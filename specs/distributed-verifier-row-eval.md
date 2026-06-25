@@ -1,14 +1,16 @@
 # Spec: Witness-shape-generic verifier row-MLE evaluation
 
-| Field         | Value                          |
-|---------------|--------------------------------|
-| Author(s)     | Omid                          |
-| Created       | 2026-06-19                     |
-| Status        | proposed                       |
-| PR            |                                |
-| Supersedes    |                                |
-| Superseded-by |                                |
+
+| Field         | Value                              |
+| ------------- | ---------------------------------- |
+| Author(s)     | Omid; Freya                               |
+| Created       | 2026-06-19                         |
+| Status        | proposed                           |
+| PR            |                                    |
+| Supersedes    |                                    |
+| Superseded-by |                                    |
 | Book-chapter  | how/verifying/matrix_evaluation.md |
+
 
 ## Summary
 
@@ -25,10 +27,10 @@ which the witness is partitioned into contiguous **chunks**, each chunk holding
 one slice of every component, with the shared `r`-tail at the end.
 
 This spec generalizes the verifier row-MLE evaluation to be **layout-agnostic**:
-it introduces a `WitnessType` enum describing the two column layouts, factors
-both into one **chunk-list** common denominator, and refactors the evaluation so
-a single code path serves both — the established layout becoming the
-one-chunk special case. The implementation surface is
+it introduces a `num_machines` parameter in `LevelParams` describing the two
+column layouts, factors both into one **chunk-list** common denominator, and
+refactors the evaluation so a single code path serves both — the established
+layout becoming the one-chunk special case. The implementation surface is
 `RingSwitchDeferredRowEval::eval_at_point`
 (`crates/akita-verifier/src/protocol/ring_switch.rs`), the structured/setup
 evaluators in `crates/akita-verifier/src/protocol/slice_mle/`, and
@@ -52,166 +54,168 @@ artifact.
 
 ### Goal
 
-Make the verifier row-MLE evaluation generic over a `WitnessType` by resolving
+Make the verifier row-MLE evaluation generic over `num_machines` by resolving
 every shape to one `WitnessLayout` that the per-component evaluators fold over,
-where the established single-segment layout is the one-chunk case and is
-byte-identical to today.
+where the established single-segment layout is the one-chunk (`num_machines = 1`)
+case and is byte-identical to today.
 
 Key abstractions and surfaces introduced or modified (all layout types live in
 `akita-types`, alongside the existing `RingRelationSegmentLayout` and
 `SetupContributionPlanInputs`, so both the verifier and the setup-contribution
 planner consume the same definitions):
 
-- **`WitnessType`** (new enum):
-
+- `**num_machines: usize` in `LevelParams`** (replaces `witness_shape: WitnessType`):
   ```rust
-  pub enum WitnessType {
-      /// Component-major layout: the witness is laid out one component at a
-      /// time — a single contiguous `e_hat` spanning all `num_blocks` blocks,
-      /// then `t_hat`, then `z_hat`, then the `r`-tail (the established
-      /// verifier layout, including the `z_first` ordering knob). Every
-      /// component is one fused segment; the block axis covers all blocks.
-      ComponentMajor,
-
-      /// Chunk-grouped layout: the witness is split into `num_groups`
-      /// contiguous chunks, each chunk holding one slice of every component
-      /// (`[ e_hat | t_hat | z_hat ]` per chunk), concatenated, with a single
-      /// shared `r`-tail. Chunk-partitioned components (`e_hat`, `t_hat`) split
-      /// their blocks evenly across chunks (`num_blocks / num_groups` each);
-      /// the chunk-replicated component (`z_hat`) appears full-size in every
-      /// chunk. Produced by the distributed prover, where each chunk is one
-      /// proving group's local witness.
-      ChunkGrouped(usize),
-  }
+  /// Number of proving machines. Must be a power of two. Only power-of-two
+  /// values are supported currently.
+  pub num_machines: usize,   // default 1
   ```
-
-- **`WitnessChunkOffset` / `WitnessLayout`** (new): the resolved, layout-agnostic
-  description the evaluators actually consume.
-
+  `num_machines = 1` is the single-machine (previously `ComponentMajor`) case.
+  `num_machines = W` is the multi-machine (previously `ChunkGrouped(W)`) case.
+- `**WitnessChunkLengths` / `WitnessChunkLayout` / `WitnessLayout**` (new): the
+resolved, layout-agnostic description the evaluators consume. Lengths and
+offsets are kept in separate structs, mirroring the existing
+`RingRelationSegmentLengths` / `RingRelationSegmentLayout` split.
   ```rust
-  /// Where one chunk's per-component pieces start in the witness column space.
-  pub struct WitnessChunkOffset {
-      pub e_offset: usize,
-      pub t_offset: usize,
-      pub z_offset: usize,            // a full-`block_len` fold (replicated)
-      pub global_block_base: usize,   // chunk_idx * blocks_per_chunk
+  /// Per-chunk segment sizes. A length of 0 means the segment is absent.
+  /// Only the last chunk has u_len / r_len > 0.
+  pub struct WitnessChunkLengths {
+      pub z_len: usize,   // replicated: same in every chunk
+      pub e_len: usize,   // partitioned: total_e_len / num_machines
+      pub t_len: usize,   // partitioned: total_t_len / num_machines
+      pub u_len: usize,   // > 0 only when tiered commitment
+      pub r_len: usize,   // > 0 only in last chunk
   }
 
-  /// A shape resolved to chunks. `chunks.len() == 1` for `ComponentMajor`,
-  /// `== num_groups` for `ChunkGrouped`. `blocks_per_chunk` is the uniform
-  /// per-chunk block window `B_w` (`== num_blocks` for `ComponentMajor`).
+  /// Per-chunk segment offsets. Fields for absent segments (len == 0) are 0.
+  pub struct WitnessChunkLayout {
+      pub offset_z: usize,
+      pub offset_e: usize,
+      pub offset_t: usize,
+      pub offset_u: usize,           
+      pub offset_r: usize,           
+      pub global_block_base: usize,  // chunk_idx * blocks_per_chunk
+  }
+
+  /// Full witness column layout for num_machines machines.
+  /// `chunks` and `chunk_lengths` are parallel Vecs of length `num_machines`.
   pub struct WitnessLayout {
       pub blocks_per_chunk: usize,
-      pub chunks: Vec<WitnessChunkOffset>,
-      pub offset_u: usize,             // tiered `û_concat`; ComponentMajor only until chunked tiering is specified
-      pub offset_r: usize,
+      pub chunks: Vec<WitnessChunkLayout>,         // offsets; len == num_machines
+      pub chunk_lengths: Vec<WitnessChunkLengths>, // lengths; parallel to chunks
   }
   ```
-
-- **`WitnessType::resolve(lp, opening_shape, m_row_layout) -> Result<WitnessLayout,
-  AkitaError>`** (new): the **only** place the two shapes diverge.
-  `ComponentMajor` resolves to a one-element chunk list whose offsets come
-  straight from today's
-  [`RingRelationSegmentLayout`](../crates/akita-types/src/proof/ring_relation.rs)
-  (preserving `z_first` and the blinding offsets) with `blocks_per_chunk =
-  num_blocks` and `global_block_base = 0`. `ChunkGrouped(W)` computes the
-  per-chunk offsets arithmetically (fixed `[e|t|z]` order). All shape validation
-  (no-panic) happens here.
-- **`RingSwitchDeferredRowEval`** carries the resolved `WitnessLayout` (replacing
-  the single `witness_segment_layout` it stores today), and `eval_at_point`
-  becomes a fold over `chunk_layout.chunks()`.
-- **`PreparedChallengeEvals::summarize_chunk_block_carries`** (new, generalizes
-  the existing `summarize_all_block_carries` in
-  `crates/akita-verifier/src/protocol/ring_switch/tensor_challenges.rs`): the
-  per-claim two-bucket `c_alpha` block summaries for **one chunk's** block window
-  `[global_block_base, global_block_base + B_w)`, peeling `B_w` instead of `B`.
-- **`SetupContributionPlanInputs`** / **`SetupContributionPlan::prepare`**: take
-  the `WitnessLayout` so the precomputed column-weight vectors (`e_eq_slice`,
-  `t_eq_slice_per_group`, `z_eq_slice`) are built against the resolved chunks.
-  The hot α-evaluation loop `packed_slice_inner_sum` is **unchanged**.
-- **`LevelParams`** gains a public `witness_shape: WitnessType` (default
-  `ComponentMajor`) — the verifier's source of truth for the layout. It is a
-  public schedule/layout parameter, not a prover-controlled proof byte.
+  
+- `**RingRelationInstance::segment_layout(lp) -> WitnessLayout**` (replaces
+returning `RingRelationSegmentLayout`): the **only** place the two shapes
+diverge. `lp.num_machines` drives how many chunks are produced.
+`num_machines = 1` resolves to a one-element chunk list whose offsets come
+from the existing `RingRelationSegmentLayout` computation (blinding offsets
+preserved; z-first ordering unconditional) with `blocks_per_chunk = num_blocks`
+and `global_block_base = 0`. `num_machines = W` computes per-chunk offsets
+arithmetically with fixed `[z|e|t]` order per chunk: for chunk `j`,
+`offset_z = j·stride`, `offset_e = offset_z + z_len_j`,
+`offset_t = offset_e + e_len_j`. Only the last chunk carries `u` and `r`.
+All validation (no-panic) happens here. `RingRelationSegmentLayout` is
+deprecated and replaced by `WitnessLayout`.
+- `**RingSwitchDeferredRowEval`** carries the resolved `WitnessLayout` (replacing
+`witness_segment_layout`), and `eval_at_point` becomes a fold over
+`chunk_layout.chunks()` zipped with `chunk_layout.chunk_lengths`.
+- `**PreparedChallengeEvals::summarize_chunk_block_carries`** (new, generalizes
+`summarize_all_block_carries` in
+`crates/akita-verifier/src/protocol/ring_switch/tensor_challenges.rs`): the
+per-claim two-bucket `c_alpha` block summaries for one chunk's block window
+`[global_block_base, global_block_base + B_w)`, peeling `B_w` instead of `B`.
+- `**SetupContributionPlanInputs**` / `**SetupContributionPlan::prepare**`: take
+the `WitnessLayout` so the precomputed column-weight vectors (`e_eq_slice`,
+`t_eq_slice_per_group`, `z_eq_slice`) are built against the resolved chunks.
+The hot α-evaluation loop `packed_slice_inner_sum` is **unchanged**.
+- `**LevelParams`** gains a public `num_machines: usize` (default `1`) — the
+verifier's source of truth for the layout. It is a public schedule/layout
+parameter, not a prover-controlled proof byte.
 
 ### Invariants
 
-- **`ComponentMajor` is byte-identical to today.** Evaluating under
-  `ComponentMajor` returns exactly the same field element as the current
-  `eval_at_point` for every fixture. Protected by a new regression test
-  `component_major_matches_legacy_row_eval`.
-- **`ChunkGrouped(1)` collapses to `ComponentMajor`.** Resolving
-  `ChunkGrouped(1)` yields a one-chunk `WitnessLayout` whose evaluation equals
-  `ComponentMajor` (modulo the `z_first` ordering knob, which `ChunkGrouped` does
-  not use). Protected by `chunk_grouped_one_equals_component_major`. This is the
-  structural proof that the chunk fold is a true generalization, not a parallel
-  path.
-- **Structured correctness for every power-of-two chunk count.** For every
-  `W ∈ {1, 2, 4, …, num_blocks}` the chunked structured evaluation equals the
-  brute-force materialized `M` over the resolved chunk layout (with `z_hat`
-  replicated `W` times). Protected by `chunk_grouped_matches_materialized` (see
-  Testing Strategy), run for both power-of-two and non-power-of-two `block_len`.
+- `**num_machines = 1` is byte-identical to today.** Evaluating under
+`num_machines = 1` returns exactly the same field element as the current
+`eval_at_point` for every fixture. Protected by a new regression test
+`component_major_matches_legacy_row_eval`.
+- `**num_machines = 1` collapses to the single-chunk layout.** `segment_layout`
+with `num_machines = 1` yields a one-chunk `WitnessLayout` whose offsets and
+evaluation are identical to the old `ComponentMajor` / `RingRelationSegmentLayout`
+values: with `W=1`, `stride = z_len + e_len + t_len`, so `offset_z=0`,
+`offset_e=z_len`, `offset_t=z_len+e_len`. There is no ordering caveat;
+all shapes use the same z-first convention. Protected by
+`chunk_grouped_one_equals_component_major`. This is the structural proof that
+the chunk fold is a true generalization, not a parallel path.
+- **Structured correctness for every power-of-two `num_machines`.** For every
+`W ∈ {1, 2, 4, …, num_blocks}` the chunked structured evaluation equals the
+brute-force materialized `M` over the resolved chunk layout (with `z_hat`
+replicated `W` times). Protected by `chunk_grouped_matches_materialized` (see
+Testing Strategy), run for both power-of-two and non-power-of-two `block_len`.
 - **Dominant-cost equivalence (α-evaluations).** The shared SIS-matrix
-  α-evaluation scan (`eval_ring_at_pows` inside `packed_slice_inner_sum`) runs
-  exactly **once per shared-matrix entry**, with the same
-  `r_max = max(n_d, n_b, n_a)` and the same `n_cols` regardless of chunk count.
-  The chunk-replicated `A·z_hat` enters only through the additively combined,
-  α-free `Z_comb` weight vector. The implementation must **not** re-scan or
-  re-α-evaluate the setup matrix per chunk.
+α-evaluation scan (`eval_ring_at_pows` inside `packed_slice_inner_sum`) runs
+exactly **once per shared-matrix entry**, with the same
+`r_max = max(n_d, n_b, n_a)` and the same `n_cols` regardless of chunk count.
+The chunk-replicated `A·z_hat` enters only through the additively combined,
+α-free `Z_comb` weight vector. The implementation must **not** re-scan or
+re-α-evaluate the setup matrix per chunk.
 - **Chunk-partitioned cost is flat in chunk count.** The `e_hat`/`t_hat` block
-  summaries cost `O(W · C · B_w) = O(C · B)` in total (the `W` chunk windows
-  *tile* the same `B` blocks), and the shared `eq_low` table is built once at
-  window `B_w`, not once per chunk.
+summaries cost `O(W · C · B_w) = O(C · B)` in total (the `W` chunk windows
+*tile* the same `B` blocks), and the shared `eq_low` table is built once at
+window `B_w`, not once per chunk.
 - **Only chunk-replicated `z_hat` scales with chunk count.** The `z_hat`-tensor
-  contribution and the `Z_comb` build are the only `O(W · …)` terms:
-  `O(W · block_len + W · DF · DC)` (peelable `block_len`) /
-  `O(W · DF · DC · block_len)` (dense `block_len`), and `O(W · A_cols)`
-  (`Z_comb`).
+contribution and the `Z_comb` build are the only `O(W · …)` terms:
+`O(W · block_len + W · DF · DC)` (peelable `block_len`) /
+`O(W · DF · DC · block_len)` (dense `block_len`), and `O(W · A_cols)`
+(`Z_comb`).
 - **No-panic boundary preserved.** All chunk counts, per-chunk offsets, the block
-  window `B_w`, and the replicated `z_hat` capacity are validated in
-  `WitnessType::resolve` (from public layout) before any proof data is read, per
-  the [verifier no-panic contract](../book/src/how/verification.md). Malformed
-  shape / chunk count / capacity is rejected with `AkitaError`, never a panic.
+window `B_w`, and the replicated `z_hat` capacity are validated in
+`segment_layout` (from public layout) before any proof data is read, per
+the [verifier no-panic contract](../book/src/how/verification.md). Malformed
+shape / chunk count / capacity is rejected with `AkitaError`, never a panic.
 - **Transcript unchanged in shape, additive in rounds only.** Because `z_hat` is
-  chunk-replicated, the next-level witness variable count rises by at most
-  `log₂ W`, so stage-2 / setup-product sum-checks read up to `log₂ W` extra round
-  polynomials. No new challenge *kinds*; challenge sampling order is unchanged.
+chunk-replicated, the next-level witness variable count rises by at most
+`log₂ W`, so stage-2 / setup-product sum-checks read up to `log₂ W` extra round
+polynomials. No new challenge *kinds*; challenge sampling order is unchanged.
 
 ### Non-Goals
 
 - **No prover or planner changes.** Verifier-only. Producing the chunk-grouped
-  witness, setting `witness_shape` in the schedule, and the distributed prover's
-  partial-fold construction are out of scope. Test fixtures synthesize the
-  resolved layout directly.
+witness, setting `num_machines` in the schedule, and the distributed prover's
+partial-fold construction are out of scope. Test fixtures synthesize the
+resolved layout directly.
 - **Non-power-of-two chunk count.** Only `W` a power of two dividing `num_blocks`
-  (so the `e_hat`/`t_hat` chunk window `B_w` is a clean low-bit window) is in
-  scope for the peeled fast path. A dense per-chunk fallback for non-power-of-two
-  `B_w` is a follow-up (the exact analogue of the `z_hat`-tensor dense fallback).
-  **Note:** this is the `B_w` (chunk block window) constraint and is *distinct*
-  from `block_len` (the `z` in-block size): a **non-power-of-two `block_len` is
-  fully in scope** and specified below (§4 Case 2 / §5), since it already arises
-  at recursive levels and the dense fallback exists today.
+(so the `e_hat`/`t_hat` chunk window `B_w` is a clean low-bit window) is in
+scope for the peeled fast path. A dense per-chunk fallback for non-power-of-two
+`B_w` is a follow-up (the exact analogue of the `z_hat`-tensor dense fallback).
+**Note:** this is the `B_w` (chunk block window) constraint and is *distinct*
+from `block_len` (the `z` in-block size): a **non-power-of-two `block_len` is
+fully in scope** and specified below (§4 Case 2 / §5), since it already arises
+at recursive levels and the dense fallback exists today.
 - **ZK blinding interaction.** The `b_zk` / `d_zk` blinding segments
-  (`crates/akita-verifier/src/protocol/slice_mle/zk_blinding.rs`) under chunked
-  layout are out of scope; the spec targets the non-zk core evaluation. ZK
-  chunking is a follow-up mirroring the same per-chunk offset treatment.
+(`crates/akita-verifier/src/protocol/slice_mle/zk_blinding.rs`) under chunked
+layout are out of scope; the spec targets the non-zk core evaluation. ZK
+chunking is a follow-up mirroring the same per-chunk offset treatment.
 - **Tensor (factored) challenges under chunking.** The flat-`c_alpha` path is the
-  primary target. Factored challenges require restricting the block-window to a
-  chunk's contiguous range (which lands in the `left` factor of the left⊗right
-  block factorization); a sub-task that may land separately (see
-  Implementation Stages).
+primary target. Factored challenges require restricting the block-window to a
+chunk's contiguous range (which lands in the `left` factor of the left⊗right
+block factorization); a sub-task that may land separately (see
+Implementation Stages).
 
 ## Evaluation
 
 ### Acceptance Criteria
 
-- [ ] `WitnessType`, `WitnessChunkOffset`, `WitnessLayout` exist in `akita-types`, and
-  `WitnessType::resolve` yields `1` chunk for `ComponentMajor` and `W` for
-  `ChunkGrouped(W)`.
+- [ ] `WitnessChunkLayout`, `WitnessLayout` exist in `akita-types`, and
+  `RingRelationInstance::segment_layout(lp)` yields `1` chunk for
+  `num_machines = 1` and `W` chunks for `num_machines = W`.
 - [ ] `RingSwitchDeferredRowEval::eval_at_point` evaluates `e_hat`, `t_hat`,
   `z_hat`, and the setup contribution as a fold over `chunk_layout.chunks()`,
   reusing the existing `EStructuredSlicesEvaluator` /
   `TStructuredSlicesEvaluator` / `ZStructuredPow2SlicesEvaluator` /
-  `ZDenseSlicesEvaluator` unchanged in body.
+  `ZDenseSlicesEvaluator` unchanged in body; `u` and `r` contributions are
+  gated by the chunk's `u_len > 0` / `r_len > 0`.
 - [ ] `SetupContributionPlan::prepare` builds `e_eq_slice`,
   `t_eq_slice_per_group`, and `Z_comb` (`z_eq_slice`) against the `WitnessLayout`;
   `packed_slice_inner_sum` is unchanged.
@@ -223,7 +227,7 @@ planner consume the same definitions):
   `block_len` **not** a power of two (Case 2, dense fallback), mirroring the
   existing single-segment `z_dense_matches_materialized_range_inner_product`
   (`block_len = 510`).
-- [ ] A negative test rejects malformed shape (chunk count not a power of two,
+- [ ] A negative test rejects malformed shape (`num_machines` not a power of two,
   `W ∤ num_blocks`, or `W` replicated `z_hat` exceeds witness capacity) with
   `AkitaError`, no panic.
 - [ ] `cargo fmt -q`, `cargo clippy --all -- -D warnings`, `cargo test` pass.
@@ -236,62 +240,62 @@ ring-switch tests (`crates/akita-verifier/src/protocol/ring_switch/tests.rs`),
 reusing the existing `StructuredFixture`/`fixture()` shape
 (`F = Prime128OffsetA7F7`, `D = 32`, `num_blocks = 8`, `block_len = 512`).
 
-1. **`chunk_grouped_matches_materialized` (ground truth).** For each
-   `W ∈ {1, 2, 4, 8}` (powers of two dividing `num_blocks = 8`):
-   - Resolve the layout via `WitnessType::ChunkGrouped(W).resolve(...)`.
-   - **Materialize** the full `M` row contribution as a flat vector over
-     `[ e0|t0|z0 ]…[ e(W-1)|t(W-1)|z(W-1) ][ r ]`, using the per-cell formulas
-     from the theory chapter (`e_hat`: `c_alpha[claim][blk_g]·g_open`; `t_hat`:
-     with the `a_row` axis; `z_hat`: `g_commit·g_fold·a[blk]`, **the same in
-     every chunk** — replicated; `c_alpha` read at the *global* block
-     `blk_g = chunk·B_w + block_local` for `e_hat`/`t_hat`).
-   - Form `eq(·, r_col)` densely over that layout, inner-product against the row
-     weights, and compare to the chunked structured evaluation. This is the
-     analogue of the existing
-     `e_structured_matches_materialized_range_inner_product` /
-     `z_structured_matches_materialized_range_inner_product` tests, extended over
-     the chunk axis. The loop over `W` proves "any power-of-two chunk count."
-2. **`chunk_grouped_matches_materialized_z_dense` (non-pow2 `block_len`).** Same
-   structure as (1) with a fixture whose `block_len` is **not** a power of two
+1. `**chunk_grouped_matches_materialized` (ground truth).** For each
+  `W ∈ {1, 2, 4, 8}` (powers of two dividing `num_blocks = 8`):
+  - Resolve the layout via `relation.segment_layout(&lp_with_num_machines(W))`.
+  - **Materialize** the full `M` row contribution as a flat vector over
+  `[ z0|e0|t0 ]…[ z(W-1)|e(W-1)|t(W-1) ][ u ][ r ]` (z-first within each
+  chunk, `u`/`r` only in last chunk), using the per-cell formulas from the
+  theory chapter (`e_hat`: `c_alpha[claim][blk_g]·g_open`; `t_hat`: with the
+  `a_row` axis; `z_hat`: `g_commit·g_fold·a[blk]`, **the same in every chunk**
+  — replicated; `c_alpha` read at the *global* block
+  `blk_g = chunk·B_w + block_local` for `e_hat`/`t_hat`).
+  - Form `eq(·, r_col)` densely over that layout, inner-product against the row
+  weights, and compare to the chunked structured evaluation. This is the
+  analogue of the existing
+  `e_structured_matches_materialized_range_inner_product` /
+  `z_structured_matches_materialized_range_inner_product` tests, extended over
+  the chunk axis. The loop over `W` proves "any power-of-two chunk count."
+2. `**chunk_grouped_matches_materialized_z_dense` (non-pow2 `block_len`).** Same
+  structure as (1) with a fixture whose `block_len` is **not** a power of two
    (e.g. `block_len = 510`, as in the existing single-segment
    `z_dense_matches_materialized_range_inner_product`). Drives the §4 Case 2 /
    §5 dense `Z_comb` paths (`ZDenseSlicesEvaluator` summed over chunks, dense
    `z_eq_slice` summed over chunks). Loop `W ∈ {1, 2, 4, 8}`. The materialized
    `z_hat` is **replicated** (same `g_commit·g_fold·a[blk]` in every chunk, only
    the offset shifts).
-3. **`component_major_matches_legacy_row_eval` (regression).** Evaluate under
-   `ComponentMajor` and assert equality with the current single-segment result on
+3. `**component_major_matches_legacy_row_eval` (regression).** Evaluate under
+  `num_machines = 1` and assert equality with the current single-segment result on
    the existing fixture (both `block_len` pow2 and non-pow2).
-4. **`chunk_grouped_one_equals_component_major`.** Assert
-   `ChunkGrouped(1).resolve(...)` evaluates to the same value as
-   `ComponentMajor.resolve(...)` (with the `[e|t|z]` ordering), confirming the
-   one-chunk collapse.
+4. `**chunk_grouped_one_equals_component_major`.** Assert
+  `segment_layout` with `num_machines = 1` evaluates to the same value as the
+   old `ComponentMajor` path (both use the same `[z|e|t]` ordering since PR
+   #216), confirming the one-chunk collapse.
 5. **Per-component equivalence.** Optionally split (1)/(2) into `e_hat`-only,
-   `t_hat`-only, `z_hat`-only, and setup-only sub-tests for sharper failure
+  `t_hat`-only, `z_hat`-only, and setup-only sub-tests for sharper failure
    localization.
 6. **No-panic negatives.** `chunk_grouped_rejects_bad_shape`: assert `AkitaError`
-   (not panic) for `ChunkGrouped(3)` (not pow2), `ChunkGrouped(16)`
+  (not panic) for `num_machines = 3` (not pow2), `num_machines = 16`
    (`> num_blocks`), and a chunk count whose `W · z_len` exceeds the validated
    `w_len`.
 7. **End-to-end.** Existing `crates/akita-pcs` / verifier integration tests must
-   continue passing unchanged (they exercise `ComponentMajor`).
+  continue passing unchanged (they exercise `num_machines = 1`).
 
 ### Performance
 
 - **Dominant term unchanged.** The setup-matrix α-evaluation scan
-  (`O(r_max · n_cols · D)` ring ops) must be identical to `ComponentMajor` for
-  any chunk count; verify via the profile harness
-  (`AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`)
-  comparing a `ComponentMajor` run with a synthetic `ChunkGrouped(W)` run on the
-  `setup_contribution` span — the span time must be flat in `W`.
-- **`e_hat`/`t_hat`/`r` flat in chunk count.** Block-summary build is `O(C·B)`
-  total regardless of `W`; the only `W`-scaled additions are the cheap digit-axis
-  outer combines (`O(W·C·do)`, `O(W·n_A·C·do)`) and the high tables (`O(W·…)`),
-  far below the α-eval floor.
-- **`z_hat` and `Z_comb` scale with chunk count** by design — acceptable because
-  the `z_hat`-tensor is the cheap (α-free) part of the verifier.
-- **Net expectation:** total verifier time `≈ ComponentMajor + O(W·block_len) +
-  O(W·A_cols)`, negligible whenever `W ≪ r_max·D`.
+(`O(r_max · n_cols · D)` ring ops) must be identical to `num_machines = 1` for
+any chunk count; verify via the profile harness
+(`AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`)
+comparing a `num_machines = 1` run with a synthetic `num_machines = W` run on the
+`setup_contribution` span — the span time must be flat in `W`.
+- `**e_hat`/`t_hat`/`r` flat in chunk count.** Block-summary build is `O(C·B)`
+total regardless of `W`; the only `W`-scaled additions are the cheap digit-axis
+outer combines (`O(W·C·do)`, `O(W·n_A·C·do)`) and the high tables (`O(W·…)`),
+far below the α-eval floor.
+- `**z_hat` and `Z_comb` scale with chunk count** by design — acceptable because
+the `z_hat`-tensor is the cheap (α-free) part of the verifier.
+- **Net expectation:** total verifier time `≈ num_machines=1 baseline + O(W·block_len) + O(W·A_cols)`, negligible whenever `W ≪ r_max·D`.
 
 ## Detailed Review
 
@@ -303,11 +307,11 @@ fold over resolved chunks. That is the correct boundary because today's code has
 three independent consumers of witness column geometry:
 
 - `RingSwitchDeferredRowEval::eval_at_point`, which owns the structured
-  `e_hat`/`t_hat`/`z_hat` and `r` contributions.
+`e_hat`/`t_hat`/`z_hat` and `r` contributions.
 - `SetupContributionPlan::prepare`, which translates the same geometry into
-  column-equality weights for the packed setup scan.
+column-equality weights for the packed setup scan.
 - `PreparedChallengeEvals::summarize_all_block_carries`, which binds the
-  challenge vector's global block axis to the verifier's low-bit peeled window.
+challenge vector's global block axis to the verifier's low-bit peeled window.
 
 Factoring the layout into `akita-types` is also the right crate boundary. The
 layout is not verifier-local: both the direct verifier setup scan and the
@@ -316,42 +320,41 @@ definition avoids the most dangerous failure mode: the structured witness
 contribution and the setup contribution silently evaluating different column
 layouts.
 
-The main architecture requirement is that `WitnessType::resolve` must become a
-real verifier boundary, not just a convenience constructor. It should receive, or
-be followed immediately by validation against, the validated witness column
-capacity (`w_len / D`). Without that, the spec's no-panic invariant cannot be
-fully enforced at the shape boundary; `eval_at_point` would still be able to
-construct offsets that are algebraically valid but outside the committed witness
-column domain. In implementation terms, either make `witness_len` part of
-`WitnessTypeResolveInputs`, or add a non-optional
+The main architecture requirement is that `segment_layout` must become a real
+verifier boundary, not just a convenience constructor. It should receive, or be
+followed immediately by validation against, the validated witness column capacity
+(`w_len / D`). Without that, the spec's no-panic invariant cannot be fully
+enforced at the shape boundary; `eval_at_point` would still be able to construct
+offsets that are algebraically valid but outside the committed witness column
+domain. In implementation terms, either make `witness_len` part of
+`segment_layout`'s inputs, or add a non-optional
 `WitnessLayout::validate_capacity(witness_len, r_tail_len)` call in
 `prepare_ring_switch_row_eval` before the layout is stored.
 
-`witness_shape` must also be transcript/descriptor-bound as a public layout
+`num_machines` must also be transcript/descriptor-bound as a public layout
 parameter. The proof should not choose it, but the verifier and prover must agree
 on it through the same public schedule/layout descriptor that already binds the
-level parameters. Adding `LevelParams::witness_shape` without including it in the
+level parameters. Adding `LevelParams::num_machines` without including it in the
 canonical descriptor/serialization path would create a configuration mismatch
 risk: two executions could absorb the same commitments and proof bytes while
 interpreting the relation matrix columns differently.
 
 One current-code edge needs an explicit decision before implementation:
 `RingRelationSegmentLayout` has `offset_u` and tiered-commitment replay uses it in
-both `SetupContributionPlan::prepare` and `u_recompose_contribution`, but the
-new `WitnessChunkOffset` only models `e_offset`, `t_offset`, and `z_offset`. Therefore
-the first implementation must either:
+both `SetupContributionPlan::prepare` and `u_recompose_contribution`. The new
+`WitnessChunkLayout` carries `offset_u` and `u_len` fields, but `u_len > 0` only
+in the last chunk and only when tiering is active. Therefore the first
+implementation must either:
 
-- reject `ChunkGrouped(W)` when `lp.tier_split > 1` with `AkitaError` and state
-  that chunked tiered commitments are outside this spec's first landing, or
-- extend `WitnessChunkOffset`/`WitnessLayout` with `u_offset` (and the corresponding
-  chunked `u` geometry) so tiered replay remains layout-generic.
+- reject `num_machines > 1` when `lp.tier_split > 1` with `AkitaError` and state
+that chunked tiered commitments are outside this spec's first landing, or
+- specify whether `û_concat` is partitioned with `t_hat`, replicated, or kept as
+a shared segment, and implement accordingly.
 
-The conservative path is to reject chunked+tiered at first, because the spec does
-not yet define whether `û_concat` is partitioned with `t_hat`, replicated, or
-kept as a shared segment. That rejection must be public-layout validation, not a
-late panic or hidden assumption.
+The conservative path is to reject chunked+tiered at first. That rejection must
+be public-layout validation, not a late panic or hidden assumption.
 
-The `ComponentMajor` compatibility story is good but should be tested at two
+The `num_machines = 1` compatibility story is good but should be tested at two
 levels. A direct result comparison protects behavior, while a resolved-layout
 snapshot test protects the intended geometry (`offset_e`, `offset_t`, `offset_z`,
 `offset_u`, `offset_r`). The latter is useful because a future refactor can
@@ -382,7 +385,7 @@ No setup column should be duplicated across chunks for `e_hat` or `t_hat`.
 
 The high-equality tables need careful implementation. A single dense table from
 the first chunk's high offset to the last chunk's high offset can accidentally
-include large gaps introduced by the per-chunk `[e|t|z]` stride, especially
+include large gaps introduced by the per-chunk `[z|e|t]` stride, especially
 because every chunk carries a full replicated `z_hat`. Prefer per-chunk high
 tables (or an absolute-index cache) for `e_hat` and `t_hat`:
 
@@ -407,7 +410,7 @@ The performance acceptance test should measure two spans separately:
 
 - `setup_contribution`: must be flat in `W` except for `Z_comb` precompute.
 - `z_structured`: may grow with `W` and should match the expected `O(W·block_len)`
-  or dense-fallback profile.
+or dense-fallback profile.
 
 That split is important because total verifier time can still rise slightly with
 chunk count; the invariant is not "no cost changes," but "the α-evaluation floor
@@ -448,12 +451,12 @@ M̃(r) = Σ_chunk [ e_contribution(chunk) + t_contribution(chunk)
         + r_contribution()                       # single shared tail
 ```
 
-- `ComponentMajor` is the **degenerate one-chunk** case: a single chunk whose
-  `e_hat` spans all `num_blocks`, whose `z_hat` is the lone fold, and whose
-  offsets are exactly today's `RingRelationSegmentLayout`.
-- `ChunkGrouped(W)` is the **`W`-chunk** case: each chunk's `e_hat`/`t_hat`
-  spans `B_w = num_blocks / W` blocks, and each chunk carries a full-`block_len`
-  `z_hat`.
+- `num_machines = 1` is the **degenerate one-chunk** case: a single chunk whose
+`e_hat` spans all `num_blocks`, whose `z_hat` is the lone fold, and whose
+offsets are exactly today's `RingRelationSegmentLayout`.
+- `num_machines = W` is the `**W`-chunk** case: each chunk's `e_hat`/`t_hat`
+spans `B_w = num_blocks / W` blocks, and each chunk carries a full-`block_len`
+`z_hat`.
 
 That additivity is exactly the verifier requirement stated up front: the
 established single-segment layout is just the one-chunk case. The single-segment
@@ -464,22 +467,21 @@ verifier *is* the chunk fold with one iteration.
 The design pivots on a single resolution step:
 
 ```text
-WitnessType  ──resolve──▶  WitnessLayout { blocks_per_chunk, chunks[], offset_u, offset_r }
+num_machines  ──segment_layout(lp)──▶  WitnessLayout { blocks_per_chunk, chunks[] }
 ```
 
 `WitnessLayout` is the *only* thing the evaluators see. They never branch on
-`WitnessType`; they fold over `chunk_layout.chunks()`. All layout divergence —
-`z_first`, blinding offsets, the chunk-offset formula — is confined to the two
-arms of `resolve`, which is also where every no-panic check lives (chunk count is
+`num_machines`; they fold over `chunk_layout.chunks()`. All layout divergence —
+`z_first`, blinding offsets, the chunk-offset formula — is confined to
+`segment_layout`, which is also where every no-panic check lives (chunk count is
 a power of two, divides `num_blocks`, `B_w` is a clean window, `W·L + |r|` fits
 the validated `w_len`). The hot path inherits the guarantee that all bounds were
 checked once, at the edge.
 
-This placement also fixes the crate boundary cleanly: `WitnessType` /
-`WitnessChunkOffset` / `WitnessLayout` live in `akita-types` next to
-`RingRelationSegmentLayout`, so the verifier's `ring_switch.rs` and the
-`akita-types` `SetupContributionPlan` consume one definition — no duplicated
-layout knowledge across the verifier/types boundary.
+This placement also fixes the crate boundary cleanly: `WitnessChunkLayout` /
+`WitnessLayout` live in `akita-types` next to `RingRelationSegmentLayout`, so the
+verifier's `ring_switch.rs` and the `akita-types` `SetupContributionPlan` consume
+one definition — no duplicated layout knowledge across the verifier/types boundary.
 
 #### Tile vs. replicate falls out of the data, not control flow
 
@@ -491,16 +493,15 @@ express this without a per-component "am I partitioned?" switch.
 
 The chunk representation does this implicitly:
 
-- A chunk's `e_hat`/`t_hat` pieces are addressed by `(global_block_base,
-  blocks_per_chunk)`. Because the chunks' windows are disjoint and cover
-  `[0, num_blocks)`, **summing** their contributions reconstructs the full
-  component, and the total block scan is `Σ_chunk B_w = B` — flat in `W`. Tiling
-  is just "disjoint windows that sum to the whole," which the fold gives for
-  free.
+- A chunk's `e_hat`/`t_hat` pieces are addressed by `(global_block_base, blocks_per_chunk)`. Because the chunks' windows are disjoint and cover
+`[0, num_blocks)`, **summing** their contributions reconstructs the full
+component, and the total block scan is `Σ_chunk B_w = B` — flat in `W`. Tiling
+is just "disjoint windows that sum to the whole," which the fold gives for
+free.
 - A chunk's `z_hat` piece is addressed by `z_offset` and always spans the full
-  `block_len`. There are `#chunks` such pieces, so summing them yields `#chunks`
-  copies. Replication is just "every chunk carries the full thing," again free
-  from the fold.
+`block_len`. There are `#chunks` such pieces, so summing them yields `#chunks`
+copies. Replication is just "every chunk carries the full thing," again free
+from the fold.
 
 No evaluator asks whether a component tiles or replicates; the geometry of the
 chunk (`B_w`-window for `e`/`t`, full `block_len` for `z`) encodes it. The cost
@@ -512,31 +513,19 @@ shape, not a special case in code.
 The consolidated design is three thin layers, with the case-split living only in
 layer 1:
 
-1. **Resolve (layout, shape-aware).** `WitnessType::resolve -> WitnessLayout`.
-   Two arms; all validation. `ComponentMajor` reads `RingRelationSegmentLayout`
-   (one chunk, `B_w = num_blocks`, `global_block_base = 0`). `ChunkGrouped(W)`
-   computes per-chunk offsets from `L = |e^j| + |t^j| + |z^j|`:
-
-   ```text
-   |e^j| = depth_open · num_claims · B_w
-   |t^j| = depth_open · n_A · num_t_vectors · B_w
-   |z^j| = depth_fold · depth_commit · block_len        # full size, replicated
-   chunk j:  e_offset = base + j·L
-             t_offset = base + j·L + |e^j|
-             z_offset = base + j·L + |e^j| + |t^j|
-             global_block_base = j·B_w
-   offset_r = base + W·L
-   ```
-
+1. **Resolve (layout, shape-aware).** `segment_layout(lp) -> WitnessLayout`.
+  All validation. `num_machines = 1` reads `RingRelationSegmentLayout`
+   (one chunk, `B_w = num_blocks`, `global_block_base = 0`). `num_machines = W`
+   computes per-chunk offsets with z-first ordering per chunk, from
+   `L = |z^j| + |e^j| + |t^j|` (stride):
 2. **Per-chunk evaluate (shape-agnostic, reuses today's evaluators).** The
-   existing `EStructuredSlicesEvaluator` / `TStructuredSlicesEvaluator` /
+  existing `EStructuredSlicesEvaluator` / `TStructuredSlicesEvaluator` /
    `ZStructuredPow2SlicesEvaluator` / `ZDenseSlicesEvaluator` are instantiated
    once per chunk with the chunk's offsets; their bodies are unchanged. Only
    their *inputs* are chunk-derived (offset, `global_block_base`, the peel window
    `B_w`).
-
 3. **Fold (orchestrator, shape-agnostic).** `eval_at_point` builds the
-   chunk-independent precomputes once (the shared `eq_low` at window `B_w`, the
+  chunk-independent precomputes once (the shared `eq_low` at window `B_w`, the
    shared `eq_low_z` at window `block_len`, gadgets, `alpha_pows`), then sums
    per-chunk contributions and adds the single setup + `r` contributions.
 
@@ -554,7 +543,7 @@ fn summarize_chunk_block_carries(
 // flat slice = c_alpha[claim*num_blocks + global_block_base .. + B_w]
 ```
 
-`ComponentMajor` ⇒ `global_block_base = 0`, `B_w = num_blocks` ⇒ today's
+`num_machines = 1` ⇒ `global_block_base = 0`, `B_w = num_blocks` ⇒ today's
 `summarize_all_block_carries`. The `t_hat` evaluator reuses the chunk's `e_hat`
 summaries (same in-window residue, since `|e^j|` is a multiple of `B_w`). `eq_low`
 (window `B_w`) and `high_challenges` are built once and shared across chunks.
@@ -566,32 +555,29 @@ chunk-specific data — `a[blk]` and the gadget weights are global), so only the
 offset differs. The verifier dispatches on `block_len.is_power_of_two()` exactly
 as today; the dispatch depends on `block_len`, not on the chunk, so the chunk
 loop sits **outside** the case split. Both cases combine additively:
-`z_contribution = Σ_chunk Z_eval(chunk.z_offset)`.
+`z_contribution = Σ_chunk Z_eval(chunk.offset_z)`.
 
 - **Case 1 — `block_len` a power of two (root).** Peel the `block_len` window per
-  chunk; build the two-bucket in-block summary with `z_lo = z_offset mod
-  block_len` (the `eq_low_z` table is built once and shared — it depends only on
-  `r_col`'s low bits and the window size, never on the offset), evaluate with
-  `ZStructuredPow2SlicesEvaluator { offset_z: chunk.z_offset }`, sum. Overhead
-  `O(W·block_len + W·DF·DC)`.
+chunk; build the two-bucket in-block summary with `z_lo = z_offset mod block_len` (the `eq_low_z` table is built once and shared — it depends only on
+`r_col`'s low bits and the window size, never on the offset), evaluate with
+`ZStructuredPow2SlicesEvaluator { offset_z: chunk.offset_z }`, sum. Overhead
+`O(W·block_len + W·DF·DC)`.
 - **Case 2 — `block_len` not a power of two (recursive, dense).** No clean
-  low-bit window to peel (`block_len = ceil(num_ring / num_blocks)` need not be a
-  power of two at recursive levels). Fall back to materializing the structured
-  `z` segment and running one generic offset-eq evaluation — per chunk, i.e.
-  today's `ZDenseSlicesEvaluator` repeated `W` times, each at its own
-  `chunk.z_offset`:
-
+low-bit window to peel (`block_len = ceil(num_ring / num_blocks)` need not be a
+power of two at recursive levels). Fall back to materializing the structured
+`z` segment and running one generic offset-eq evaluation — per chunk, i.e.
+today's `ZDenseSlicesEvaluator` repeated `W` times, each at its own
+`chunk.offset_z`:
   ```rust
   z_contribution += ZDenseSlicesEvaluator {
       g1_commit, fold_gadget,
       consistency_weight: self.eq_tau1[0],
       a_evals_by_point,                 // shared across chunks (a[blk] is global)
       full_vec_randomness: x_challenges,
-      offset_z: chunk.z_offset,         // the only per-chunk input
+      offset_z: chunk.offset_z,         // the only per-chunk input
       block_len,
   }.evaluate()?;
   ```
-
   Since `a_evals_by_point` is shared, the materialized segment is identical in
   every chunk; an implementation may materialize the `O(DF·DC·block_len)` segment
   **once** and evaluate it at the `W` offsets. Overhead `O(W·DF·DC·block_len)`.
@@ -607,50 +593,45 @@ precomputed column-weight vectors are built against the chunks; the hot loop
 `packed_slice_inner_sum` (and its eq-weighted twin `bar_omega_segment_eval`) is
 **unchanged** — this is what keeps the α-evaluation count layout-independent.
 
-- **`W_col` / `e_eq_slice` (`D·e_hat`, partitioned).** `get_eq_indices_for_d`
-  gains a chunk split: decode the SIS column to `(dig, blk_g, claim)` as today,
-  then map the global block to its chunk:
-
+- `**W_col` / `e_eq_slice` (`D·e_hat`, partitioned).** `get_eq_indices_for_d`
+gains a chunk split: decode the SIS column to `(dig, blk_g, claim)` as today,
+then map the global block to its chunk:
   ```text
   chunk_idx    = blk_g / B_w
   block_local  = blk_g % B_w
-  block_sum    = (chunks[chunk_idx].e_offset mod B_w) + block_local
+  block_sum    = (chunks[chunk_idx].offset_e mod B_w) + block_local
   low_eq_idx   = block_sum & (B_w - 1)
   block_carry  = block_sum >> log₂(B_w)
-  high_eq_idx  = (chunks[chunk_idx].e_offset >> log₂(B_w))
+  high_eq_idx  = (chunks[chunk_idx].offset_e >> log₂(B_w))
                  + (dig*num_claims + claim) + block_carry
   W_col[c]     = eq_low[low_eq_idx] * eq_high_e[high_eq_idx]
   ```
-
   `eq_low` is the shared `B_w`-window table; `eq_high_e` is the existing high
   table indexed at the per-chunk offset base (the "chunk axis" of size `W·C·do`
-  is just `W` offset bases into one high table). `ComponentMajor` ⇒ one chunk,
+  is just `W` offset bases into one high table). `num_machines = 1` ⇒ one chunk,
   `chunk_idx = 0`, `block_local = blk_g` ⇒ today's `get_eq_indices_for_d`.
   **Footprint unchanged**: each SIS column maps to exactly one chunk's `e_hat`
   piece (partition), so `d_required`/`n_cols_e` are the same.
-- **`T_col` / `t_eq_slice_per_group` (`B·t_hat`, partitioned).** Same chunk split
-  in `get_eq_indices_for_b`, with the extra `a_row` axis and per-group sparsity;
-  footprint unchanged.
-- **`Z_comb` / `z_eq_slice` (`A·z_hat`, replicated).** For each `A` column `c`,
-  sum the per-chunk `z_hat`-equality weight over all chunks:
-
+- `**T_col` / `t_eq_slice_per_group` (`B·t_hat`, partitioned).** Same chunk split
+in `get_eq_indices_for_b`, with the extra `a_row` axis and per-group sparsity;
+footprint unchanged.
+- `**Z_comb` / `z_eq_slice` (`A·z_hat`, replicated).** For each `A` column `c`,
+sum the per-chunk `z_hat`-equality weight over all chunks:
   ```text
-  Z_comb[c] = Σ_chunk z_weight(c, chunk.z_offset)
+  Z_comb[c] = Σ_chunk z_weight(c, chunk.offset_z)
   ```
-
   Following the **same two `block_len` cases as §`z_hat` per chunk**, `prepare`
   dispatches once on `block_len.is_power_of_two()` and loops the chunk axis
   inside:
-  - **`block_len` pow2:** reuse the per-chunk peeled in-block weights — the
-    `s_per_dc_per_carry` table is rebuilt per chunk (its high offset
-    `z_offset >> log₂(block_len)` differs), the shared `z_block_low_eq` window
-    table is built once. Build cost `O(W·A_cols)`.
-  - **`block_len` not pow2 (dense):** build the dense `z_eq_slice` per chunk via
-    the existing one-shot peeled-equality cache (today's non-pow2 branch),
-    summing into `Z_comb`. Build cost `O(W·A_cols)`.
-
+  - `**block_len` pow2:** reuse the per-chunk peeled in-block weights — the
+  `s_per_dc_per_carry` table is rebuilt per chunk (its high offset
+  `z_offset >> log₂(block_len)` differs), the shared `z_block_low_eq` window
+  table is built once. Build cost `O(W·A_cols)`.
+  - `**block_len` not pow2 (dense):** build the dense `z_eq_slice` per chunk via
+  the existing one-shot peeled-equality cache (today's non-pow2 branch),
+  summing into `Z_comb`. Build cost `O(W·A_cols)`.
   Either way the output length is `z_range = inner_width` (**unchanged**), so the
-  downstream scan and its α-evaluation count are identical to `ComponentMajor`;
+  downstream scan and its α-evaluation count are identical to `num_machines = 1`;
   only the precomputed `Z_comb` weights are summed over chunks. One chunk ⇒
   today's `z_eq_slice`.
 
@@ -661,60 +642,58 @@ range (`r_max`, `n_cols`) and α-eval count are layout-independent. `Z_comb` is 
 #### `r`-tail and tail segments
 
 `compute_r_contribution` is **unchanged**: a single summed quotient `r` tails the
-whole witness at `chunk_layout.offset_r`. Only the offset value changes (end of
-the resolved layout); the evaluator body and cost are identical. The tiered
-`u_recompose` term and (out of scope here) ZK blinding consume offsets from the
-resolved layout the same way.
+whole witness at `chunk_layout.chunks.last().unwrap().offset_r`. Only the offset
+value changes (end of the resolved layout); the evaluator body and cost are
+identical. The tiered `u_recompose` term and (out of scope here) ZK blinding
+consume offsets from the resolved layout the same way.
 
 ### Alternatives Considered
 
-- **Branch on `WitnessType` inside each component evaluator.** Rejected: it
-  duplicates the peeled-block arithmetic and the no-panic checks across every
-  component and the setup planner, and it puts a layout `if` inside the hot loop.
-  The chunk-list resolution keeps the case-split at one edge (`resolve`) and the
-  hot path uniform.
+- **Branch on `num_machines` inside each component evaluator.** Rejected: it
+duplicates the peeled-block arithmetic and the no-panic checks across every
+component and the setup planner, and it puts a layout `if` inside the hot loop.
+The chunk-list resolution keeps the case-split at one edge (`segment_layout`) and
+the hot path uniform.
 - **Per-component "segment iterator" trait (no chunk object).** Each component
-  exposes its own `Iterator<Item = (offset, window, block_base)>`, decoupling
-  components from the chunk concept. Rejected as weaker: it hides the fact that
-  `e`/`t`/`z` of one chunk share a `global_block_base` and offset region, makes
-  the `t_hat`-reuses-`e_hat`-summaries sharing awkward to express, and offers no
-  benefit since both layouts are genuinely chunk-structured.
-- **General `ColumnAddressing` strategy object** mapping logical `(component,
-  block, claim, dig)` to physical columns. The most general (could absorb
-  `z_first`, blinding, arbitrary future layouts) but heavyweight: an indirection
-  on the hot index path and far more surface than two layouts justify. The
-  `WitnessLayout` is the minimal common denominator for the layouts that actually
-  exist; revisit the strategy object only if a third, non-chunk-structured layout
-  appears.
-- **Collapse `ComponentMajor` into `ChunkGrouped(1)` (single variant).**
-  Tempting, since `ChunkGrouped(1)` resolves to the same one-chunk evaluation.
-  Rejected for two reasons: (a) `ComponentMajor` must preserve the established
-  `z_first` ordering and blinding offsets sourced from `RingRelationSegmentLayout`,
-  which `ChunkGrouped` does not model; (b) the named variant communicates intent
-  at call sites and in the schedule. The equivalence is captured instead as the
-  `chunk_grouped_one_equals_component_major` test invariant, which is the right
-  place for it.
+exposes its own `Iterator<Item = (offset, window, block_base)>`, decoupling
+components from the chunk concept. Rejected as weaker: it hides the fact that
+`e`/`t`/`z` of one chunk share a `global_block_base` and offset region, makes
+the `t_hat`-reuses-`e_hat`-summaries sharing awkward to express, and offers no
+benefit since both layouts are genuinely chunk-structured.
+- **General `ColumnAddressing` strategy object** mapping logical `(component, block, claim, dig)` to physical columns. The most general (could absorb
+`z_first`, blinding, arbitrary future layouts) but heavyweight: an indirection
+on the hot index path and far more surface than two layouts justify. The
+`WitnessLayout` is the minimal common denominator for the layouts that actually
+exist; revisit the strategy object only if a third, non-chunk-structured layout
+appears.
+- **Retain a `WitnessType` enum alongside `num_machines`.** Rejected: it
+introduces redundancy — `num_machines = 1` and `num_machines = W` are already
+unambiguous, and a separate enum would need its own default, serialization, and
+consistency checks. The `num_machines: usize` field is the single source of
+truth; the equivalence between `num_machines = 1` and the old `ComponentMajor`
+single-chunk layout is captured as the `chunk_grouped_one_equals_component_major`
+test invariant.
 - **Re-scan the SIS matrix per chunk.** Rejected: it multiplies the dominant
-  α-evaluation cost by the chunk count, violating the dominant-cost invariant.
-  The `Z_comb` pre-combine keeps the scan single-pass.
+α-evaluation cost by the chunk count, violating the dominant-cost invariant.
+The `Z_comb` pre-combine keeps the scan single-pass.
 
 ## Documentation
 
 - The chunked-layout theory (component-by-component cost, partitioned vs
-  replicated, why the α-scan is unchanged) lives in the book at
-  [`book/src/how/verifying/distributed-relation-verifier.md`](../book/src/how/verifying/distributed-relation-verifier.md);
-  the single-segment row-eval is
-  [`book/src/how/verifying/matrix_evaluation.md`](../book/src/how/verifying/matrix_evaluation.md);
-  and the prover side is
-  [`book/src/how/proving/distributed-prover.md`](../book/src/how/proving/distributed-prover.md).
-  This spec is the implementation record; on land set `Status: implemented`, fill
-  `PR:`, reference the new symbols (`WitnessType`, `WitnessLayout`,
-  `summarize_chunk_block_carries`). When stable, fold the witness-shape
-  abstraction into `matrix_evaluation.md` and archive per
-  [`specs/PRUNING.md`](PRUNING.md).
+replicated, why the α-scan is unchanged) lives in the book at
+`[book/src/how/verifying/distributed-relation-verifier.md](../book/src/how/verifying/distributed-relation-verifier.md)`;
+the single-segment row-eval is
+`[book/src/how/verifying/matrix_evaluation.md](../book/src/how/verifying/matrix_evaluation.md)`;
+and the prover side is
+`[book/src/how/proving/distributed-prover.md](../book/src/how/proving/distributed-prover.md)`.
+This spec is the implementation record; on land set `Status: implemented`, fill
+`PR:`, reference the new symbols (`num_machines`, `WitnessChunkLayout`,
+`WitnessLayout`, `summarize_chunk_block_carries`). When stable, fold the
+`num_machines`/chunk abstraction into `matrix_evaluation.md` and archive per
+`[specs/PRUNING.md](PRUNING.md)`.
 - Update the verifier no-panic audit
-  ([`docs/verifier-panic-audit.md`](../docs/verifier-panic-audit.md)) with the
-  `WitnessType::resolve` boundary checks (shape / chunk-count / capacity rows).
+(`[docs/verifier-panic-audit.md](../docs/verifier-panic-audit.md)`) with the
+`segment_layout` boundary checks (shape / chunk-count / capacity rows).
 - No `AGENTS.md` crate-graph change (no new crate; new types in `akita-types`).
 
 ## Implementation Stages
@@ -727,50 +706,40 @@ that prove it before moving on.
 
 Before changing the hot path, lock down two public-boundary decisions:
 
-1. `witness_shape` is a public schedule/layout parameter and is included anywhere
-   `LevelParams` participates in canonical descriptor bytes, schedule snapshots,
+1. `num_machines` is a public schedule/layout parameter and is included anywhere
+  `LevelParams` participates in canonical descriptor bytes, schedule snapshots,
    or generated table identity.
-2. `ChunkGrouped(W)` with `lp.tier_split > 1` is either rejected for the first
-   landing or the spec is extended with explicit `û_concat` chunk geometry. The
-   recommended first landing is rejection, because `u` is not defined in
-   `WitnessChunkOffset`.
+2. `num_machines > 1` with `lp.tier_split > 1` is either rejected for the first
+  landing or the spec is extended with explicit `û_concat` chunk geometry. The
+   recommended first landing is rejection, because tiered-chunked `u` geometry is
+   not yet specified.
 
 Expected code shape:
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WitnessType {
-    ComponentMajor,
-    ChunkGrouped(usize),
-}
-
-impl Default for WitnessType {
-    fn default() -> Self {
-        Self::ComponentMajor
-    }
-}
-
 // Inside LevelParams.
-pub witness_shape: WitnessType,
+/// Number of proving machines. Must be a power of two. Only power-of-two values
+/// are supported currently.
+pub num_machines: usize,   // default 1
 ```
 
 The early rejection, if tiered chunking is deferred, should happen before proof
 data is used:
 
 ```rust
-if matches!(lp.witness_shape, WitnessType::ChunkGrouped(_)) && lp.tier_split > 1 {
+if lp.num_machines > 1 && lp.tier_split > 1 {
     return Err(AkitaError::InvalidSetup(
-        "chunk-grouped verifier layout for tiered commitments is not specified".into(),
+        "multi-machine verifier layout for tiered commitments is not specified".into(),
     ));
 }
 ```
 
 Tests:
 
-- A descriptor/serialization snapshot changes when `witness_shape` changes.
-- Existing schedules deserialize/build with `WitnessType::ComponentMajor`.
-- `ChunkGrouped(W)` with `tier_split > 1` returns `AkitaError` if tiered chunking
-  is deferred.
+- A descriptor/serialization snapshot changes when `num_machines` changes.
+- Existing schedules deserialize/build with `num_machines = 1`.
+- `num_machines > 1` with `tier_split > 1` returns `AkitaError` if tiered chunking
+is deferred.
 
 ### Stage 1 — Layout Types and Capacity-Checked Resolution
 
@@ -783,22 +752,32 @@ Expected code shape:
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WitnessChunkOffset {
-    pub e_offset: usize,
-    pub t_offset: usize,
-    pub z_offset: usize,
-    pub global_block_base: usize,
+pub struct WitnessChunkLengths {
+    pub z_len: usize,   // replicated: same in every chunk
+    pub e_len: usize,   // partitioned: total_e_len / num_machines
+    pub t_len: usize,   // partitioned: total_t_len / num_machines
+    pub u_len: usize,   // > 0 only in last chunk AND when tiered commitment
+    pub r_len: usize,   // > 0 only in last chunk
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WitnessChunkLayout {
+    pub offset_z: usize,
+    pub offset_e: usize,
+    pub offset_t: usize,
+    pub offset_u: usize,           // 0 if u_len == 0
+    pub offset_r: usize,           // 0 if r_len == 0
+    pub global_block_base: usize,  // chunk_idx * blocks_per_chunk
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessLayout {
     pub blocks_per_chunk: usize,
-    pub chunks: Vec<WitnessChunkOffset>,
-    pub offset_u: usize,
-    pub offset_r: usize,
+    pub chunks: Vec<WitnessChunkLayout>,         // offsets; len == num_machines
+    pub chunk_lengths: Vec<WitnessChunkLengths>, // lengths; parallel to chunks
 }
 
-pub struct WitnessTypeResolveInputs {
+pub struct SegmentLayoutInputs {
     pub num_claims: usize,
     pub num_t_vectors: usize,
     pub m_row_layout: MRowLayout,
@@ -806,61 +785,91 @@ pub struct WitnessTypeResolveInputs {
 }
 ```
 
-`ComponentMajor` delegates to the existing layout and becomes a one-chunk
+`num_machines = 1` delegates to the existing layout and becomes a one-chunk
 adapter:
 
 ```rust
-let legacy = relation.segment_layout(lp)?;
+let lens = ring_relation_segment_lengths(lp, inputs)?;  // includes r_len
+let layout = WitnessChunkLayout {
+    offset_z: 0,
+    offset_e: lens.z_len,
+    offset_t: lens.z_len + lens.e_len,
+    offset_u: lens.z_len + lens.e_len + lens.t_len,
+    offset_r: lens.z_len + lens.e_len + lens.t_len + lens.u_len,
+    global_block_base: 0,
+};
+let lengths = WitnessChunkLengths {
+    z_len: lens.z_len,
+    e_len: lens.e_len,
+    t_len: lens.t_len,
+    u_len: lens.u_len,
+    r_len: lens.r_len,
+};
 WitnessLayout {
     blocks_per_chunk: lp.num_blocks,
-    chunks: vec![WitnessChunkOffset {
-        e_offset: legacy.offset_e,
-        t_offset: legacy.offset_t,
-        z_offset: legacy.offset_z,
-        global_block_base: 0,
-    }],
-    offset_u: legacy.offset_u,
-    offset_r: legacy.offset_r,
+    chunks: vec![layout],
+    chunk_lengths: vec![lengths],
 }
 ```
 
-`ChunkGrouped(W)` computes `[e^j|t^j|z^j]` with checked arithmetic:
+`num_machines = W` computes z-first `[z^j|e^j|t^j]` with checked arithmetic,
+`u`/`r` only on the last chunk:
 
 ```rust
 let blocks_per_chunk = lp.num_blocks.checked_div(w).ok_or(AkitaError::InvalidSetup(...))?;
+let z_len_j = depth_fold * depth_commit * lp.block_len;
 let e_len_j = depth_open * inputs.num_claims * blocks_per_chunk;
 let t_len_j = depth_open * lp.a_key.row_len() * inputs.num_t_vectors * blocks_per_chunk;
-let z_len_j = depth_fold * depth_commit * lp.block_len;
-let chunk_stride = e_len_j + t_len_j + z_len_j;
+let chunk_stride = z_len_j + e_len_j + t_len_j;
 
-let chunks = (0..w)
-    .map(|j| WitnessChunkOffset {
-        e_offset: j * chunk_stride,
-        t_offset: j * chunk_stride + e_len_j,
-        z_offset: j * chunk_stride + e_len_j + t_len_j,
-        global_block_base: j * blocks_per_chunk,
+let u_len_total = /* tiered u_len or 0 */;
+let r_len_total = inputs.num_rows * r_decomp_levels::<F>(lp.log_basis);
+
+let (chunks, chunk_lengths): (Vec<_>, Vec<_>) = (0..w)
+    .map(|j| {
+        let is_last = j == w - 1;
+        let base = j * chunk_stride;
+        let layout = WitnessChunkLayout {
+            offset_z: base,
+            offset_e: base + z_len_j,
+            offset_t: base + z_len_j + e_len_j,
+            offset_u: if is_last { w * chunk_stride } else { 0 },
+            offset_r: if is_last { w * chunk_stride + u_len_total } else { 0 },
+            global_block_base: j * blocks_per_chunk,
+        };
+        let lengths = WitnessChunkLengths {
+            z_len: z_len_j,
+            e_len: e_len_j,
+            t_len: t_len_j,
+            u_len: if is_last { u_len_total } else { 0 },
+            r_len: if is_last { r_len_total } else { 0 },
+        };
+        (layout, lengths)
     })
-    .collect::<Vec<_>>();
-let offset_r = w * chunk_stride;
+    .unzip();
+WitnessLayout { blocks_per_chunk, chunks, chunk_lengths }
 ```
 
-Validation checklist inside `resolve`:
+`RingRelationSegmentLengths` gains `r_len: usize`; `ring_relation_segment_lengths`
+gains a `num_rows: usize` parameter. In `segment_layout`, pass `self.y.len()` as
+`num_rows`. `r_len = num_rows * r_decomp_levels::<F>(log_basis)`.
+
+Validation checklist inside `segment_layout`:
 
 - `W > 0`, `W.is_power_of_two()`, and `W <= num_blocks`.
 - `num_blocks % W == 0`.
 - `blocks_per_chunk.is_power_of_two()` for the peeled fast path.
 - every offset/length uses checked arithmetic.
 - `global_block_base + blocks_per_chunk <= num_blocks`.
-- `offset_r + r_tail_len <= witness_ring_len` (or an equivalent validated
-  capacity bound).
+- `chunks.last().offset_r + r_len_total <= witness_ring_len` (capacity bound).
 
 Tests:
 
-- `component_major_resolves_to_legacy_segment_layout`.
-- `chunk_grouped_one_resolves_to_single_chunk`.
-- `chunk_grouped_offsets_are_contiguous_and_cover_blocks`.
+- `num_machines_one_resolves_to_legacy_segment_layout`.
+- `num_machines_one_resolves_to_single_chunk`.
+- `chunk_layout_offsets_are_contiguous_and_cover_blocks`.
 - bad `W`, overflow-shaped inputs, and too-short witness capacity return
-  `AkitaError`.
+`AkitaError`.
 
 ### Stage 2 — Prepare-Time Wiring
 
@@ -887,7 +896,7 @@ checks and before returning the prepared evaluator:
 
 ```rust
 let witness_ring_len = w_len / D;
-let chunk_layout = lp.witness_shape.resolve(&WitnessTypeResolveInputs {
+let chunk_layout = relation.segment_layout(&lp, &SegmentLayoutInputs {
     num_claims,
     num_t_vectors,
     m_row_layout,
@@ -901,15 +910,15 @@ and computes `num_ring_elems`, so this is the right boundary.
 
 Tests:
 
-- Existing verifier tests still pass under `ComponentMajor`.
+- Existing verifier tests still pass under `num_machines = 1`.
 - A focused prepare test asserts `RingSwitchDeferredRowEval::chunk_layout()` is
-  one chunk for default levels.
+one chunk for default levels.
 
 ### Stage 3 — Chunk-Window Challenge Summaries
 
 Generalize `summarize_all_block_carries` into a chunk-window helper. The flat
 path is the first implementation target; the tensor path can preserve current
-behavior for `ComponentMajor` and reject chunk windows until the follow-up lands.
+behavior for `num_machines = 1` and reject chunk windows until the follow-up lands.
 
 Expected code shape:
 
@@ -956,11 +965,11 @@ where
 Tests:
 
 - For `global_block_base = 0`, `blocks_per_chunk = num_blocks`, the new helper
-  matches `summarize_all_block_carries`.
+matches `summarize_all_block_carries`.
 - For `W ∈ {1,2,4,8}`, the flat helper matches a direct dense summary over the
-  corresponding `c_alpha[claim][global_block_base..][..B_w]` window.
-- Tensor `ComponentMajor` still passes existing tensor summary tests.
-- Tensor `ChunkGrouped` returns `AkitaError` until the follow-up is implemented.
+corresponding `c_alpha[claim][global_block_base..][..B_w]` window.
+- Tensor `num_machines = 1` still passes existing tensor summary tests.
+- Tensor `num_machines > 1` returns `AkitaError` until the follow-up is implemented.
 
 ### Stage 4 — Structured `eval_at_point` Chunk Fold
 
@@ -981,7 +990,7 @@ let mut t_structured_contribution = E::zero();
 let mut z_structured_contribution = E::zero();
 
 for chunk in &layout.chunks {
-    let block_offset_low = chunk.e_offset & (layout.blocks_per_chunk - 1);
+    let block_offset_low = chunk.offset_e & (layout.blocks_per_chunk - 1);
     let summaries = self.c_alphas.summarize_chunk_block_carries::<F, D>(
         self.num_claims,
         &x_challenges[..block_bits],
@@ -994,7 +1003,7 @@ for chunk in &layout.chunks {
 
     e_structured_contribution += EStructuredSlicesEvaluator {
         high_challenges,
-        offset_high: chunk.e_offset >> block_bits,
+        offset_high: chunk.offset_e >> block_bits,
         gadget_vector: &g1_open,
         challenge_block_summaries: &summaries,
         challenge_weight: self.eq_tau1[0],
@@ -1002,7 +1011,7 @@ for chunk in &layout.chunks {
 
     t_structured_contribution += TStructuredSlicesEvaluator {
         high_challenges,
-        offset_high: chunk.t_offset >> block_bits,
+        offset_high: chunk.offset_t >> block_bits,
         gadget_vector: &g1_open,
         challenge_block_summaries: &summaries,
         a_row_weights: &self.eq_tau1[a_start..self.rows],
@@ -1016,11 +1025,11 @@ inside the selected case:
 ```rust
 if self.block_len.is_power_of_two() {
     for chunk in &layout.chunks {
-        let z_offset_low = chunk.z_offset & (self.block_len - 1);
+        let z_offset_low = chunk.offset_z & (self.block_len - 1);
         let a_block_summary = vec![summarize_pow2_multiplier_block_carries(...)?];
         z_structured_contribution += ZStructuredPow2SlicesEvaluator {
             high_challenges: &x_challenges[z_offset_low_bits..],
-            offset_high: chunk.z_offset >> z_offset_low_bits,
+            offset_high: chunk.offset_z >> z_offset_low_bits,
             // ...
         }.evaluate();
     }
@@ -1028,7 +1037,7 @@ if self.block_len.is_power_of_two() {
     let a_evals_by_point = vec![/* build once */];
     for chunk in &layout.chunks {
         z_structured_contribution += ZDenseSlicesEvaluator {
-            offset_z: chunk.z_offset,
+            offset_z: chunk.offset_z,
             a_evals_by_point: &a_evals_by_point,
             // ...
         }.evaluate()?;
@@ -1036,9 +1045,25 @@ if self.block_len.is_power_of_two() {
 }
 ```
 
-`r_contribution` stays a single call at `layout.offset_r`. If tiered chunking is
-deferred, `u_recompose_contribution` remains unchanged for `ComponentMajor` and
-is unreachable for `ChunkGrouped`.
+`r_contribution` is gated by the last chunk's `r_len > 0` and uses
+`layout.chunks.last().unwrap().offset_r`. The `u`/`r` contributions use
+`zip` to pair each chunk's offsets with its lengths:
+
+```rust
+for (chunk, lens) in layout.chunks.iter().zip(&layout.chunk_lengths) {
+    // always active
+    acc += eval_z(chunk, lens.z_len);
+    acc += eval_e(chunk, lens.e_len);
+    acc += eval_t(chunk, lens.t_len);
+    // conditional — only last chunk carries u and r
+    if lens.u_len > 0 { acc += eval_u(chunk, lens.u_len); }
+    if lens.r_len > 0 { acc += eval_r(chunk, lens.r_len); }
+}
+```
+
+If tiered chunking is deferred, `u_recompose_contribution` remains unchanged for
+`num_machines = 1` (where `u_len > 0` in the single chunk when tiering is active)
+and is unreachable for `num_machines > 1` (rejected in Stage 0).
 
 Tests:
 
@@ -1046,7 +1071,7 @@ Tests:
 - `chunk_grouped_one_equals_component_major` under the non-tiered fixture.
 - `chunk_grouped_matches_materialized` for structured-only `e/t/z/r`.
 - per-component tests (`e_only`, `t_only`, `z_only`) if the combined test is hard
-  to debug.
+to debug.
 
 ### Stage 5 — Setup Contribution Chunk Weights
 
@@ -1087,7 +1112,7 @@ fn get_eq_indices_for_d_chunked(
     let chunk_idx = block_idx / layout.blocks_per_chunk;
     let block_local = block_idx % layout.blocks_per_chunk;
     let chunk = layout.chunks.get(chunk_idx).ok_or(AkitaError::InvalidSetup(...))?;
-    let block_sum = (chunk.e_offset & block_mask) + block_local;
+    let block_sum = (chunk.offset_e & block_mask) + block_local;
     let low_eq_idx = block_sum & block_mask;
     let block_carry = block_sum >> block_bits;
     let high_rel_idx = digit_idx * num_claims + claim_idx + block_carry;
@@ -1101,7 +1126,7 @@ offsets:
 ```rust
 let eq_hi_e_tables: Vec<Vec<E>> = layout.chunks.iter()
     .map(|chunk| {
-        let high_base = chunk.e_offset >> block_bits;
+        let high_base = chunk.offset_e >> block_bits;
         (0..=e_hi_len)
             .map(|k| eq_eval_at_index(high_challenges, high_base + k))
             .collect()
@@ -1123,7 +1148,7 @@ for chunk in &chunk_layout.chunks {
         full_vec_randomness,
         z_block_low_eq,
         fold_gadget,
-        chunk.z_offset,
+        chunk.offset_z,
     )?;
     for (dst, src) in z_eq_slice.iter_mut().zip(per_chunk) {
         *dst += src;
@@ -1144,12 +1169,12 @@ packed_slice_inner_sum::<F, E, D, HAS_D, HAS_B, HAS_A>(
 
 Tests:
 
-- `ComponentMajor` setup weights exactly match the old `prepare` output.
-- `ChunkGrouped(1)` setup weights match `ComponentMajor`.
-- `ChunkGrouped(W)` setup contribution matches a materialized row-MLE for
-  `W ∈ {1,2,4,8}`.
+- `num_machines = 1` setup weights exactly match the old `prepare` output.
+- `num_machines = 1` setup weights match the single-chunk layout.
+- `num_machines = W` setup contribution matches a materialized row-MLE for
+`W ∈ {1,2,4,8}`.
 - a test or review assertion confirms `packed_slice_inner_sum` is not called in a
-  per-chunk loop.
+per-chunk loop.
 
 ### Stage 6 — End-to-End Verifier Fixtures
 
@@ -1162,8 +1187,8 @@ Expected test shape:
 
 ```rust
 for w in [1, 2, 4, 8] {
-    let shape = WitnessType::ChunkGrouped(w);
-    let layout = shape.resolve(&inputs)?;
+    let lp_w = lp.with_num_machines(w);
+    let layout = relation.segment_layout(&lp_w, &inputs)?;
     let materialized = materialize_chunked_relation_row(&fixture, &layout)?;
     let expected = dense_eq_inner_product(&materialized, &fixture.full_vec_randomness);
     let got = prepared.eval_at_point::<_, D>(...)?;
@@ -1175,10 +1200,10 @@ Run this matrix:
 
 - pow2 `block_len` (`512`) and dense fallback `block_len` (`510`).
 - with and without the D block (`MRowLayout::WithDBlock` /
-  `MRowLayout::WithoutDBlock`) where fixtures exist.
+`MRowLayout::WithoutDBlock`) where fixtures exist.
 - `W = 1` plus every power-of-two divisor of `num_blocks`.
-- negative malformed layouts: non-power-of-two `W`, `W ∤ num_blocks`, `W >
-  num_blocks`, and too-small witness capacity.
+- negative malformed layouts: non-power-of-two `num_machines`, `W ∤ num_blocks`,
+`W > num_blocks`, and too-small witness capacity.
 
 ### Stage 7 — Performance Gate
 
@@ -1188,10 +1213,10 @@ time.
 
 Procedure:
 
-1. Run the profile example under `ComponentMajor`.
-2. Run the same shape with synthetic `ChunkGrouped(W)` for `W = 2, 4, 8`.
+1. Run the profile example under `num_machines = 1`.
+2. Run the same shape with `num_machines = W` for `W = 2, 4, 8`.
 3. Compare `setup_contribution` span time and α-evaluation counts, if a counter
-   is added in test/profile builds.
+  is added in test/profile builds.
 4. Separately record `z_structured` time; it is allowed to scale with `W`.
 
 Expected result:
@@ -1207,18 +1232,18 @@ packed setup scan was accidentally moved inside a chunk loop.
 ### Stage 8 — Production Enablement
 
 Once verifier-only fixtures pass, connect the public layout selection to the
-distributed prover/schedule side. This is the point where
-`WitnessType::ChunkGrouped` becomes more than a synthetic verifier fixture.
+distributed prover/schedule side. This is the point where `num_machines > 1`
+becomes more than a synthetic verifier fixture.
 
 Implementation checklist:
 
-- schedule/config code sets `LevelParams::witness_shape` for distributed runs.
-- generated table identity or runtime schedule descriptor includes
-  `witness_shape`.
-- prover output witness layout matches the exact `[e|t|z]... [r]` geometry used
-  by `WitnessType::resolve`.
+- schedule/config code sets `LevelParams::num_machines` for distributed runs.
+- generated table identity or runtime schedule descriptor includes `num_machines`.
+- prover output witness layout matches the exact `[z|e|t]... [u][r]` geometry
+used by `segment_layout` (z-first within each chunk, matching PR #216; `u`/`r`
+only in last chunk).
 - verifier integration tests prove a distributed prover output with the chunked
-  public layout and reject the same proof under `ComponentMajor`.
+public layout and reject the same proof under `num_machines = 1`.
 
 Follow-ups after the first full landing:
 
@@ -1230,13 +1255,14 @@ Follow-ups after the first full landing:
 ## References
 
 - Single-segment row-eval theory:
-  [`book/src/how/verifying/matrix_evaluation.md`](../book/src/how/verifying/matrix_evaluation.md)
+`[book/src/how/verifying/matrix_evaluation.md](../book/src/how/verifying/matrix_evaluation.md)`
 - Distributed-relation verifier theory:
-  [`book/src/how/verifying/distributed-relation-verifier.md`](../book/src/how/verifying/distributed-relation-verifier.md)
+`[book/src/how/verifying/distributed-relation-verifier.md](../book/src/how/verifying/distributed-relation-verifier.md)`
 - Distributed prover:
-  [`book/src/how/proving/distributed-prover.md`](../book/src/how/proving/distributed-prover.md)
+`[book/src/how/proving/distributed-prover.md](../book/src/how/proving/distributed-prover.md)`
 - Code: `crates/akita-verifier/src/protocol/ring_switch.rs` (`eval_at_point`),
-  `crates/akita-verifier/src/protocol/slice_mle/` (structured + setup
-  evaluators), `crates/akita-types/src/setup_contribution.rs`
-  (`SetupContributionPlan`), `crates/akita-types/src/proof/ring_relation.rs`
-  (`RingRelationSegmentLayout`).
+`crates/akita-verifier/src/protocol/slice_mle/` (structured + setup
+evaluators), `crates/akita-types/src/setup_contribution.rs`
+(`SetupContributionPlan`), `crates/akita-types/src/proof/ring_relation.rs`
+(`RingRelationSegmentLayout`).
+
