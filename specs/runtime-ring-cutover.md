@@ -24,8 +24,10 @@ suffix code re-prepares all four backend clusters and rebuilds stacks via
 This spec **demotes `D` from a storage and orchestration type parameter to a
 runtime schedule value**. Bulk data lives in flat field buffers; hot kernels still
 monomorphize at `const D` behind a single backend dispatch boundary. A
-**`FoldRingPlan`** records per-level `RingLevelContext` (ring dimension and the
-setup prefix read at that level); **`PreparedSetup`** holds one NTT cache per
+**`FoldRingPlan`** is a derived view of validated per-level `ring_dimension` values
+from the schedule; per-level **`RingLevelContext`** (ring dimension plus setup prefix
+geometry) is computed at runtime via `context_at` from the live
+`SetupRelationShape`, not stored inside the plan. **`PreparedSetup`** holds one NTT cache per
 **distinct** ring dimension the proof uses (keyed `(ring_d, num_ring_elements)`),
 warmed once at prove entry from `plan.unique_dims()`. Caches at different `ring_d`
 are physically distinct transforms and are never shared (see NTT cache today); a
@@ -375,7 +377,8 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
       sumcheck and verifier stage 3 (replaces the two parallel derivations).
 - [ ] D-free `SetupPrefixRegistry` (replaces `SetupPrefixProverRegistry<F, D>`; the
       verifier registry is already D-free); delete the `if D == SETUP_OFFLOAD_D_SETUP`
-      eligibility gate and the constant. See Phase-ordering note for the slot's
+      eligibility gates at both call sites (retain `SETUP_OFFLOAD_D_SETUP` as the
+      `d_setup = 64` naming constant in `setup_prefix.rs`). See Phase-ordering note for the slot's
       commitment/hint.
 - [ ] `bind_transcript_instance_descriptor` without `const D`;
       `AlgebraSection::for_envelope` uses `gen_ring_dim`.
@@ -449,7 +452,7 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 - `RingBuf::as_ring_slice` / `FlatRingVec::as_ring_slice` roundtrip and alignment.
 - Grep inventory for deleted symbols (`Suffix*ProveBackend`, suffix-level
   `dispatch_ring_dim_result!`, `RECURSIVE_SUFFIX_RING_DIMENSIONS`,
-  `SETUP_OFFLOAD_D_SETUP`).
+  `SetupPrefixProverRegistry<F,`, `if D == SETUP_OFFLOAD_D_SETUP` gates).
 - Descriptor digest pins: uniform-D proofs byte-identical before/after Phase 2 (all
   shipped presets have `Cfg::D == gen_ring_dim`).
 - Regression: PCS e2e, commitment contract, transcript hardening, fold-linf.
@@ -624,9 +627,11 @@ Because `select_setup_prefix_slot` already returns `None` when no matching slot 
 deleting the `if D == SETUP_OFFLOAD_D_SETUP` gate is behavior-preserving for shipped
 presets (setup construction still populates slots only at `d_setup = 64`; *which* slots
 exist is a separate, out-of-scope question). The genuine remaining work is narrow:
-**(a)** delete the `if D == SETUP_OFFLOAD_D_SETUP` gate at its two call sites
-(`setup_sumcheck.rs`, `stage3.rs`) and the constant; **(b)** demote the *prover*
-registry/slot off `const D` (see Phase-ordering note).
+**(a)** delete the `if D == SETUP_OFFLOAD_D_SETUP` gates at its two call sites
+(`setup_sumcheck.rs`, `stage3.rs`); **(b)** demote the *prover*
+registry/slot off `const D` (see Phase-ordering note). Retain
+`SETUP_OFFLOAD_D_SETUP` (`d_setup = 64`) for setup-prefix slot construction in
+`akita-setup` / `setup_prefix.rs`.
 
 ### `FoldRingPlan` and `RingLevelContext`
 
@@ -1026,14 +1031,15 @@ layout.
 - `ProverComputeStack<F, const D, ...>`, `OperationCtx<F, B, const D>`
 - `CpuPreparedSetup<F, const D>` as public type (replaced by D-free version)
 - `PreparedFold<F, L, const D>`, `RingRelationInstance<F, const D>` (after Phase 3)
-- `SetupPrefixProverRegistry<F, const D>`, `SETUP_OFFLOAD_D_SETUP` and its eligibility
-  gate; the suffix cold-path empty `SetupPrefixProverRegistry::new()` workaround
+- `SetupPrefixProverRegistry<F, const D>` and the `if D == SETUP_OFFLOAD_D_SETUP`
+  eligibility gates; the suffix cold-path empty `SetupPrefixProverRegistry::new()` workaround
 
 Retain (already D-free / already shared — do not rewrite):
 
 - `dispatch_ring_dim!` / `dispatch_ring_dim_result!` in `akita-types` for kernel entry
 - `select_setup_prefix_slot`, `setup_prefix_level_params`, `SetupPrefixSlotId`
   (already take `d_setup`), `SetupPrefixVerifierRegistry<F>` (already D-free)
+- `SETUP_OFFLOAD_D_SETUP` (`d_setup = 64` naming constant in `setup_prefix.rs`)
 - `NttSlotCache<const D>`, `CyclotomicRing<F, D>`, all SIMD kernels
 - `validate_level_dispatch` semantics (subsumed by `FoldRingPlan::context_at`)
 
@@ -1276,8 +1282,8 @@ Three independently-committable sub-steps; keep each green.
 - **3b — D-free `SetupPrefixRegistry` (keying) + ungate offload.** Replace
   `SetupPrefixProverRegistry<F, D>` with a registry keyed on `SetupPrefixSlotId`
   (slot `commitment`/`hint` stay D-typed, reached via `id.d_setup` dispatch — see
-  Phase-ordering note). Delete the `if D == SETUP_OFFLOAD_D_SETUP` gate at both call
-  sites (`setup_sumcheck.rs`, `stage3.rs`) and the constant.
+  Phase-ordering note). Delete the `if D == SETUP_OFFLOAD_D_SETUP` gates at both call
+  sites (`setup_sumcheck.rs`, `stage3.rs`); keep `SETUP_OFFLOAD_D_SETUP` for slot construction.
   - **Gotcha:** ungating is behavior-preserving because `select_setup_prefix_slot`
     returns `None` when no matching slot exists, and setup construction still populates
     slots only at `d_setup = 64`. Do not change which slots are created.
