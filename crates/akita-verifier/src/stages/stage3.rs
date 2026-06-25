@@ -63,6 +63,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             layout.offset_t,
             layout.offset_z,
             layout.offset_u,
+            None,
+            None,
         );
         let plan = evaluator.prepare()?;
         let lambda_len = plan.required().checked_next_power_of_two().ok_or_else(|| {
