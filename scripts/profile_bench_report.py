@@ -284,8 +284,8 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_e_bytes",
     "tail_t_bytes",
     "tail_r_bytes",
-    "z_rice_k",
-    "z_rice_k_security",
+    "z_rice_low_bits_wire",
+    "z_rice_low_bits_cap",
     "z_coords",
     "z_packed_hypothetical_bytes",
     "z_golomb_savings_bytes",
@@ -437,20 +437,20 @@ def render_tail_encoding(current: dict[str, object]) -> None:
         )
 
     z_witness_linf_cap = current.get("z_witness_linf_cap")
-    z_rice_k = current.get("z_rice_k")
-    z_rice_k_security = current.get("z_rice_k_security")
+    z_rice_low_bits_wire = current.get("z_rice_low_bits_wire")
+    z_rice_low_bits_cap = current.get("z_rice_low_bits_cap")
     z_field_coeffs = current.get("tail_z_field_elems") or current.get("z_coords")
     z_ring_elems = current.get("tail_z_ring_elems")
     z_bits_golomb = current.get("z_bits_per_coord_golomb")
     z_bits_packed = current.get("z_bits_per_coord_packed")
     z_packed_hyp = current.get("z_packed_hypothetical_bytes")
     z_savings = current.get("z_golomb_savings_bytes")
-    if z_witness_linf_cap is not None and z_rice_k is not None and z_field_coeffs is not None:
+    if z_witness_linf_cap is not None and z_rice_low_bits_wire is not None and z_field_coeffs is not None:
         comparison = ""
         if z_bits_golomb is not None and z_bits_packed is not None:
-            k_note = f"Golomb k_live=`{z_rice_k}`"
-            if z_rice_k_security is not None:
-                k_note += f", k_security=`{z_rice_k_security}`"
+            k_note = f"Golomb wire_low_bits=`{z_rice_low_bits_wire}`"
+            if z_rice_low_bits_cap is not None:
+                k_note += f", cap_low_bits=`{z_rice_low_bits_cap}`"
             comparison = (
                 f", `{z_bits_golomb:.2f}` bits/field_coeff ({k_note} from witness_linf_cap=`{z_witness_linf_cap}`) "
                 f"vs `{z_bits_packed:.2f}` bits/field_coeff (legacy uniform `PackedDigits` z planes)"
@@ -711,29 +711,18 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
         elif "proof tail summary" in line and kvs.get("label") == mode:
             ingest_tail_summary_fields(summary, kvs)
         elif "z fold encoding stats" in line and kvs.get("label") == mode:
-            # Legacy line shape before tail summary consolidation; keep for old logs.
             if summary.get("tail_encoding") != "segment_typed":
                 summary["tail_encoding"] = "segment_typed"
             if "z_coords" in kvs:
                 summary["z_coords"] = int(kvs["z_coords"])
             if "witness_linf_cap" in kvs:
                 summary["z_witness_linf_cap"] = kvs["witness_linf_cap"]
-            elif "beta_inf" in kvs:
-                summary["z_witness_linf_cap"] = kvs["beta_inf"]
-            if "rice_k_live" in kvs:
-                summary["z_rice_k"] = int(kvs["rice_k_live"])
-            elif "rice_k_public" in kvs:
-                summary["z_rice_k"] = int(kvs["rice_k_public"])
-            elif "rice_k_beta" in kvs:
-                summary["z_rice_k"] = int(kvs["rice_k_beta"])
-            if "rice_k_security" in kvs:
-                summary["z_rice_k_security"] = int(kvs["rice_k_security"])
-            if "bits_per_coord_k_live" in kvs:
-                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_live"])
-            elif "bits_per_coord_k_public" in kvs:
-                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_public"])
-            elif "bits_per_coord_k_beta" in kvs:
-                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_k_beta"])
+            if "rice_low_bits_wire" in kvs:
+                summary["z_rice_low_bits_wire"] = int(kvs["rice_low_bits_wire"])
+            if "rice_low_bits_cap" in kvs:
+                summary["z_rice_low_bits_cap"] = int(kvs["rice_low_bits_cap"])
+            if "bits_per_coord_at_wire" in kvs:
+                summary["z_bits_per_coord_golomb"] = float(kvs["bits_per_coord_at_wire"])
             if "bits_per_coord_packed" in kvs:
                 summary["z_bits_per_coord_packed"] = float(kvs["bits_per_coord_packed"])
             if "z_payload_bytes" in kvs:

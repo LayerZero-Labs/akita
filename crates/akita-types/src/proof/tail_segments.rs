@@ -12,14 +12,14 @@ use akita_serialization::{
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
-    golomb_rice_planner_bits_per_z_coord, golomb_rice_rows_encodable_at_live_k,
-    golomb_rice_zigzag_width, ZFoldEncodingStats,
+    golomb_rice_rows_encodable_at_wire_low_bits, golomb_rice_zigzag_width,
+    tail_z_planner_bits_per_coord, ZFoldEncodingStats,
 };
 use crate::layout::field_bytes;
 use crate::proof::CleartextWitnessShape;
 use crate::proof::{ring_column_z_first, FlatRingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
-use crate::tail_golomb_cap_to_k::{live_rice_k_for_fold_cap, security_rice_k_for_fold_cap};
+use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 use crate::{LevelParams, MRowLayout};
 
 /// Public segment geometry for a transparent terminal witness.
@@ -470,8 +470,8 @@ pub fn terminal_golomb_grind_tail_t_vectors(
 
 /// Runtime Golomb-Rice **wire** parameters for terminal `z` encode/decode.
 ///
-/// Uses live `k` ([`live_rice_k_for_fold_cap`]); planner byte budgets use
-/// [`security_rice_k_for_fold_cap`] via [`segment_typed_z_payload_bytes`].
+/// Uses wire low bits ([`wire_rice_low_bits`]); planner byte budgets use
+/// [`cap_rice_low_bits`] via [`segment_typed_z_payload_bytes`].
 /// Rice `k` and zigzag width `W` are derived from the per-coefficient fold-response
 /// cap [`crate::LevelParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
 /// alone), matching [`crate::sis::num_digits_fold`] and grind acceptance.
@@ -484,9 +484,9 @@ pub fn tail_golomb_rice_z_params(
     num_t_vectors: usize,
 ) -> Result<(u32, u32), AkitaError> {
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    let k = live_rice_k_for_fold_cap(cap);
+    let rice_low_bits = wire_rice_low_bits(cap);
     let w = golomb_rice_zigzag_width(cap);
-    Ok((k, w))
+    Ok((rice_low_bits, w))
 }
 
 /// Decode centered fold-response `z` coefficients from a segment-typed witness.
@@ -499,11 +499,11 @@ pub fn z_fold_decoded_from_segment<F: FieldCore>(
     lp: &LevelParams,
     num_t_vectors: usize,
 ) -> Result<Vec<i64>, AkitaError> {
-    let (rice_k, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
+    let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     golomb_rice_decode_vec(
         &witness.z_payload,
         witness.layout.z_coords,
-        rice_k,
+        rice_low_bits,
         zigzag_w,
     )
 }
@@ -666,8 +666,8 @@ pub fn tail_segment_multiplicities_from_layout(
 
 /// Planner byte budget for the Golomb-coded terminal `z` segment.
 ///
-/// Uses security Rice `k` plus the average-case `k + 2` bits/coord model so schedules
-/// stay conservative across field families; on-wire encode/decode uses [`live_rice_k_for_fold_cap`].
+/// Uses cap-derived low bits plus the average-case `cap_rice_low_bits + 2` bits/coord model so schedules
+/// stay conservative across field families; on-wire encode/decode uses [`wire_rice_low_bits`].
 ///
 /// # Errors
 ///
@@ -678,8 +678,8 @@ pub fn segment_typed_z_payload_bytes(
     num_t_vectors: usize,
 ) -> Result<usize, AkitaError> {
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    let rice_k = security_rice_k_for_fold_cap(cap);
-    let bits_per_coord = golomb_rice_planner_bits_per_z_coord(rice_k);
+    let low_bits_cap = cap_rice_low_bits(cap);
+    let bits_per_coord = tail_z_planner_bits_per_coord(low_bits_cap);
     Ok(layout.z_coords.saturating_mul(bits_per_coord).div_ceil(8))
 }
 
@@ -740,7 +740,7 @@ pub(crate) fn encode_z_segment_from_centered<const D: usize>(
     centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
-    rice_k: u32,
+    rice_low_bits: u32,
     zigzag_w_z: u32,
 ) -> Result<Vec<u8>, AkitaError> {
     let inner_width = block_len * depth_commit;
@@ -755,7 +755,7 @@ pub(crate) fn encode_z_segment_from_centered<const D: usize>(
             values.push(i64::from(coeff));
         }
     }
-    golomb_rice_encode_vec(&values, rice_k, zigzag_w_z)
+    golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w_z)
 }
 
 /// Construct a segment-typed terminal witness from ring-switch outputs.
@@ -787,15 +787,15 @@ where
         num_commitment_groups,
         field_bits,
     )?;
-    let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
+    let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    golomb_rice_rows_encodable_at_live_k(z_folded_centered, cap)?;
+    golomb_rice_rows_encodable_at_wire_low_bits(z_folded_centered, cap)?;
     let depth_commit = lp.num_digits_commit;
     let z_payload = encode_z_segment_from_centered(
         z_folded_centered,
         lp.block_len,
         depth_commit,
-        rice_k,
+        rice_low_bits,
         zigzag_w_z,
     )?;
     let e_fields = FlatRingVec::from_ring_elems(e_folded).into_compact();
@@ -884,12 +884,12 @@ where
     let depth_commit = lp.num_digits_commit;
     let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     let levels = compute_num_digits_full_field(field_bits, log_basis);
-    let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
+    let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
 
     let z_values = golomb_rice_decode_vec(
         &witness.z_payload,
         witness.layout.z_coords,
-        rice_k,
+        rice_low_bits,
         zigzag_w_z,
     )?;
     let inner_width = lp.block_len * depth_commit;
@@ -1114,11 +1114,16 @@ mod tests {
             scheduled_z_bytes > 16,
             "test expects scheduled z budget to exceed a tight payload"
         );
-        let (rice_k, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1).unwrap();
+        let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1).unwrap();
         let centered = [[-3i32, 0, 1, 2, -1, 4, 0, 0]; 2];
-        let z_payload =
-            encode_z_segment_from_centered(&centered, 1, lp.num_digits_commit, rice_k, zigzag_w_z)
-                .unwrap();
+        let z_payload = encode_z_segment_from_centered(
+            &centered,
+            1,
+            lp.num_digits_commit,
+            rice_low_bits,
+            zigzag_w_z,
+        )
+        .unwrap();
         assert!(z_payload.len() < scheduled_z_bytes);
         let witness = SegmentTypedWitness {
             layout,

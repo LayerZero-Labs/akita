@@ -1,6 +1,6 @@
 //! Fold-l∞ rejection protocol identity bound into every transcript preamble.
 
-use crate::golomb_rice::TAIL_Z_PLANNER_MODEL_K_PLUS_TWO;
+use crate::golomb_rice::TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO;
 use crate::sis::{
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
@@ -32,7 +32,7 @@ pub struct FoldLinfProtocolBinding {
     pub grind_entropy_bits_per_level: u8,
     /// Prover grind search order (`FOLD_GRIND_PROBE_ORDER_*`).
     pub grind_probe_order: u8,
-    /// Terminal `z` Golomb average-case planner model (e.g. [`TAIL_Z_PLANNER_MODEL_K_PLUS_TWO`]).
+    /// Terminal `z` Golomb average-case planner model (e.g. [`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`]).
     pub tail_z_planner_model_id: u8,
 }
 
@@ -55,7 +55,7 @@ impl FoldLinfProtocolBinding {
                 FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN
             }
         },
-        tail_z_planner_model_id: TAIL_Z_PLANNER_MODEL_K_PLUS_TWO,
+        tail_z_planner_model_id: TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
     };
 
     /// Rational grind acceptance target `(NUM, DEN)` for tail-bound sizing.

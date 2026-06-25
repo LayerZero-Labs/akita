@@ -9,7 +9,7 @@ use akita_challenges::{
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    golomb_rice_rows_encodable_at_live_k,
+    golomb_rice_rows_encodable_at_wire_low_bits,
     sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
     FoldLinfProtocolBinding, LevelParams, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
@@ -87,7 +87,7 @@ fn accepts_fold_witness<const D: usize>(
     {
         return true;
     }
-    golomb_rice_rows_encodable_at_live_k(&witness.centered_coeffs, witness_linf_cap).is_ok()
+    golomb_rice_rows_encodable_at_wire_low_bits(&witness.centered_coeffs, witness_linf_cap).is_ok()
 }
 
 fn grind_caps(

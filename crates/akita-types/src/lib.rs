@@ -17,7 +17,7 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
-pub mod tail_golomb_cap_to_k;
+pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
 #[cfg(feature = "zk")]
@@ -43,8 +43,8 @@ pub use field_reduction::{
     SubfieldParams,
 };
 pub use golomb_rice::{
-    golomb_rice_coord_encodable_without_escape, golomb_rice_rows_encodable_at_live_k,
-    ZFoldEncodingStats, TAIL_Z_PLANNER_MODEL_K_PLUS_TWO,
+    golomb_rice_coord_encodable_without_escape, golomb_rice_rows_encodable_at_wire_low_bits,
+    ZFoldEncodingStats, TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
 };
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
@@ -122,9 +122,9 @@ pub use schedule::{
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
-pub use tail_golomb_cap_to_k::{
-    live_rice_k_for_fold_cap, security_rice_k_for_fold_cap, TAIL_GOLOMB_LIVE_K_DELTA,
-    TAIL_GOLOMB_LIVE_K_RULE_SECURITY_MINUS_DELTA,
+pub use tail_golomb_rice_low_bits::{
+    cap_rice_low_bits, wire_rice_low_bits, WIRE_RICE_LOW_BITS_DELTA,
+    WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
 };
 pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,

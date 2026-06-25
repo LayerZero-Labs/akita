@@ -2,7 +2,7 @@
 
 use akita_field::AkitaError;
 
-use crate::tail_golomb_cap_to_k::{live_rice_k_for_fold_cap, security_rice_k_for_fold_cap};
+use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 
 /// Maximum unary quotient before the bounded escape literal.
 pub const GOLOMB_RICE_Q_MAX: u32 = 32;
@@ -123,9 +123,11 @@ pub fn zigzag_decode(u: u64, width: u32) -> Result<i64, AkitaError> {
     Ok(n)
 }
 
-/// Rice parameter `k` from a per-coordinate magnitude scale (e.g. fold `‖z‖_inf` cap).
+/// Rice low-bit width from a per-coordinate magnitude scale (e.g. fold `‖z‖_inf` cap).
+///
+/// Equals `floor(log2(scale))` for `scale > 1`; divisor is `2^rice_low_bits`.
 #[must_use]
-pub fn optimal_rice_k(scale: u128) -> u32 {
+pub fn rice_low_bits_for_cap(scale: u128) -> u32 {
     if scale <= 1 {
         return 0;
     }
@@ -149,30 +151,38 @@ pub fn golomb_rice_zigzag_width(scale: u128) -> u32 {
 
 /// Average-case tail-`z` planner model bound into [`crate::instance_descriptor::FoldLinfProtocolBinding`].
 ///
-/// `K_PLUS_TWO`: budget `k_security + 2` bits per coordinate. Bump when recalibrating
-/// [`golomb_rice_planner_bits_per_z_coord`].
-pub const TAIL_Z_PLANNER_MODEL_K_PLUS_TWO: u8 = 1;
+/// Planner model: budget `cap_rice_low_bits + 2` bits per coordinate. Bump when recalibrating
+/// [`tail_z_planner_bits_per_coord`].
+pub const TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO: u8 = 1;
 
-/// Average-case planner bit budget per `z` coordinate from security Rice `k`.
+/// Average-case planner bit budget per `z` coordinate from cap-derived low-bit width.
 ///
-/// Public `(k, W)` still cover every coefficient in `[-cap, cap]`; this budget
-/// prices honest witnesses under [`TAIL_Z_PLANNER_MODEL_K_PLUS_TWO`] (`k + 2` bits/coord).
+/// Public `(rice_low_bits, W)` still cover every coefficient in `[-cap, cap]`; this budget
+/// prices honest witnesses under [`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`].
 #[must_use]
-pub fn golomb_rice_planner_bits_per_z_coord(rice_k: u32) -> usize {
-    (rice_k as usize).saturating_add(2)
+pub fn tail_z_planner_bits_per_coord(cap_rice_low_bits: u32) -> usize {
+    (cap_rice_low_bits as usize).saturating_add(2)
 }
 
-/// Golomb-Rice bit length for one coordinate at public `(k, w)`.
-pub fn golomb_rice_bits_for_coord(n: i64, k: u32, w: u32) -> Result<usize, AkitaError> {
+/// Golomb-Rice bit length for one coordinate at public `(rice_low_bits, zigzag_w)`.
+pub fn golomb_rice_bits_for_coord(
+    n: i64,
+    rice_low_bits: u32,
+    zigzag_w: u32,
+) -> Result<usize, AkitaError> {
     let mut writer = BitWriter::default();
-    golomb_rice_encode_one_into(&mut writer, n, k, w)?;
+    golomb_rice_encode_one_into(&mut writer, n, rice_low_bits, zigzag_w)?;
     Ok(writer.bit_len())
 }
 
-/// Total Golomb-Rice bits for a vector at public `(k, w)`.
-pub fn golomb_rice_total_bits(values: &[i64], k: u32, w: u32) -> Result<usize, AkitaError> {
+/// Total Golomb-Rice bits for a vector at public `(rice_low_bits, zigzag_w)`.
+pub fn golomb_rice_total_bits(
+    values: &[i64],
+    rice_low_bits: u32,
+    zigzag_w: u32,
+) -> Result<usize, AkitaError> {
     values.iter().try_fold(0usize, |acc, &n| {
-        golomb_rice_bits_for_coord(n, k, w)?
+        golomb_rice_bits_for_coord(n, rice_low_bits, zigzag_w)?
             .checked_add(acc)
             .ok_or(AkitaError::InvalidSetup(
                 "golomb-rice total bits overflow".to_string(),
@@ -180,24 +190,26 @@ pub fn golomb_rice_total_bits(values: &[i64], k: u32, w: u32) -> Result<usize, A
     })
 }
 
-/// Empirical Rice `k` minimizing total Golomb bits on a realized sample.
+/// Witness-sample Rice low-bit width minimizing total Golomb bits (not public).
 #[must_use]
-pub fn empirical_optimal_rice_k(values: &[i64], w: u32, k_max: u32) -> u32 {
-    (0..=k_max)
-        .min_by_key(|&k| golomb_rice_total_bits(values, k, w).unwrap_or(usize::MAX))
+pub fn sample_optimal_rice_low_bits(values: &[i64], zigzag_w: u32, low_bits_hi: u32) -> u32 {
+    (0..=low_bits_hi)
+        .min_by_key(|&rice_low_bits| {
+            golomb_rice_total_bits(values, rice_low_bits, zigzag_w).unwrap_or(usize::MAX)
+        })
         .unwrap_or(0)
 }
 
-/// Payload byte length for each Rice `k` in `0..=k_hi` on a realized `z` sample.
-pub fn golomb_rice_k_sweep_payload_bytes(
+/// Payload byte length for each `rice_low_bits` in `0..=low_bits_hi` on a realized `z` sample.
+pub fn golomb_rice_low_bits_sweep_payload_bytes(
     values: &[i64],
-    w: u32,
-    k_hi: u32,
+    zigzag_w: u32,
+    low_bits_hi: u32,
 ) -> Result<Vec<(u32, usize)>, AkitaError> {
-    (0..=k_hi)
-        .map(|k| {
-            let bits = golomb_rice_total_bits(values, k, w)?;
-            Ok((k, bits.div_ceil(8)))
+    (0..=low_bits_hi)
+        .map(|rice_low_bits| {
+            let bits = golomb_rice_total_bits(values, rice_low_bits, zigzag_w)?;
+            Ok((rice_low_bits, bits.div_ceil(8)))
         })
         .collect()
 }
@@ -213,19 +225,19 @@ pub struct ZFoldEncodingStats {
     pub p90_abs: u64,
     pub p99_abs: u64,
     pub zigzag_w: u32,
-    /// Security Rice `k` (`optimal_rice_k(cap)`); audit reference for the old cap→k rule.
-    pub rice_k_security: u32,
-    /// Live Rice `k` on wire ([`crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap`]).
-    pub rice_k_live: u32,
-    /// Witness-optimal `k` minimizing total Golomb bits on this sample (not public).
-    pub rice_k_empirical: u32,
-    pub bits_per_coord_k_security: f64,
-    pub bits_per_coord_k_live: f64,
-    pub bits_per_coord_k_empirical: f64,
+    /// Cap-derived Rice low-bit width (`rice_low_bits_for_cap(cap)`); planner/audit reference.
+    pub rice_low_bits_cap: u32,
+    /// Wire Rice low-bit width ([`crate::tail_golomb_rice_low_bits::wire_rice_low_bits`]).
+    pub rice_low_bits_wire: u32,
+    /// Witness-sample optimal low-bit width (profiling only; not public).
+    pub rice_low_bits_sample: u32,
+    pub bits_per_coord_at_cap: f64,
+    pub bits_per_coord_at_wire: f64,
+    pub bits_per_coord_at_sample: f64,
     pub bits_per_coord_packed_digits: f64,
-    pub total_bits_k_security: usize,
-    pub total_bits_k_live: usize,
-    pub total_bits_k_empirical: usize,
+    pub total_bits_at_cap: usize,
+    pub total_bits_at_wire: usize,
+    pub total_bits_at_sample: usize,
     pub total_bits_packed_digits: usize,
     pub actual_payload_bytes: usize,
 }
@@ -253,10 +265,10 @@ pub fn analyze_z_fold_golomb_encoding(
     log_basis: u32,
     actual_payload_bytes: usize,
 ) -> Result<ZFoldEncodingStats, AkitaError> {
-    let rice_k_security = security_rice_k_for_fold_cap(witness_linf_cap);
-    let rice_k_live = live_rice_k_for_fold_cap(witness_linf_cap);
-    let k_search_hi = rice_k_security.saturating_add(4);
-    let rice_k_empirical = empirical_optimal_rice_k(values, zigzag_w, k_search_hi);
+    let rice_low_bits_cap = cap_rice_low_bits(witness_linf_cap);
+    let rice_low_bits_wire = wire_rice_low_bits(witness_linf_cap);
+    let low_bits_search_hi = rice_low_bits_cap.saturating_add(4);
+    let rice_low_bits_sample = sample_optimal_rice_low_bits(values, zigzag_w, low_bits_search_hi);
 
     let mut abs_vals: Vec<u64> = values.iter().map(|&n| n.unsigned_abs()).collect();
     abs_vals.sort_unstable();
@@ -268,9 +280,9 @@ pub fn analyze_z_fold_golomb_encoding(
         sum_abs as f64 / values.len() as f64
     };
 
-    let total_bits_k_security = golomb_rice_total_bits(values, rice_k_security, zigzag_w)?;
-    let total_bits_k_live = golomb_rice_total_bits(values, rice_k_live, zigzag_w)?;
-    let total_bits_k_empirical = golomb_rice_total_bits(values, rice_k_empirical, zigzag_w)?;
+    let total_bits_at_cap = golomb_rice_total_bits(values, rice_low_bits_cap, zigzag_w)?;
+    let total_bits_at_wire = golomb_rice_total_bits(values, rice_low_bits_wire, zigzag_w)?;
+    let total_bits_at_sample = golomb_rice_total_bits(values, rice_low_bits_sample, zigzag_w)?;
     let bits_per_digit_plane = log_basis as usize;
     let total_bits_packed_digits = values
         .len()
@@ -287,44 +299,52 @@ pub fn analyze_z_fold_golomb_encoding(
         p90_abs: percentile_abs(&abs_vals, 90, 100),
         p99_abs: percentile_abs(&abs_vals, 99, 100),
         zigzag_w,
-        rice_k_security,
-        rice_k_live,
-        rice_k_empirical,
-        bits_per_coord_k_security: total_bits_k_security as f64 / n,
-        bits_per_coord_k_live: total_bits_k_live as f64 / n,
-        bits_per_coord_k_empirical: total_bits_k_empirical as f64 / n,
+        rice_low_bits_cap,
+        rice_low_bits_wire,
+        rice_low_bits_sample,
+        bits_per_coord_at_cap: total_bits_at_cap as f64 / n,
+        bits_per_coord_at_wire: total_bits_at_wire as f64 / n,
+        bits_per_coord_at_sample: total_bits_at_sample as f64 / n,
         bits_per_coord_packed_digits: total_bits_packed_digits as f64 / n,
-        total_bits_k_security,
-        total_bits_k_live,
-        total_bits_k_empirical,
+        total_bits_at_cap,
+        total_bits_at_wire,
+        total_bits_at_sample,
         total_bits_packed_digits,
         actual_payload_bytes,
     })
 }
 
-/// Golomb unary quotient for one coefficient at public `(k, w)`.
-pub fn golomb_rice_quotient_for_coord(n: i64, k: u32, w: u32) -> Result<u64, AkitaError> {
-    let u = zigzag_encode(n, w)?;
-    Ok(if k == 0 { u } else { u >> k })
+/// Golomb unary quotient for one coefficient at public `(rice_low_bits, zigzag_w)`.
+pub fn golomb_rice_quotient_for_coord(
+    n: i64,
+    rice_low_bits: u32,
+    zigzag_w: u32,
+) -> Result<u64, AkitaError> {
+    let u = zigzag_encode(n, zigzag_w)?;
+    Ok(if rice_low_bits == 0 {
+        u
+    } else {
+        u >> rice_low_bits
+    })
 }
 
-/// Whether `n` encodes at `(k, w)` without taking the bounded-unary escape path.
+/// Whether `n` encodes at `(rice_low_bits, zigzag_w)` without taking the bounded-unary escape path.
 pub fn golomb_rice_coord_encodable_without_escape(
     n: i64,
-    k: u32,
-    w: u32,
+    rice_low_bits: u32,
+    zigzag_w: u32,
 ) -> Result<(), AkitaError> {
-    let quotient = golomb_rice_quotient_for_coord(n, k, w)?;
+    let quotient = golomb_rice_quotient_for_coord(n, rice_low_bits, zigzag_w)?;
     if quotient >= u64::from(GOLOMB_RICE_Q_MAX) {
         return Err(AkitaError::InvalidInput(format!(
-            "golomb-rice coefficient {n} needs escape at k={k} (quotient={quotient})"
+            "golomb-rice coefficient {n} needs escape at rice_low_bits={rice_low_bits} (quotient={quotient})"
         )));
     }
     Ok(())
 }
 
-/// Whether every centered row encodes at live `(k, W)` derived from fold cap `cap`.
-pub fn golomb_rice_rows_encodable_at_live_k<const D: usize>(
+/// Whether every centered row encodes at wire `(rice_low_bits, zigzag_w)` derived from fold cap.
+pub fn golomb_rice_rows_encodable_at_wire_low_bits<const D: usize>(
     rows: &[[i32; D]],
     cap: u128,
 ) -> Result<(), AkitaError> {
@@ -333,8 +353,8 @@ pub fn golomb_rice_rows_encodable_at_live_k<const D: usize>(
             "golomb-rice encodability check at zero cap".to_string(),
         ));
     }
-    let k = live_rice_k_for_fold_cap(cap);
-    let w = golomb_rice_zigzag_width(cap);
+    let rice_low_bits = wire_rice_low_bits(cap);
+    let zigzag_w = golomb_rice_zigzag_width(cap);
     for row in rows {
         for &n in row {
             if i128::from(n).unsigned_abs() > cap {
@@ -342,7 +362,7 @@ pub fn golomb_rice_rows_encodable_at_live_k<const D: usize>(
                     "centered coefficient {n} exceeds fold grind cap {cap}"
                 )));
             }
-            golomb_rice_coord_encodable_without_escape(i64::from(n), k, w)?;
+            golomb_rice_coord_encodable_without_escape(i64::from(n), rice_low_bits, zigzag_w)?;
         }
     }
     Ok(())
@@ -351,32 +371,40 @@ pub fn golomb_rice_rows_encodable_at_live_k<const D: usize>(
 fn golomb_rice_encode_one_into(
     writer: &mut BitWriter,
     n: i64,
-    k: u32,
-    w: u32,
+    rice_low_bits: u32,
+    zigzag_w: u32,
 ) -> Result<(), AkitaError> {
-    let u = zigzag_encode(n, w)?;
-    let quotient = if k == 0 { u } else { u >> k };
-    let remainder = if k == 0 { 0 } else { u & ((1u64 << k) - 1) };
+    let u = zigzag_encode(n, zigzag_w)?;
+    let quotient = if rice_low_bits == 0 {
+        u
+    } else {
+        u >> rice_low_bits
+    };
+    let remainder = if rice_low_bits == 0 {
+        0
+    } else {
+        u & ((1u64 << rice_low_bits) - 1)
+    };
     if quotient >= u64::from(GOLOMB_RICE_Q_MAX) {
         for _ in 0..GOLOMB_RICE_Q_MAX {
             writer.write_bit(true);
         }
         writer.write_bit(false);
-        writer.write_bits(u, w);
+        writer.write_bits(u, zigzag_w);
     } else {
         for _ in 0..quotient {
             writer.write_bit(true);
         }
         writer.write_bit(false);
-        writer.write_bits(remainder, k);
+        writer.write_bits(remainder, rice_low_bits);
     }
     Ok(())
 }
 
 fn golomb_rice_decode_one_from(
     reader: &mut BitReader<'_>,
-    k: u32,
-    w: u32,
+    rice_low_bits: u32,
+    zigzag_w: u32,
 ) -> Result<i64, AkitaError> {
     let mut quotient = 0u64;
     loop {
@@ -393,25 +421,29 @@ fn golomb_rice_decode_one_from(
         break;
     }
     let u = if quotient >= u64::from(GOLOMB_RICE_Q_MAX) {
-        let u = reader.read_bits(w)?;
-        if (u >> k) < u64::from(GOLOMB_RICE_Q_MAX) {
+        let u = reader.read_bits(zigzag_w)?;
+        if (u >> rice_low_bits) < u64::from(GOLOMB_RICE_Q_MAX) {
             return Err(AkitaError::InvalidProof);
         }
         u
-    } else if k == 0 {
+    } else if rice_low_bits == 0 {
         quotient
     } else {
-        let remainder = reader.read_bits(k)?;
-        (quotient << k) | remainder
+        let remainder = reader.read_bits(rice_low_bits)?;
+        (quotient << rice_low_bits) | remainder
     };
-    zigzag_decode(u, w)
+    zigzag_decode(u, zigzag_w)
 }
 
 /// Concatenated Golomb-Rice encoding for a fixed-length integer vector.
-pub fn golomb_rice_encode_vec(values: &[i64], k: u32, w: u32) -> Result<Vec<u8>, AkitaError> {
+pub fn golomb_rice_encode_vec(
+    values: &[i64],
+    rice_low_bits: u32,
+    zigzag_w: u32,
+) -> Result<Vec<u8>, AkitaError> {
     let mut writer = BitWriter::default();
     for &n in values {
-        golomb_rice_encode_one_into(&mut writer, n, k, w)?;
+        golomb_rice_encode_one_into(&mut writer, n, rice_low_bits, zigzag_w)?;
     }
     Ok(writer.finish())
 }
@@ -420,13 +452,17 @@ pub fn golomb_rice_encode_vec(values: &[i64], k: u32, w: u32) -> Result<Vec<u8>,
 pub fn golomb_rice_decode_vec(
     bytes: &[u8],
     count: usize,
-    k: u32,
-    w: u32,
+    rice_low_bits: u32,
+    zigzag_w: u32,
 ) -> Result<Vec<i64>, AkitaError> {
     let mut reader = BitReader::new(bytes);
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
-        out.push(golomb_rice_decode_one_from(&mut reader, k, w)?);
+        out.push(golomb_rice_decode_one_from(
+            &mut reader,
+            rice_low_bits,
+            zigzag_w,
+        )?);
     }
     while reader.remaining_bits() > 0 {
         if reader.read_bit()? {
@@ -439,21 +475,21 @@ pub fn golomb_rice_decode_vec(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tail_golomb_cap_to_k::live_rice_k_for_fold_cap;
+    use crate::tail_golomb_rice_low_bits::wire_rice_low_bits;
 
-    fn exhaustive_min_sound_k(cap: u128) -> Option<u32> {
-        let w = golomb_rice_zigzag_width(cap);
-        for k in 0..=20 {
+    fn exhaustive_min_sound_low_bits(cap: u128) -> Option<u32> {
+        let zigzag_w = golomb_rice_zigzag_width(cap);
+        for rice_low_bits in 0..=20 {
             let mut ok = true;
             for n in -(cap as i64)..=(cap as i64) {
-                let encoded = match golomb_rice_encode_vec(&[n], k, w) {
+                let encoded = match golomb_rice_encode_vec(&[n], rice_low_bits, zigzag_w) {
                     Ok(e) => e,
                     Err(_) => {
                         ok = false;
                         break;
                     }
                 };
-                let decoded = match golomb_rice_decode_vec(&encoded, 1, k, w) {
+                let decoded = match golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w) {
                     Ok(d) => d,
                     Err(_) => {
                         ok = false;
@@ -466,67 +502,71 @@ mod tests {
                 }
             }
             if ok {
-                return Some(k);
+                return Some(rice_low_bits);
             }
         }
         None
     }
 
     #[test]
-    fn min_sound_k_vs_optimal_rice_k_probe() {
+    fn min_sound_low_bits_vs_cap_rice_low_bits_probe() {
         for cap in [504u128, 885, 1008, 1568, 6912] {
-            let pub_k = optimal_rice_k(cap);
-            let min_k = exhaustive_min_sound_k(cap).expect("min k");
+            let cap_low_bits = rice_low_bits_for_cap(cap);
+            let min_low_bits = exhaustive_min_sound_low_bits(cap).expect("min low bits");
             eprintln!(
-                "cap={cap} optimal_rice_k={pub_k} exhaustive_min={min_k} delta={}",
-                pub_k.saturating_sub(min_k)
+                "cap={cap} cap_rice_low_bits={cap_low_bits} exhaustive_min={min_low_bits} delta={}",
+                cap_low_bits.saturating_sub(min_low_bits)
             );
-            assert!(pub_k >= min_k, "public k must dominate sound min");
-            // `min_k` is always `0` here: escape makes every k decodable. Do not use it as `k_live`.
-            assert_eq!(min_k, 0, "cap={cap}");
+            assert!(
+                cap_low_bits >= min_low_bits,
+                "cap low bits must dominate sound min"
+            );
+            // Escape makes every low-bit width decodable; do not use min as wire low bits.
+            assert_eq!(min_low_bits, 0, "cap={cap}");
         }
     }
 
     #[test]
-    fn optimal_rice_k_tracks_per_coefficient_scale() {
+    fn rice_low_bits_for_cap_tracks_per_coefficient_scale() {
         let cap = 6_912u128;
-        assert_eq!(optimal_rice_k(cap), 12);
+        assert_eq!(rice_low_bits_for_cap(cap), 12);
         let level_variance_envelope = 6_189_618u128;
         assert!(
-            optimal_rice_k(cap) < optimal_rice_k(level_variance_envelope),
-            "per-coordinate k must use fold cap, not the level variance envelope"
+            rice_low_bits_for_cap(cap) < rice_low_bits_for_cap(level_variance_envelope),
+            "per-coordinate low bits must use fold cap, not the level variance envelope"
         );
     }
 
     #[test]
     fn golomb_rice_round_trip_and_canonicality() {
-        let k = 3u32;
-        let w = 12u32;
+        let rice_low_bits = 3u32;
+        let zigzag_w = 12u32;
         let values = [-100i64, -1, 0, 1, 42, 500];
-        let encoded = golomb_rice_encode_vec(&values, k, w).unwrap();
-        let decoded = golomb_rice_decode_vec(&encoded, values.len(), k, w).unwrap();
+        let encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
+        let decoded =
+            golomb_rice_decode_vec(&encoded, values.len(), rice_low_bits, zigzag_w).unwrap();
         assert_eq!(decoded, values);
-        let reencoded = golomb_rice_encode_vec(&decoded, k, w).unwrap();
+        let reencoded = golomb_rice_encode_vec(&decoded, rice_low_bits, zigzag_w).unwrap();
         assert_eq!(encoded, reencoded);
     }
 
     #[test]
     fn golomb_rice_escape_path_round_trip() {
-        let k = 0u32;
-        let w = 16u32;
+        let rice_low_bits = 0u32;
+        let zigzag_w = 16u32;
         let values = vec![200i64; 1];
-        let encoded = golomb_rice_encode_vec(&values, k, w).unwrap();
-        let decoded = golomb_rice_decode_vec(&encoded, 1, k, w).unwrap();
+        let encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
+        let decoded = golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w).unwrap();
         assert_eq!(decoded, values);
     }
 
     #[test]
     fn golomb_rice_decode_rejects_trailing_garbage() {
-        let k = 2u32;
-        let w = 8u32;
-        let mut encoded = golomb_rice_encode_vec(&[3i64, 5i64], k, w).unwrap();
+        let rice_low_bits = 2u32;
+        let zigzag_w = 8u32;
+        let mut encoded = golomb_rice_encode_vec(&[3i64, 5i64], rice_low_bits, zigzag_w).unwrap();
         encoded.push(0xff);
-        assert!(golomb_rice_decode_vec(&encoded, 2, k, w).is_err());
+        assert!(golomb_rice_decode_vec(&encoded, 2, rice_low_bits, zigzag_w).is_err());
     }
 
     #[test]
@@ -534,52 +574,52 @@ mod tests {
         assert!(golomb_rice_decode_vec(&[], 1, 0, 4).is_err());
     }
 
-    fn non_canonical_escape_bytes(u: u64, w: u32) -> Vec<u8> {
+    fn non_canonical_escape_bytes(u: u64, zigzag_w: u32) -> Vec<u8> {
         let mut writer = BitWriter::default();
         for _ in 0..GOLOMB_RICE_Q_MAX {
             writer.write_bit(true);
         }
         writer.write_bit(false);
-        writer.write_bits(u, w);
+        writer.write_bits(u, zigzag_w);
         writer.finish()
     }
 
     #[test]
     fn golomb_rice_decode_rejects_non_canonical_escape() {
-        let k = 3u32;
-        let w = 12u32;
+        let rice_low_bits = 3u32;
+        let zigzag_w = 12u32;
         let u = 2u64;
-        assert!(u >> k < u64::from(GOLOMB_RICE_Q_MAX));
-        let bytes = non_canonical_escape_bytes(u, w);
-        assert!(golomb_rice_decode_vec(&bytes, 1, k, w).is_err());
+        assert!(u >> rice_low_bits < u64::from(GOLOMB_RICE_Q_MAX));
+        let bytes = non_canonical_escape_bytes(u, zigzag_w);
+        assert!(golomb_rice_decode_vec(&bytes, 1, rice_low_bits, zigzag_w).is_err());
 
-        let k0 = 0u32;
-        let w0 = 16u32;
+        let rice_low_bits0 = 0u32;
+        let zigzag_w0 = 16u32;
         let u0 = 5u64;
         assert!(u0 < u64::from(GOLOMB_RICE_Q_MAX));
-        let bytes0 = non_canonical_escape_bytes(u0, w0);
-        assert!(golomb_rice_decode_vec(&bytes0, 1, k0, w0).is_err());
+        let bytes0 = non_canonical_escape_bytes(u0, zigzag_w0);
+        assert!(golomb_rice_decode_vec(&bytes0, 1, rice_low_bits0, zigzag_w0).is_err());
     }
 
     #[test]
-    fn golomb_rice_planner_k_plus_two_bits_per_coord() {
-        assert_eq!(golomb_rice_planner_bits_per_z_coord(8), 10);
-        assert_eq!(golomb_rice_planner_bits_per_z_coord(10), 12);
+    fn tail_z_planner_cap_low_bits_plus_two_bits_per_coord() {
+        assert_eq!(tail_z_planner_bits_per_coord(8), 10);
+        assert_eq!(tail_z_planner_bits_per_coord(10), 12);
     }
 
     #[test]
-    fn golomb_rice_rows_encodable_at_live_k_matches_cap_range() {
+    fn golomb_rice_rows_encodable_at_wire_low_bits_matches_cap_range() {
         for &cap in &[504u128, 1008] {
-            let k = live_rice_k_for_fold_cap(cap);
-            let w = golomb_rice_zigzag_width(cap);
+            let rice_low_bits = wire_rice_low_bits(cap);
+            let zigzag_w = golomb_rice_zigzag_width(cap);
             let cap_i64 = cap as i64;
             for n in -cap_i64..=cap_i64 {
-                golomb_rice_coord_encodable_without_escape(n, k, w)
+                golomb_rice_coord_encodable_without_escape(n, rice_low_bits, zigzag_w)
                     .unwrap_or_else(|e| panic!("cap={cap} n={n}: {e}"));
             }
             let row = [cap_i64 as i32; 4];
-            golomb_rice_rows_encodable_at_live_k(&[row], cap).expect("row encodable");
+            golomb_rice_rows_encodable_at_wire_low_bits(&[row], cap).expect("row encodable");
         }
-        assert!(golomb_rice_rows_encodable_at_live_k(&[[1009i32; 4]], 1008).is_err());
+        assert!(golomb_rice_rows_encodable_at_wire_low_bits(&[[1009i32; 4]], 1008).is_err());
     }
 }
