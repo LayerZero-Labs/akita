@@ -41,8 +41,8 @@ pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
 pub use direct_witness::{
     segment_typed_witness_shape, terminal_direct_witness_shape,
-    terminal_direct_witness_shape_for_key, terminal_fold_segment_counts, CleartextWitnessProof,
-    CleartextWitnessShape, PackedDigits,
+    terminal_direct_witness_shape_for_key, CleartextWitnessProof, CleartextWitnessShape,
+    PackedDigits,
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{

@@ -160,14 +160,13 @@ where
 
     let w_len = match proof {
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
-        AkitaBatchedRootProof::Fold(_) => w_ring_element_count_with_counts::<F>(
-            root_lp,
-            opening_batch.num_polynomials(),
-            num_claims,
-            1,
-        )?
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        AkitaBatchedRootProof::Fold(_) => {
+            w_ring_element_count_with_counts::<F>(root_lp, opening_batch.num_polynomials(), 1)?
+                .checked_mul(D)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("next witness length overflow".to_string())
+                })?
+        }
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     let terminal_replay = match proof {

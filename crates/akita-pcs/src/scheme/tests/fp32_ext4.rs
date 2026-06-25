@@ -200,10 +200,10 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn get_params_for_prove(
         opening_batch: &OpeningBatchShape,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_polynomials())?;
+        let lp =
+            scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_polynomials())?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            opening_batch.num_polynomials(),
             opening_batch.num_polynomials(),
             1,
             akita_types::MRowLayout::WithoutDBlock,
@@ -290,7 +290,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn get_params_for_prove(
         opening_batch: &OpeningBatchShape,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_polynomials())?;
+        let lp =
+            scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_polynomials())?;
         // Single-fold schedule: the root IS the terminal fold, so its
         // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
@@ -298,7 +299,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         // length.
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            opening_batch.num_polynomials(),
             opening_batch.num_polynomials(),
             1,
             akita_types::MRowLayout::WithoutDBlock,

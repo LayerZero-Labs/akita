@@ -78,7 +78,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
 {
     // The dense profile opens one polynomial at one point, so the schedule key
     // is the singleton root the prover actually resolves via
-    // `new_from_opening_batch`. 
+    // `new_from_opening_batch`.
     let layout = resolve_layout::<FF, Cfg>(nv);
     let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
     tracing::info!("{}", title);
@@ -141,7 +141,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         print_layout(&layout, 1, Cfg::decomposition().field_bits());
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan));
     } else {
-        let schedule_key = AkitaScheduleLookupKey::new(nv, num_polys, num_polys, 1);
+        let schedule_key = AkitaScheduleLookupKey::new(nv, num_polys);
         let plan = Cfg::runtime_schedule(schedule_key).expect("schedule plan");
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;

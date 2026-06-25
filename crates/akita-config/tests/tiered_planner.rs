@@ -61,7 +61,7 @@ fn tiered_preset_tiers_a_batched_root() {
     // tiered level in every schedule.
     let mut total_tiered = 0usize;
     for batch in [64usize, 128, 256, 512, 1024] {
-        let key = AkitaScheduleLookupKey::new(22, batch, batch, 1);
+        let key = AkitaScheduleLookupKey::new(22, batch);
         let schedule = fp128::D64OneHotTiered::runtime_schedule(key).expect("tiered schedule");
         total_tiered += assert_tiered_levels_fit_under_a(&schedule);
     }
@@ -69,16 +69,6 @@ fn tiered_preset_tiers_a_batched_root() {
         total_tiered >= 1,
         "expected tiering to fire for at least one batched root in the sweep"
     );
-}
-
-#[test]
-fn tiered_preset_rejects_grouped_root_key() {
-    let key = AkitaScheduleLookupKey::new(22, 3, 2, 2);
-
-    let err =
-        fp128::D64OneHotTiered::runtime_schedule(key).expect_err("grouped tiered key must reject");
-
-    assert!(matches!(err, akita_field::AkitaError::InvalidSetup(_)));
 }
 
 #[test]

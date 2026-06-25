@@ -370,23 +370,18 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
         } else {
             akita_types::MRowLayout::WithDBlock
         };
-        // Root-level batched witnesses fan out over the key's vector
-        // counts; recursive levels collapse back to singleton-by-construction.
-        let (num_t_vectors, num_w_vectors, num_public_rows) = if idx == 0 {
-            (key.num_t_vectors, key.num_w_vectors, key.num_z_vectors)
+        // Root-level batched witnesses fan out over the key's polynomial
+        // count; recursive levels collapse back to singleton-by-construction.
+        let (num_polynomials, num_public_rows) = if idx == 0 {
+            (key.num_polynomials, 1)
         } else {
-            (1, 1, 1)
+            (1, 1)
         };
-        let runtime_next_w_len =
-            akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
-                &fold.params,
-                num_t_vectors,
-                num_w_vectors,
-                num_public_rows,
-                layout,
-            )
-            .expect("valid planned witness")
-                * fold.params.ring_dimension;
+        let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
+            Cfg::Field,
+        >(&fold.params, num_polynomials, num_public_rows, layout)
+        .expect("valid planned witness")
+            * fold.params.ring_dimension;
         assert_eq!(
             runtime_next_w_len, fold.next_w_len,
             "planner/runtime next_w_len mismatch at level {idx} for key={key:?}",
@@ -397,12 +392,7 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
 #[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(
-            entry.key.num_vars,
-            entry.key.num_t_vectors,
-            entry.key.num_w_vectors,
-            entry.key.num_z_vectors,
-        );
+        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
         Cfg::runtime_schedule(key).expect("config schedule should succeed");
     }
 }
@@ -473,12 +463,7 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) {
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(
-            entry.key.num_vars,
-            entry.key.num_t_vectors,
-            entry.key.num_w_vectors,
-            entry.key.num_z_vectors,
-        );
+        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
         let schedule = Cfg::runtime_schedule(key).expect("config schedule should succeed");
         let levels = setup_level_params_from_runtime_schedule(&schedule.steps);
         for level in &levels {
@@ -493,14 +478,9 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
     for entry in table
         .entries
         .iter()
-        .filter(|entry| entry.key.num_t_vectors > 1)
+        .filter(|entry| entry.key.num_polynomials > 1)
     {
-        let key = AkitaScheduleLookupKey::new(
-            entry.key.num_vars,
-            entry.key.num_t_vectors,
-            entry.key.num_w_vectors,
-            entry.key.num_z_vectors,
-        );
+        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
         let generated = Cfg::runtime_schedule(key).expect("config schedule should succeed");
         let Some(root) = generated.fold_steps().next() else {
             continue;
@@ -512,12 +492,12 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         let singleton_d_width = root_lp.num_digits_open * root_lp.num_blocks;
         assert_eq!(
             root_lp.outer_width(),
-            singleton_outer_width * entry.key.num_t_vectors,
+            singleton_outer_width * entry.key.num_polynomials,
             "generated batched root B width should be claim-scaled for key={key:?}"
         );
         assert_eq!(
             root_lp.d_matrix_width(),
-            singleton_d_width * entry.key.num_t_vectors,
+            singleton_d_width * entry.key.num_polynomials,
             "generated batched root D width should be claim-scaled for key={key:?}"
         );
     }
@@ -579,12 +559,7 @@ fn generated_batched_roots_restore_scaled_widths() {
 fn generated_d128_full_table_materializes_valid_plans() {
     let table = fp128_d128_full_table();
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(
-            entry.key.num_vars,
-            entry.key.num_t_vectors,
-            entry.key.num_w_vectors,
-            entry.key.num_z_vectors,
-        );
+        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
         <fp128::D128Full as CommitmentConfig>::runtime_schedule(key)
             .expect("config schedule should succeed");
     }
@@ -613,18 +588,9 @@ fn batched_root_plan_matches_runtime_next_w_len() {
     let entry = table
         .entries
         .iter()
-        .find(|entry| {
-            entry.key.num_t_vectors > 1
-                || entry.key.num_w_vectors > 1
-                || entry.key.num_z_vectors > 1
-        })
+        .find(|entry| entry.key.num_polynomials > 1)
         .expect("generated table should contain a non-singleton batched-root row");
-    let key = AkitaScheduleLookupKey::new(
-        entry.key.num_vars,
-        entry.key.num_t_vectors,
-        entry.key.num_w_vectors,
-        entry.key.num_z_vectors,
-    );
+    let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
 
     assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
 }
@@ -632,7 +598,7 @@ fn batched_root_plan_matches_runtime_next_w_len() {
 #[test]
 #[cfg(not(feature = "zk"))]
 fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
-    let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
+    let key = AkitaScheduleLookupKey::new(30, 4);
     let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
         .expect("config schedule should succeed");
 
