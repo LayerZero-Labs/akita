@@ -7,6 +7,7 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
+#[cfg(not(feature = "zk"))]
 use akita_types::terminal_golomb_grind_tail_t_vectors;
 #[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;

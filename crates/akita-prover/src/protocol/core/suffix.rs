@@ -11,6 +11,7 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
+#[cfg(not(feature = "zk"))]
 use akita_types::terminal_golomb_grind_tail_t_vectors;
 
 /// Prover state carried between suffix fold levels.
@@ -168,7 +169,6 @@ where
                 level,
                 level_params,
                 m_row_layout,
-                #[cfg(not(feature = "zk"))]
                 tail_t_vectors,
             )
             .map_err(|err| {
@@ -225,7 +225,6 @@ where
                         level,
                         level_params,
                         m_row_layout,
-                        #[cfg(not(feature = "zk"))]
                         tail_t_vectors,
                     )
                     .map_err(|err| {
@@ -396,7 +395,6 @@ where
         BasisMode::Lagrange,
         BlockOrder::ColumnMajor,
         m_row_layout,
-        #[cfg(not(feature = "zk"))]
         terminal_tail_t_vectors,
     )
 }
