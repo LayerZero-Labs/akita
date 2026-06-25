@@ -55,10 +55,9 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
 
         let shared_flat =
             derive_public_matrix_flat::<F, D>(setup_envelope.max_setup_len, &public_matrix_seed);
-        let expanded = Arc::new(AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            seed,
-            shared_flat,
-        ));
+        let expanded = Arc::new(
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
+        );
 
         Ok(Self {
             expanded,

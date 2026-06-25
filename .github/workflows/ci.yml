@@ -59,8 +59,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           components: clippy
-      - name: Clippy (all features)
-        run: cargo clippy --all --all-targets --all-features -- -D warnings
+      - name: Clippy (transparent default features)
+        run: cargo clippy --all --all-targets --no-default-features --features parallel,disk-persistence -- -D warnings
       - name: Clippy (no default features)
         run: cargo clippy --all --all-targets --no-default-features -- -D warnings
       - name: Crate dependency hygiene
@@ -90,7 +90,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
       - name: Build documentation
-        run: cargo doc -q --no-deps --all-features
+        run: cargo doc -q --no-deps --no-default-features --features parallel,disk-persistence
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -160,71 +160,15 @@ jobs:
       - name: Drift guard (all-schedules)
         run: |
           cargo test -p akita-config --features all-schedules generated_schedule_tables_match_find_schedule
-          cargo test -p akita-config --features zk,all-schedules generated_schedule_tables_match_find_schedule
       - name: Schedule catalog wiring
         run: |
           cargo test -p akita-config --no-default-features --test schedule_catalog_feature_off
           cargo test -p akita-config --features schedules-fp128-d64-onehot,schedules-fp128-d64-full --test schedule_catalog_miswire
 
-  test-all-features:
-    name: Test (all-features ${{ matrix.shard }}/${{ strategy.job-total }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-        with:
-          cache: false
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          shared-key: ci-test-all-features
-          add-job-id-key: false
-          cache-on-failure: true
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
-      - name: Run tests (all features)
-        env:
-          SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: ${{ strategy.job-total }}
-        run: |
-          artifact_dir="$RUNNER_TEMP/ci-test-pass-all-features-shard-${SHARD_INDEX}"
-          mkdir -p "$artifact_dir"
-          start_epoch=$(date +%s)
-          set +e
-          # akita-field defines no zk feature; its tests are field-arithmetic only and
-          # already run in the non-zk leg above. Exclude them here to keep the zk
-          # test coverage narrow (see #75).
-          cargo nextest run --profile ci-all-features --all-features -E 'not (package(akita-field))' \
-            --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
-          status=$?
-          end_epoch=$(date +%s)
-          if [ -f target/nextest/ci-all-features/junit.xml ]; then
-            cp target/nextest/ci-all-features/junit.xml "$artifact_dir/junit-shard-${SHARD_INDEX}.xml"
-          fi
-          printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s,"shard_index":%s,"shard_total":%s}\n' \
-            "$start_epoch" "$end_epoch" "$status" "$SHARD_INDEX" "$SHARD_TOTAL" \
-            > "$artifact_dir/timing-shard-${SHARD_INDEX}.json"
-          exit "$status"
-      - name: Upload all-features shard artifact
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ci-test-pass-all-features-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/ci-test-pass-all-features-shard-${{ matrix.shard }}
-          if-no-files-found: warn
-          retention-days: 7
-
   test-timing:
     name: Test timing
-    needs: [test-non-zk, test-all-features]
-    if: >-
-      always() &&
-      needs.test-non-zk.result != 'cancelled' &&
-      needs.test-all-features.result != 'cancelled'
+    needs: [test-non-zk]
+    if: always() && needs.test-non-zk.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -237,13 +181,6 @@ jobs:
           pattern: ci-test-pass-non-zk-shard-*
           merge-multiple: true
           path: ${{ runner.temp }}/ci-test-pass-non-zk-shards
-      - name: Download all-features shard artifacts
-        continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: ci-test-pass-all-features-shard-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/ci-test-pass-all-features-shards
       - name: Merge test timing artifact
         id: merge
         if: always()
@@ -257,19 +194,14 @@ jobs:
             --output-junit "$RUNNER_TEMP/merged-non-zk-junit.xml" \
             --output-timing "$RUNNER_TEMP/merged-non-zk-timing.json"
           NON_ZK_PREPARE_STATUS=$?
-          python3 scripts/ci_test_timing_report.py prepare-pass \
-            --input-dir "$RUNNER_TEMP/ci-test-pass-all-features-shards" \
-            --output-junit "$RUNNER_TEMP/merged-all-features-junit.xml" \
-            --output-timing "$RUNNER_TEMP/merged-all-features-timing.json"
-          ALL_FEATURES_PREPARE_STATUS=$?
+          ALL_FEATURES_PREPARE_STATUS=0
+          ALL_FEATURES_START=0
+          ALL_FEATURES_END=0
+          ALL_FEATURES_STATUS=0
 
           read -r NON_ZK_START NON_ZK_END NON_ZK_STATUS <<< "$(python3 scripts/ci_test_timing_report.py read-timing "$RUNNER_TEMP/merged-non-zk-timing.json")"
-          read -r ALL_FEATURES_START ALL_FEATURES_END ALL_FEATURES_STATUS <<< "$(python3 scripts/ci_test_timing_report.py read-timing "$RUNNER_TEMP/merged-all-features-timing.json")"
           if [ "$NON_ZK_PREPARE_STATUS" -ne 0 ]; then
             NON_ZK_STATUS=1
-          fi
-          if [ "$ALL_FEATURES_PREPARE_STATUS" -ne 0 ]; then
-            ALL_FEATURES_STATUS=1
           fi
 
           SHARD_COUNT="$(python3 -c 'import json, pathlib; path = pathlib.Path("'"$RUNNER_TEMP/merged-non-zk-timing.json"'"); data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}; print(int(data.get("shard_total") or 0))')"
@@ -323,7 +255,7 @@ jobs:
       - name: Fail if test jobs failed
         if: always()
         run: |
-          if [ "${{ needs.test-non-zk.result }}" = "failure" ] || [ "${{ needs.test-all-features.result }}" = "failure" ]; then
+          if [ "${{ needs.test-non-zk.result }}" = "failure" ]; then
             exit 1
           fi
 

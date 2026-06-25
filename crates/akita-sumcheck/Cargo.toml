@@ -25,10 +25,7 @@ tracing = "0.1"
 [features]
 default = []
 parallel = ["akita-algebra/parallel", "akita-field/parallel"]
-zk = [
-  "akita-algebra/zk",
-  "akita-transcript/zk",
-]
+zk = ["akita-algebra/zk", "akita-transcript/zk"]
 
 [lints]
 workspace = true
