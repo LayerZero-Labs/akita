@@ -5,7 +5,6 @@ members = [
   "crates/akita-config",
   "crates/akita-field",
   "crates/akita-pcs",
-  "crates/akita-r1cs",
   "crates/akita-serialization",
   "crates/akita-setup",
   "crates/akita-sumcheck",

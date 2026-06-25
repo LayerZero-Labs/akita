@@ -154,7 +154,7 @@ where
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    if opening_batch.num_claims() != witnesses.len() {
+    if opening_batch.num_polynomials() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -234,7 +234,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_len = params.b_key.row_len();
-    let row_width = akita_types::zk::blinding_column_count::<F>(row_len, D, params.log_basis);
+    let row_width =
+        akita_types::lhl_blinding::blinding_column_count::<F>(row_len, D, params.log_basis);
     let expected_digits = row_width.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
     if blinding_digits.len() != expected_digits {
         return Err(AkitaError::InvalidProof);
@@ -486,7 +487,7 @@ where
     let opening_batch = claims
         .validate(OpeningBatchLimits {
             max_num_vars: setup.expanded.seed().max_num_vars,
-            max_num_claims: setup.expanded.seed().max_num_batched_polys,
+            max_num_polynomials: setup.expanded.seed().max_num_batched_polys,
         })
         .map_err(|_| AkitaError::InvalidProof)?;
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;

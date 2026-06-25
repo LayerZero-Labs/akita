@@ -217,29 +217,29 @@ pub fn decomposed_s_block_ring_count(block_len: usize, num_digits_commit: usize)
     block_len.checked_mul(num_digits_commit)
 }
 
-/// B-matrix committed width (ring columns): `n_a · δ_open · num_blocks · t_vectors`.
+/// B-matrix committed width (ring columns): `n_a · δ_open · num_blocks · num_polynomials`.
 #[inline]
 pub fn decomposed_t_ring_count(
     n_a: usize,
     num_digits_open: usize,
     num_blocks: usize,
-    t_vectors: usize,
+    num_polynomials: usize,
 ) -> Option<usize> {
     n_a.checked_mul(num_digits_open)?
         .checked_mul(num_blocks)?
-        .checked_mul(t_vectors)
+        .checked_mul(num_polynomials)
 }
 
-/// D-matrix committed width (ring columns): `δ_open · num_blocks · t_vectors`.
+/// D-matrix committed width (ring columns): `δ_open · num_blocks · num_polynomials`.
 #[inline]
 pub fn decomposed_w_ring_count(
     num_digits_open: usize,
     num_blocks: usize,
-    t_vectors: usize,
+    num_polynomials: usize,
 ) -> Option<usize> {
     num_digits_open
         .checked_mul(num_blocks)?
-        .checked_mul(t_vectors)
+        .checked_mul(num_polynomials)
 }
 
 #[cfg(test)]

@@ -117,7 +117,7 @@ fn regen_diff_vs_shipped_tables() {
             }
 
             if new.total_bytes != old.total_bytes || structure_changed {
-                let num_polys = key.num_t_vectors.max(key.num_w_vectors);
+                let num_polys = key.num_polynomials;
                 all_changed.push(ChangedKey {
                     family: family.module_name,
                     num_vars: key.num_vars,

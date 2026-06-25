@@ -28,9 +28,7 @@ use crate::PlannerPolicy;
 pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
     GeneratedScheduleKey {
         num_vars: key.num_vars,
-        num_t_vectors: key.num_t_vectors,
-        num_w_vectors: key.num_w_vectors,
-        num_z_vectors: key.num_z_vectors,
+        num_polynomials: key.num_polynomials,
     }
 }
 
@@ -42,13 +40,7 @@ pub fn resolve_schedule(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
-    if policy.tiered && key.num_z_vectors != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
-                .to_string(),
-        ));
-    }
-    key.validate_scalar_root_batch()?;
+    key.validate()?;
     let Some(table) = catalog else {
         return find_schedule(
             key,
@@ -99,7 +91,7 @@ fn extension_opening_reduction_level_bytes(
     }
     let (partials, opening_vars) = if fold_level == 0 {
         (
-            extension_opening_width.saturating_mul(key.num_w_vectors),
+            extension_opening_width.saturating_mul(key.num_polynomials),
             key.num_vars,
         )
     } else {
@@ -154,7 +146,7 @@ pub fn schedule_from_entry(
                     current_w_len,
                 };
                 let level_num_claims = if fold_level == 0 {
-                    key.num_t_vectors
+                    key.num_polynomials
                 } else {
                     1
                 };
@@ -166,10 +158,10 @@ pub fn schedule_from_entry(
                     fold_challenge_shape_at_level(inputs),
                     level_num_claims,
                 )?;
-                let (nt, nw, nz) = if fold_level == 0 {
-                    (key.num_t_vectors, key.num_w_vectors, key.num_z_vectors)
+                let (num_polynomials, num_public_rows) = if fold_level == 0 {
+                    (key.num_polynomials, 1)
                 } else {
-                    (1, 1, 1)
+                    (1, 1)
                 };
                 let mul_d = |ring: usize| -> Result<usize, AkitaError> {
                     ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
@@ -182,16 +174,20 @@ pub fn schedule_from_entry(
                     let ring = w_ring_element_count_with_counts_for_layout_bits(
                         field_bits,
                         &lp,
-                        nt,
-                        nw,
-                        nz,
+                        num_polynomials,
+                        num_public_rows,
                         MRowLayout::WithoutDBlock,
                     )?;
                     let len = mul_d(ring)?;
                     terminal_witness_field_len = Some(len);
                     (len, None, MRowLayout::WithoutDBlock)
                 } else {
-                    let ring = w_ring_element_count_with_counts_bits(field_bits, &lp, nt, nw, nz)?;
+                    let ring = w_ring_element_count_with_counts_bits(
+                        field_bits,
+                        &lp,
+                        num_polynomials,
+                        num_public_rows,
+                    )?;
                     let len = mul_d(ring)?;
                     let GeneratedStep::Fold(next_level) = next else {
                         return Err(AkitaError::InvalidSetup(
@@ -213,11 +209,8 @@ pub fn schedule_from_entry(
                     )?;
                     (len, Some(next_lp), MRowLayout::WithDBlock)
                 };
-                let num_claims_here = if fold_level == 0 {
-                    key.num_z_vectors
-                } else {
-                    1
-                };
+                // Single commitment group at one point: one public row per level.
+                let num_claims_here = 1;
                 let level_bytes = level_proof_bytes(
                     field_bits,
                     challenge_field_bits,
@@ -270,7 +263,7 @@ pub fn schedule_from_entry(
                                     level: 0,
                                     current_w_len: expected_root_w_len,
                                 }),
-                                key.num_t_vectors,
+                                key.num_polynomials,
                             )
                             .ok(),
                         None => None,
@@ -385,7 +378,7 @@ mod tests {
 
     #[test]
     fn resolve_schedule_none_matches_find_schedule() {
-        let key = AkitaScheduleLookupKey::new(20, 1, 1, 1);
+        let key = AkitaScheduleLookupKey::new(20, 1);
         let policy = flat_policy();
         let via_resolve = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
             .expect("resolve");
@@ -395,12 +388,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_schedule_rejects_grouped_key_before_scalar_lookup() {
-        let key = AkitaScheduleLookupKey::new(20, 4, 2, 2);
+    fn resolve_schedule_rejects_zero_dimension_key() {
+        let key = AkitaScheduleLookupKey::new(0, 1);
         let policy = flat_policy();
 
         let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
-            .expect_err("grouped root key must not use scalar lookup");
+            .expect_err("zero-arity key must be rejected");
 
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
