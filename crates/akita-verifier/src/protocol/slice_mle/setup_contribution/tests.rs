@@ -55,7 +55,7 @@ fn setup_contribution_matches_recursive_on_batched_root_fixture() {
 
 #[test]
 fn setup_contribution_matches_recursive_with_e_t_offset_carries() {
-    SetupContributionFixture::from_shape(&SetupContributionShape::z_first_e_t_offset_carry())
+    SetupContributionFixture::from_shape(&SetupContributionShape::e_t_offset_carry())
         .assert_direct_matches_recursive();
 }
 

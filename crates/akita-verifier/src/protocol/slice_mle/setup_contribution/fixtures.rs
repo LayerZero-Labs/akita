@@ -48,7 +48,6 @@ pub(crate) struct SetupContributionShape {
     pub num_polys_per_segment: Vec<usize>,
     pub num_public_rows: usize,
     pub m_row_layout: MRowLayout,
-    pub z_first: bool,
     /// Tiered split factor `f` (`1` = single-tier).
     pub tier_split: usize,
     /// Second-tier `F` rank (`0` = single-tier).
@@ -71,7 +70,6 @@ impl SetupContributionShape {
             num_polys_per_segment: vec![1],
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
-            z_first: false,
             tier_split: 1,
             n_f: 0,
         }
@@ -104,7 +102,6 @@ impl SetupContributionShape {
             num_polys_per_segment: vec![3],
             num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
-            z_first: false,
             tier_split: 1,
             n_f: 0,
         }
@@ -131,13 +128,12 @@ impl SetupContributionShape {
         shape
     }
 
-    pub fn z_first_e_t_offset_carry() -> Self {
+    pub fn e_t_offset_carry() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_blocks = 8;
         shape.block_len = 10;
         shape.depth_commit = 3;
         shape.depth_fold = 2;
-        shape.z_first = true;
         shape
     }
 
@@ -186,27 +182,13 @@ impl SetupContributionFixture {
         let e_len = shape.depth_open * total_blocks;
         let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
         let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
-        // û_concat witness segment (tiered only): `num_points · f_stride` planes
-        // placed between `t` and `z`. For single-tier `u_len == 0` and the layout
-        // is unchanged.
+        // û_concat witness segment (tiered only): `num_points · f_stride` planes after `t`.
         let u_len = if tiered { num_points * f_stride } else { 0 };
-        let (offset_e, offset_t, offset_u, offset_z, total_len) = if shape.z_first {
-            (
-                z_len,
-                z_len + e_len,
-                z_len + e_len + t_len,
-                0usize,
-                z_len + e_len + t_len + u_len,
-            )
-        } else {
-            (
-                0usize,
-                e_len,
-                e_len + t_len,
-                e_len + t_len + u_len,
-                e_len + t_len + u_len + z_len,
-            )
-        };
+        let offset_z = 0usize;
+        let offset_e = z_len;
+        let offset_t = z_len + e_len;
+        let offset_u = z_len + e_len + t_len;
+        let total_len = z_len + e_len + t_len + u_len;
         let offset_r: usize = total_len;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
