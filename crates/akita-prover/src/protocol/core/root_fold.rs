@@ -76,7 +76,7 @@ where
     R: DigitRowsComputeBackend<F>,
 {
     let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let opening_num_vars = opening_batch.num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = root_tensor_projection_enabled::<F, E, D>(opening_num_vars);
@@ -192,7 +192,7 @@ where
 {
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let root_params = &scheduled.params;
 
     if claims.flat_polys().len() != num_claims {
@@ -302,7 +302,7 @@ where
 {
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     let root_params = &scheduled.params;
 
     if claims.flat_polys().len() != num_claims {

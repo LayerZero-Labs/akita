@@ -414,7 +414,7 @@ where
     E: FieldCore,
 {
     let opening_batch = relation.opening_batch();
-    let num_claims = relation.opening_batch().num_claims();
+    let num_claims = relation.opening_batch().num_polynomials();
     let num_polys = opening_batch.num_polynomials();
 
     let depth_commit = lp.num_digits_commit;

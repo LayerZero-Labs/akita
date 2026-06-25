@@ -50,7 +50,7 @@ where
     let openings = claims.claims();
     let opening_batch = claims.to_shape();
     let shared_opening_point = claims.point();
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -146,7 +146,7 @@ where
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_claims()])
+            Ok(vec![shared_factor; opening_batch.num_polynomials()])
         })
         .transpose()?;
     #[cfg(feature = "zk")]
@@ -154,7 +154,7 @@ where
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_claims()])
+            Ok(vec![shared_factor; opening_batch.num_polynomials()])
         })
         .transpose()?;
 
@@ -162,7 +162,7 @@ where
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
         AkitaBatchedRootProof::Fold(_) => w_ring_element_count_with_counts::<F>(
             root_lp,
-            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
             num_claims,
             1,
         )?

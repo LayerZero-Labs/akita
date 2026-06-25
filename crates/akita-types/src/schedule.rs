@@ -116,9 +116,9 @@ impl AkitaScheduleLookupKey {
 
     /// Build a schedule lookup key from a validated [`OpeningBatchShape`].
     ///
-    /// Projects `num_vars`, total polynomial count (`num_t_vectors`), and
-    /// `num_claims`. Assumes the batch was already validated at the claims
-    /// boundary (`OpeningBatchShape::check` or an infallible constructor).
+    /// Projects `num_vars` and the total polynomial count. Assumes the batch
+    /// was already validated at the opening boundary (`OpeningBatchShape::check`
+    /// or an infallible constructor).
     ///
     /// Folded schedule lookup currently treats every batch as one commitment
     /// group; see `akita_planner::generated_schedule_lookup_key`.
@@ -136,7 +136,7 @@ impl AkitaScheduleLookupKey {
         Ok(Self::new(
             opening_batch.num_vars(),
             num_t_vectors,
-            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
             1,
         ))
     }

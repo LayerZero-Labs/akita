@@ -77,14 +77,14 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            225,
+            221,
             [
-                0x74, 0x8f, 0xe4, 0x87, 0x21, 0x1a, 0x0b, 0x70, 0xae, 0xdf, 0x84, 0x4e, 0x16, 0x36,
-                0xed, 0xe7, 0xfb, 0x67, 0xa6, 0x3b, 0xb5, 0xc5, 0x9d, 0x25, 0xd1, 0x7f, 0xb9, 0x3f,
-                0xf2, 0x12, 0x1f, 0x4d,
+                0x89, 0x2a, 0xd5, 0x49, 0xae, 0xec, 0xea, 0x86, 0x29, 0x96, 0x65, 0x42, 0x30, 0x4f,
+                0xdc, 0xf0, 0xd7, 0xc2, 0xc2, 0xed, 0x24, 0x34, 0xfb, 0xd4, 0x48, 0x73, 0x14, 0x1a,
+                0x1a, 0x6c, 0xcd, 0x3d,
             ]
         ),
-        "update pinned digest after wire rice low-bits binding"
+        "update pinned digest after dropping CallSection num_claims from the wire"
     );
 }
 
@@ -286,7 +286,7 @@ fn opening_batch_digest_binds_point_variable_selection_order() {
         2,
         vec![OpeningGroupShape {
             point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
-            num_claims: 1,
+            num_polynomials: 1,
         }],
     )
     .expect("forward");
@@ -294,7 +294,7 @@ fn opening_batch_digest_binds_point_variable_selection_order() {
         2,
         vec![OpeningGroupShape {
             point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
-            num_claims: 1,
+            num_polynomials: 1,
         }],
     )
     .expect("swapped");
@@ -311,7 +311,6 @@ fn call_section_exposes_group_partition() {
     let call = CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call");
 
     assert_eq!(call.num_polys, 3);
-    assert_eq!(call.num_claims, 3);
     assert_eq!(call.num_commitment_groups, 2);
     assert_eq!(call.num_polys_per_commitment_group, vec![1, 2]);
     assert_eq!(call.point_variable_selections, vec![vec![0, 1, 2, 3]; 2]);

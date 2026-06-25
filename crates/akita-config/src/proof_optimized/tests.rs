@@ -227,7 +227,7 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
 
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatchShape) -> usize {
     let max_group_poly_count = opening_batch.num_polynomials();
-    let d_width = lp.num_blocks * opening_batch.num_claims() * lp.num_digits_open;
+    let d_width = lp.num_blocks * opening_batch.num_polynomials() * lp.num_digits_open;
     let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
     let b_width = max_group_poly_count * t_cols_per_vector;
     (lp.d_key.row_len() * d_width).max(lp.b_key.row_len() * b_width)

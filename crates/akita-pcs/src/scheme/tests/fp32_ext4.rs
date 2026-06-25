@@ -89,7 +89,7 @@ impl Fp32RingSubfieldRootFoldCfg {
 
 fn fp32_ext4_setup_matrix_size<F>(
     lp: &LevelParams,
-    max_num_claims: usize,
+    max_num_polynomials: usize,
 ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError>
 where
     F: akita_field::CanonicalField,
@@ -97,7 +97,7 @@ where
     let _field_marker = core::marker::PhantomData::<F>;
     let outer_width = lp
         .outer_width()
-        .checked_mul(max_num_claims)
+        .checked_mul(max_num_polynomials)
         .ok_or_else(|| AkitaError::InvalidSetup("B matrix width overflow".to_string()))?;
     #[cfg(feature = "zk")]
     let max_zk_b_len = lp
@@ -112,7 +112,7 @@ where
 
     let d_width = lp
         .d_matrix_width()
-        .checked_mul(max_num_claims)
+        .checked_mul(max_num_polynomials)
         .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".to_string()))?;
     #[cfg(feature = "zk")]
     let max_zk_d_len = lp
@@ -189,8 +189,8 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         max_num_batched_polys: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
-        let max_num_claims = fp32_ext4_max_claims(max_num_batched_polys)?;
-        fp32_ext4_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
+        let max_num_polynomials = fp32_ext4_max_claims(max_num_batched_polys)?;
+        fp32_ext4_setup_matrix_size::<Self::Field>(&lp, max_num_polynomials)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -200,11 +200,11 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn get_params_for_prove(
         opening_batch: &OpeningBatchShape,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
+        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_polynomials())?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             opening_batch.num_polynomials(),
-            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
             1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;
@@ -212,7 +212,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         let witness_shape = akita_types::segment_typed_witness_shape(
             &lp,
             Self::Field::modulus_bits(),
-            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
             opening_batch.num_polynomials(),
             1,
             1,
@@ -279,8 +279,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         max_num_batched_polys: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
-        let max_num_claims = fp32_ext4_max_claims(max_num_batched_polys)?;
-        fp32_ext4_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
+        let max_num_polynomials = fp32_ext4_max_claims(max_num_batched_polys)?;
+        fp32_ext4_setup_matrix_size::<Self::Field>(&lp, max_num_polynomials)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -290,7 +290,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn get_params_for_prove(
         opening_batch: &OpeningBatchShape,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_claims())?;
+        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_polynomials())?;
         // Single-fold schedule: the root IS the terminal fold, so its
         // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
@@ -299,7 +299,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             opening_batch.num_polynomials(),
-            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
             1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;
@@ -307,7 +307,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let witness_shape = akita_types::segment_typed_witness_shape(
             &lp,
             Self::Field::modulus_bits(),
-            opening_batch.num_claims(),
+            opening_batch.num_polynomials(),
             opening_batch.num_polynomials(),
             1,
             1,
