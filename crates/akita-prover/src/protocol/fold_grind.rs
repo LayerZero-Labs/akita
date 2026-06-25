@@ -51,10 +51,12 @@ fn accepts_fold_witness<const D: usize>(
     {
         return false;
     }
-    if tail_t_vectors.is_none() || contract.policy == FoldWitnessLinfCapPolicy::WorstCaseBetaOnly {
-        return true;
+    if tail_t_vectors.is_some()
+        && golomb_rice_rows_admit_terminal_wire(&witness.centered_coeffs, witness_linf_cap).is_err()
+    {
+        return false;
     }
-    golomb_rice_rows_admit_terminal_wire(&witness.centered_coeffs, witness_linf_cap).is_ok()
+    true
 }
 
 fn witness_linf_cap_for_grind(
@@ -98,8 +100,9 @@ fn grind_probe_nonces(
 /// with tail-bound grind use a transcript-seeded uniform permutation of the same
 /// range; see `specs/fold-linf-rejection.md` (*ZK: grind probe order*).
 ///
-/// When `tail_t_vectors` is set, tail-bound presets also reject witnesses whose centered
-/// coefficients do not fit the terminal Golomb planner budget at wire low bits.
+/// When `tail_t_vectors` is set, presets reject witnesses whose centered coefficients do not
+/// fit the terminal Golomb planner budget at wire low bits (including `WorstCaseBetaOnly`
+/// presets that do not reroll on linf cap).
 pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup<D>>,
@@ -208,5 +211,27 @@ mod tests {
             grind_probe_nonces(&contract, &binding, &transcript, &lp, 1).expect("shuffle order");
         let sequential = (0..contract.max_nonce_exclusive).collect::<Vec<_>>();
         assert_ne!(shuffled, sequential);
+    }
+
+    #[test]
+    fn worst_case_beta_only_still_rejects_golomb_inadmissible_terminal_tail() {
+        const D: usize = 4;
+        let cap = 1008u128;
+        let contract = FoldWitnessGrindContract {
+            policy: FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
+            witness_linf_cap: cap,
+            max_nonce_exclusive: 1,
+        };
+        let witness = DecomposeFoldWitness::<F, D> {
+            z_folded_rings: Vec::new(),
+            centered_coeffs: vec![[cap as i32; D]],
+            centered_inf_norm: cap as u32,
+        };
+        assert!(!accepts_fold_witness(
+            &contract,
+            &witness,
+            cap,
+            Some(1),
+        ));
     }
 }
