@@ -1,5 +1,6 @@
-//! Slice-0 tripwire: transparent proof bytes for fixed folded instances must not
-//! change across the ZK strip cutover (`specs/akita-zk-strip-for-audit.md`, I1).
+//! Slice-0 tripwire: transparent proof bytes for fixed folded instances are pinned
+//! against accidental transparent-path regressions (`specs/akita-zk-strip-for-audit.md`, I1).
+//! Re-pin digests when an intentional wire-format change (e.g. terminal Golomb encoding) lands.
 //!
 //! Cases exercise the main shipped presets on non-root-direct schedules:
 //! - `fp128::D64Full` at nv = 15
@@ -25,9 +26,9 @@ use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 
 const GOLDEN_D64_FULL_NV15_SHA256: &str =
-    "7d860d0bc97975cb5594bb91a631b23d32d7f4f6f44e05c6d82b1f361cdcfb0a";
+    "affaf7b40bce960207685e168c214d38233169dde547c527f1b3d174ad2cae96";
 const GOLDEN_D64_ONEHOT_NV20_SHA256: &str =
-    "d0df7b19b9159ab296cabe5e953142e10650734320d5931632003ef12c88c88c";
+    "84881ff6c9b652d0be459ed0844fa151e585bf53b07d29328dc0ad29c9735fbc";
 
 fn fixed_opening_point(nv: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -226,7 +227,7 @@ fn transparent_proof_golden_d64_full_nv15_digest() {
     }
     assert_eq!(
         digest, GOLDEN_D64_FULL_NV15_SHA256,
-        "fp128 D64Full nv15 proof bytes changed — ZK strip violated invariant I1"
+        "fp128 D64Full nv15 proof bytes changed — re-pin after intentional wire-format updates"
     );
 }
 
@@ -242,7 +243,7 @@ fn transparent_proof_golden_d64_onehot_nv20_digest() {
     }
     assert_eq!(
         digest, GOLDEN_D64_ONEHOT_NV20_SHA256,
-        "fp128 D64OneHot nv20 proof bytes changed — ZK strip violated invariant I1"
+        "fp128 D64OneHot nv20 proof bytes changed — re-pin after intentional wire-format updates"
     );
 }
 

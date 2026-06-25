@@ -8,6 +8,8 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 #[cfg(not(feature = "zk"))]
+use akita_types::terminal_golomb_grind_tail_t_vectors;
+#[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
 fn validate_non_eor_root_opening_shape<F, E, const D: usize>(
@@ -44,6 +46,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     claims: ProverOpeningBatch<'_, E, P, F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
+    terminal_tail_t_vectors: Option<usize>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
@@ -115,6 +118,7 @@ where
         basis,
         BlockOrder::RowMajor,
         m_row_layout,
+        terminal_tail_t_vectors,
     )
 }
 
@@ -205,6 +209,7 @@ where
         claims,
         root_params,
         MRowLayout::WithDBlock,
+        None,
         #[cfg(feature = "zk")]
         zk_hiding,
         basis,
@@ -310,12 +315,22 @@ where
 
     #[cfg(feature = "zk")]
     let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
+    #[cfg(not(feature = "zk"))]
+    let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
+        root_params,
+        MRowLayout::WithoutDBlock,
+        Some(terminal_direct_witness_shape),
+    )?;
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
         stack,
         transcript,
         claims,
         root_params,
         MRowLayout::WithoutDBlock,
+        #[cfg(not(feature = "zk"))]
+        terminal_tail_t_vectors,
+        #[cfg(feature = "zk")]
+        None,
         #[cfg(feature = "zk")]
         owned_zk_hiding,
         basis,

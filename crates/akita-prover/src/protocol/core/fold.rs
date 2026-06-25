@@ -292,6 +292,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     basis: BasisMode,
     block_order: BlockOrder,
     m_row_layout: MRowLayout,
+    terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -368,6 +369,7 @@ where
                 #[cfg(feature = "zk")]
                 zk_hiding,
                 m_row_layout,
+                terminal_tail_t_vectors,
             })
         } else {
             let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
@@ -406,6 +408,7 @@ where
                     #[cfg(feature = "zk")]
                     zk_hiding,
                     m_row_layout,
+                    terminal_tail_t_vectors,
                 },
             )
         }
@@ -430,6 +433,7 @@ where
             #[cfg(feature = "zk")]
             zk_hiding,
             m_row_layout,
+            terminal_tail_t_vectors,
         })
     }
 }
@@ -462,6 +466,7 @@ where
     #[cfg(feature = "zk")]
     zk_hiding: ZkHidingProverState<F>,
     m_row_layout: MRowLayout,
+    terminal_tail_t_vectors: Option<usize>,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
@@ -506,6 +511,7 @@ where
         #[cfg(feature = "zk")]
         zk_hiding,
         m_row_layout,
+        terminal_tail_t_vectors,
     } = args;
     let opening = stack.opening();
     let prepared_point = prepare_opening_point::<F, E, D>(
@@ -557,6 +563,7 @@ where
         transcript,
         row_coefficient_rings,
         m_row_layout,
+        terminal_tail_t_vectors,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let row_coefficients = if pad_base_evals {
@@ -1021,7 +1028,12 @@ where
                         "segment-typed witness layout does not match schedule".to_string(),
                     ));
                 }
-                validate_segment_typed_z_payload(&segment, scheduled_shape.z_payload_bytes)?;
+                validate_segment_typed_z_payload(
+                    &segment,
+                    lp,
+                    num_t_vectors,
+                    scheduled_shape.z_payload_bytes,
+                )?;
                 let parts = segment.terminal_transcript_parts()?;
                 transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
                 return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));
