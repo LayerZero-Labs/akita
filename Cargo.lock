@@ -104,6 +104,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff",
  "criterion",
+ "hex",
  "num-bigint",
  "p3-baby-bear",
  "p3-field",
@@ -113,6 +114,7 @@ dependencies = [
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rayon",
+ "sha2 0.10.9",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
@@ -150,14 +152,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-r1cs"
-version = "0.1.0"
-dependencies = [
- "akita-field",
- "tracing",
-]
-
-[[package]]
 name = "akita-schedules"
 version = "0.1.0"
 dependencies = [
@@ -191,7 +185,6 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-field",
- "akita-r1cs",
  "akita-serialization",
  "akita-transcript",
  "tracing",
@@ -868,6 +861,12 @@ name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
+
+[[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hybrid-array"
@@ -1641,6 +1640,17 @@ dependencies = [
 
 [[package]]
 name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "sha2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
@@ -1710,7 +1720,7 @@ dependencies = [
  "keccak 0.1.6",
  "p3-koala-bear",
  "rand 0.8.6",
- "sha2",
+ "sha2 0.11.0",
  "sha3 0.11.0",
 ]
 

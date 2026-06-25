@@ -5,7 +5,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField};
 #[cfg(test)]
 use akita_types::FlatMatrix;
-use akita_types::{zk, FlatDigitBlocks};
+use akita_types::{lhl_blinding, FlatDigitBlocks};
 use rand_core::{OsRng, RngCore};
 
 fn sample_balanced_pow2_digit<R: RngCore>(rng: &mut R, log_basis: u32) -> i8 {
@@ -35,7 +35,8 @@ where
         ));
     }
 
-    let blinding_planes = zk::blinding_digit_plane_count::<F>(output_ring_len, D, log_basis);
+    let blinding_planes =
+        lhl_blinding::blinding_digit_plane_count::<F>(output_ring_len, D, log_basis);
     if blinding_planes == 0 {
         return Ok(FlatDigitBlocks::empty());
     }

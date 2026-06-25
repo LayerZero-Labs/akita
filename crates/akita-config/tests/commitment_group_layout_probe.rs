@@ -33,7 +33,7 @@ fn layout_summary(
     num_vars: usize,
     max_basis: u32,
 ) -> Result<LayoutSummary, AkitaError> {
-    let key = AkitaScheduleLookupKey::new(num_vars, 1, 1, 1);
+    let key = AkitaScheduleLookupKey::new(num_vars, 1);
     let schedule = find_schedule(
         key,
         policy,

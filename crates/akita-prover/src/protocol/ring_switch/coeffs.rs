@@ -58,7 +58,7 @@ where
         + AkitaSerialize,
     B: RingSwitchProveBackend<F, D>,
 {
-    let num_claims = instance.opening_batch().num_claims();
+    let num_claims = instance.opening_batch().num_polynomials();
     let RingRelationWitness {
         z_folded_rings,
         fold_grind_nonce: _,

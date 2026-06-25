@@ -75,9 +75,8 @@ fn schedule_to_generated_steps(schedule: &Schedule) -> Vec<GeneratedStep> {
 
 fn emit_key(key: GeneratedScheduleKey) -> String {
     format!(
-        "GeneratedScheduleKey {{ num_vars: {}, num_t_vectors: {}, num_w_vectors: {}, \
-         num_z_vectors: {} }}",
-        key.num_vars, key.num_t_vectors, key.num_w_vectors, key.num_z_vectors,
+        "GeneratedScheduleKey {{ num_vars: {}, num_polynomials: {} }}",
+        key.num_vars, key.num_polynomials,
     )
 }
 

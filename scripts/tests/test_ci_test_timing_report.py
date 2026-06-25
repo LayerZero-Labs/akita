@@ -14,13 +14,12 @@ class CiTestTimingReportTests(unittest.TestCase):
         junit_path = FIXTURES_DIR / "sample-non-zk.xml"
         tests = report.parse_junit(junit_path)
         self.assertGreaterEqual(len(tests), 3)
-        # Sorted by duration descending.
         self.assertGreaterEqual(tests[0].duration_s, tests[-1].duration_s)
         ids = [t.id for t in tests]
         self.assertIn("bin_a::t1", ids)
         self.assertIn("bin_a::t1#2", ids)
 
-    def test_merge_and_render_smoke(self) -> None:
+    def test_merge_and_render_single_pass(self) -> None:
         from scripts import ci_test_timing_report as report
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -33,26 +32,23 @@ class CiTestTimingReportTests(unittest.TestCase):
                     "source_sha": "3735fc4f00000000000000000000000000000000",
                     "source_branch": "quang/ci-test-timing",
                     "workflow_run_id": 123,
-                    "passes": ["non-zk", "all-features"],
-                    "junits": [
-                        str(FIXTURES_DIR / "sample-non-zk.xml"),
-                        str(FIXTURES_DIR / "sample-all-features.xml"),
-                    ],
-                    "started_ats": ["100", "200"],
-                    "finished_ats": ["110", "260"],
-                    "exit_codes": ["0", "1"],
-                    "passes_parallel": True,
-                    "passes_sharded": False,
-                    "shard_count": 0,
+                    "passes": ["ci"],
+                    "profiles": ["ci"],
+                    "junits": [str(FIXTURES_DIR / "sample-non-zk.xml")],
+                    "timings": [],
+                    "started_ats": ["100"],
+                    "finished_ats": ["110"],
+                    "exit_codes": ["0"],
+                    "passes_sharded": True,
+                    "shard_count": 2,
                 },
             )()
             report.merge_command(args)
             summary_path = out_dir / "summary.json"
-            self.assertTrue(summary_path.exists())
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            self.assertIn("passes", summary)
-            self.assertIn("non-zk", summary["passes"])
-            self.assertEqual(summary["passes"]["non-zk"]["wall_s"], 10.0)
+            self.assertEqual(summary["schema_version"], 2)
+            self.assertEqual(summary["pass_layout"], "single")
+            self.assertEqual(summary["passes"]["ci"]["wall_s"], 10.0)
 
             render_args = type(
                 "Args",
@@ -66,15 +62,98 @@ class CiTestTimingReportTests(unittest.TestCase):
                 },
             )()
             report.render_command(render_args)
-            comment_path = out_dir / "comment.md"
-            self.assertTrue(comment_path.exists())
-            comment = comment_path.read_text(encoding="utf-8")
+            comment = (out_dir / "comment.md").read_text(encoding="utf-8")
             self.assertIn(report.MARKER, comment)
-            self.assertIn("CI test timing", comment)
-            self.assertIn("Critical path", comment)
-            self.assertTrue(summary.get("passes_parallel"))
+            self.assertIn("Run summary", comment)
+            self.assertNotIn("all-features", comment)
+            self.assertNotIn("Critical path", comment)
 
-    def test_prepare_pass_combines_shard_artifacts(self) -> None:
+    def test_merge_accepts_timing_file(self) -> None:
+        from scripts import ci_test_timing_report as report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            timing = pathlib.Path(tmp) / "timing.json"
+            timing.write_text(
+                '{"started_at_epoch":100,"finished_at_epoch":150,"exit_code":0}\n',
+                encoding="utf-8",
+            )
+            out_dir = pathlib.Path(tmp) / "out"
+            args = type(
+                "Args",
+                (),
+                {
+                    "output_dir": str(out_dir),
+                    "source_sha": "abc",
+                    "source_branch": "main",
+                    "workflow_run_id": 1,
+                    "passes": [],
+                    "profiles": [],
+                    "junits": [str(FIXTURES_DIR / "sample-non-zk.xml")],
+                    "timings": [str(timing)],
+                    "started_ats": [],
+                    "finished_ats": [],
+                    "exit_codes": [],
+                    "passes_sharded": False,
+                    "shard_count": 0,
+                },
+            )()
+            report.merge_command(args)
+            summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["passes"]["ci"]["wall_s"], 50.0)
+
+    def test_render_v2_current_against_v1_main_baseline(self) -> None:
+        from scripts import ci_test_timing_report as report
+
+        current = {
+            "schema_version": 2,
+            "pass_layout": "single",
+            "pass_order": ["ci"],
+            "passes_sharded": True,
+            "shard_count": 2,
+            "passes": {
+                "ci": {
+                    "wall_s": 500.0,
+                    "exit_code": 0,
+                    "test_count": 1,
+                    "skipped": 0,
+                    "failed": 0,
+                    "tests": [
+                        {
+                            "id": "bin_a::t1",
+                            "binary": "bin_a",
+                            "test": "t1",
+                            "classname": "bin_a",
+                            "duration_s": 40.0,
+                        }
+                    ],
+                }
+            },
+        }
+        main = {
+            "schema_version": 1,
+            "passes_parallel": True,
+            "passes": {
+                "non-zk": {
+                    "wall_s": 600.0,
+                    "tests": [
+                        {
+                            "id": "bin_a::t1",
+                            "binary": "bin_a",
+                            "test": "t1",
+                            "classname": "bin_a",
+                            "duration_s": 10.0,
+                        }
+                    ],
+                },
+                "all-features": {"wall_s": 200.0, "tests": []},
+            },
+        }
+        comment, _ = report.render_report(current, main, None, compact=False)
+        self.assertIn("Baseline layout mismatch", comment)
+        self.assertIn("600.0", comment)
+        self.assertIn("Regressions vs main", comment)
+
+    def test_prepare_shards_combines_shard_artifacts(self) -> None:
         from scripts import ci_test_timing_report as report
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -111,7 +190,7 @@ class CiTestTimingReportTests(unittest.TestCase):
                     "expected_shard_count": 0,
                 },
             )()
-            report.prepare_pass_command(args)
+            report.prepare_shards_command(args)
 
             tests = report.parse_junit(merged_junit)
             self.assertGreater(len(tests), 3)
@@ -137,34 +216,11 @@ class CiTestTimingReportTests(unittest.TestCase):
                 report.read_timing_command(args)
             self.assertEqual(buf.getvalue().strip(), "100 150 0")
 
-    def test_critical_path_omits_main_delta_without_parallel_baseline(self) -> None:
-        from scripts import ci_test_timing_report as report
-
-        current = {
-            "passes_parallel": True,
-            "passes_sharded": False,
-            "passes": {
-                "non-zk": {"wall_s": 500.0},
-                "all-features": {"wall_s": 200.0},
-            },
-        }
-        main = {
-            "passes_parallel": False,
-            "passes": {
-                "non-zk": {"wall_s": 600.0},
-                "all-features": {"wall_s": 250.0},
-            },
-        }
-        comment, _ = report.render_report(current, main, None, compact=True)
-        self.assertIn("Critical path", comment)
-        self.assertIn("predates parallel CI passes", comment)
-        self.assertNotIn("main 600", comment)
-
-    def test_prepare_pass_finds_nested_shard_artifacts(self) -> None:
+    def test_prepare_shards_finds_nested_shard_artifacts(self) -> None:
         from scripts import ci_test_timing_report as report
 
         with tempfile.TemporaryDirectory() as tmp:
-            nested = pathlib.Path(tmp) / "shards" / "ci-test-pass-non-zk-shard-1"
+            nested = pathlib.Path(tmp) / "shards" / "ci-test-pass-shard-1"
             nested.mkdir(parents=True)
             (nested / "junit-shard-1.xml").write_text(
                 (FIXTURES_DIR / "sample-non-zk.xml").read_text(encoding="utf-8"),
@@ -187,10 +243,10 @@ class CiTestTimingReportTests(unittest.TestCase):
                     "expected_shard_count": 0,
                 },
             )()
-            status = report.prepare_pass_command(args)
+            status = report.prepare_shards_command(args)
             self.assertEqual(status, 0)
 
-    def test_prepare_pass_requires_expected_shard_count(self) -> None:
+    def test_prepare_shards_requires_expected_shard_count(self) -> None:
         from scripts import ci_test_timing_report as report
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -217,7 +273,7 @@ class CiTestTimingReportTests(unittest.TestCase):
                     "expected_shard_count": 0,
                 },
             )()
-            status = report.prepare_pass_command(args)
+            status = report.prepare_shards_command(args)
             self.assertEqual(status, 1)
             timing = json.loads((pathlib.Path(tmp) / "merged-timing.json").read_text(encoding="utf-8"))
             self.assertTrue(timing.get("missing_shards"))
@@ -225,4 +281,3 @@ class CiTestTimingReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

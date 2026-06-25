@@ -116,7 +116,7 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::zk;
+    use akita_types::lhl_blinding;
     use akita_types::{
         AkitaSetupSeed, FlatMatrix, LevelParams, MRowLayout, OpeningBatchShape,
         RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
@@ -165,7 +165,7 @@ mod tests {
             b: vec![F::zero(); lp.num_blocks],
         };
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let num_claims = opening_batch.num_claims();
+        let num_claims = opening_batch.num_polynomials();
         let challenges = akita_challenges::Challenges::Sparse {
             challenges: Vec::new(),
             num_blocks_per_claim: lp.num_blocks,
@@ -207,9 +207,10 @@ mod tests {
 
         let w_len = depth_open * total_blocks;
         let b_blinding_digit_planes_per_point =
-            zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
+            lhl_blinding::blinding_digit_plane_count::<F>(n_b, D, log_basis);
         let b_blinding_segment_len = b_blinding_digit_planes_per_point;
-        let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
+        let d_blinding_segment_len =
+            lhl_blinding::blinding_digit_plane_count::<F>(n_d, D, log_basis);
         let lp = fixture_lp();
         let witness_segment_layout =
             ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)

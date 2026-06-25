@@ -196,7 +196,6 @@ fn expected_same_point_batched_shape(
         &terminal_params,
         1,
         1,
-        1,
         akita_types::MRowLayout::WithoutDBlock,
     )
     .expect("terminal-layout witness count")

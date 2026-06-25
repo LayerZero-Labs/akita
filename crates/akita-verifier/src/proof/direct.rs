@@ -68,13 +68,12 @@ where
     let opening_batch = claims.to_shape();
     let openings = claims.claims();
     let opening_point = claims.point();
-    let num_claims = opening_batch.num_claims();
     let num_polynomials = opening_batch.num_polynomials();
-    if witnesses.len() != num_polynomials || openings.len() != num_claims {
+    if witnesses.len() != num_polynomials || openings.len() != num_polynomials {
         return Err(AkitaError::InvalidProof);
     }
 
-    for (claim_idx, opening) in openings.iter().enumerate().take(num_claims) {
+    for (claim_idx, opening) in openings.iter().enumerate().take(num_polynomials) {
         let witness = witnesses.get(claim_idx).ok_or(AkitaError::InvalidProof)?;
         if !cleartext_witness_opening_matches(witness, opening_point, opening, basis)? {
             return Err(AkitaError::InvalidProof);
