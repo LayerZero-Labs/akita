@@ -729,10 +729,14 @@ where
             if !root_stage2.next_w_commitment.can_decode_vec(first_level_d) {
                 return Err(AkitaError::InvalidProof);
             }
+            let root_next_opening = proof
+                .root
+                .fold_stage3_sumcheck_proof(setup_contribution_mode)?
+                .map_or_else(|| root_stage2.next_w_eval(), |proof| proof.next_w_eval);
 
             let current_state = SuffixVerifierState {
                 opening_point: root_challenges,
-                opening: root_stage2.next_w_eval(),
+                opening: root_next_opening,
                 #[cfg(feature = "zk")]
                 opening_mask: zk_ext_mask_lc_at::<F, E>(
                     zk_hiding_cursor - <E as ExtField<F>>::EXT_DEGREE,
