@@ -76,7 +76,6 @@ Its public layout is `TailSegmentLayout`:
 pub struct TailSegmentLayout {
     pub ring_dimension: usize,
     pub log_basis: u32,
-    pub z_first: bool,
     pub z_coords: usize,
     pub e_field_elems: usize,
     pub t_field_elems: usize,
@@ -84,6 +83,9 @@ pub struct TailSegmentLayout {
     pub logical_num_elems: usize,
 }
 ```
+
+Wire segment order is fixed `z ‖ e ‖ t ‖ r` (#216 removed the old adaptive
+`z_first` flag).
 
 The current realized witness is:
 
