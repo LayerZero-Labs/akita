@@ -275,10 +275,10 @@ num_z_vectors = descriptor-bound number of public/folded Z rows
 w_hat_ring_count = num_w_vectors * num_blocks * num_digits_open
 t_hat_ring_count = num_t_vectors * num_blocks * a_key_row_len * num_digits_open
 z_pre_ring_count = num_z_vectors * inner_width * num_digits_fold
-z_first = m_vars >= r_vars
 
 w_hat_digit_count = w_hat_ring_count * ring_dim
-w_hat_digit_offset = if z_first { z_pre_ring_count * ring_dim } else { 0 }
+# w_hat always follows the leading z_pre segment.
+w_hat_digit_offset = z_pre_ring_count * ring_dim
 ```
 
 `num_z_vectors` is the explicit public-row count carried by witness-layout
@@ -294,8 +294,8 @@ canonical logical final-witness digit stream, then extracts:
 The verifier must not slice raw `PackedDigits` bytes. The representation is
 bit-packed, and logical digit boundaries need not be byte boundaries. The
 remainder is every terminal witness digit outside the logical `w_hat` range, in
-canonical final-witness order. This avoids relying on a prefix convention:
-current layouts may place `z_pre` before `w_hat` when `m_vars >= r_vars`.
+canonical final-witness order. This avoids relying on a prefix convention: `z_pre`
+always precedes `w_hat`.
 
 Verifier replay rejects malformed terminal proofs whose packed witness is too
 short for the derived range, whose remainder length does not match the

@@ -62,27 +62,23 @@ in $M$ (which segment goes where, in what order) are made for efficiency and
 engineering reasons only — **they do not change the security properties or the
 claims that Akita proves.**
 
-### Two column orderings
+### Column ordering
 
-The witness comes in one of two layouts, selected by a single boolean
-`z_first`. The motivation for having this choice is discussed in a later
-section; for now we just record the two shapes.
-
-When `z_first = true`:
+The witness column layout is:
 
 ```text
 z_hat ‖ e_hat ‖ t_hat ‖ b_zk ‖ d_zk ‖ r_tail
 ```
 
-When `z_first = false`:
-
-```text
-e_hat ‖ t_hat ‖ b_zk ‖ d_zk ‖ z_hat ‖ r_tail
-```
-
 Each segment occupies a disjoint, contiguous range of columns. The `b_zk` and
 `d_zk` blinding segments are present only in zero-knowledge builds and are empty
 otherwise.
+
+`z_hat` leads the layout so the committed-fold block sits at column offset `0`,
+which keeps the verifier on the fast multi-factor tensor path for the `z`
+segment. The `e_hat` and `t_hat` segments share the same `num_blocks` peel axis;
+their relative order does not change block alignment because both segment lengths
+are multiples of `num_blocks`.
 
 ### Segment sizes and layout
 
@@ -779,8 +775,8 @@ one-hot presets `DC = 1`, so `z_len = DF · block_len`.
 
 ### Worked example — `nv = 32`, fp128 `D64` one-hot
 
-Per-level schedule (`depth_commit = 1`, `z_first = true` on all 8 levels). The
-dense cost equals `z_len`; the partial-peel cost is
+Per-level schedule (`depth_commit = 1`, z-first layout on all 8 levels).
+The dense cost equals `z_len`; the partial-peel cost is
 `block_len + (block_len / 2^v) · DF`:
 
 | level | block_len | DF | pow2? | `2^v` | odd | dense (`z_len`) | partial peel | speedup |

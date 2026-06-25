@@ -267,7 +267,6 @@ TAIL_SUMMARY_INT_FIELDS = (
     "final_w_num_elems",
     "final_w_bits_per_elem",
     "tail_log_basis",
-    "tail_z_first",
     "tail_z_prefix_bytes",
     "tail_z_golomb_bytes",
     "tail_z_bytes",
@@ -368,11 +367,9 @@ def render_tail_encoding(current: dict[str, object]) -> None:
         return
 
     if current.get("tail_num_elems") is not None and current.get("tail_log_basis") is not None:
-        z_first = current.get("tail_z_first")
-        z_first_label = "z-first" if z_first == 1 else "e-first"
         print(
             f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elems, "
-            f"`log_basis={current['tail_log_basis']}`, wire order `{z_first_label}`"
+            f"`log_basis={current['tail_log_basis']}`, wire order `z-first`"
         )
 
     z_prefix = current.get("tail_z_prefix_bytes")
