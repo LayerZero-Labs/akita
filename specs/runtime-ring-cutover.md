@@ -24,10 +24,12 @@ suffix code re-prepares all four backend clusters and rebuilds stacks via
 This spec **demotes `D` from a storage and orchestration type parameter to a
 runtime schedule value**. Bulk data lives in flat field buffers; hot kernels still
 monomorphize at `const D` behind a single backend dispatch boundary. A
-**`FoldRingPlan`** records per-level `RingLevelContext` (ring dimension and setup
-prefix needs); **`PreparedSetup`** caches NTT state keyed by
-`(ring_d, num_ring_elements)` so later folds can use smaller prefixes at smaller
-ring degrees without paying for a full-envelope cache at every dimension.
+**`FoldRingPlan`** records per-level `RingLevelContext` (ring dimension and the
+setup prefix read at that level); **`PreparedSetup`** holds one NTT cache per
+**distinct** ring dimension the proof uses (keyed `(ring_d, num_ring_elements)`),
+warmed once at prove entry from `plan.unique_dims()`. Caches at different `ring_d`
+are physically distinct transforms and are never shared (see NTT cache today); a
+uniform-`D` proof keeps exactly one cache, identical to today.
 
 A follow-on planner change (not fully scoped here) can emit **one optimal
 mixed-D schedule per field family** instead of maintaining separate preset and
@@ -143,29 +145,56 @@ two copies (neg + cyc), so `cache_bytes ≈ num_ring_elements * K * D * 4 * 2` �
 fp128 (`K = 5`) roughly 5× the underlying field data (hence "much larger than the
 plain setup vector").
 
-**Why caches at different `D` do not overlap** (this is why the cache key must be
-`(ring_d, num_ring_elements)` and must **not** dedup across `ring_d`):
+**Why caches at different `D` cannot be shared.** Let the small/large dims be `D` and
+`2D` (concretely 64 and 128). A dim-`2D` element `f = (a₀,…,a_{2D−1})` is *viewed* at
+dim-`D` as two independent elements — the raw halves `p_lo = (a₀,…,a_{D−1})` and
+`p_hi = (a_D,…,a_{2D−1})`, with `f = p_lo + Xᴰ·p_hi`. The dim-`D` cache must hold
+`NTT±_D(p_lo)` and `NTT±_D(p_hi)` **separately**; the dim-`2D` cache holds
+`NTT±_{2D}(f)`. Three facts, in increasing subtlety:
 
-1. **The transform domain is tied to `D`.** The same coefficients viewed at `D=64`
-   are reinterpreted as twice as many ring elements, each NTT'd over a 64-point
-   (negacyclic 128-point) domain instead of a 128-point (256-point) domain. Different
-   roots of unity → different `params` twiddle tables (`CrtNttParamSet<…,64>` vs
-   `<…,128>` are distinct types) → different output values. Neither cache's bytes are
-   a sub-slice of the other.
-2. **Primes shared, transforms not.** The prime family depends only on the field
-   modulus, so fp128 uses the same 5 primes at both `D` — but per-element NTT values
-   and twiddles are `D`-specific, so nothing is reused.
-3. **Cooley–Tukey relationship is not exploited.** A 128-point NTT decomposes into two
-   64-point NTTs plus a merge layer, but `build_ntt_slot` rebuilds from coefficients
-   per `(D, view)`. The two caches are independent allocations.
+1. **Root nesting holds only for the cyclic transform.** The cyclic `N`-NTT (the `cyc`
+   / quotient rep, ring `Xᴺ−1`) evaluates at the `N`-th roots of unity. Since
+   `x⁶⁴ = 1 ⟹ x¹²⁸ = (x⁶⁴)² = 1`, the `D`-th roots are exactly the even powers of a
+   primitive `2D`-th root: `{D-th roots} ⊂ {2D-th roots}`. The negacyclic `N`-NTT (the
+   `neg` / matvec rep, ring `Xᴺ+1`) evaluates at the roots of `Xᴺ+1`: dim-`D` roots
+   solve `xᴰ = −1` (order exactly `2D`), dim-`2D` roots solve `x^{2D} = −1` (order
+   exactly `4D`) — **disjoint**. So the "roots of −1, same thing applies" intuition
+   holds for `+1` (cyclic) but **fails for −1** (negacyclic): `α⁶⁴ = −1 ⟹ α¹²⁸ = +1 ≠ −1`.
 
-**Size corollary.** Because the field-element count is invariant, a *full-envelope*
-cache holds the same total transformed-i32 count at any `D`
-(`num_ring_elements_at_D * D * K = total_coeffs * K`). Smaller `D` does **not** shrink
-the full cache. The real win is that later folds consume only a **prefix** of
-`k ≪ total` ring elements; a `(64, k)` cache is genuinely cheaper than the
-`(128, total_128)` root cache. Distinct keys naming distinct, non-overlapping
-transforms is correct and intended.
+2. **Even where the roots nest, the operands don't.** The exact radix-2
+   (decimation-in-frequency) identity for the cyclic transform is
+   ```
+   NTT⁺_{2D}(f)[even] = NTT⁺_D(p_lo + p_hi)
+   NTT⁺_{2D}(f)[odd]  = NTT⁻_D(p_lo − p_hi)
+   ```
+   Derivation: at an even point `ω²ᵏ` (so `ω²` is a primitive `D`-th root), `ω^{2kD}=1`
+   yields `Σ(a_i + a_{D+i})(ω²)^{ki}`, the cyclic transform of the *sum*; at an odd
+   point `ω^{2k+1}`, `ωᴰ=−1` yields `Σ(a_i − a_{D+i})ω^{(2k+1)i}`, the *negacyclic*
+   transform of the *difference* on the `Xᴰ+1` roots. So the even sublattice of the
+   `2D`-cyclic cache **is** a genuine `D`-cyclic transform — but of `p_lo+p_hi`, giving
+   only one linear equation `NTT⁺_D(p_lo) + NTT⁺_D(p_hi)`. The other block lives in the
+   negacyclic domain (different evaluation points) and cannot be combined to separate
+   the halves. The transform of an interleaving is not the interleaving of the
+   transforms.
+
+3. **The salvageable part isn't worth it.** Deinterleaving **both** the `2D` cyc and
+   neg caches yields four sum/difference relations across the two domains — exactly one
+   Cooley–Tukey butterfly layer, which is invertible: one *could* recover the four
+   `D`-caches with `O(D)` twiddle butterflies per element instead of an `O(D log D)`
+   retransform. But (a) it only helps on the region the two caches *share*, which is
+   normally empty — the `2D` cache is the full root envelope while a `D` cache is a
+   small later prefix; (b) it saves build *compute*, not *memory* — both layouts must
+   still be stored, and storage (~5× the field data for fp128) dominates; (c) it is
+   domain-crossing and twiddle-heavy. So `build_ntt_slot` rebuilds from coefficients
+   per `(D, view)`, and the cache keys on `ring_d` with no cross-`D` reuse.
+
+**Size corollary.** The field-element count is invariant, so a *full-envelope* cache
+holds the same total transformed-i32 count at any `D`
+(`num_ring_elements_at_D · D · K = total_coeffs · K`). Smaller `D` does **not** shrink
+the full-envelope cache; it only regroups the same coefficients. (Real memory savings
+would come from caching a sub-envelope **prefix** sized to a proof's actual commit
+footprint rather than the `max_num_vars` envelope — a deferred optimization, orthogonal
+to `ring_d`; see NTT cache design.)
 
 ### What hurts today
 
@@ -253,8 +282,9 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 2. Suffix orchestration does not special-case cross-D folds (no stack rebuild).
 3. Fold protocol storage (`PreparedFold`, `RingRelationInstance`) does not carry
    `const D` on the struct (Phase 3); in-memory owners use `RingBuf` / `RingSlice`.
-4. NTT prepared caches are sized per `(ring_d, num_ring_elements)`, not per full
-   envelope.
+4. NTT prepared caches are one full-envelope cache per **distinct** `ring_d` (keyed
+   `(ring_d, num_ring_elements)`), warmed at prove entry, never shared across `ring_d`.
+   Prefix-sizing *within* a `ring_d` is a deferred optimization (see NTT cache design).
 5. Infrastructure supports a future planner that optimizes `ring_d` per fold step
    within one field family.
 
@@ -280,17 +310,19 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 **Setup / NTT cache**
 
 - One physical `FlatMatrix` per expanded setup (`gen_ring_dim` = capacity envelope).
-- NTT cache entries keyed by `(ring_d, num_ring_elements)`; building uses
-  `ring_view::<D>(rows, cols)` on a **prefix** only.
-- Distinct keys may coexist on one proof (e.g. `(128, total_128)` and `(64, k)` with
-  `k ≪ total_64`). Keys at different `ring_d` name physically distinct,
-  non-overlapping transforms (see NTT cache today); never dedup across `ring_d`.
+- One NTT cache per **distinct** `ring_d`, keyed `(ring_d, num_ring_elements)` with
+  `num_ring_elements = total_ring_elements_at::<ring_d>()` (the full envelope at that
+  `ring_d`). Uniform-`D` ⇒ exactly one entry (today's behavior).
+- Keys at different `ring_d` name physically distinct, non-overlapping transforms (see
+  NTT cache today); never dedup or share across `ring_d`.
 - The cache-hit accessor `NttSlotCacheAny::as_d::<D>()` is **fallible**: a stored
   variant whose `ring_d` ≠ the dispatched `D` returns `InvalidSetup`, never panics.
-- `setup_active_ring_elems_at(ℓ)` is a pure function of `(schedule, level, setup
-  envelope, relation shape)` — challenge-independent (see Normative contracts).
-  `setup_ntt_ring_elems_at(ℓ)` additionally depends on the setup-prefix registry and
-  is prover-only.
+- The NTT cache is **independent of setup-prefix offload**: kernels take the full slot
+  plus `(row_len, row_width)` and index a prefix; offload changes only the setup
+  sumcheck's *direct* `ring_view`, never a cache key (see Setup-prefix offload).
+- `setup_active_ring_elems_at(ℓ)` (the offload-decision count) is a pure function of
+  `(schedule, level, setup envelope, relation shape)` — challenge-independent (see
+  Normative contracts) and **identical on prover and verifier**.
 
 **Descriptor / transcript**
 
@@ -334,9 +366,10 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
       type.
 - [ ] `NttCacheKey`, `NttSlotCacheAny` (+ fallible `as_d::<D>()`), `NttCacheMap`
       (`HashMap` keyed store) with lazy `ensure_ntt_slot`.
-- [ ] `CpuPreparedSetup<F>` (trait `PreparedSetup<F>`) without `const D`; lazy
-      `ensure_ntt_slot(key)` on first use inside the fold loop (no infeasible
-      pre-loop warm-cache; see Warm-cache policy).
+- [ ] `CpuPreparedSetup<F>` (trait assoc type `PreparedSetup`) without `const D`;
+      `prepare_expanded` builds an empty map; warm-cache at prove entry via
+      `plan.unique_dims()` (one full-envelope entry per distinct `ring_d`; see
+      Warm-cache policy).
 - [ ] Single shared setup-geometry function consumed by **both** prover setup
       sumcheck and verifier stage 3 (replaces the two parallel derivations).
 - [ ] D-free `SetupPrefixRegistry` (replaces `SetupPrefixProverRegistry<F, D>`; the
@@ -407,8 +440,9 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
   level shape (single-tier, tiered, with/without prefix offload), pinning
   `(level shape, ring_d, required, offload?) → (active, ntt)`. These must be derivable
   **without** challenges (regression guard against re-coupling to `eq_tau1`).
-- `NttCacheKey` unit tests: `cache_bytes()` scales with `num_ring_elements` and `D`;
-  prefix `k < total` builds smaller cache than full envelope.
+- `NttCacheKey` / warm-cache unit tests: uniform-D warms exactly one entry
+  `(Cfg::D, total)`; the mixed-D fixture warms exactly two; `cache_bytes()` scales with
+  `num_ring_elements` and `D`.
 - `NttSlotCacheAny::as_d::<D>()` returns the correct variant on match and
   `InvalidSetup` on `ring_d` mismatch (no panic).
 - `RingBuf::as_ring_slice` / `FlatRingVec::as_ring_slice` roundtrip and alignment.
@@ -434,18 +468,19 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
   consistent `current_w_len` / `next_w_len` chain.
 - Witness length divisible at each `D` transition; `128 % 64 == 0` so the envelope
   buffer splits cleanly with no envelope-sizing change.
-- Expected NTT keys: at most one `(128, total_128)`, one or two `(64, prefix_64)`
-  variants depending on offload; total distinct keys ≤ 4.
+- Expected NTT keys: exactly two — `(128, total_128)` and `(64, total_64)`. Offload
+  does not change this (it touches only the setup sumcheck's direct read).
 
 ### Performance
 
 - **Gate:** `ring_ntt.rs`, `root_kernels.rs` baselines; profile workloads in
   `book/src/usage/profiling.md`.
 - **Expect:** neutral or faster on uniform-D proofs (suffix cold path removed).
-- **Expect:** mixed-D proofs build one NTT cache per distinct `(D, prefix)` key
-  (lazy `ensure_ntt_slot` dedups via the `HashMap`), not per fold level.
-- **Memory:** `NttCacheMap` holds O(unique keys) entries per proof session; shipped
-  uniform-D presets typically 1–2 keys; mixed-D fixture ≤ 4 keys.
+- **Expect:** mixed-D proofs build one full-envelope NTT cache per distinct `ring_d`,
+  warmed at entry from `plan.unique_dims()`; uniform-D builds exactly one (today's work,
+  relocated from `prepare_expanded`). Offload adds no cache builds.
+- **Memory:** `NttCacheMap` holds one entry per distinct `ring_d`: 1 for uniform-D, 2
+  for the mixed-D fixture, ≤ 4 in principle.
 - **Advisory (not CI):** profile preset `onehot_fp128_d64:32:1` prove time within
   5% of pre-cutover baseline after Phase 2.
 
@@ -519,16 +554,16 @@ is derivable from the schedule's witness/claim chain.
 This is the single shared function required by both prover and verifier (What hurts
 #6). Both sides must call it; no parallel copy survives.
 
-### `setup_ntt_ring_elems_at` and offload
+### Setup-prefix offload (decoupled from the NTT cache)
 
-`setup_ntt_ring_elems_at(ℓ)` is the ring-element count for the **NTT cache key**.
-Normally equals `setup_active_ring_elems_at(ℓ)`. When setup-prefix offloading is
-active it equals the **padded** prefix length in ring elements (`slot.padded_len /
-ring_d`) so the cache covers the committed prefix domain. It additionally depends on
-the `SetupPrefixRegistry`, so it is a **prover-only** quantity (the verifier has no
-NTT cache; it only needs the offload active/inactive decision to absorb `slot.id`).
-
-`RingLevelContext` therefore separates shared geometry from prover-only NTT sizing:
+A correction to an earlier draft of this spec: **offload does not size or key the NTT
+cache.** The commitment matvec/quotient kernels read the shared-matrix NTT cache
+(full envelope per `ring_d`, indexing a prefix). The setup sumcheck — the only place
+offload acts — reads the shared matrix **directly** (`ring_view::<D>(1, setup_eval_len)`
+→ its own lifted table; it never touches the NTT cache). Offload only changes
+`setup_eval_len` (the direct read length) and absorbs `slot.id`. There is therefore
+**no `setup_ntt_ring_elems` quantity** and `RingLevelContext` carries no prover-only
+NTT field:
 
 ```rust
 pub const MAX_FOLD_LEVELS: usize = 16;            // > deepest shipped schedule; from_schedule fails closed above
@@ -537,39 +572,49 @@ pub const SUPPORTED_RING_DIMS: [usize; 4] = [32, 64, 128, 256];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RingLevelContext {
     pub ring_d: usize,
-    /// Natural setup ring elements read at this level (shared; prover and verifier).
+    /// Shape-only count of setup ring rows the level's setup product touches
+    /// (`SetupContributionPlan::required`). Drives the offload decision and the setup
+    /// sumcheck's direct `ring_view`. Identical on prover and verifier.
     pub setup_active_ring_elems: usize,
-    /// NTT cache element count at this level (prover-only; padded when offload active).
-    /// `None` on the verifier path, which has no NTT cache.
-    pub setup_ntt_ring_elems: Option<usize>,
-}
-
-impl RingLevelContext {
-    pub fn shared_ntt_key(&self) -> Option<NttCacheKey> {
-        self.setup_ntt_ring_elems.map(|n| NttCacheKey {
-            ring_d: self.ring_d,
-            num_ring_elements: n,
-        })
-    }
 }
 ```
 
-**Offload decision at level ℓ** (normative; helpers already D-free):
+The NTT cache key for a level is just `(ctx.ring_d, total_ring_elements_at::<ring_d>())`
+— derivable from `ring_d` and the seed alone, with no dependence on the relation shape,
+the registry, or offload. That is why warm-cache by `plan.unique_dims()` is feasible
+(see Warm-cache policy).
 
-1. `natural_field_len = setup_active_ring_elems_at(ℓ) * ring_d`.
-2. `setup_prefix_level_params(level_params, n_prefix, ring_d)` (already takes
-   `d_setup`; no generalization needed).
-3. If params are `Some` **and** `prefix_registry` has a slot whose `SetupPrefixSlotId`
-   (which already carries `d_setup`) covers `natural_field_len`, offload is **active**:
-   transcript absorbs `slot.id` (both sides, same order as today);
-   `setup_ntt_ring_elems = slot.padded_len / ring_d`.
-4. Else `setup_ntt_ring_elems = setup_active_ring_elems`.
+**Offload decision at level ℓ** (normative; stays inside the setup sumcheck / stage 3,
+exactly where it is today, now ungated):
 
-The genuine remaining work here is narrow (the wire artifacts and helpers already
-exist and are D-free): **(a)** delete the `if D == SETUP_OFFLOAD_D_SETUP` eligibility
-gate at its two call sites (`setup_sumcheck.rs`, `stage3.rs`) and the constant, so
-offload is eligible at any `ring_d` the level/registry permits; **(b)** demote the
-*prover* registry/slot off `const D` (see Phase-ordering note).
+1. `natural_field_len = ctx.setup_active_ring_elems * ring_d` (today's `required * D`).
+2. `setup_prefix_level_params(level_params, n_prefix, ring_d)` — already takes
+   `d_setup`; no generalization needed.
+3. If params are `Some` **and** the side's prefix registry has a slot whose
+   `SetupPrefixSlotId` (already carries `d_setup`) covers `natural_field_len`, offload
+   is **active**: absorb `slot.id` (both sides, same order as today) and read the slot's
+   prefix length.
+4. Else read the full matrix as today.
+
+**Each side runs this with its own already-existing registry** — the prover with the
+session `SetupPrefixRegistry` (this spec's D-free successor to
+`SetupPrefixProverRegistry`), the verifier with `SetupPrefixVerifierRegistry`. Both feed
+the *same* shared `select_setup_prefix_slot` and look up the *same* `SetupPrefixSlotId`,
+which is exactly what keeps `setup_eval_len` and the transcript absorption identical on
+both sides. The earlier draft’s `context_at(prefix_registry: None)` on the verifier was
+wrong: the offload decision does not live in `context_at` (which is registry-free and
+symmetric) — it lives here, in the setup sumcheck (prover) and stage 3 (verifier), where
+each side already holds its registry. Inputs to the decision are challenge-free
+(`setup_active_ring_elems` is shape-only), so prover and verifier agree without a
+transcript digest of `setup_eval_len`.
+
+Because `select_setup_prefix_slot` already returns `None` when no matching slot exists,
+deleting the `if D == SETUP_OFFLOAD_D_SETUP` gate is behavior-preserving for shipped
+presets (setup construction still populates slots only at `d_setup = 64`; *which* slots
+exist is a separate, out-of-scope question). The genuine remaining work is narrow:
+**(a)** delete the `if D == SETUP_OFFLOAD_D_SETUP` gate at its two call sites
+(`setup_sumcheck.rs`, `stage3.rs`) and the constant; **(b)** demote the *prover*
+registry/slot off `const D` (see Phase-ordering note).
 
 ### `FoldRingPlan` and `RingLevelContext`
 
@@ -593,16 +638,17 @@ impl FoldRingPlan {
     pub fn dim_at(&self, level: usize) -> Result<usize, AkitaError>;
     pub fn unique_dims(&self) -> impl Iterator<Item = usize> + '_;
 
-    /// Per-level geometry. A per-level RUNTIME call (needs the live relation shape and,
-    /// for the prover, the prefix registry). NOT precomputable before the fold loop —
-    /// the relation shape at level ℓ is the output of folding ℓ-1.
+    /// Per-level geometry. A per-level RUNTIME call (needs the live relation shape).
+    /// NOT precomputable before the fold loop — the relation shape at level ℓ is the
+    /// output of folding ℓ-1. Identical signature and result on prover and verifier
+    /// (the offload decision, which needs the registry, lives in the setup sumcheck,
+    /// not here).
     pub fn context_at<F>(
         &self,
         level: usize,
         schedule: &Schedule,
         expanded: &AkitaExpandedSetup<F>,
         relation_shape: &SetupRelationShape,
-        prefix_registry: Option<&SetupPrefixRegistry>,   // Some on prover, None on verifier
     ) -> Result<RingLevelContext, AkitaError>;
 }
 ```
@@ -610,8 +656,9 @@ impl FoldRingPlan {
 `dim_at` returns `ring_dims[level]` after bounds / support checks. `context_at`
 replaces today's `validate_level_dispatch`: it checks `SUPPORTED_RING_DIMS`,
 `schedule[level].params.ring_dimension == ring_dims[level]`, then derives
-`setup_active_ring_elems` (shared) and, when `prefix_registry` is `Some`,
-`setup_ntt_ring_elems`.
+`setup_active_ring_elems` via the shared `setup_active_ring_elems_at`. The NTT cache
+key for the level is `(ctx.ring_d, total_ring_elements_at::<ring_d>())`, formed
+separately at the kernel boundary — `context_at` does not compute it.
 
 **Prove entry:** build `FoldRingPlan::from_schedule(schedule, seed)`; the verifier
 builds the same plan from the same schedule + seed. Per-level contexts are computed
@@ -631,34 +678,64 @@ builds the same plan from the same schedule + seed. Per-level contexts are compu
 | Cross-level lengths | `next_w_len` consistent with digit layout at `ring_d` and the next level's `ring_d` when they differ |
 | Root layout | `ring_dims[0]` matches committed polynomial ring layout (validated at PCS commit entry) |
 
-Setup-prefix feasibility (`setup_ntt_ring_elems ≤ envelope total at ring_d`) is a
-**runtime** check inside `context_at` (it depends on the registry), not a
-`from_schedule` check. Mixed-D schedules that bypass generated expansion (hand-built
-fixtures, Phase 3 test) must still satisfy this catalog.
+Active-prefix feasibility (`setup_active_ring_elems ≤ envelope total at ring_d`) is a
+**runtime** check inside `context_at` (it depends on the live relation shape), not a
+`from_schedule` check; offload-slot coverage is checked where offload is decided (setup
+sumcheck / stage 3). Mixed-D schedules that bypass generated expansion (hand-built
+fixtures, the mixed-D fixture) must still satisfy this catalog.
 
-### Warm-cache policy (corrected)
+### Warm-cache policy
 
-The NTT cache is built **lazily inside the fold loop** via `ensure_ntt_slot(key)`. The
-`NttCacheMap` `HashMap` deduplicates: distinct levels sharing a `(ring_d, prefix)` key
-build the cache exactly once, on first use. There is **no pre-loop warm-cache loop**,
-because the per-level key needs the live relation shape (and registry), which do not
-exist before the loop.
+Because the NTT cache key is `(ring_d, total_ring_elements_at::<ring_d>())` — a function
+of `ring_d` and the seed alone, with no dependence on the relation shape, challenges, or
+registry — the full set of keys **is** known before any fold runs: it is exactly
+`plan.unique_dims()`, which spans the **whole** plan, root fold (level 0) included. So
+warm the cache once at prove entry — **before the root fold, not just before the suffix
+loop** — while you still hold `&mut` on the prepared setup, then run everything against
+`&prepared` with **no interior mutability** in the hot path:
 
 ```rust
+// Prove entry, after building the plan, BEFORE the root fold and the suffix loop:
+for d in plan.unique_dims() {            // spans levels 0..num_folds, root included
+    // total_ring_elements_at_dyn(d) is the runtime sibling of the const-generic
+    // total_ring_elements_at::<D>() — pure arithmetic (total_ring_elements * gen_ring_dim / d
+    // with the gen_ring_dim % d == 0 check); add it in Wave 2.
+    let n = expanded.shared_matrix().total_ring_elements_at_dyn(d)?;
+    prepared.ensure_ntt_slot(NttCacheKey { ring_d: d, num_ring_elements: n })?;  // &mut prepared
+}
+// freeze: hand &prepared to the root fold AND the suffix loop
+root_fold(..., &prepared, plan.context_at(0, ...)?, ...)?;   // level 0, reads ntt_slot via &prepared
 for level in 1..plan.num_folds {
-    let ctx = plan.context_at(level, schedule, expanded, &relation_shape, Some(&prefix_registry))?;
-    if let Some(key) = ctx.shared_ntt_key() {
-        prepared.ensure_ntt_slot(key)?;     // builds once per distinct key, lazily
-    }
-    let prepared_fold = prepare_suffix(stack, ..., &ctx, ...)?;
+    let ctx = plan.context_at(level, schedule, expanded, &relation_shape)?;
+    let prepared_fold = prepare_suffix(stack, ..., &ctx, ...)?;   // reads ntt_slot via &prepared
     prove_fold(..., stack, &ctx, prepared_fold, ...)?;
 }
 ```
 
-(If a future need arises to pre-size or fail-fast, the shape-only `setup_geometry_at`
-path *can* enumerate keys ahead of the loop **for levels whose relation shape is
-schedule-derivable**, but that is an optimization, not the correctness path, and is
-out of scope here.)
+**Root fold and the standalone commit path are not special-cased — they are covered, but
+only if you warm by `unique_dims()` and place the warm before the root fold.** Two traps
+to avoid (both flagged in review):
+
+- The suffix loop starts at level **1**; the **root fold at level 0** runs earlier,
+  outside `prove_suffix`, and also reads the prepared-setup NTT cache. Warming by
+  `plan.unique_dims()` (which includes `dim_at(0)`) before the root fold covers it.
+  Warming *inside* a `level >= 1` loop, or lazily on first suffix use, would leave the
+  root fold without a built entry — do not do that.
+- The standalone `commit` entry point (committing the root polynomial, which runs before
+  any `FoldRingPlan` exists) must likewise `ensure_ntt_slot` its root-layout entry
+  `(Cfg::D, total)` at its own entry, since `prepare_expanded` no longer builds it
+  eagerly.
+
+For a uniform-`D` proof this warms exactly one cache `(Cfg::D, total)` — byte-for-byte
+the work `prepare_expanded` does eagerly today, just relocated and keyed (and the commit
+path warms the same single entry). For the mixed-D fixture it warms exactly two:
+`(128, total_128)` and `(64, total_64)`.
+
+(`ensure_ntt_slot` is still idempotent and safe to call lazily if a future code path
+prefers it; warming up front is chosen because it avoids any interior-mutability or
+`OnceLock` machinery in the single-threaded hot loop and makes the cache contents a
+pure function of the plan. Prefix-sizing a cache below the full envelope is a deferred
+optimization, orthogonal to this policy.)
 
 ### D-free `PreparedSetup` and NTT caches
 
@@ -703,16 +780,24 @@ pub struct CpuPreparedSetup<F> {
 pub trait ComputeBackendSetup<F> {
     type PreparedSetup: Send + Sync;  // no const D
     fn prepare_expanded(expanded: Arc<AkitaExpandedSetup<F>>) -> Result<Self::PreparedSetup, ...>;
-    fn ensure_ntt_slot(prepared: &Self::PreparedSetup, key: NttCacheKey) -> Result<(), AkitaError>;
+    /// Build the cache for `key` if absent. Called at prove entry with `&mut`
+    /// (warm-cache); idempotent.
+    fn ensure_ntt_slot(prepared: &mut Self::PreparedSetup, key: NttCacheKey) -> Result<(), AkitaError>;
+    /// Read a previously-warmed slot. `InvalidSetup` if the key was never warmed.
     fn ntt_slot<'a>(prepared: &'a Self::PreparedSetup, key: NttCacheKey)
         -> Result<&'a NttSlotCacheAny, AkitaError>;
 }
 ```
 
-Cache-miss (build) path:
+`prepare_expanded` builds an **empty** map (no eager NTT). The single warm-cache loop at
+prove entry (see Warm-cache policy) populates one entry per distinct `ring_d`, each at
+the full envelope `num_ring_elements = total_ring_elements_at::<ring_d>()`.
+
+Cache-build path (inside `ensure_ntt_slot`):
 
 ```rust
 dispatch_ring_dim!(key.ring_d, |D| {
+    // key.num_ring_elements == total_ring_elements_at::<D>() in the baseline
     let view = expanded.shared_matrix().ring_view::<D>(1, key.num_ring_elements)?;
     NttSlotCacheAny::from(build_ntt_slot(view)?)
 })
@@ -729,13 +814,15 @@ dispatch_ring_dim!(ctx.ring_d, |D| {
 })
 ```
 
-ZK blinding matrices follow the same keyed pattern per `(ring_d, num_ring_elements)`.
+ZK blinding matrices follow the same pattern in their own maps (`zk_b_ntt`, `zk_d_ntt`):
+one full-envelope cache per distinct `ring_d`.
 
-**`NttCacheMap`:** `HashMap<NttCacheKey, NttSlotCacheAny>` with lazy
-`ensure_ntt_slot`. Prove is single-threaded today; if parallel prove ships later, use
-`OnceLock`/`DashMap` per key. Expected cardinality is small (≤ 8 keys per proof). No
-fixed-slot table: prefix/offload combinations can yield multiple keys at the same
-`ring_d`, and keys at different `ring_d` are physically distinct (see NTT cache today).
+**`NttCacheMap`:** `HashMap<NttCacheKey, NttSlotCacheAny>`, populated by
+`ensure_ntt_slot` at prove entry (`&mut`). Cardinality = number of distinct `ring_d` in
+the plan: **1 for uniform-`D`**, ≤ 4 in principle. Offload adds no entries (it never
+touches the cache). A `HashMap` (rather than a fixed 4-slot table) is used only so the
+key type stays forward-compatible with a future prefix-sized cache; today there is
+exactly one entry per `ring_d`.
 
 ### Flat ring storage
 
@@ -814,11 +901,11 @@ per-call `ring_d` selects cache key and kernel monomorphization.
 Verifier has no `PreparedSetup` / NTT cache. Changes:
 
 - Build `FoldRingPlan` from schedule + seed (same as prover).
-- `verify_fold(..., ctx: &RingLevelContext, ...)` without suffix-level dispatch macro;
-  `ctx.setup_ntt_ring_elems == None` on this side.
-- `context_at(..., prefix_registry = None)` computes only the shared
-  `setup_active_ring_elems` (plus the offload active/inactive decision for transcript
-  absorption); it does not compute an NTT element count.
+- `verify_fold(..., ctx: &RingLevelContext, ...)` without the suffix-level dispatch
+  macro. `RingLevelContext` is identical to the prover's (no NTT field).
+- `context_at` is the same call as the prover's; the verifier simply never warms an NTT
+  cache. The offload active/inactive decision (for transcript absorption) happens in
+  stage 3 via the shared `select_setup_prefix_slot`, exactly as on the prover.
 - Flat proof decode: `proof.v().as_ring_slice::<D>()` where `D = ctx.ring_d`.
 - `validate_level_dispatch` replaced by `FoldRingPlan::context_at`.
 
@@ -935,8 +1022,8 @@ Custom backend implementors: see updated `docs/compute-backends.md` checklist
 | C. Runtime-D NTT without `const D` | Rejected: SIMD regression |
 | D. 16 fixed `PreparedSetup` slots per proof | Rejected: duplicates caches |
 | E. `enum PreparedSetup { D32(...), D64(...), ... }` per stack | Rejected: multiplies stacks; prefer keyed cache |
-| F. Pre-loop NTT warm-cache via `ntt_cache_keys()` | Rejected: per-level keys need the live relation shape (output of prior folds); lazy `ensure_ntt_slot` gives the same dedup |
-| G. Share NTT bytes across `ring_d` via Cooley–Tukey | Rejected: transforms at different `D` are distinct domains; not exploited by kernels; complexity ≫ benefit |
+| F. Per-level prefix-keyed NTT cache (key per `(ring_d, level prefix)`) | Rejected: kernels index a prefix of one full slot, so per-level keys would build several overlapping caches and **regress** uniform-D from one cache to many. Adopted instead: one full-envelope cache per distinct `ring_d`, warmed at entry from `plan.unique_dims()` |
+| G. Share NTT bytes across `ring_d` via Cooley–Tukey | Rejected: cyclic roots nest (`D`-th ⊂ `2D`-th) but the view splits into *raw halves* whose separate transforms are not sub-blocks of the `2D` transform — that holds `NTT(p_lo±p_hi)` in mixed cyclic/negacyclic domains; negacyclic roots don't nest at all. Recovery costs a domain-crossing butterfly over a usually-empty overlap and saves no memory (see NTT cache today) |
 
 ## Future: unified field-family planner
 
@@ -1028,52 +1115,191 @@ loop without stack rebuild) or land in the same PR series with a shared owner fo
 
 ## Execution
 
-### Phase 1 — Runtime ring infrastructure
+Phases 1–3 land as **one PR** on `quang/runtime-ring-cutover`, in eight waves (0–7).
+The work is too coupled to split (shared geometry is soundness-load-bearing; the suffix
+cutover depends on D-free prepared setup; the mixed-D fixture is the deletion gate).
+Phase 4 (planner DP, field-element envelope sizing) is a **separate** PR, out of scope.
 
-1. `setup_geometry_at` (shape-only) + `setup_active_ring_elems_at`; refactor
-   `SetupContributionPlan::prepare` to call `setup_geometry_at` for `required` /
-   endpoints. Golden vectors (challenge-free).
-2. Route prover setup sumcheck and verifier stage 3 through the single shared geometry
-   function (delete the parallel derivation).
-3. `NttCacheKey`, `NttSlotCacheAny` (+ `as_d`), `NttCacheMap` (`HashMap`), lazy
-   `ensure_ntt_slot`.
-4. `RingLevelContext`, `FoldRingPlan::from_schedule(schedule, &AkitaSetupSeed)` +
-   validation catalog; per-level `context_at` (runtime).
-5. `CpuPreparedSetup<F>` D-free + `ComputeBackendSetup` trait cutover.
-6. D-free `SetupPrefixRegistry` (keying level); delete `SETUP_OFFLOAD_D_SETUP` gate +
-   constant. (Slot commitment/hint stay D-typed per Phase-ordering note.)
-7. `AlgebraSection::for_envelope`, `bind_transcript_instance_descriptor` without
-   `const D`; confirm pinned descriptor tests are unchanged.
-8. `dispatch_ring_dim!` infallible-body macro (or rename of `dispatch_ring_dim_result!`).
+### Working agreement (read first)
 
-### Phase 2 — Demote D from orchestration
+- **Each wave must leave the workspace compiling and its tests green** before starting
+  the next. Commit per wave (or per sub-step). The verify command for every wave is at
+  minimum `cargo build --workspace` and `cargo build --workspace --features zk`, plus
+  the per-wave tests listed.
+- **Never delete a symbol until its replacement is green and in use.** Deletions are
+  scheduled into the wave where the last caller is migrated (mostly Wave 5).
+- **Behavior-preserving until Wave 6.** Through Wave 5, every shipped uniform-`D` proof
+  must produce **byte-identical** proof wire and descriptor digests. If a digest moves,
+  stop and find out why before re-pinning (see Descriptor binding).
+- **The const `D` only ever disappears behind `dispatch_ring_dim!`.** Inside a
+  `dispatch_ring_dim!(ring_d, |D| { … })` closure you still have a `const D`; that is
+  where every NTT/matvec/ring kernel is monomorphized. Demoting a *type* off `const D`
+  never means a kernel loses it.
+- When in doubt about a count or a length, prefer the **shared function**
+  (`setup_geometry_at` / `setup_active_ring_elems_at`) over re-deriving inline.
 
-9. `OperationCtx<F, B>`, `ProverComputeStack<F, B>` without `const D`.
-10. Backend traits: `RingLevelContext` on methods; internal dispatch only.
-11. Rewrite `prove_suffix`, `verify_suffix`, `commit_next_w` as uniform loops.
-12. Delete `Suffix*ProveBackendFor`, `RECURSIVE_SUFFIX_RING_DIMENSIONS`, six-bound
-    `RecursiveProveBackend` lattice.
-13. `AkitaCommitmentScheme<Cfg>`, `CommitmentProver<F>`, `batched_prove` cutover;
-    relax setup `gen_ring_dim != D` checks to seed-internal consistency.
-14. Grep gate for suffix-level `dispatch_ring_dim_result!`.
+### Do NOT do in this PR
 
-### Phase 3 — Fold storage cutover
+- No planner `ring_d` DP search; no relaxing `expand_to_level_params`’s
+  `ring_d == policy.ring_dimension` check.
+- No change to envelope **sizing/generation** policy: setup is still generated at one
+  `gen_ring_dim == Cfg::D`. (Wave 5 only removes the now-redundant *type-level*
+  `gen_ring_dim != D` comparison; it does not change how the buffer is sized — see W5e.)
+- No prefix-sized NTT caches (caches stay full-envelope per `ring_d`).
+- No preset-family consolidation (`fp128_d64` + `fp128_d128`).
+- No cross-`ring_d` NTT sharing.
 
-15. Demote `const D` from `PreparedFold`, `RingRelationInstance`, `PreparedFoldReplay`;
-    `RingBuf` / `RingSlice` owners.
-16. Demote `RingCommitment` / `AkitaCommitmentHint` (or slot `RingBuf` rows) and drop
-    residual `const D` from `SetupPrefixSlot`.
-17. Kill `to_vec::<D>()` on hot boundaries; audit with grep.
-18. Mixed-D hand schedule integration test + prover≡verifier geometry cross-check
-    (gate before removing legacy cold-path reference).
+### Wave 0 — Mixed-D fixture on the LEGACY path (de-risk + record the oracle)
 
-### Phase 4 — Planner (follow-on PR)
+The current suffix path already handles `level_d != Cfg::D` (the `else`/rebuild branch).
+Exercise it first to (a) prove the hand-built fixture is well-formed and (b) record the
+oracle the cutover must reproduce.
 
-19. DP search over per-step `ring_d`; relax `expand_to_level_params` policy check.
-20. Field-element envelope sizing with `D_max`; relax enforced `gen_ring_dim == Cfg::D`.
-21. Regenerate catalogs (`akita-schedules`, `gen_schedule_tables.rs`); evaluate preset
-    family consolidation.
-22. Profile mixed-D vs best uniform-D on representative workloads.
+- Build the mixed-D fixture (see Mixed-D fixture sketch): `fp128::D128Full` setup
+  (`gen_ring_dim = 128`), hand-built `Schedule` with levels 0–1 at `D=128`, level 2+ at
+  `D=64`. If no test hook exists to feed a hand-built `Schedule` to prove/verify, add a
+  **test-only** entry point as the first step.
+- Prove + verify + transcript replay on **current** code. Snapshot the proof bytes and
+  descriptor digest as a committed test oracle.
+- **Done when:** the fixture proves and verifies on unmodified code and the oracle is
+  committed. **Do not delete or change any production code in this wave.**
+- **Gotcha:** the setup is built at `D=128` (so the setup-time `gen_ring_dim == Cfg::D`
+  check passes); `D=64` appears only as a runtime *view* of the 128 envelope
+  (`128 % 64 == 0`). No sizing change is needed or allowed.
+
+### Wave 1 — Shared setup geometry + `FoldRingPlan` (`akita-types`, additions only)
+
+- `SetupRelationShape` (small projection: `num_claims`, `num_polynomials`,
+  `m_row_layout`, tier dims — **no** `eq_tau1`, **no** `RingCommitment`).
+- `setup_geometry_at(level, schedule, &SetupRelationShape) -> SetupGeometry { required }`
+  — the shape-only row-layout footprint (`a_end`), challenge-free.
+- `setup_active_ring_elems_at(...) = min(required, total_ring_elements_at::<ring_d>())`.
+- Refactor `SetupContributionPlan::prepare` to obtain `required`/endpoints from
+  `setup_geometry_at` (weights layer on top, unchanged).
+- `FoldRingPlan`, `RingLevelContext`, `FoldRingPlan::from_schedule(schedule, &AkitaSetupSeed)`
+  with the validation catalog; `dim_at`, `unique_dims`, `context_at`.
+- **Done when:** new code compiles (unused is fine — wire one usage into a test);
+  existing setup tests still pass.
+- **Verify:** `cargo test -p akita-types`.
+- **Gotcha (critical):** `setup_geometry_at` must reproduce
+  `SetupContributionPlan::prepare().required()` **exactly**. Add a cross-check test that,
+  for every shipped generated table’s level shapes, asserts the two agree. This test is
+  the safety net for Waves 4–7 — write it before relying on the function.
+
+### Wave 2 — NTT cache types (`akita-types` + `akita-prover/kernels`, additions only)
+
+- `NttCacheKey { ring_d, num_ring_elements }`; `NttSlotCacheAny` (D32/D64/D128/D256) with
+  `From<NttSlotCache<D>>` and fallible `as_d::<const D>() -> Result<&NttSlotCache<D>, _>`
+  (returns `InvalidSetup` on `ring_d` mismatch, never panics); `NttCacheMap` type alias.
+- **Done when:** compiles, unused; unit tests pass.
+- **Verify:** `cargo test -p akita-prover ntt_slot_cache_any`.
+- **Gotcha:** `as_d::<D>()` must compare the stored variant’s degree to the requested
+  `D`; the `From` impls must map each `NttSlotCache<D>` to the matching variant. Test
+  both the match and the mismatch branch.
+
+### Wave 3 — D-free prepared setup + prefix registry + descriptor (`akita-prover`, `akita-types`, `akita-config`)
+
+Three independently-committable sub-steps; keep each green.
+
+- **3a — D-free `CpuPreparedSetup` + NTT map.** Change `ComputeBackendSetup::PreparedSetup`
+  from a `<const D>` GAT to a plain associated type; `CpuPreparedSetup<F>` holds a
+  `NttCacheMap` instead of `NttSlotCache<D>`. `prepare_expanded` builds an **empty** map.
+  Add `ensure_ntt_slot(&mut, key)` / `ntt_slot(&, key)`.
+  - **Ripple to watch:** every `B::PreparedSetup<D>` becomes `B::PreparedSetup`,
+    including `OperationCtx`’s field — even though `OperationCtx` *keeps* its `const D`
+    until Wave 5. Kernel read sites switch from `prepared.ntt_shared` to
+    `ntt_slot(prepared, key)?.as_d::<D>()` (the `const D` is still in scope here, so
+    `as_d::<D>()` resolves). To preserve behavior, each site warms/reads the key
+    `(D, total_ring_elements_at::<D>())`; `validate_digit_row_request` keeps passing
+    because the cached length is the full envelope.
+- **3b — D-free `SetupPrefixRegistry` (keying) + ungate offload.** Replace
+  `SetupPrefixProverRegistry<F, D>` with a registry keyed on `SetupPrefixSlotId`
+  (slot `commitment`/`hint` stay D-typed, reached via `id.d_setup` dispatch — see
+  Phase-ordering note). Delete the `if D == SETUP_OFFLOAD_D_SETUP` gate at both call
+  sites (`setup_sumcheck.rs`, `stage3.rs`) and the constant.
+  - **Gotcha:** ungating is behavior-preserving because `select_setup_prefix_slot`
+    returns `None` when no matching slot exists, and setup construction still populates
+    slots only at `d_setup = 64`. Do not change which slots are created.
+- **3c — Descriptor.** Add `AlgebraSection::for_envelope::<F,E>(gen_ring_dim)`; switch
+  `bind_transcript_instance_descriptor` off `const D` to call it with
+  `expanded.shared_matrix().gen_ring_dim()`.
+  - **Gotcha:** since `gen_ring_dim == Cfg::D` today, the bytes are identical and the
+    pinned digests **must not move**. If they do, investigate (see Descriptor binding).
+- **Verify:** `cargo test -p akita-prover -p akita-verifier -p akita-types`
+  (with and without `--features zk`); descriptor digest tests unchanged.
+
+### Wave 4 — One shared geometry path on both sides (`akita-prover`, `akita-verifier`)
+
+- Make the prover setup sumcheck and the verifier stage 3 both call
+  `setup_active_ring_elems_at` for the offload-decision count; delete the two parallel
+  derivations. This closes soundness gap #6.
+- **Done when:** existing prove/verify tests pass; add the **prover≡verifier geometry
+  cross-check** test (both produce the same `setup_active_ring_elems` per level on the
+  mixed-D fixture).
+- **Gotcha:** both sides must construct the *same* `SetupRelationShape`. The cross-check
+  is the guard; if it fails, the two shape projections disagree — fix the projection,
+  do not special-case.
+
+### Wave 5 — Orchestration cutover (`akita-prover`, `akita-verifier`, `akita-pcs`) — largest blast radius
+
+Five sub-steps; keep each compiling.
+
+- **5a — Plan plumbing.** Build `FoldRingPlan::from_schedule` at prove and verify entry;
+  warm the NTT cache via `plan.unique_dims()` (`&mut prepared`, then freeze) **before the
+  root fold (level 0), not just before the suffix loop**; warm the root-layout entry in
+  the standalone `commit` path too (see Warm-cache policy — both are review-flagged
+  traps). Keep the existing per-level dispatch for now (no behavior change yet).
+- **5b — Demote `OperationCtx` / `ProverComputeStack` off `const D`.** They no longer
+  carry `D`. Backend methods take `ring_d` (or `&RingLevelContext`) and dispatch
+  internally at the kernel boundary (`dispatch_ring_dim!` + `as_d`). Migrate call sites
+  method-by-method.
+- **5c — Uniform suffix loops.** Rewrite `prove_suffix` / `verify_suffix` /
+  `commit_next_w` as a single loop over `plan.context_at(level)`; **delete** the
+  `if level_d == D { … } else { rebuild }` branch and the empty-registry workaround.
+- **5d — Delete the dead lattice.** `Suffix*ProveBackendFor`, the root-tensor siblings,
+  `RECURSIVE_SUFFIX_RING_DIMENSIONS`, and the six-bound `RecursiveProveBackend`
+  supertrait set.
+- **5e — Public API.** `AkitaCommitmentScheme<Cfg>`, `CommitmentProver<F>`,
+  `batched_prove` off `const D`; `AkitaProverSetup<F>`. Relax the setup
+  `if seed.gen_ring_dim != D` checks (`api/setup.rs`, `akita-setup/src/lib.rs`) to the
+  seed-internal `shared_matrix.gen_ring_dim() == seed.gen_ring_dim`. **This is removing a
+  now-meaningless type comparison, not a sizing change.**
+- **Done when:** all uniform-`D` tests green and byte-identical; the **Wave-0 mixed-D
+  fixture re-run on the new path reproduces the recorded oracle byte-for-byte**; grep
+  gate clean (`! rg 'dispatch_ring_dim_result!' crates/akita-*/src/protocol/core/suffix.rs`).
+- **Gotchas:** warm-cache stays at entry (`&mut`), not in the loop. Offload stays in the
+  setup sumcheck (ungated since 3b). The mixed-D fixture is your regression oracle for
+  this whole wave — run it after every sub-step that touches the suffix.
+
+### Wave 6 — Fold storage (`akita-types`, `akita-prover`, `akita-verifier`)
+
+- `RingBuf<F>` + `as_ring_slice::<D>()` / `as_single_ring::<D>()`.
+- Demote `const D` from `PreparedFold`, `RingRelationInstance`, `PreparedFoldReplay`
+  (use `RingBuf` / `RingSlice`).
+- Demote `RingCommitment` / `AkitaCommitmentHint` in prefix slots (or store slot rows as
+  `RingBuf`) and drop the residual `const D` from `SetupPrefixSlot`.
+- **Coordinate with `protocol-field-geometry-cutover.md`:** if `PreparedFold` becomes a
+  tagged enum (`SingleField` / `TensorProjection`), land the D-free `RingBuf` fields
+  inside the variants here rather than fighting a parallel geometry refactor.
+- **Done when:** grep audit clean for `to_vec::<D>()` / `from_vec::<D>()` on fold hot
+  boundaries; all tests green.
+
+### Wave 7 — Final gate + cleanup
+
+- Re-run the mixed-D fixture end to end on the final tree (prove + verify + replay);
+  confirm byte-identical to the Wave-0 oracle.
+- Confirm the prover≡verifier geometry cross-check passes.
+- Grep inventory for all deleted symbols (see Inventory).
+- `docs/doc-blast-radius.json` regions; optional book stubs; `docs/compute-backends.md`.
+
+### Phase 4 — Planner (separate, follow-on PR; out of scope here)
+
+1. DP search over per-step `ring_d`; relax `expand_to_level_params` policy check.
+2. Field-element envelope sizing with `D_max`; relax enforced `gen_ring_dim == Cfg::D` in
+   generation.
+3. Regenerate catalogs (`akita-schedules`, `gen_schedule_tables.rs`); evaluate preset
+   family consolidation.
+4. Profile mixed-D vs best uniform-D on representative workloads.
 
 ### Module touch list
 
@@ -1100,13 +1326,16 @@ Add `runtime-ring-cutover` regions to `docs/doc-blast-radius.json`.
 | Prover/verifier geometry divergence | One shared function; prover≡verifier cross-check on mixed-D fixture (not just sampled golden vectors) |
 | `NttSlotCacheAny` variant ≠ dispatched `D` | Fallible `as_d::<D>()` returns `InvalidSetup`; unit-tested both branches |
 | Re-coupling geometry to challenges | Golden vectors assert the count is computable with no `tau1`/`x_challenges` |
-| Offload / full-envelope mismatch | Shared `select_setup_prefix_slot` (already shared); transcript binds slot id |
-| Phase-1 D-free slot vs Phase-3 commitment/hint | Key on `SetupPrefixSlotId`; slot commitment/hint stay D-typed until Phase 3 |
-| Cache stampede on parallel prove | `OnceLock`/`DashMap` per key; prove is single-threaded today |
+| **Uniform-D cache regression** (per-level prefix keying → many overlapping caches) | One full-envelope cache per distinct `ring_d`; warm at entry from `unique_dims()`; test asserts uniform-D warms **exactly one** entry |
+| Offload mistakenly sizing the NTT cache | Offload affects only the setup sumcheck's *direct* `ring_view`; NTT cache is full-envelope per `ring_d` and independent (W3b) |
+| **Wave-3 GAT→assoc-type ripple** breaks the build broadly | Do the `PreparedSetup<D>` → `PreparedSetup` migration in one sub-step (3a); `OperationCtx` keeps `const D` until Wave 5; kernel sites use `ntt_slot(key).as_d::<D>()` |
+| `NttSlotCacheAny` variant ≠ dispatched `D` | Fallible `as_d::<D>()` returns `InvalidSetup`; unit-tested both branches |
+| Phase-1 D-free slot vs Phase-3 commitment/hint | Key on `SetupPrefixSlotId`; slot commitment/hint stay D-typed until Wave 6 |
+| Cache stampede on parallel prove | N/A today (warm at entry with `&mut`, then immutable loop); if parallel prove ships, use `OnceLock`/`DashMap` per key |
 | `AlgebraSection` semantic change | No-op for current presets (`gen_ring_dim == Cfg::D`); a moving digest is a red flag to investigate |
 | Phase 3 + geometry cutover conflict | Sequencing rule above; single `PreparedFold` target |
 | Mixed-D envelope sizing (Phase 4) | Field-element accumulation + `D_max`; SIS audit per `(ring_d, step)` |
-| Mixed-D test gap | Run against legacy cold path before deletion |
+| Mixed-D regression | Record the Wave-0 oracle on the legacy path; require byte-identical re-run after cutover (W5/W7) |
 
 ## References
 
