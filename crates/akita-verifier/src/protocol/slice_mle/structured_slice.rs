@@ -19,22 +19,26 @@ pub(super) const CARRY0: usize = 0;
 /// Inner-sum slot for the one-carry bucket (`carry = 1`).
 pub(super) const CARRY1: usize = 1;
 
+/// Build `table[k] = eq_high(offset_high + k)` for `k ∈ [0, hi_len]`.
+pub(crate) fn high_eq_window<E: FieldCore>(
+    high_challenges: &[E],
+    offset_high: usize,
+    hi_len: usize,
+) -> Vec<E> {
+    (0..=hi_len)
+        .map(|k| eq_eval_at_index(high_challenges, offset_high + k))
+        .collect()
+}
+
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `book/src/how/verifying/matrix_evaluation.md` for the full derivation.
 pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     /// Number of outer-loop indices.
     fn num_outer_indices(&self) -> usize;
 
-    /// High-bit segment of the slice's randomness:
-    /// `full_vec_randomness[offset_low_bits..]`.
-    ///
-    /// Used only by the default [`Self::compute_outer_sum`].
-    fn get_high_challenges(&self) -> &[F];
-
-    /// High-bit part of the slice offset: `offset >> offset_low_bits`.
-    ///
-    /// Used only by the default [`Self::compute_outer_sum`].
-    fn get_offset_high(&self) -> usize;
+    /// Precomputed high-bit equality table, indexed *relative* to the slice's
+    /// high offset: `table[k] == eq_high(offset_high + k)`.
+    fn high_eq_table(&self) -> &[F];
 
     /// Compute the inner sum at `outer_index`: this evaluator's contribution
     /// to each carry bucket ([`CARRY0`], [`CARRY1`]) for that outer index.
@@ -50,18 +54,13 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
         false
     }
 
-    /// Compute the outer sum: combine the per-outer-index carry terms with
-    /// the high-bit equality polynomial.
-    ///
-    /// Default implementation is the standard high-bit equality pass:
+    /// Combine the per-outer-index carry terms with the precomputed high-bit
+    /// equality table:
     ///
     /// ```text
-    /// Σ_q  carry_terms[q][CARRY0] · eq_high(offset_high + q)
-    ///    + carry_terms[q][CARRY1] · eq_high(offset_high + q + 1)
+    /// Σ_q  carry_terms[q][CARRY0] · table[q]
+    ///    + carry_terms[q][CARRY1] · table[q + 1]
     /// ```
-    ///
-    /// where `offset_high = self.get_offset_high()` and `eq_high` is the
-    /// multilinear equality polynomial on `self.get_high_challenges()`.
     ///
     /// **Note:** Both this default impl and the algebra it implements are
     /// only tested and intended for [`POSSIBLE_CARRIES`] = 2. The two carry
@@ -69,9 +68,7 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     /// the peeled-block split.
     #[inline]
     fn compute_outer_sum(&self, carry_terms: &[[F; POSSIBLE_CARRIES]]) -> F {
-        let offset_high = self.get_offset_high();
-        let high_challenges = self.get_high_challenges();
-
+        let table = self.high_eq_table();
         carry_terms
             .iter()
             .enumerate()
@@ -79,12 +76,12 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
                 let acc = if terms[CARRY0].is_zero() {
                     acc
                 } else {
-                    acc + terms[CARRY0] * eq_eval_at_index(high_challenges, offset_high + q)
+                    acc + terms[CARRY0] * table[q]
                 };
                 if terms[CARRY1].is_zero() {
                     acc
                 } else {
-                    acc + terms[CARRY1] * eq_eval_at_index(high_challenges, offset_high + q + 1)
+                    acc + terms[CARRY1] * table[q + 1]
                 }
             })
     }
@@ -109,10 +106,6 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
 
 /// E-hat segment slice evaluator.
 pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
-    /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
-    pub high_challenges: &'a [E],
-    /// `offset >> offset_low_bits` — slice's high-bit offset.
-    pub offset_high: usize,
     /// Gadget vector for the digit decomposition of `e`. Length =
     /// `num_digits`.
     pub gadget_vector: &'a [F],
@@ -120,6 +113,8 @@ pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
     pub challenge_block_summaries: &'a [[E; 2]],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub challenge_weight: E,
+    /// Precomputed high-eq table relative to the slice's high offset.
+    pub high_eq_table: &'a [E],
 }
 
 impl<F, E> StructuredSliceMleEvaluator<E> for EStructuredSlicesEvaluator<'_, F, E>
@@ -133,13 +128,8 @@ where
     }
 
     #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
+    fn high_eq_table(&self) -> &[E] {
+        self.high_eq_table
     }
 
     #[inline]
@@ -162,10 +152,6 @@ where
 
 /// T-segment slice evaluator.
 pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
-    /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
-    pub high_challenges: &'a [E],
-    /// `offset >> offset_low_bits` — slice's high-bit offset.
-    pub offset_high: usize,
     /// Gadget vector for the digit decomposition of `w`. Length =
     /// `num_digits`.
     pub gadget_vector: &'a [F],
@@ -174,6 +160,8 @@ pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
     /// `tau1` equality weight for each `A`-row of `M`. Length =
     /// number of `A` rows.
     pub a_row_weights: &'a [E],
+    /// Precomputed high-eq table relative to the slice's high offset.
+    pub high_eq_table: &'a [E],
 }
 
 impl<F, E> StructuredSliceMleEvaluator<E> for TStructuredSlicesEvaluator<'_, F, E>
@@ -187,13 +175,8 @@ where
     }
 
     #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
+    fn high_eq_table(&self) -> &[E] {
+        self.high_eq_table
     }
 
     #[inline]
@@ -217,10 +200,6 @@ where
 
 /// Pow2 Z-segment slice evaluator.
 pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
-    /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit randomness.
-    pub high_challenges: &'a [E],
-    /// `offset_z >> log₂(block_len)` — slice's high-bit offset.
-    pub offset_high: usize,
     /// Commit-side gadget. Length = `depth_commit`.
     pub g1_commit: &'a [F],
     /// Fold-side gadget. Length = `depth_fold`.
@@ -229,6 +208,8 @@ pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
     pub a_block_summary: &'a [[E; 2]],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub consistency_weight: E,
+    /// Precomputed high-eq table relative to the slice's high offset.
+    pub high_eq_table: &'a [E],
 }
 
 impl<F, E> StructuredSliceMleEvaluator<E> for ZStructuredPow2SlicesEvaluator<'_, F, E>
@@ -242,13 +223,8 @@ where
     }
 
     #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
+    fn high_eq_table(&self) -> &[E] {
+        self.high_eq_table
     }
 
     #[inline]
@@ -366,7 +342,7 @@ mod tests {
     use super::*;
 
     use akita_algebra::eq_poly::EqPolynomial;
-    use akita_algebra::offset_eq::summarize_pow2_block_carries;
+    use akita_algebra::offset_eq::{eq_eval_at_index, summarize_pow2_block_carries};
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -566,12 +542,17 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         let c_alphas = p.c_alphas.as_flat().unwrap();
+        let e_high = &fx.full_vec_randomness[offset_low_bits..];
+        let e_offset_high = fx.offset_e >> offset_low_bits;
+        let e_outer = challenge_block_summaries.len() * fx.g1_open.len();
+        let eq_hi_e: Vec<F> = (0..=e_outer)
+            .map(|k| eq_eval_at_index(e_high, e_offset_high + k))
+            .collect();
         let got = EStructuredSlicesEvaluator {
-            high_challenges: &fx.full_vec_randomness[offset_low_bits..],
-            offset_high: fx.offset_e >> offset_low_bits,
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
             challenge_weight: p.eq_tau1[0],
+            high_eq_table: &eq_hi_e,
         }
         .evaluate();
 
@@ -609,12 +590,17 @@ mod tests {
             .unwrap();
         let c_alphas = p.c_alphas.as_flat().unwrap();
         let a_start = 1 + p.n_d_active() + p.n_b;
+        let t_high = &fx.full_vec_randomness[offset_low_bits..];
+        let t_offset_high = fx.offset_t >> offset_low_bits;
+        let t_outer = challenge_block_summaries.len() * fx.g1_open.len() * (p.rows - a_start);
+        let eq_hi_t: Vec<F> = (0..=t_outer)
+            .map(|k| eq_eval_at_index(t_high, t_offset_high + k))
+            .collect();
         let got = TStructuredSlicesEvaluator {
-            high_challenges: &fx.full_vec_randomness[offset_low_bits..],
-            offset_high: fx.offset_t >> offset_low_bits,
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
             a_row_weights: &p.eq_tau1[a_start..p.rows],
+            high_eq_table: &eq_hi_t,
         }
         .evaluate();
 
@@ -648,13 +634,18 @@ mod tests {
             &fx.opening_point.a[..p.block_len],
         )
         .unwrap()];
+        let z_high = &fx.full_vec_randomness[z_offset_low_bits..];
+        let z_offset_high = fx.offset_z >> z_offset_low_bits;
+        let z_outer = a_block_summary.len() * fx.fold_gadget.len() * fx.g1_commit.len();
+        let eq_hi_z: Vec<F> = (0..=z_outer)
+            .map(|k| eq_eval_at_index(z_high, z_offset_high + k))
+            .collect();
         let got = ZStructuredPow2SlicesEvaluator {
-            high_challenges: &fx.full_vec_randomness[z_offset_low_bits..],
-            offset_high: fx.offset_z >> z_offset_low_bits,
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
             a_block_summary: &a_block_summary,
             consistency_weight: p.eq_tau1[0],
+            high_eq_table: &eq_hi_z,
         }
         .evaluate();
 

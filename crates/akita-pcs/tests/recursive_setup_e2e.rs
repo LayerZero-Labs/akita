@@ -4,7 +4,7 @@
 //! verifier scans the expanded setup matrix inline. This suite covers
 //! [`SetupContributionMode::Recursive`], where each non-terminal fold level
 //! delegates the setup contribution to a setup-product sumcheck (the Stage-3
-//! `SetupSumcheckProver` / `SetupSumcheckVerifier` pair) instead.
+//! `AkitaStage3Prover` / `SetupSumcheckVerifier` pair) instead.
 //!
 //! Coverage:
 //!

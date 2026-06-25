@@ -277,15 +277,17 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         // its per-row blinding is also unused. Intermediate layout keeps the
         // D-block blinding as before.
         let d_blinding_count = match layout {
-            crate::layout::MRowLayout::WithDBlock => crate::zk::blinding_column_count_from_bits(
-                lp.d_key.row_len(),
-                lp.ring_dimension,
-                lp.log_basis,
-                field_bits as usize,
-            ),
+            crate::layout::MRowLayout::WithDBlock => {
+                crate::lhl_blinding::blinding_column_count_from_bits(
+                    lp.d_key.row_len(),
+                    lp.ring_dimension,
+                    lp.log_basis,
+                    field_bits as usize,
+                )
+            }
             crate::layout::MRowLayout::WithoutDBlock => 0,
         };
-        let b_blinding_count = crate::zk::blinding_column_count_from_bits(
+        let b_blinding_count = crate::lhl_blinding::blinding_column_count_from_bits(
             lp.b_key.row_len(),
             lp.ring_dimension,
             lp.log_basis,

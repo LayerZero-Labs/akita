@@ -57,7 +57,7 @@ jobs:
       matrix:
         # Group names are index-prefixed so the `report` glob sorts
         # deterministically, fixing case order in the comment. `cases` is a
-        # newline-separated list of MODE:NUM_VARS:NUM_POLYS specs.
+        # newline-separated list of MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE] specs.
         #
         # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
         # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
@@ -76,6 +76,7 @@ jobs:
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
               onehot_fp128_d64:32:1
+              onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

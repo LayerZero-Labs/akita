@@ -7,10 +7,8 @@
 //!
 //! ## Descriptor version policy
 //!
-//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` remains at `1` until the codebase is
-//! frozen for audit. Pre-audit wire-format changes (for example extended
-//! `CallSection` fields) land without bumping this constant. After audit freeze,
-//! any incompatible descriptor layout change must increment it.
+//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` bumps when setup-section bindings change
+//! (for example extended `FoldLinfProtocolBinding` fields).
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -36,7 +34,7 @@ use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
