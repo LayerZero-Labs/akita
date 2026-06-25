@@ -20,7 +20,6 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-r1cs = { version = "0.1.0", path = "../akita-r1cs", optional = true }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
@@ -35,13 +34,7 @@ parallel = [
   "akita-field/parallel",
   "akita-sumcheck/parallel",
 ]
-zk = [
-  "dep:akita-r1cs",
-  "akita-r1cs/zk",
-  "akita-config/zk",
-  "akita-sumcheck/zk",
-  "akita-types/zk",
-]
+zk = ["akita-config/zk", "akita-sumcheck/zk", "akita-types/zk"]
 
 [lints]
 workspace = true

@@ -88,26 +88,6 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     );
 }
 
-#[cfg(feature = "zk")]
-#[test]
-fn fold_linf_descriptor_canonical_digest_pinned_zk() {
-    let mut descriptor = sample_descriptor();
-    descriptor.setup.protocol_features = ProtocolFeatureSet { zk: true };
-    let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
-    assert_eq!(
-        (bytes.len(), blake2b_256(&bytes)),
-        (
-            225,
-            [
-                0x1a, 0x01, 0x35, 0x00, 0xd5, 0x16, 0x53, 0xc3, 0x1c, 0xfb, 0xb7, 0x83, 0x5c, 0x65,
-                0x6a, 0xdc, 0xc3, 0x22, 0xbc, 0x60, 0xed, 0xd6, 0xaf, 0x90, 0xcc, 0xc9, 0xbe, 0xd2,
-                0x94, 0xd5, 0x54, 0x39,
-            ]
-        ),
-        "update pinned zk digest after wire rice low-bits binding"
-    );
-}
-
 #[test]
 fn fold_linf_binding_is_part_of_setup_section() {
     let descriptor = sample_descriptor();

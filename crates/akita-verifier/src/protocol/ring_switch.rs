@@ -12,7 +12,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
-use akita_types::zk;
+use akita_types::lhl_blinding;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
     LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
@@ -367,11 +367,12 @@ where
     let num_t_vectors = num_polys;
     #[cfg(feature = "zk")]
     let d_blinding_segment_len = match m_row_layout {
-        MRowLayout::WithDBlock => zk::blinding_digit_plane_count::<F>(n_d, D, log_basis),
+        MRowLayout::WithDBlock => lhl_blinding::blinding_digit_plane_count::<F>(n_d, D, log_basis),
         MRowLayout::WithoutDBlock => 0,
     };
     #[cfg(feature = "zk")]
-    let b_blinding_digit_planes_per_point = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
+    let b_blinding_digit_planes_per_point =
+        lhl_blinding::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
     let b_blinding_segment_len = b_blinding_digit_planes_per_point;
     // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.

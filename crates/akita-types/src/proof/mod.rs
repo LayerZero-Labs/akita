@@ -68,8 +68,6 @@ pub use setup::{
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
-#[cfg(feature = "zk")]
-pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
     setup_prefix_level_params, setup_prefix_slot_id, SetupPrefixProverRegistry,

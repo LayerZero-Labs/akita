@@ -96,14 +96,16 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usi
 
     #[cfg(feature = "zk")]
     let d_blinding_len = match m_row_layout {
-        MRowLayout::WithDBlock => {
-            crate::zk::blinding_digit_plane_count::<F>(lp.d_key.row_len(), D, lp.log_basis)
-        }
+        MRowLayout::WithDBlock => crate::lhl_blinding::blinding_digit_plane_count::<F>(
+            lp.d_key.row_len(),
+            D,
+            lp.log_basis,
+        ),
         MRowLayout::WithoutDBlock => 0,
     };
     #[cfg(feature = "zk")]
     let b_blinding_len =
-        crate::zk::blinding_digit_plane_count::<F>(lp.b_key.row_len(), D, lp.log_basis);
+        crate::lhl_blinding::blinding_digit_plane_count::<F>(lp.b_key.row_len(), D, lp.log_basis);
 
     let u_len = lp.u_concat_ring_len_per_group();
 
