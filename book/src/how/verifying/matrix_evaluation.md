@@ -64,7 +64,7 @@ claims that Akita proves.**
 
 ### Column ordering
 
-The witness uses a single fixed **z-first** layout:
+The witness column layout is:
 
 ```text
 z_hat ‖ e_hat ‖ t_hat ‖ b_zk ‖ d_zk ‖ r_tail
@@ -74,11 +74,11 @@ Each segment occupies a disjoint, contiguous range of columns. The `b_zk` and
 `d_zk` blinding segments are present only in zero-knowledge builds and are empty
 otherwise.
 
-Placing `z_hat` first keeps the wider committed-fold block at column offset `0`,
-which lets the verifier stay on the fast multi-factor tensor path for the `z`
-segment. Profiling at production scale (nv=36, onehot fp128 D=64) showed z-first
-is strictly faster on verify time with no offset cost to `e`/`t`, so the
-ordering is hard-coded rather than chosen adaptively per level.
+`z_hat` leads the layout so the committed-fold block sits at column offset `0`,
+which keeps the verifier on the fast multi-factor tensor path for the `z`
+segment. The `e_hat` and `t_hat` segments share the same `num_blocks` peel axis;
+their relative order does not change block alignment because both segment lengths
+are multiples of `num_blocks`.
 
 ### Segment sizes and layout
 
@@ -775,7 +775,7 @@ one-hot presets `DC = 1`, so `z_len = DF · block_len`.
 
 ### Worked example — `nv = 32`, fp128 `D64` one-hot
 
-Per-level schedule (`depth_commit = 1`, fixed z-first layout on all 8 levels).
+Per-level schedule (`depth_commit = 1`, z-first layout on all 8 levels).
 The dense cost equals `z_len`; the partial-peel cost is
 `block_len + (block_len / 2^v) · DF`:
 

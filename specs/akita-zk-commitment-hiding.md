@@ -78,7 +78,7 @@ examples, profiles, and CI coverage for both transparent and `zk` builds.
    `crates/akita-config/src/proof_optimized.rs` must include the digit-source
    blinding column count when compiled with `zk`.
 5. Prover and verifier must agree on recursive witness width and segment order.
-  In `zk` builds the recursive witness contains, in fixed z-first order:
+  In `zk` builds the recursive witness contains, in order:
    `z_pre`, `w_hat`, `t_hat`, `B-blinding`, and `r_hat`.
 6. The ring-switch M-table must include the B-blinding contribution with the
   same offsets on both sides. Prover materialization in
@@ -296,7 +296,7 @@ across D-erased recursive commitment hints.
 
 The recursive witness includes the blinding digits because later sumchecks must
 prove that the public commitment's B-row contribution matches the committed
-witness. In the fixed z-first layout the witness builder in `build_w_coeffs`
+witness. In the witness layout the witness builder in `build_w_coeffs`
 emits `z_pre` first, then the `{w_hat, t_hat, blinding}` group, so the blinding
 planes follow `t_hat`. The verifier mirrors this layout in
 `RingSwitchDeferredRowEval::eval_at_point`.

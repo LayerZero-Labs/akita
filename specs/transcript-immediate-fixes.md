@@ -277,7 +277,7 @@ t_hat_ring_count = num_t_vectors * num_blocks * a_key_row_len * num_digits_open
 z_pre_ring_count = num_z_vectors * inner_width * num_digits_fold
 
 w_hat_digit_count = w_hat_ring_count * ring_dim
-# Fixed z-first layout: w_hat always follows the leading z_pre segment.
+# w_hat always follows the leading z_pre segment.
 w_hat_digit_offset = z_pre_ring_count * ring_dim
 ```
 
@@ -294,8 +294,8 @@ canonical logical final-witness digit stream, then extracts:
 The verifier must not slice raw `PackedDigits` bytes. The representation is
 bit-packed, and logical digit boundaries need not be byte boundaries. The
 remainder is every terminal witness digit outside the logical `w_hat` range, in
-canonical final-witness order. This avoids relying on a prefix convention: the
-fixed z-first layout always places `z_pre` before `w_hat`.
+canonical final-witness order. This avoids relying on a prefix convention: `z_pre`
+always precedes `w_hat`.
 
 Verifier replay rejects malformed terminal proofs whose packed witness is too
 short for the derived range, whose remainder length does not match the

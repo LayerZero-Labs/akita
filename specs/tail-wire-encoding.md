@@ -195,7 +195,7 @@ r_field_elems  = m_row_count(WithoutDBlock) * D                       (RawField;
 
 `z_coords` is the Golomb element count. `e_field_elems`, `t_field_elems`, and `r_field_elems` are base-field coefficient counts for `RawField` serialization.
 The legacy `PackedDigits` layout in `build_w_coeffs` (`coeffs.rs`) is the source for S3's byte-neutral framing, but S2 removes the legacy `t_hat`, `û_concat`, and `r_hat` planes from the final terminal policy.
-Segments appear in the fixed z-first wire order (`z ‖ e ‖ t ‖ r`); `r_hat` planes are absent under PR #141 direct mode.
+Segments appear in wire order `z ‖ e ‖ t ‖ r`; `r_hat` planes are absent under PR #141 direct mode.
 Multipoint layouts scale `z_coords` with `num_public_rows`; tiered layouts must either use the same `t`-state terminal policy or reject.
 
 This mirrors the existing headerless, shape-driven decode (the shape supplies counts and the `z` payload upper bound). `CleartextWitnessShape::SegmentTyped` and `CleartextWitnessProof::SegmentTyped` ship in #190.
@@ -229,7 +229,7 @@ Tail encoding uses three layers:
 |-------|--------|---------|
 | **Policy** | `AkitaInstanceDescriptor` (new tail section + version bump) | codec id, `cap -> k` rule id, per-role segment models, terminal-state mode, r-drop flag |
 | **Layout** | `CleartextWitnessShape` / `TerminalLevelProofShape` (S3) | per-segment element counts (and byte length once entropy-coded) |
-| **Derived** | both sides at runtime | `cap`, `k`, fixed z-first segment order, decode bounds |
+| **Derived** | both sides at runtime | `cap`, `k`, segment order (`z ‖ e ‖ t ‖ r`), decode bounds |
 
 The tail-encoding policy is bound in `AkitaInstanceDescriptor` (same pattern as PR #141's terminal proof mode and PR #174's threshold policy):
 

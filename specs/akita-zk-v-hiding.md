@@ -60,7 +60,7 @@ The feature modifies these surfaces:
 
    where `kappa = d_key.row_len()`.
 4. The prover and verifier must agree on recursive witness segment order. In
-   `zk` builds the fixed z-first order is:
+   `zk` builds use this witness segment order:
 
    ```text
    z_pre || w_hat || t_hat || B-blinding || D-blinding || r_hat

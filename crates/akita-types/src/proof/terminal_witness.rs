@@ -148,7 +148,7 @@ pub fn terminal_e_hat_bytes_from_blocks<const D: usize>(
 }
 
 /// Derive the terminal `e_hat` byte range, which always follows the leading
-/// `z_folded` segment in the fixed z-first final-witness layout.
+/// `z_folded` segment in the final-witness layout.
 ///
 /// This is the shared layout primitive used by both prover witness emission and
 /// verifier/prover transcript slicing.
@@ -175,7 +175,7 @@ pub fn terminal_witness_segment_layout_from_counts(
             "terminal e_hat digit range is empty".to_string(),
         ));
     }
-    // Fixed z-first layout: `e_hat` always follows the `z_folded` segment.
+    // `e_hat` follows the leading `z_folded` segment.
     let e_hat_digit_offset = z_folded_ring_count
         .checked_mul(ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal e_hat offset overflow".to_string()))?;

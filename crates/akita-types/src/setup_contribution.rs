@@ -1238,7 +1238,7 @@ mod tests {
         let depth_fold = 2;
         let num_points = 1;
         let z_range = block_len * depth_commit;
-        let offset_z = 192;
+        let offset_z = 0;
         let full_vec_randomness = (0..9)
             .map(|idx| test_scalar(101 + idx as u128))
             .collect::<Vec<_>>();
