@@ -11,14 +11,6 @@ use akita_challenges::Challenges;
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 
-/// Column ordering for the ring-switch row MLE: `m_vars >= r_vars` places ẑ
-/// before ê/t̂; otherwise ê/t̂ precede ẑ (see
-/// `book/src/how/verifying/matrix_evaluation.md`).
-#[inline]
-pub fn ring_column_z_first(lp: &LevelParams) -> bool {
-    lp.m_vars >= lp.r_vars
-}
-
 /// Witness-column segment offsets for ring-switch evaluation.
 ///
 /// Produced only by [`RingRelationInstance::segment_layout`].
@@ -217,26 +209,12 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         // Tiered `û_concat` segment length (per the single commitment bundle);
         // `0` for single-tier levels.
         let u_len = lp.u_concat_ring_len_per_group();
-        let z_first = ring_column_z_first(lp);
-        let offset_z = if z_first {
-            0
-        } else {
-            e_len
-                .checked_add(t_len)
-                .and_then(|offset| offset.checked_add(u_len))
-                .and_then(|offset| offset.checked_add(b_blinding_segment_len))
-                .and_then(|offset| offset.checked_add(d_blinding_segment_len))
-                .ok_or_else(|| AkitaError::InvalidSetup("Z offset overflow".to_string()))?
-        };
-        let offset_e = if z_first { z_len } else { 0 };
-        let offset_t = if z_first {
-            z_len
-                .checked_add(e_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?
-        } else {
-            e_len
-        };
-        // `û_concat` is emitted immediately after `t̂` in both orderings.
+        let offset_z = 0;
+        let offset_e = z_len;
+        let offset_t = z_len
+            .checked_add(e_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?;
+        // `û_concat` is emitted immediately after `t̂`.
         let offset_u = offset_t
             .checked_add(t_len)
             .ok_or_else(|| AkitaError::InvalidSetup("U offset overflow".to_string()))?;
@@ -246,16 +224,9 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         let d_blinding_offset = b_blinding_offset
             .checked_add(b_blinding_segment_len)
             .ok_or_else(|| AkitaError::InvalidSetup("D blinding offset overflow".to_string()))?;
-        let offset_r_base = d_blinding_offset
+        let offset_r = d_blinding_offset
             .checked_add(d_blinding_segment_len)
             .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
-        let offset_r = if z_first {
-            offset_r_base
-        } else {
-            offset_r_base
-                .checked_add(z_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?
-        };
 
         Ok(RingRelationSegmentLayout {
             offset_e,
@@ -361,7 +332,6 @@ mod tests {
         .expect("same-axis relation");
 
         let layout = instance.segment_layout(&lp).expect("layout");
-        assert!(ring_column_z_first(&lp));
         assert_eq!(layout.offset_z, 0);
         let num_t_vectors = instance.opening_batch().num_polynomials();
         let depth_fold = lp

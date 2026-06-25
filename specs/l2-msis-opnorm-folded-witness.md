@@ -1318,8 +1318,9 @@ Likely primary files:
 - `crates/akita-prover/src/protocol/ring_relation.rs`
 - `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` (`emit_z_folded_block_inner`
   is the `z_hat` digit-plane source for grouped limbs)
-- `crates/akita-types/src/proof/ring_relation.rs` (`ring_column_z_first`, segment
-  layout: expose the committed `z_hat` offset for grouped virtualization)
+- `crates/akita-types/src/proof/ring_relation.rs` (`segment_layout`: fixed
+  z-first column order exposes the committed `z_hat` offset for grouped
+  virtualization)
 - `crates/akita-prover/src/protocol/sumcheck/akita_stage2/`
 - `crates/akita-verifier/src/protocol/slice_mle/setup_contribution.rs`
   (`compute_setup_contribution` / `fold_gadget`: the structured-matrix evaluation

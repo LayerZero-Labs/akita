@@ -184,11 +184,11 @@ B = (K / D) · Tr_H( B_blk(r_x_blk) · EQ(r_y) · sigma_{-1}(packed_inner_point)
 The conjugate sum is taken once per level, not once per block, so verifier cost is `O(|H| · D)` independent of `num_blocks · num_digits_open`.
 The term remains a single `E`-valued sum-check addend whose matching input contribution is `trace_coeff · opening` (`trace_coeff = γ²`) under the normalized convention.
 
-**Layout preconditions and relation to `z_first`.**
+**Layout preconditions and the fixed z-first column order.**
 The `y`-axis factor `eq(r_y, inner_open)` is always clean.
-On the `x`-axis the block factor `eq(r_x_blk, b_open)` is always exact, because `offset_e` is a multiple of `num_blocks` in both column orderings: `offset_e = 0` when `ring_column_z_first(lp) == false`, and `offset_e = z_len` (a multiple of `block_len`, hence of `num_blocks` since `m_vars ≥ r_vars`) when `z_first == true` (`crates/akita-types/src/proof/ring_relation.rs:17-19,256-266`).
-What `z_first` changes is only the high-bit (plane + segment) part of the `x`-axis. With `z_first == false` `e_hat` is the offset-0 prefix, so `G` and `eq_seg` are clean tensor products. With `z_first == true` (`m_vars ≥ r_vars`, which the `fp128_d128` optimum can hit) the high index carries a constant offset `O = offset_e / num_blocks` that need not be a multiple of `num_digits_open`, so that one factor becomes a single `eval_offset_eq_tensor` (carry) call instead of a product, still `O(col_bits)`.
-This is the same offset / carry treatment the existing row-MLE evaluators already apply to the `e_hat` (`ŵ`) segment (the Matrix evaluation chapter, `book/src/how/verifying/matrix_evaluation.md`), so the trace term adds no new column-alignment constraint and does not by itself motivate changing or removing `z_first` (which is governed by the `ẑ`-vs-`ŵ`/`t̂` block-width tradeoff; see Non-Goals).
+On the `x`-axis the block factor `eq(r_x_blk, b_open)` is always exact, because `offset_e` is a multiple of `num_blocks`: the witness uses the fixed z-first column order, so `offset_e = z_len` (a multiple of `block_len`, hence of `num_blocks`) (`crates/akita-types/src/proof/ring_relation.rs`, `segment_layout`).
+With the leading `z_pre` segment, the high index of the `e_hat` (`ŵ`) segment carries a constant offset `O = offset_e / num_blocks` that need not be a multiple of `num_digits_open`, so that one factor becomes a single `eval_offset_eq_tensor` (carry) call instead of a product, still `O(col_bits)`.
+This is the same offset / carry treatment the existing row-MLE evaluators already apply to the `e_hat` (`ŵ`) segment (the Matrix evaluation chapter, `book/src/how/verifying/matrix_evaluation.md`), so the trace term adds no new column-alignment constraint.
 The only obligation carried into step 2 of Execution is the `K > 1` weighting derivation.
 
 ### Invariants
@@ -296,7 +296,7 @@ target.
 - Changing the extension-opening reduction partials or its degree-two sum-check. However, `K > 1` implementation must still redesign the EOR final binding, because the verifier currently recovers the EOR output from on-wire `y_ring`.
 - The zero-fold (`AkitaBatchedRootProof::ZeroFold`) fast path, which sends no `y_ring`.
 - Committing `y_ring` explicitly (the "commit the ring element" framing). That variant is recorded under Alternatives Considered and is deliberately not the chosen design.
-- Changing or removing the `z_first` column ordering (`ring_column_z_first(lp) := m_vars ≥ r_vars`). `z_first` is a divisibility/alignment rule that keeps both block-width families (`ŵ`/`t̂` at `2^{r_vars}`, `ẑ` at `2^{m_vars}`) on the fast multi-factor `eval_offset_eq_tensor` path by placing the larger-block-width family first (`book/src/how/verifying/matrix_evaluation.md`; `setup-offloading-companion.html` "Why This Order"). Removing `y_ring` only drops a materialized *row* family (no column-alignment constraint), and the fused trace term reuses the same offset/carry treatment on the `e_hat` column segment, so neither side of this change alters the `ẑ`-vs-`ŵ`/`t̂` tradeoff that motivates `z_first`. Hard-coding either ordering regresses the levels where the planner's `(m, r)` split makes the other family larger (forcing the misaligned segment onto the carry-DP / materialization fallback, which for `ẑ` is `O(|ẑ|)` and for `ŵ`/`t̂` also hits the shared setup-contribution scan). `z_first` therefore stays adaptive.
+- The witness column ordering. **Resolved by `specs/remove-z-first.md`:** the adaptive `z_first` knob has been removed and the witness now always uses the fixed z-first column order (`ẑ` first), so this work neither depends on nor changes the ordering. Removing `y_ring` only drops a materialized *row* family (no column-alignment constraint), and the fused trace term reuses the same offset/carry treatment on the `e_hat` column segment.
 - Any change to setup, SIS sizing, or the security floor.
 
 ## Evaluation
@@ -369,7 +369,7 @@ Recommended order, soundness first:
 6. **ZK.** Remove the `y_ring` masks; add the deferred trace relation; close the cursor accounting.
 7. **Tests + profile.** Negative tests, byte-delta test, transcript-hardening, and the profile shrink check.
 
-Risks to resolve first: the exact `M`-row bookkeeping when the public-output row is removed (does the consistency row or commitment binding implicitly depend on it?), whether the intentional `r_hat` shrink should be accepted in the first PR or temporarily avoided with inert padding, and the `e_hat` segment alignment when `ring_column_z_first(lp) == true` (the constant offset folds into `eq_seg`; see *Verifier final-point evaluation*). The `K > 1` per-round eval cost is resolved: the conjugate sum collapses into one `Tr_H` of a single ring product, `O(|H| · D)` per level, independent of `num_blocks · num_digits_open`. These are flagged for step 1–2 before committing to the wiring.
+Risks to resolve first: the exact `M`-row bookkeeping when the public-output row is removed (does the consistency row or commitment binding implicitly depend on it?), whether the intentional `r_hat` shrink should be accepted in the first PR or temporarily avoided with inert padding, and the `e_hat` segment alignment under the fixed z-first layout (the constant `offset_e = z_len` folds into `eq_seg`; see *Verifier final-point evaluation*). The `K > 1` per-round eval cost is resolved: the conjugate sum collapses into one `Tr_H` of a single ring product, `O(|H| · D)` per level, independent of `num_blocks · num_digits_open`. These are flagged for step 1–2 before committing to the wiring.
 
 ## Notation
 
@@ -432,7 +432,7 @@ and commitment `\mathbf{v}`.
 - Opening-point split / `packed_inner_point`: `crates/akita-types/src/proof/batch.rs:624-734` (`reduce_inner_opening_to_ring_element`: `crates/akita-types/src/layout/opening_point.rs:185-197`).
 - Notation: see the Notation section above and `~/Documents/Notes/akita-v-notation-and-zfirst-rationale.md`.
 - Fold producing `y_ring = sum_j b_j · e_folded_j`, `e_folded_j = <a, block_j>`: `crates/akita-prover/src/backend/recursive_witness.rs:179-211`.
-- Plane-major `e_hat` column layout (`col = offset_e + h · num_blocks + j`): `crates/akita-prover/src/protocol/ring_switch/coeffs.rs:146-165`; `z_first`: `crates/akita-types/src/proof/ring_relation.rs:17-19`.
+- Plane-major `e_hat` column layout (`col = offset_e + h · num_blocks + j`): `crates/akita-prover/src/protocol/ring_switch/coeffs.rs:146-165`; fixed z-first `segment_layout`: `crates/akita-types/src/proof/ring_relation.rs`.
 - Gadget powers `g_open[h] = base^h`: `crates/akita-types/src/layout/digit_math.rs:17-26`.
 - Verifier level + fused trace claim: `crates/akita-verifier/src/protocol/levels.rs`, `levels/recursive.rs`; stage-2 oracle: `crates/akita-verifier/src/stages/stage2.rs`.
 - Proof sizing: `crates/akita-types/src/proof_size.rs:72-104`.

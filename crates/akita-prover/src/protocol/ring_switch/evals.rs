@@ -499,26 +499,15 @@ where
         })
         .collect();
 
-    let z_first = akita_types::ring_column_z_first(lp);
-    if z_first {
-        out.extend(z_segment);
-        out.extend(w_segment);
-        out.extend(t_segment);
-        out.extend(u_segment);
-        #[cfg(feature = "zk")]
-        out.extend(b_blinding_segment);
-        #[cfg(feature = "zk")]
-        out.extend(d_blinding_segment);
-    } else {
-        out.extend(w_segment);
-        out.extend(t_segment);
-        out.extend(u_segment);
-        #[cfg(feature = "zk")]
-        out.extend(b_blinding_segment);
-        #[cfg(feature = "zk")]
-        out.extend(d_blinding_segment);
-        out.extend(z_segment);
-    }
+    // Fixed z-first segment order: z ‖ w ‖ t ‖ u ‖ [b_zk] ‖ [d_zk] ‖ r_tail.
+    out.extend(z_segment);
+    out.extend(w_segment);
+    out.extend(t_segment);
+    out.extend(u_segment);
+    #[cfg(feature = "zk")]
+    out.extend(b_blinding_segment);
+    #[cfg(feature = "zk")]
+    out.extend(d_blinding_segment);
     out.extend(r_tail);
     out.resize(x_len, E::zero());
     Ok(out)

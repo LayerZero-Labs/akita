@@ -238,12 +238,8 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// Build the committed witness polynomial from ring-domain digit planes.
 ///
 /// Emits field-domain coefficients in digit-major order (block index innermost)
-/// with adaptive segment ordering: the segment whose block dimension is the
-/// larger power of two comes first.
-///
-/// Segment ordering:
-/// - If `m_vars >= r_vars`: z-hat (`2^m` blocks), e-hat + t-hat (`2^r` blocks), r-hat
-/// - If `m_vars < r_vars`: e-hat + t-hat (`2^r` blocks), z-hat (`2^m` blocks), r-hat
+/// with the fixed z-first segment ordering:
+/// z-hat, e-hat + t-hat, û_concat, blinding, r-hat.
 ///
 /// Within each segment, the power-of-2 block index is the fastest-varying
 /// (innermost) dimension.
@@ -303,7 +299,6 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         + b_blinding_planes
         + z_folded_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
-    let z_first = akita_types::ring_column_z_first(lp);
     tracing::debug!(
         e_hat_planes,
         d_blinding_planes,
@@ -315,7 +310,6 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         r_planes = r_hat_count,
         total_ring = z_count + r_hat_count,
         total_field = (z_count + r_hat_count) * D,
-        z_first,
         "build_w_coeffs"
     );
     let total_planes = z_count + r_hat_count;
@@ -341,59 +335,31 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         t_hat_planes / t_block_count
     };
 
-    if z_first {
-        emit_z_folded_block_inner(
-            &mut out,
-            z_folded_centered,
-            block_len,
-            depth_commit,
-            num_digits_fold,
-            log_basis,
-        );
-        akita_types::emit_witness_planes_block_inner(
-            &mut out,
-            e_hat.flat_digits(),
-            w_block_count,
-            depth_open,
-        );
-        akita_types::emit_witness_planes_block_inner(
-            &mut out,
-            t_hat.flat_digits(),
-            t_block_count,
-            t_planes_per_block,
-        );
-        emit_flat_planes(&mut out, u_concat_digits);
-        #[cfg(feature = "zk")]
-        emit_blinding_planes(&mut out, b_blinding_digits);
-        #[cfg(feature = "zk")]
-        emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
-    } else {
-        akita_types::emit_witness_planes_block_inner(
-            &mut out,
-            e_hat.flat_digits(),
-            w_block_count,
-            depth_open,
-        );
-        akita_types::emit_witness_planes_block_inner(
-            &mut out,
-            t_hat.flat_digits(),
-            t_block_count,
-            t_planes_per_block,
-        );
-        emit_flat_planes(&mut out, u_concat_digits);
-        #[cfg(feature = "zk")]
-        emit_blinding_planes(&mut out, b_blinding_digits);
-        #[cfg(feature = "zk")]
-        emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
-        emit_z_folded_block_inner(
-            &mut out,
-            z_folded_centered,
-            block_len,
-            depth_commit,
-            num_digits_fold,
-            log_basis,
-        );
-    }
+    emit_z_folded_block_inner(
+        &mut out,
+        z_folded_centered,
+        block_len,
+        depth_commit,
+        num_digits_fold,
+        log_basis,
+    );
+    akita_types::emit_witness_planes_block_inner(
+        &mut out,
+        e_hat.flat_digits(),
+        w_block_count,
+        depth_open,
+    );
+    akita_types::emit_witness_planes_block_inner(
+        &mut out,
+        t_hat.flat_digits(),
+        t_block_count,
+        t_planes_per_block,
+    );
+    emit_flat_planes(&mut out, u_concat_digits);
+    #[cfg(feature = "zk")]
+    emit_blinding_planes(&mut out, b_blinding_digits);
+    #[cfg(feature = "zk")]
+    emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
 
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;

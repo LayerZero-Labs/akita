@@ -147,8 +147,8 @@ pub fn terminal_e_hat_bytes_from_blocks<const D: usize>(
     Ok(bytes)
 }
 
-/// Derive the terminal `e_hat` byte range from the two prefix segments that can
-/// precede it in the final witness.
+/// Derive the terminal `e_hat` byte range, which always follows the leading
+/// `z_folded` segment in the fixed z-first final-witness layout.
 ///
 /// This is the shared layout primitive used by both prover witness emission and
 /// verifier/prover transcript slicing.
@@ -159,7 +159,6 @@ pub fn terminal_e_hat_bytes_from_blocks<const D: usize>(
 /// logical `e_hat` range would be empty.
 pub fn terminal_witness_segment_layout_from_counts(
     ring_dimension: usize,
-    z_first: bool,
     z_folded_ring_count: usize,
     e_hat_ring_count: usize,
 ) -> Result<TerminalWitnessSegmentLayout, AkitaError> {
@@ -176,13 +175,10 @@ pub fn terminal_witness_segment_layout_from_counts(
             "terminal e_hat digit range is empty".to_string(),
         ));
     }
-    let e_hat_digit_offset = if z_first {
-        z_folded_ring_count
-            .checked_mul(ring_dimension)
-            .ok_or_else(|| AkitaError::InvalidSetup("terminal e_hat offset overflow".to_string()))?
-    } else {
-        0
-    };
+    // Fixed z-first layout: `e_hat` always follows the `z_folded` segment.
+    let e_hat_digit_offset = z_folded_ring_count
+        .checked_mul(ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal e_hat offset overflow".to_string()))?;
     Ok(TerminalWitnessSegmentLayout {
         e_hat_digit_offset,
         e_hat_digit_count,
@@ -223,7 +219,6 @@ pub fn terminal_witness_segment_layout(
         .ok_or_else(|| AkitaError::InvalidSetup("terminal z-folded width overflow".to_string()))?;
     terminal_witness_segment_layout_from_counts(
         lp.ring_dimension,
-        crate::proof::ring_relation::ring_column_z_first(lp),
         z_folded_ring_count,
         e_hat_ring_count,
     )
@@ -253,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_witness_segment_layout_places_e_hat_after_z_when_z_first() {
+    fn terminal_witness_segment_layout_places_e_hat_after_z() {
         let lp = segment_test_params(3, 2);
         let layout = terminal_witness_segment_layout(&lp, 5, 2, 128).unwrap();
 
@@ -261,18 +256,6 @@ mod tests {
             layout.e_hat_digit_offset,
             2 * lp.inner_width() * lp.num_digits_fold(5, 128).unwrap() * lp.ring_dimension
         );
-        assert_eq!(
-            layout.e_hat_digit_count,
-            5 * lp.num_blocks * lp.num_digits_open * lp.ring_dimension
-        );
-    }
-
-    #[test]
-    fn terminal_witness_segment_layout_places_e_hat_first_when_w_first() {
-        let lp = segment_test_params(1, 3);
-        let layout = terminal_witness_segment_layout(&lp, 5, 2, 128).unwrap();
-
-        assert_eq!(layout.e_hat_digit_offset, 0);
         assert_eq!(
             layout.e_hat_digit_count,
             5 * lp.num_blocks * lp.num_digits_open * lp.ring_dimension
