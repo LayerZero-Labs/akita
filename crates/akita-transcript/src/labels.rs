@@ -49,6 +49,8 @@ pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"ak/c/scr";
 pub const ABSORB_SUMCHECK_S_CLAIM: &[u8] = b"ak/a/scs";
 /// Absorb the stage-2 next-witness evaluation handoff before recursion continues.
 pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
+/// Absorb the stage-3 carried next-witness evaluation before recursion continues.
+pub const ABSORB_STAGE3_NEXT_W_EVAL: &[u8] = b"ak/a/s3w";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 /// Challenge for batched sumcheck coefficient sampling.
@@ -122,6 +124,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_SUMCHECK_ROUND,
     ABSORB_SUMCHECK_S_CLAIM,
     ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_STAGE3_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
