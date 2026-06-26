@@ -60,7 +60,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
-            ProverSetup = AkitaProverSetup<FF, D>,
+            ProverSetup = AkitaProverSetup<FF>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -105,7 +105,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
-            ProverSetup = AkitaProverSetup<FF, D>,
+            ProverSetup = AkitaProverSetup<FF>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -172,7 +172,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             F,
             D,
-            ProverSetup = AkitaProverSetup<F, D>,
+            ProverSetup = AkitaProverSetup<F>,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,

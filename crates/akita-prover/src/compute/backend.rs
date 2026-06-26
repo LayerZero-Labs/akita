@@ -8,7 +8,7 @@ use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use akita_types::{dispatch_ring_dim_result, AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 
 /// Shared prepared-setup contract for prover compute backends.
@@ -29,14 +29,18 @@ where
 
     /// Prepare backend state from a prover setup wrapper.
     ///
-    /// Builds the minimum NTT setup contract: the full-envelope slot at `D`.
-    fn prepare_setup<const D: usize>(
+    /// Builds the minimum NTT setup contract: one full-envelope slot at the
+    /// setup seed's `gen_ring_dim`.
+    fn prepare_setup(
         &self,
-        setup: &AkitaProverSetup<F, D>,
+        setup: &AkitaProverSetup<F>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        let prepared = self.prepare_expanded::<D>(setup.expanded.clone())?;
-        self.register_setup_contract_envelope_ntt::<D>(&prepared, setup.expanded.as_ref())?;
-        Ok(prepared)
+        let ring_d = setup.gen_ring_dim();
+        dispatch_ring_dim_result!(ring_d, |D| {
+            let prepared = self.prepare_expanded::<D>(setup.expanded.clone())?;
+            self.register_setup_contract_envelope_ntt::<D>(&prepared, setup.expanded.as_ref())?;
+            Ok(prepared)
+        })
     }
 
     /// Prepare backend state from already-expanded setup data.

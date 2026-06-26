@@ -603,16 +603,16 @@ mod tests {
 
     fn prepared() -> CpuPreparedSetup<F> {
         let setup =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(D, 8, 1, setup_envelope(32)).unwrap();
         CpuBackend.prepare_setup(&setup).unwrap()
     }
 
     #[test]
     fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
         let setup_a =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(D, 8, 1, setup_envelope(32)).unwrap();
         let setup_b =
-            AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(D, 9, 1, setup_envelope(32)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
 
         CpuBackend
@@ -629,9 +629,9 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
         let setup_a =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(D, 8, 1, setup_envelope(32)).unwrap();
         let setup_b =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(D, 8, 1, setup_envelope(32)).unwrap();
         assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
@@ -657,7 +657,7 @@ mod tests {
     #[test]
     fn prepare_setup_registers_envelope_ntt_contract() {
         let setup =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(D, 8, 1, setup_envelope(32)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let envelope_key =
@@ -670,7 +670,7 @@ mod tests {
     #[test]
     fn prepare_expanded_with_envelope_ntt_builds_envelope_slot() {
         let setup =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(D, 8, 1, setup_envelope(32)).unwrap();
         let prepared = CpuBackend
             .prepare_expanded_with_envelope_ntt::<D>(setup.expanded.clone())
             .expect("prepared");
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_warms_multiple_ntt_slots() {
         let setup =
-            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(D, 8, 1, setup_envelope(32)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");

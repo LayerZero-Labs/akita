@@ -106,7 +106,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             F,
             D,
-            ProverSetup = AkitaProverSetup<F, D>,
+            ProverSetup = AkitaProverSetup<F>,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
@@ -273,7 +273,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             F,
             D,
-            ProverSetup = AkitaProverSetup<F, D>,
+            ProverSetup = AkitaProverSetup<F>,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,

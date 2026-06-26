@@ -743,7 +743,8 @@ mod tests {
 
     #[test]
     fn commit_level_params_reject_log_basis_above_i8_range() {
-        let expanded = AkitaProverSetup::<F, D>::generate_with_capacity(
+        let expanded = AkitaProverSetup::<F>::generate_with_capacity(
+            D,
             5,
             1,
             SetupMatrixEnvelope { max_setup_len: 8 },
