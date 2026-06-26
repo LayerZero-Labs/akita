@@ -10,8 +10,9 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
-    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
+    validate_schedule_context_at_entry, ValidatedScheduleContext, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
+    GROUPED_ROOT_UNSUPPORTED,
 };
 
 fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
@@ -175,6 +176,8 @@ where
     .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(&flat_polys, root_commit_params)?;
 
+    let schedule_ctx = validate_schedule_context_at_entry(&schedule, expanded.seed())?;
+
     bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         expanded.as_ref(),
         &opening_batch,
@@ -207,6 +210,7 @@ where
         transcript,
         claims,
         &schedule,
+        &schedule_ctx,
         basis,
         setup_contribution_mode,
     )
@@ -242,6 +246,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     transcript: &mut T,
     claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field, D>,
     schedule: &Schedule,
+    schedule_ctx: &ValidatedScheduleContext,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
@@ -287,6 +292,14 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
+    let ring_plan = &schedule_ctx.ring_plan;
+    let root_ring_d = ring_plan.dim_at(0)?;
+    if root_ring_d != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
+        )));
+    }
+
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
         let commitments = claims.commitments();
@@ -319,6 +332,7 @@ where
             D,
         >(
             expanded,
+            prefix_slots,
             stacks,
             transcript,
             claims,

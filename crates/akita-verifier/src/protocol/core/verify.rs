@@ -14,10 +14,11 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    FpExtEncoding, LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, Schedule,
-    SetupContributionMode, Step, VerifierOpeningBatch, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    schedule_root_fold_step, validate_batched_inputs, validate_schedule_context_at_entry,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup,
+    BasisMode, CleartextWitnessProof, FpExtEncoding, LevelParams, OpeningBatchLimits,
+    OpeningBatchShape, RingCommitment, Schedule, SetupContributionMode, Step,
+    ValidatedScheduleContext, VerifierOpeningBatch, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
     GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
@@ -433,6 +434,7 @@ where
     let schedule = effective_batched_schedule::<Cfg, D>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
+    let schedule_ctx = validate_schedule_context_at_entry(&schedule, setup.expanded.seed())?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         &setup.expanded,
@@ -448,6 +450,7 @@ where
         transcript,
         claims,
         &schedule,
+        &schedule_ctx,
         basis,
         setup_contribution_mode,
     )
@@ -473,6 +476,7 @@ pub(crate) fn verify<Cfg, T, const D: usize>(
     transcript: &mut T,
     claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
     schedule: &Schedule,
+    schedule_ctx: &ValidatedScheduleContext,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -486,6 +490,8 @@ where
         + AkitaSerialize,
     T: Transcript<Cfg::Field>,
 {
+    let ring_plan = &schedule_ctx.ring_plan;
+
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
             let Some(Step::Direct(direct)) = schedule.steps.first() else {
@@ -500,6 +506,12 @@ where
             )?;
         }
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
+            let root_ring_d = ring_plan.dim_at(0)?;
+            if root_ring_d != D {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
+                )));
+            }
             verify_folded_batched_proof::<Cfg::Field, Cfg::ExtField, T, D>(
                 proof,
                 setup,

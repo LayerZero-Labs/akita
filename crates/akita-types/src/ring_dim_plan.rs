@@ -195,6 +195,47 @@ impl RingDimPlan {
     }
 }
 
+/// Validated per-fold ring geometry for prove/verify orchestration.
+///
+/// Build once at [`validate_schedule_context_at_entry`] and thread inward so inner
+/// `prove` / `verify` do not re-validate the schedule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedScheduleContext {
+    pub ring_plan: RingDimPlan,
+}
+
+impl ValidatedScheduleContext {
+    /// Validate schedule ring geometry against the setup seed.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`RingDimPlan::from_schedule`].
+    pub fn validate(schedule: &Schedule, seed: &AkitaSetupSeed) -> Result<Self, AkitaError> {
+        Ok(Self {
+            ring_plan: RingDimPlan::from_schedule(schedule, seed)?,
+        })
+    }
+}
+
+/// Prove or verify entry validation (wave 5a): schedule ring geometry only, no NTT warming.
+///
+/// Call once the effective schedule is fixed at `batched_prove` / `batched_verify` or the
+/// inner `prove` / `verify` orchestration entry.
+pub fn validate_ring_dim_plan_at_entry(
+    schedule: &Schedule,
+    seed: &AkitaSetupSeed,
+) -> Result<RingDimPlan, AkitaError> {
+    Ok(ValidatedScheduleContext::validate(schedule, seed)?.ring_plan)
+}
+
+/// Entry helper returning the full validated context for orchestration threading.
+pub fn validate_schedule_context_at_entry(
+    schedule: &Schedule,
+    seed: &AkitaSetupSeed,
+) -> Result<ValidatedScheduleContext, AkitaError> {
+    ValidatedScheduleContext::validate(schedule, seed)
+}
+
 fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
     for d in [dims.inner, dims.outer, dims.opening] {
         if !SUPPORTED_RING_DIMS.contains(&d) {
