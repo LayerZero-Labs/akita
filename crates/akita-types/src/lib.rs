@@ -49,7 +49,7 @@ pub use golomb_rice::{
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection,
-    FoldLinfProtocolBinding, PlanSection, ProtocolFeatureSet, SetupSection,
+    FoldLinfProtocolBinding, PlanSection, SetupSection,
     FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN, FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 pub use layout::{
@@ -60,8 +60,6 @@ pub use layout::{
     sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView,
     RingOpeningPoint,
 };
-#[cfg(feature = "zk")]
-pub use proof::ZkHidingProof;
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,

@@ -80,16 +80,11 @@ pub fn extension_opening_reduction_proof_bytes(
     }
     let elem_bytes = field_bytes(challenge_field_bits);
     let rounds = opening_vars - split_bits;
-    Ok(partials.saturating_mul(elem_bytes).saturating_add({
-        #[cfg(feature = "zk")]
-        {
-            sumcheck_bytes(rounds, EXTENSION_OPENING_REDUCTION_DEGREE, elem_bytes)
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            sumcheck_bytes(rounds, EXTENSION_OPENING_REDUCTION_DEGREE, elem_bytes)
-        }
-    }))
+    Ok(partials.saturating_mul(elem_bytes).saturating_add(sumcheck_bytes(
+        rounds,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
+        elem_bytes,
+    )))
 }
 
 /// Planned recursive witness size in ring elements for a singleton fold.
@@ -118,38 +113,12 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     // Tiered single-group `û_concat` (one commitment bundle); `0` single-tier.
     let u_concat_count = lp.u_concat_ring_len_per_group();
 
-    #[cfg(feature = "zk")]
-    {
-        let d_blinding_count = crate::lhl_blinding::blinding_column_count_from_bits(
-            lp.d_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-            field_bits as usize,
-        );
-        let b_blinding_count = crate::lhl_blinding::blinding_column_count_from_bits(
-            lp.b_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-            field_bits as usize,
-        );
-        e_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(u_concat_count))
-            .and_then(|n| n.checked_add(b_blinding_count))
-            .and_then(|n| n.checked_add(d_blinding_count))
-            .and_then(|n| n.checked_add(z_pre_count))
-            .and_then(|n| n.checked_add(r_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        e_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(u_concat_count))
-            .and_then(|n| n.checked_add(z_pre_count))
-            .and_then(|n| n.checked_add(r_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))
-    }
+    e_hat_count
+        .checked_add(t_hat_count)
+        .and_then(|n| n.checked_add(u_concat_count))
+        .and_then(|n| n.checked_add(z_pre_count))
+        .and_then(|n| n.checked_add(r_count))
+        .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))
 }
 
 /// Planned recursive witness size in field elements for a singleton fold.

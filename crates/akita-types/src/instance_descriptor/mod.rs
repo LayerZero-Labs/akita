@@ -8,7 +8,8 @@
 //! ## Descriptor version policy
 //!
 //! `AKITA_INSTANCE_DESCRIPTOR_VERSION` bumps when setup-section bindings change
-//! (for example extended `FoldLinfProtocolBinding` fields).
+//! (for example extended `FoldLinfProtocolBinding` fields or dropping
+//! `ProtocolFeatureSet` at descriptor v3).
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -34,7 +35,7 @@ use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 3;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
@@ -134,23 +135,6 @@ impl AlgebraSection {
     }
 }
 
-/// Compile-time features that change protocol transcript behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProtocolFeatureSet {
-    /// Whether the `zk` feature is active.
-    pub zk: bool,
-}
-
-impl ProtocolFeatureSet {
-    /// Return the protocol feature set of the current build.
-    #[inline]
-    pub const fn current() -> Self {
-        Self {
-            zk: cfg!(feature = "zk"),
-        }
-    }
-}
-
 /// Setup-bound descriptor fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupSection {
@@ -160,8 +144,6 @@ pub struct SetupSection {
     pub sis_modulus_family: SisModulusFamily,
     /// Digest of the canonical `AkitaSetupSeed` bytes.
     pub setup_seed_digest: DescriptorDigest,
-    /// Protocol-affecting feature mode.
-    pub protocol_features: ProtocolFeatureSet,
     /// Fold-l∞ threshold policy, grind cap, and nonce wire contract.
     pub fold_linf: FoldLinfProtocolBinding,
 }
@@ -187,7 +169,6 @@ impl SetupSection {
             decomposition,
             sis_modulus_family,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
-            protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         })
     }
@@ -445,45 +426,6 @@ impl AkitaDeserialize for AlgebraSection {
     }
 }
 
-impl Valid for ProtocolFeatureSet {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl AkitaSerialize for ProtocolFeatureSet {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.zk.serialize_with_mode(writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.zk.serialized_size(compress)
-    }
-}
-
-impl AkitaDeserialize for ProtocolFeatureSet {
-    type Context = ();
-
-    fn deserialize_with_mode<R: Read>(
-        reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &Self::Context,
-    ) -> Result<Self, SerializationError> {
-        let out = Self {
-            zk: bool::deserialize_with_mode(reader, compress, validate, &())?,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
 impl Valid for SetupSection {
     fn check(&self) -> Result<(), SerializationError> {
         if self.decomposition.log_basis == 0 {
@@ -510,8 +452,6 @@ impl AkitaSerialize for SetupSection {
         encode_decomposition(&self.decomposition, &mut writer, compress)?;
         encode_sis_family(self.sis_modulus_family, &mut writer, compress)?;
         writer.write_all(&self.setup_seed_digest)?;
-        self.protocol_features
-            .serialize_with_mode(&mut writer, compress)?;
         self.fold_linf.serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
@@ -520,7 +460,6 @@ impl AkitaSerialize for SetupSection {
         decomposition_size(&self.decomposition, compress)
             + sis_family_size(compress)
             + 32
-            + self.protocol_features.serialized_size(compress)
             + self.fold_linf.serialized_size(compress)
     }
 }
@@ -537,15 +476,12 @@ impl AkitaDeserialize for SetupSection {
         let decomposition = decode_decomposition(&mut reader, compress, validate)?;
         let sis_modulus_family = decode_sis_family(&mut reader, compress, validate)?;
         let setup_seed_digest = read_digest(&mut reader)?;
-        let protocol_features =
-            ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let fold_linf =
             FoldLinfProtocolBinding::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             decomposition,
             sis_modulus_family,
             setup_seed_digest,
-            protocol_features,
             fold_linf,
         };
         if matches!(validate, Validate::Yes) {

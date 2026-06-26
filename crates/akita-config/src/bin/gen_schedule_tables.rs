@@ -4,12 +4,10 @@
 //! [`akita_planner::EmitSpec`] values and delegates emission to the planner
 //! library. Output lands in `akita-schedules/src/generated/`.
 //!
-//! Full regen (non-zk tables, ZK tables, then `mod.rs` wiring):
+//! Full regen (tables, then `mod.rs` wiring):
 //!
 //! ```text
 //! cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- \
-//!   crates/akita-schedules/src/generated
-//! cargo run --release -p akita-config --no-default-features --features zk --bin gen_schedule_tables -- \
 //!   crates/akita-schedules/src/generated
 //! cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- \
 //!   crates/akita-schedules/src/generated --wiring-only
@@ -61,7 +59,6 @@ fn main() -> Result<(), String> {
     };
 
     if !wiring_only {
-        let zk_enabled = false;
         let generator_command = generator_command();
         for family in ALL_GENERATED_FAMILIES {
             if let Some(ref names) = filter {
@@ -69,9 +66,8 @@ fn main() -> Result<(), String> {
                     continue;
                 }
             }
-            let spec =
-                emit_spec_for_family(family, base_dir.clone(), zk_enabled, generator_command)
-                    .map_err(|e| format!("{}: emit spec: {e}", family.module_name))?;
+            let spec = emit_spec_for_family(family, base_dir.clone(), generator_command)
+                .map_err(|e| format!("{}: emit spec: {e}", family.module_name))?;
             let dest = write_family_module(&spec)?;
             println!("wrote {}", dest.display());
         }

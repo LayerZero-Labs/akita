@@ -53,7 +53,6 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             },
             sis_modulus_family: SisModulusFamily::Q32,
             setup_seed_digest: [1; 32],
-            protocol_features: ProtocolFeatureSet { zk: false },
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         },
         PlanSection::from_schedule(&schedule),
@@ -68,7 +67,6 @@ fn rejects_removed_q16_sis_family_tag() {
     assert!(matches!(err, SerializationError::InvalidData(_)));
 }
 
-#[cfg(not(feature = "zk"))]
 #[test]
 fn fold_linf_descriptor_canonical_digest_pinned() {
     let bytes = sample_descriptor()
@@ -77,14 +75,14 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            221,
+            220,
             [
-                0x89, 0x2a, 0xd5, 0x49, 0xae, 0xec, 0xea, 0x86, 0x29, 0x96, 0x65, 0x42, 0x30, 0x4f,
-                0xdc, 0xf0, 0xd7, 0xc2, 0xc2, 0xed, 0x24, 0x34, 0xfb, 0xd4, 0x48, 0x73, 0x14, 0x1a,
-                0x1a, 0x6c, 0xcd, 0x3d,
+                0x56, 0xc5, 0x0a, 0xef, 0x46, 0x38, 0x02, 0x14, 0x17, 0x95, 0xbf, 0x95, 0xec, 0x1a,
+                0xbb, 0x7a, 0xa2, 0xa2, 0x13, 0xc9, 0x0b, 0xa0, 0xa3, 0xb6, 0x77, 0x63, 0xf1, 0x7f,
+                0x9d, 0xa8, 0xb0, 0x79,
             ]
         ),
-        "update pinned digest after dropping CallSection num_claims from the wire"
+        "update pinned digest after dropping ProtocolFeatureSet from SetupSection (descriptor v3)"
     );
 }
 
@@ -335,10 +333,6 @@ fn setup_seed_digest_matches_setup_section() {
         max_num_batched_polys: 2,
         gen_ring_dim: 4,
         max_setup_len: 2,
-        #[cfg(feature = "zk")]
-        max_zk_b_len: 1,
-        #[cfg(feature = "zk")]
-        max_zk_d_len: 1,
         public_matrix_seed: [7; 32],
     };
     let section = SetupSection::from_parts(
