@@ -384,19 +384,15 @@ impl SetupContributionFixture {
         );
     }
 
-    /// Stage-3 offload footprint must match shared geometry and the weight plan.
+    /// Stage-3 geometry invariant: shared layout matches the weight plan (test-only).
     pub fn assert_geometry_matches_setup_contribution_plan(&self) {
-        use akita_types::{
-            setup_active_ring_elems_for_fold, setup_required_for_shape, SetupRelationShape,
-        };
+        use akita_types::{ensure_setup_envelope, setup_required_for_shape, SetupRelationShape};
 
         let inputs = self.prepared.create_setup_contribution_inputs();
         let shape = SetupRelationShape::from(&inputs);
         let geometry_required = setup_required_for_shape(&shape).expect("geometry required");
-        let active_ring_elems =
-            setup_active_ring_elems_for_fold(&self.setup, &shape, TEST_RING_DIM)
-                .expect("active ring elems");
-        assert_eq!(active_ring_elems, geometry_required);
+        ensure_setup_envelope(&self.setup, geometry_required, TEST_RING_DIM)
+            .expect("setup envelope");
 
         let evaluator = SetupEvaluator::new(
             &inputs,
