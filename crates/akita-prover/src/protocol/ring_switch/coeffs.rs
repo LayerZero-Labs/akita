@@ -224,10 +224,8 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     // Tiered: the hidden decomposed concatenated slice images `û_concat` are a
     // flat contiguous segment emitted immediately after `t̂` (at `offset_u`).
     let u_concat_planes = u_concat_digits.len();
-    let z_count = e_hat_planes
-        + t_hat_planes
-        + u_concat_planes
-        + z_folded_centered.len() * num_digits_fold;
+    let z_count =
+        e_hat_planes + t_hat_planes + u_concat_planes + z_folded_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     tracing::debug!(
         e_hat_planes,
