@@ -125,8 +125,9 @@ pub use schedule::{
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use setup_geometry::{
-    active_setup_field_len, compute_setup_layout, setup_active_ring_elems_at,
-    setup_required_for_shape, SetupLayoutFootprint, SetupRelationShape,
+    active_setup_field_len, compute_setup_layout, ensure_setup_envelope,
+    setup_active_ring_elems_at, setup_active_ring_elems_for_fold, setup_required_for_shape,
+    stage3_offload_natural_field_len, SetupLayoutFootprint, SetupRelationShape,
 };
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use tail_golomb_rice_low_bits::{

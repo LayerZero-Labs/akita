@@ -13,8 +13,10 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
-    LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    setup_active_ring_elems_for_fold, stage3_offload_natural_field_len, AkitaExpandedSetup,
+    AkitaVerifierSetup, LevelParams, SetupRelationShape, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -27,6 +29,9 @@ use akita_types::{
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupEvalPlan<E>,
     alpha_pows: Vec<E>,
+    /// Authoritative inner setup row count from [`setup_active_ring_elems_for_fold`].
+    required: usize,
+    fold_ring_d: usize,
     ring_bits: usize,
     rounds: usize,
 }
@@ -41,6 +46,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F, const D: usize>(
         prepared: &RingSwitchDeferredRowEval<E>,
+        expanded: &AkitaExpandedSetup<F>,
+        fold_ring_d: usize,
         x_challenges: &[E],
         alpha: E,
     ) -> Result<Self, AkitaError>
@@ -48,10 +55,12 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
     {
-        let alpha_pows = scalar_powers(alpha, D);
+        let alpha_pows = scalar_powers(alpha, fold_ring_d);
         let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
         let layout = prepared.segment_layout()?;
         let setup_contribution_inputs = prepared.create_setup_contribution_inputs();
+        let relation_shape = SetupRelationShape::from(&setup_contribution_inputs);
+        let required = setup_active_ring_elems_for_fold(expanded, &relation_shape, fold_ring_d)?;
         let evaluator = SetupEvaluator::new(
             &setup_contribution_inputs,
             x_challenges,
@@ -67,11 +76,16 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             None,
         );
         let plan = evaluator.prepare()?;
-        let lambda_len = plan.required().checked_next_power_of_two().ok_or_else(|| {
+        if plan.required() != required {
+            return Err(AkitaError::InvalidSetup(
+                "setup contribution plan disagrees with geometry required rows".into(),
+            ));
+        }
+        let lambda_len = required.checked_next_power_of_two().ok_or_else(|| {
             AkitaError::InvalidSetup("setup product lambda length overflow".into())
         })?;
         let lambda_bits = lambda_len.trailing_zeros() as usize;
-        let ring_bits = D.trailing_zeros() as usize;
+        let ring_bits = fold_ring_d.trailing_zeros() as usize;
         let rounds = ring_bits
             .checked_add(lambda_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("setup product round count overflow".into()))?;
@@ -79,6 +93,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         Ok(Self {
             plan,
             alpha_pows,
+            required,
+            fold_ring_d,
             ring_bits,
             rounds,
         })
@@ -114,7 +130,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let setup_len = setup
             .expanded
             .shared_matrix()
-            .total_ring_elements_at::<D>()?;
+            .total_ring_elements_at_dyn(self.fold_ring_d)?;
         let setup_eval_len =
             self.setup_eval_len::<F, T, D>(setup, next_fold_level_params, setup_len, transcript)?;
 
@@ -134,11 +150,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let rho_setup = &challenges[..self.rounds];
         let (rho_y, rho_lambda) = rho_setup.split_at(self.ring_bits);
 
-        let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
+        let eq_lambda = lambda_eq_table(self.required, rho_lambda)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
         let setup_val = setup_mle_at_eq_tables::<F, E, D>(
             &setup.expanded,
-            self.plan.required(),
+            self.required,
             setup_eval_len,
             &eq_lambda,
             &eq_y,
@@ -169,13 +185,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        let natural_field_len = self
-            .plan
-            .required()
-            .checked_mul(SETUP_OFFLOAD_D_SETUP)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
-            })?;
+        let required = self.required;
+        ensure_setup_envelope(&setup.expanded, required, self.fold_ring_d)?;
+        let natural_field_len = stage3_offload_natural_field_len(required, SETUP_OFFLOAD_D_SETUP)?;
         let setup_prefix_selection = select_setup_prefix_slot(
             setup.expanded.seed(),
             setup_len,
