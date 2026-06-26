@@ -217,7 +217,7 @@ where
                     })?;
                 prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
                     expanded,
-                    &level_prefix_slots,
+                    level_prefix_slots,
                     &level_stack,
                     transcript,
                     level,
