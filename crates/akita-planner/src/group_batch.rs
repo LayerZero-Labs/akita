@@ -138,8 +138,7 @@ fn group_root_params_from_layout(
         challenge,
         witness,
         fold_linf_cap_config,
-    )
-    .unwrap_or(1);
+    )?;
 
     Ok(GroupRootParams {
         layout: layout.clone(),
@@ -250,6 +249,7 @@ fn grouped_root_direct_witness_len(
 fn grouped_root_direct_main_candidate(
     ctx: &GroupedRootDirectCandidateCtx<'_>,
     main_num_polys: usize,
+    log_basis: u32,
     m_vars: usize,
     r_vars: usize,
 ) -> Result<Option<LevelParams>, AkitaError> {
@@ -257,7 +257,6 @@ fn grouped_root_direct_main_candidate(
     let d = policy.ring_dimension;
     let family = policy.sis_family;
     let decomp = policy.decomposition;
-    let log_basis = decomp.log_basis;
     let level_decomp = DecompositionParams {
         log_basis,
         ..decomp
@@ -413,22 +412,30 @@ fn compute_grouped_root_direct_level_params(
                 .collect()
         }
     };
-    for (m_vars, r_vars) in candidates {
-        let Some(candidate) =
-            grouped_root_direct_main_candidate(&candidate_ctx, main_num_polys, m_vars, r_vars)?
-        else {
-            continue;
-        };
-        let score = grouped_root_direct_cost_score(
-            &candidate,
-            main_num_polys,
-            policy.decomposition.field_bits(),
-        )?;
-        if best
-            .as_ref()
-            .is_none_or(|(best_score, _)| score < *best_score)
-        {
-            best = Some((score, candidate));
+    let (min_log_basis, max_log_basis) = policy.basis_range;
+    for candidate_log_basis in min_log_basis..=max_log_basis {
+        for &(m_vars, r_vars) in &candidates {
+            let Some(candidate) = grouped_root_direct_main_candidate(
+                &candidate_ctx,
+                main_num_polys,
+                candidate_log_basis,
+                m_vars,
+                r_vars,
+            )?
+            else {
+                continue;
+            };
+            let score = grouped_root_direct_cost_score(
+                &candidate,
+                main_num_polys,
+                policy.decomposition.field_bits(),
+            )?;
+            if best
+                .as_ref()
+                .is_none_or(|(best_score, _)| score < *best_score)
+            {
+                best = Some((score, candidate));
+            }
         }
     }
 
@@ -529,6 +536,19 @@ mod tests {
         }
     }
 
+    fn precommitted_from_policy(
+        key: AkitaScheduleLookupKey,
+        policy: &PlannerPolicy,
+    ) -> CommitmentGroupLayout {
+        let schedule =
+            crate::find_schedule(key, policy, ring_challenge_config, fold_shape).expect("schedule");
+        let params = match schedule.steps.first().expect("schedule step") {
+            Step::Fold(fold) => fold.params.clone(),
+            Step::Direct(direct) => direct.params.clone().expect("root-direct params"),
+        };
+        CommitmentGroupLayout::from_params(key, &params)
+    }
+
     #[test]
     fn grouped_root_direct_witness_len_sums_mixed_polynomial_counts() {
         let key = GroupBatchAkitaScheduleLookupKey {
@@ -566,5 +586,26 @@ mod tests {
             find_group_batch_schedule(&key, &flat_policy(), ring_challenge_config, fold_shape)
                 .expect_err("single-group grouped schedule is disabled");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn grouped_root_direct_searches_policy_basis_range() {
+        let mut policy = flat_policy();
+        policy.decomposition.log_basis = 3;
+        policy.basis_range = (4, 4);
+        let pre_key = AkitaScheduleLookupKey::new(20, 1);
+        let key = GroupBatchAkitaScheduleLookupKey {
+            main: AkitaScheduleLookupKey::new(20, 2),
+            precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
+        };
+
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("grouped schedule");
+        let params = match schedule.steps.first().expect("grouped step") {
+            Step::Direct(direct) => direct.params.as_ref().expect("grouped root params"),
+            Step::Fold(_) => panic!("phase-1 grouped schedule should be root-direct"),
+        };
+
+        assert_eq!(params.log_basis, 4);
     }
 }

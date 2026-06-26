@@ -407,8 +407,7 @@ impl LevelParams {
             challenge,
             witness,
             self.fold_linf_cap_config,
-        )
-        .unwrap_or(1);
+        )?;
         if root_num_claims > 1 {
             self.cached_num_digits_fold_claims = root_num_claims;
             self.cached_num_digits_fold_value = crate::sis::num_digits_fold(
@@ -419,8 +418,7 @@ impl LevelParams {
                 challenge,
                 witness,
                 self.fold_linf_cap_config,
-            )
-            .unwrap_or(self.num_digits_fold_one);
+            )?;
         } else {
             self.cached_num_digits_fold_claims = 0;
             self.cached_num_digits_fold_value = self.num_digits_fold_one;
@@ -1095,6 +1093,21 @@ mod tests {
         assert_eq!(lp.inner_width(), lp.a_key.col_len());
         assert_eq!(lp.outer_width(), lp.b_key.col_len());
         assert_eq!(lp.d_matrix_width(), lp.d_key.col_len());
+    }
+
+    #[test]
+    fn with_fold_linf_cap_config_propagates_fold_digit_errors() {
+        let mut lp = sample_layout_lp();
+        lp.stage1_config = SparseChallengeConfig::Uniform {
+            weight: 0,
+            nonzero_coeffs: vec![-1, 1],
+        };
+
+        let err = lp
+            .with_fold_linf_cap_config(128, 1)
+            .expect_err("zero challenge mass must reject");
+
+        assert!(matches!(err, AkitaError::InvalidSetup(message) if message.contains("β = 0")));
     }
 
     #[test]
