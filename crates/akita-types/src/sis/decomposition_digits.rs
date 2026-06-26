@@ -164,14 +164,14 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 ///
 /// Computes the folded-witness L∞ bound
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
-/// (via [`fold_witness_beta`]) from the per-level fold challenge and witness
+/// (via [`crate::sis::fold_witness_beta`]) from the per-level fold challenge and witness
 /// norms. Under [`crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind`], the signed range is
 /// sized from `min(β_inf, t*)` with `t*²` from [`crate::sis::fold_witness_linf_tail_bound_sq`];
 /// deterministic policies use `β_inf` alone.
 ///
 /// # Errors
 ///
-/// Returns `AkitaError::InvalidSetup` when [`fold_witness_beta`] rejects the
+/// Returns `AkitaError::InvalidSetup` when [`crate::sis::fold_witness_beta`] rejects the
 /// inputs (`r_vars >= 127` or `β` overflow), or when `β == 0` (a zero
 /// challenge/witness norm or `num_claims == 0` — no well-formed level folds a
 /// zero witness).
