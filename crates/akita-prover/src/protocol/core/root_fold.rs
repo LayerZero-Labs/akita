@@ -39,7 +39,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
-    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
+    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     claims: ProverOpeningBatch<'_, E, P, F, D>,
     root_params: &LevelParams,
@@ -132,7 +132,6 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
     stacks: &'stack impl LevelProveStacks<
         'stack,
         F,
-        D,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -238,7 +237,6 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
     stacks: &'stack impl LevelProveStacks<
         'stack,
         F,
-        D,
         Commit = C,
         Opening = O,
         Tensor = TS,

@@ -76,7 +76,7 @@ where
     fn commit<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
+        stack: &UniformProverStack<'_, F, B>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -97,7 +97,7 @@ where
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
+        stack: &UniformProverStack<'_, F, B>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -119,7 +119,7 @@ where
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverOpeningBatch<'a, Self::ExtField, P, F, D>,
-        stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
+        stacks: &'a impl LevelProveStacks<'a, F, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
