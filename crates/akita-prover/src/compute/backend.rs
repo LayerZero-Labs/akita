@@ -47,6 +47,21 @@ where
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError>;
 
+    /// Empty prepared state plus the full-envelope NTT slot for `D`.
+    ///
+    /// Ephemeral rebuild paths (suffix cross-`D`, ring-switch commit) use this instead of
+    /// [`Self::prepare_setup`]. The slot is built via [`Self::ensure_ntt_slot`], so keys
+    /// outside the setup prepare contract emit a sizing diagnostic.
+    fn prepare_expanded_with_envelope_ntt<const D: usize>(
+        &self,
+        expanded: Arc<AkitaExpandedSetup<F>>,
+    ) -> Result<Self::PreparedSetup, AkitaError> {
+        let mut prepared = self.prepare_expanded::<D>(expanded.clone())?;
+        let key = NttCacheKey::from_envelope(expanded.as_ref(), D)?;
+        self.ensure_ntt_slot(&mut prepared, key)?;
+        Ok(prepared)
+    }
+
     /// Register the full-envelope NTT slot at compile-time ring degree `D` on the
     /// setup prepare contract.
     fn register_setup_contract_envelope_ntt<const D: usize>(

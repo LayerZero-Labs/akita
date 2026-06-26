@@ -49,9 +49,8 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
     CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingRelationSegmentLayout, RingDimPlan, Schedule,
-    SetupContributionMode,
+    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingCommitment, RingDimPlan,
+    RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
     SetupPrefixRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
     VerifierOpeningBatch,
 };
