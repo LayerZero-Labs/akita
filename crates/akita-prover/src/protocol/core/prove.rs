@@ -1,4 +1,3 @@
-use crate::RootTensorProjectionPoly;
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::compute::{
@@ -7,6 +6,7 @@ use crate::compute::{
     RingSwitchProveBackend, RootPolyShape, RootProvePoly, SuffixOpeningProveBackend,
     SuffixRingSwitchProveBackend, SuffixTensorProveBackend, TensorBackendFor,
 };
+use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
