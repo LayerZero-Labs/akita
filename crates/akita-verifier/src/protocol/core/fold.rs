@@ -183,7 +183,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
     pub(in crate::protocol::core) lp: &'a LevelParams,
     pub(in crate::protocol::core) m_row_layout: MRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
-    pub(in crate::protocol::core) v: Vec<CyclotomicRing<F, D>>,
+    pub(in crate::protocol::core) v: RingBuf<F>,
     pub(in crate::protocol::core) opening_batch:
         VerifierOpeningBatch<'a, E, &'a [CyclotomicRing<F, D>]>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
@@ -404,7 +404,7 @@ where
     )?;
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
-        &prepared.v,
+        prepared.v.as_ring_slice::<D>()?,
         prepared.lp.num_blocks,
         opening_shape.num_polynomials(),
         prepared.lp,
@@ -420,7 +420,7 @@ where
         MRowLayout::WithoutDBlock => 0,
     };
     let y_v_slice = match prepared.m_row_layout {
-        MRowLayout::WithDBlock => prepared.v.as_slice(),
+        MRowLayout::WithDBlock => prepared.v.as_ring_slice::<D>()?,
         MRowLayout::WithoutDBlock => &[],
     };
     let relation_y = RingBuf::from_ring_elems(&generate_y::<F, D>(
@@ -440,7 +440,7 @@ where
         gamma,
         row_coefficient_rings,
         relation_y,
-        RingBuf::from_ring_elems(&prepared.v),
+        prepared.v.clone(),
     )?;
     let ring_switch_replay = RingSwitchReplay {
         relation: &relation_instance,

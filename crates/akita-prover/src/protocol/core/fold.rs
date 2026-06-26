@@ -86,7 +86,7 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
 }
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
-    pub(in crate::protocol::core) commitment: FlatRingVec<F>,
+    pub(in crate::protocol::core) commitment: RingBuf<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
     pub(in crate::protocol::core) extension_opening_reduction:
