@@ -38,14 +38,14 @@ pub use compute::{
     DenseCommitRowsPlan, DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks,
     NttSlotCacheAny, OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster,
     OpeningProveBackendFor, OperationCtx, PreparedCrtNttProfile, ProveBackendFor,
-    ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
+    ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveWitnessProveFlowBackend,
     RecursiveWitnessCommitRowsPlan, RingSwitchCluster, RingSwitchComputeBackend,
     RingSwitchProveBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
     RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource, SparseRingCommitRowsPlan,
-    SuffixDispatchOpeningProveBackendFor, SuffixDispatchTensorProveBackendFor,
-    SuffixRingSwitchProveBackend, TensorBackendFor, TensorCluster, TieredProveStacks,
-    UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly, RootTensorSource,
+    SparseRingCommitRowsPlan, SuffixOpeningProveBackend, SuffixRingSwitchProveBackend,
+    SuffixTensorProveBackend, TensorBackendFor, TensorCluster, TieredProveStacks,
+    UniformProverStack,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};

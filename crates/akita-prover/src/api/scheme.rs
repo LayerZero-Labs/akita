@@ -2,8 +2,8 @@
 
 use crate::compute::ComputeBackendSetup;
 use crate::compute::{
-    LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
-    UniformProverStack,
+    LevelProveStacks, RecursiveWitnessProveFlowBackend, RootCommitBackend, RootCommitPoly,
+    RootProveFlowBackend, RootProvePoly, UniformProverStack,
 };
 use crate::ProverOpeningBatch;
 use crate::ProverTranscriptGrind;
@@ -129,6 +129,9 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: RootProvePoly<F, D>,
-        B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
+        B: RootProveFlowBackend<F, P, Self::ExtField, D>
+            + RecursiveWitnessProveFlowBackend<F, Self::ExtField>
+            + ComputeBackendSetup<F>
+            + 'a,
         <B as ComputeBackendSetup<F>>::PreparedSetup: 'a;
 }
