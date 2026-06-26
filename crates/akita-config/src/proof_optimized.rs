@@ -233,8 +233,7 @@ where
 }
 
 /// Packed setup envelope spanning every level in `schedule` (including the
-/// root-direct / fold-root opening_batch widening) and, with the `zk` feature,
-/// the ZK blinding + hiding accumulators.
+/// root-direct / fold-root opening_batch widening).
 pub fn matrix_envelope_for_schedule<Cfg>(
     schedule: &Schedule,
     opening_batch: &OpeningBatchShape,

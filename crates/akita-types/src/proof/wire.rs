@@ -875,9 +875,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let zk_size = 0;
-        zk_size
-            + self.root.serialized_size(compress)
+        self.root.serialized_size(compress)
             + self
                 .steps
                 .iter()

@@ -49,7 +49,7 @@ pub use golomb_rice::{
 pub use instance_descriptor::{
     digest_effective_schedule, digest_level_params, digest_opening_batch, digest_serializable,
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection,
-    FoldLinfProtocolBinding, PlanSection, SetupSection,
+    FoldLinfProtocolBinding, PlanSection, ProtocolFeatureSet, SetupSection,
     FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN, FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 pub use layout::{
@@ -94,7 +94,7 @@ pub use proof::{
     CleartextWitnessShape, CommitmentGroup, CommitmentVerifier, DummyProof,
     ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
     FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningBatchLimits, OpeningBatchShape,
-    OpeningGroupShape, OpeningPoints, PackedDigits, PointVariableSelection, PreparedOpeningPoint,
+    OpeningGroupShape, OpeningPoints, PointVariableSelection, PreparedOpeningPoint,
     ProverCommitmentRows, PublicMatrixSeed, RelationOnlyStage2Inputs, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLayout, RingRelationSegmentLengths, RingSliceSerializer,

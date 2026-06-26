@@ -350,23 +350,13 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::FlatRingVec<FFi
 
 fn mutate_terminal_e_hat_digit<FField: FieldCore>(
     witness: &mut akita_types::CleartextWitnessProof<FField>,
-    layout: akita_types::TerminalWitnessSegmentLayout,
+    _layout: akita_types::TerminalWitnessSegmentLayout,
 ) {
     match witness {
-        akita_types::CleartextWitnessProof::PackedDigits(packed) => {
-            let mut digits = (0..packed.num_elems)
-                .map(|idx| packed.digit_at(idx).expect("packed digit index"))
-                .collect::<Vec<_>>();
-            let digit = digits
-                .get_mut(layout.e_hat_digit_offset)
-                .expect("terminal e_hat offset must be in range");
-            *digit = if *digit == -1 { 0 } else { -1 };
-            *packed = akita_types::PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
-        }
         akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
             bump_flat_ring_vec(&mut segment.e_fields);
         }
-        _ => panic!("trace tamper fixture expects packed or segment-typed terminal witness"),
+        _ => panic!("trace tamper fixture expects segment-typed terminal witness"),
     }
 }
 
@@ -1102,7 +1092,6 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             // for very large `num_vars`, so the DP returns this edge instead
             // of a folded schedule; it carries no basis to check.
             akita_types::Step::Direct(direct) => match &direct.witness_shape {
-                akita_types::CleartextWitnessShape::PackedDigits((_, bits)) => *bits <= 6,
                 akita_types::CleartextWitnessShape::FieldElements(_) => true,
                 akita_types::CleartextWitnessShape::SegmentTyped(shape) => {
                     shape.layout.log_basis <= 6
@@ -1332,16 +1321,11 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                     .final_witness_mut()
                     .expect("terminal root proof must carry terminal stage-2 proof")
                 {
-                    akita_types::CleartextWitnessProof::PackedDigits(packed) => {
-                        packed.data[0] ^= 1;
-                    }
                     akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
                         segment.z_payload[0] ^= 1;
                     }
                     akita_types::CleartextWitnessProof::FieldElements(_) => {
-                        panic!(
-                            "expected packed-digits or segment-typed final witness for tamper test"
-                        );
+                        panic!("expected segment-typed final witness for tamper test");
                     }
                 }
             }

@@ -397,14 +397,6 @@ impl AkitaDeserialize for LevelProofShape {
 impl Valid for CleartextWitnessShape {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
-            Self::PackedDigits((num_elems, bits_per_elem)) => {
-                if *bits_per_elem == 0 || *bits_per_elem > 6 {
-                    return Err(SerializationError::InvalidData(
-                        "bits_per_elem out of range".to_string(),
-                    ));
-                }
-                checked_shape_len(*num_elems)?;
-            }
             Self::FieldElements(coeff_len) => checked_shape_len(*coeff_len)?,
             Self::SegmentTyped(shape) => shape.check()?,
         }
@@ -419,17 +411,12 @@ impl AkitaSerialize for CleartextWitnessShape {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         match self {
-            Self::PackedDigits((num_elems, bits_per_elem)) => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                num_elems.serialize_with_mode(&mut writer, compress)?;
-                bits_per_elem.serialize_with_mode(&mut writer, compress)?;
-            }
             Self::FieldElements(coeff_len) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
+                0u8.serialize_with_mode(&mut writer, compress)?;
                 coeff_len.serialize_with_mode(&mut writer, compress)?;
             }
             Self::SegmentTyped(shape) => {
-                2u8.serialize_with_mode(&mut writer, compress)?;
+                1u8.serialize_with_mode(&mut writer, compress)?;
                 shape.serialize_with_mode(&mut writer, compress)?;
             }
         }
@@ -439,9 +426,6 @@ impl AkitaSerialize for CleartextWitnessShape {
     fn serialized_size(&self, compress: Compress) -> usize {
         let tag = 1usize;
         match self {
-            Self::PackedDigits((num_elems, bits_per_elem)) => {
-                tag + num_elems.serialized_size(compress) + bits_per_elem.serialized_size(compress)
-            }
             Self::FieldElements(coeff_len) => tag + coeff_len.serialized_size(compress),
             Self::SegmentTyped(shape) => tag + shape.serialized_size(compress),
         }
@@ -459,16 +443,10 @@ impl AkitaDeserialize for CleartextWitnessShape {
         let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = match tag {
             0 => {
-                let num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let bits_per_elem =
-                    u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                Self::PackedDigits((num_elems, bits_per_elem))
-            }
-            1 => {
                 let coeff_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 Self::FieldElements(coeff_len)
             }
-            2 => Self::SegmentTyped(
+            1 => Self::SegmentTyped(
                 crate::proof::SegmentTypedWitnessShape::deserialize_with_mode(
                     &mut reader,
                     compress,

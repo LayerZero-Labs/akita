@@ -43,24 +43,6 @@ pub(crate) fn emit_proof_tail_report<FF, L>(
     let tail_bytes = final_w.serialized_size(Compress::No);
     let num_elems = final_w.num_elems();
 
-    if let Some(packed) = final_w.as_packed_digits() {
-        tracing::info!(
-            label,
-            tail_bytes,
-            final_w_num_elems = num_elems,
-            final_w_encoding = "packed_digits",
-            final_w_policy = "zk_fallback",
-            final_w_bits_per_elem = packed.bits_per_elem,
-            "proof tail summary"
-        );
-        eprintln!(
-            "[{label}]   final_w: encoding=packed_digits (zk fallback), total={tail_bytes} bytes, \
-             elems={num_elems}, bits/elem={}",
-            packed.bits_per_elem,
-        );
-        return;
-    }
-
     if let Some(segment) = final_w.as_segment_typed() {
         let field_sz = field_bytes(FF::modulus_bits());
         let ring_dim = segment.layout.ring_dimension;

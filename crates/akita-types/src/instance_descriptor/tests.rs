@@ -35,7 +35,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             }),
             Step::Direct(crate::DirectStep {
                 current_w_len: 256,
-                witness_shape: CleartextWitnessShape::PackedDigits((64, 3)),
+                witness_shape: CleartextWitnessShape::FieldElements(64),
                 direct_bytes: 32,
                 params: None,
             }),
@@ -53,6 +53,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             },
             sis_modulus_family: SisModulusFamily::Q32,
             setup_seed_digest: [1; 32],
+            protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         },
         PlanSection::from_schedule(&schedule),
@@ -75,14 +76,14 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            220,
+            221,
             [
-                0x56, 0xc5, 0x0a, 0xef, 0x46, 0x38, 0x02, 0x14, 0x17, 0x95, 0xbf, 0x95, 0xec, 0x1a,
-                0xbb, 0x7a, 0xa2, 0xa2, 0x13, 0xc9, 0x0b, 0xa0, 0xa3, 0xb6, 0x77, 0x63, 0xf1, 0x7f,
-                0x9d, 0xa8, 0xb0, 0x79,
+                0x9a, 0x63, 0xf2, 0x57, 0x50, 0xdb, 0x4e, 0x0c, 0x6f, 0xc0, 0x99, 0xb7, 0xef, 0xa6,
+                0x6e, 0xa5, 0xda, 0x6e, 0x77, 0x54, 0x52, 0x69, 0xe4, 0x97, 0xd0, 0x8c, 0xdf, 0x9b,
+                0x47, 0x16, 0xec, 0x9b,
             ]
         ),
-        "update pinned digest after dropping ProtocolFeatureSet from SetupSection (descriptor v3)"
+        "update pinned digest when descriptor setup-section bindings change"
     );
 }
 
@@ -366,11 +367,11 @@ fn effective_schedule_digest_binds_direct_shape() {
     let schedule_b = Schedule {
         steps: vec![Step::Direct(crate::DirectStep {
             current_w_len: 8,
-            witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
-            direct_bytes: 3,
+            witness_shape: CleartextWitnessShape::FieldElements(9),
+            direct_bytes: 9,
             params: None,
         })],
-        total_bytes: 3,
+        total_bytes: 9,
     };
 
     assert_ne!(

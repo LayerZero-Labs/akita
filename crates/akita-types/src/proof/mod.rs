@@ -40,7 +40,6 @@ pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSlice
 pub use direct_witness::{
     segment_typed_witness_shape, terminal_direct_witness_shape,
     terminal_direct_witness_shape_for_key, CleartextWitnessProof, CleartextWitnessShape,
-    PackedDigits,
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{

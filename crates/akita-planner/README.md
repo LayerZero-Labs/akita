@@ -4,7 +4,7 @@ The `akita-planner` crate is responsible for computing the parameters of each fo
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
-The planner covers the parameter-selection features supported by Akita, including batching, tiered commitments, tensor challenges, extension fields, and `zk` proof-size accounting. For each case it resolves the fold parameters that minimize the modeled proof size.
+The planner covers the parameter-selection features supported by Akita, including batching, tiered commitments, tensor challenges, and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
 
 The planner can also generate and cache schedule values when a preset wants a shipped table. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search. If no cached value is available, the same deterministic planner computes the schedule on demand.
 
@@ -145,16 +145,10 @@ Everything else in `LevelParams` is deterministically reconstructed by `Generate
 
 The reusable generated-table emitter lives in this crate and accepts explicit `EmitSpec` values. The `gen_schedule_tables` binary lives in `akita-config` because only `akita-config` can name concrete preset `Cfg` types. The emitted modules are written into `akita-schedules/src/generated/`, where feature-gated table constructors return `GeneratedScheduleTable` values to opted-in presets.
 
-To regenerate the non-`zk` tables:
+To regenerate schedule tables:
 
 ```bash
 cargo run --release -p akita-config --bin gen_schedule_tables -- crates/akita-schedules/src/generated
-```
-
-To regenerate the `zk` tables:
-
-```bash
-cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- crates/akita-schedules/src/generated
 ```
 
 The family list is in `akita-config::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the emitter and drift-guard tests so shipped entries and regeneration hooks stay aligned.
@@ -182,10 +176,6 @@ Recursive levels use the flat fold shape in the current planner search.
 ### Extension Fields
 
 `PlannerPolicy` carries both claim and challenge extension degrees. When the claim field is an extension, the planner adds the extension-opening reduction proof bytes at the root and recursive levels.
-
-### ZK Accounting
-
-The `zk` feature selects generated tables emitted with `zk` proof-size accounting. The resolver and DP use the same formulas under the active feature set, so table hits and fallback schedules agree.
 
 ## Crate Boundary
 

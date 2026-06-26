@@ -153,14 +153,46 @@ mod tests {
     use akita_sumcheck::EqFactoredUniPoly;
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
+    use crate::golomb_rice::golomb_rice_encode_vec;
+    use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
+    use crate::tail_golomb_rice_z_params;
     use crate::{
         direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
         AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape,
-        FlatRingVec, PackedDigits, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof,
+        FlatRingVec, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof,
         SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
+
+    fn segment_typed_final_witness(
+        lp: &LevelParams,
+        num_claims: usize,
+    ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
+        let field_bits = F::modulus_bits();
+        let shape = segment_typed_witness_shape(lp, field_bits, num_claims, num_claims, 1, 1)
+            .expect("segment-typed witness shape");
+        let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
+            panic!("expected segment-typed witness shape");
+        };
+        let layout = segment_shape.layout;
+        let (rice_low_bits, zigzag_w) =
+            tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
+        let z_payload = golomb_rice_encode_vec(
+            &vec![0i64; layout.z_coords],
+            rice_low_bits,
+            zigzag_w,
+        )
+        .expect("encode zero z segment");
+        let witness = SegmentTypedWitness {
+            layout,
+            z_payload,
+            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+        };
+        (CleartextWitnessProof::SegmentTyped(witness), shape)
+    }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
@@ -399,8 +431,6 @@ mod tests {
         };
         let next_w_len = D * 8;
         let num_claims = 3;
-        let final_w_num_elems = 1024;
-        let final_w_bits = 5;
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
@@ -416,10 +446,7 @@ mod tests {
             .unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
 
-            let final_witness = CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
-                &vec![0i8; final_w_num_elems],
-                final_w_bits,
-            ));
+            let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
@@ -446,14 +473,11 @@ mod tests {
                  (less final_witness) at log_basis={log_basis}"
             );
 
-            assert_eq!(
-                direct_witness_bytes(
-                    128,
-                    &CleartextWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
-                ),
-                final_witness_bytes_runtime,
-                "direct_witness_bytes should match the serialized packed-digit \
-                 final witness at log_basis={log_basis}"
+            let scheduled_bytes = direct_witness_bytes(128, &witness_shape);
+            assert!(
+                scheduled_bytes >= final_witness_bytes_runtime,
+                "scheduled direct witness budget must cover serialized segment-typed witness \
+                 at log_basis={log_basis}"
             );
         }
     }

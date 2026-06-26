@@ -23,9 +23,6 @@ pub fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
 /// Serialized byte size for a terminal direct witness shape.
 pub fn direct_witness_bytes(field_bits: u32, shape: &CleartextWitnessShape) -> usize {
     match shape {
-        CleartextWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
-            packed_digits_bytes(*num_elems, *bits_per_elem)
-        }
         CleartextWitnessShape::FieldElements(num_coeffs) => {
             num_coeffs.saturating_mul(field_bytes(field_bits))
         }

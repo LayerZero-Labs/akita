@@ -37,9 +37,7 @@ pub struct AkitaIntermediateStage2Proof<F: FieldCore, L: FieldCore> {
 }
 
 impl<F: FieldCore, L: FieldCore> AkitaIntermediateStage2Proof<F, L> {
-    /// Wire value for the next-witness evaluation claim.
-    ///
-    /// In transparent builds this is the true evaluation; in ZK builds this is
+    /// Wire value for the next-witness evaluation claim at stage 2.
     pub fn next_w_eval(&self) -> L {
         self.next_w_eval
     }
