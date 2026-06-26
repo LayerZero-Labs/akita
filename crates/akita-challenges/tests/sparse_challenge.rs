@@ -1,5 +1,4 @@
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 use akita_challenges::{
     sample_folding_challenges, sample_sparse_challenges, tensor_left_digest, ChallengeLabels,

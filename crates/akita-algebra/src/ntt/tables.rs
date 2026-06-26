@@ -98,7 +98,7 @@ pub fn q128_garner() -> GarnerData<i32, Q128_NUM_PRIMES> {
     GarnerData::compute(&primes)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

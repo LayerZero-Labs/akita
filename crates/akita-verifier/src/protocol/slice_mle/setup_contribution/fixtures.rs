@@ -213,17 +213,9 @@ impl SetupContributionFixture {
                 max_num_batched_polys: shape.num_polys_per_segment.iter().sum(),
                 gen_ring_dim: TEST_RING_DIM,
                 max_setup_len,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
                 public_matrix_seed: [7u8; 32],
             },
             FlatMatrix::from_ring_slice::<TEST_RING_DIM>(&matrix_entries),
-            #[cfg(feature = "zk")]
-            FlatMatrix::from_flat_data(vec![TestField::zero(); TEST_RING_DIM], TEST_RING_DIM),
-            #[cfg(feature = "zk")]
-            FlatMatrix::from_flat_data(vec![TestField::zero(); TEST_RING_DIM], TEST_RING_DIM),
         );
 
         let eq_tau1: Vec<TestField> = (0..rows.next_power_of_two())
@@ -242,12 +234,6 @@ impl SetupContributionFixture {
             depth_open: shape.depth_open,
             depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
-            #[cfg(feature = "zk")]
-            d_blinding_segment_len: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_digit_planes_per_point: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_segment_len: 0,
             block_len: shape.block_len,
             inner_width,
             log_basis: shape.log_basis,
@@ -265,10 +251,6 @@ impl SetupContributionFixture {
                 offset_u,
                 offset_z,
                 offset_r,
-                #[cfg(feature = "zk")]
-                b_blinding_offset: offset_u,
-                #[cfg(feature = "zk")]
-                d_blinding_offset: offset_u,
             },
         };
 

@@ -17,7 +17,6 @@ readme = "../../README.md"
 
 [features]
 default = ["schedules-default"]
-zk = ["akita-planner/zk", "akita-types/zk", "akita-schedules?/zk"]
 test-support = []
 schedules-default = [
   "schedules-fp128-d64-onehot",

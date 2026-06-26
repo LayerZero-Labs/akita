@@ -7,8 +7,10 @@
 //!
 //! ## Descriptor version policy
 //!
-//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` bumps when setup-section bindings change
-//! (for example extended `FoldLinfProtocolBinding` fields).
+//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` stays at **`1`** during active protocol
+//! development. Setup-section field changes (for example
+//! `FoldLinfProtocolBinding` extensions) land without bumping this constant;
+//! integrators must pin exact crate revisions.
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -34,7 +36,7 @@ use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
@@ -135,9 +137,12 @@ impl AlgebraSection {
 }
 
 /// Compile-time features that change protocol transcript behavior.
+///
+/// After the zk-strip cutover the product is transparent-only; the wire field
+/// remains for transcript layout stability and must deserialize as `zk = false`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProtocolFeatureSet {
-    /// Whether the `zk` feature is active.
+    /// Whether zk hiding was active (always `false` after zk-strip).
     pub zk: bool,
 }
 
@@ -145,9 +150,7 @@ impl ProtocolFeatureSet {
     /// Return the protocol feature set of the current build.
     #[inline]
     pub const fn current() -> Self {
-        Self {
-            zk: cfg!(feature = "zk"),
-        }
+        Self { zk: false }
     }
 }
 
@@ -160,7 +163,7 @@ pub struct SetupSection {
     pub sis_modulus_family: SisModulusFamily,
     /// Digest of the canonical `AkitaSetupSeed` bytes.
     pub setup_seed_digest: DescriptorDigest,
-    /// Protocol-affecting feature mode.
+    /// Protocol-affecting feature mode (transparent-only after zk-strip).
     pub protocol_features: ProtocolFeatureSet,
     /// Fold-l∞ threshold policy, grind cap, and nonce wire contract.
     pub fold_linf: FoldLinfProtocolBinding,
@@ -447,6 +450,11 @@ impl AkitaDeserialize for AlgebraSection {
 
 impl Valid for ProtocolFeatureSet {
     fn check(&self) -> Result<(), SerializationError> {
+        if *self != Self::current() {
+            return Err(SerializationError::InvalidData(
+                "descriptor protocol features do not match active build".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -497,6 +505,7 @@ impl Valid for SetupSection {
             ));
         }
         self.fold_linf.check()?;
+        self.protocol_features.check()?;
         Ok(())
     }
 }

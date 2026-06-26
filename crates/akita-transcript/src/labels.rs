@@ -13,8 +13,6 @@ pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"ak/p";
 
 /// Absorb commitment object(s) (paper §4.1).
 pub const ABSORB_COMMITMENT: &[u8] = b"ak/a/cm";
-/// Absorb the ZK hiding-factor commitment before masked opening challenges.
-pub const ABSORB_ZK_HIDING_COMMITMENT: &[u8] = b"ak/a/zhc";
 /// Absorb claimed openings/evaluations before relation reduction (paper §4.2).
 pub const ABSORB_EVALUATION_CLAIMS: &[u8] = b"ak/a/ec";
 /// Absorb the public batch nesting shape for grouped single-point batching.
@@ -106,7 +104,6 @@ pub const CHALLENGE_TAU1: &[u8] = b"ak/c/t1";
 pub const ALL_LABELS: &[&[u8]] = &[
     DOMAIN_AKITA_PROTOCOL,
     ABSORB_COMMITMENT,
-    ABSORB_ZK_HIDING_COMMITMENT,
     ABSORB_EVALUATION_CLAIMS,
     ABSORB_BATCH_SHAPE,
     CHALLENGE_LINEAR_RELATION,

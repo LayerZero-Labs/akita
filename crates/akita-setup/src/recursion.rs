@@ -149,7 +149,7 @@ where
     Ok(setup)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;

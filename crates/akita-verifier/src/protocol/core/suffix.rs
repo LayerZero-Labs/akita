@@ -1,9 +1,4 @@
 use super::*;
-#[cfg(feature = "zk")]
-use akita_r1cs::zk_ext_mask_lc_at;
-#[cfg(feature = "zk")]
-use akita_types::dispatch_ring_dim_result;
-#[cfg(not(feature = "zk"))]
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{terminal_witness_segment_layout, OpeningBatchShape};
 
@@ -13,9 +8,6 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub opening_point: Vec<L>,
     /// Claimed opening value for the current commitment.
     pub opening: L,
-    /// Hidden mask added to `opening` in the public proof.
-    #[cfg(feature = "zk")]
-    pub opening_mask: ZkR1csLinearCombination<L>,
     /// Current suffix witness commitment.
     pub commitment: &'a FlatRingVec<F>,
     /// Basis used to interpret the current opening point.
@@ -43,8 +35,6 @@ fn prepare_fold_data<'a, F, L, T, const D: usize>(
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -70,18 +60,10 @@ where
     let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
     let row_coefficients = vec![L::one()];
-    #[cfg(feature = "zk")]
-    let opening_masks = vec![Some(&current_state.opening_mask)];
     let FoldEorReplay {
         prepared_points,
-        #[cfg(not(feature = "zk"))]
-            reduction_challenges: _,
-        #[cfg(feature = "zk")]
-            reduction_challenges: _,
-        #[cfg(not(feature = "zk"))]
-            final_relation: eor_trace_final,
-        #[cfg(feature = "zk")]
-            final_relation: zk_eor_final,
+        reduction_challenges: _,
+        final_relation: eor_trace_final,
         ..
     } = verify_fold_eor::<F, L, T, D>(
         proof.extension_opening_reduction(),
@@ -95,14 +77,6 @@ where
         block_order,
         true,
         transcript,
-        #[cfg(feature = "zk")]
-        &opening_masks,
-        #[cfg(feature = "zk")]
-        "suffix extension-opening partial claim",
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
     )?;
     if prepared_points.len() != 1 {
         return Err(AkitaError::InvalidProof);
@@ -138,7 +112,6 @@ where
     let next_w_commitment = proof.next_w_commitment_opt();
     let stage3 = proof.stage3_for_mode(setup_contribution_mode, next_fold_level_params)?;
     let stage2 = proof.stage2();
-    #[cfg(not(feature = "zk"))]
     let (trace_eval_target, trace_eval_scale) = match eor_trace_final.as_ref() {
         Some((final_claim, factors_by_point)) => (
             *final_claim,
@@ -146,21 +119,6 @@ where
         ),
         None => (current_state.opening, L::one()),
     };
-    #[cfg(feature = "zk")]
-    let (trace_eval_target, trace_eval_scale, trace_eval_target_mask) =
-        if let Some((final_claim, factors_by_point)) = zk_eor_final.as_ref() {
-            (
-                final_claim.public,
-                *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
-                final_claim.mask.clone(),
-            )
-        } else {
-            (
-                current_state.opening,
-                L::one(),
-                current_state.opening_mask.clone(),
-            )
-        };
 
     let fold_grind_nonce = proof.fold_grind_nonce();
     let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
@@ -190,8 +148,6 @@ where
         trace_block_opening: None,
         trace_eval_target,
         trace_eval_scale,
-        #[cfg(feature = "zk")]
-        trace_eval_target_mask,
         trace_claim_scales: None,
         trace_basis: current_state.basis,
     })
@@ -217,8 +173,6 @@ pub(super) fn verify_suffix<'a, F, L, T>(
     schedule: &Schedule,
     mut current_state: SuffixVerifierState<'a, F, L>,
     setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -254,20 +208,8 @@ where
                         &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(
-                        setup,
-                        transcript,
-                        prepared,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
-                    )
+                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
                 })?;
 
                 let next_level_d = next_params.ring_dimension;
@@ -287,10 +229,6 @@ where
                     opening: level_proof
                         .stage3_sumcheck_proof()
                         .map_or_else(|| level_proof.next_w_eval(), |proof| proof.next_w_eval),
-                    #[cfg(feature = "zk")]
-                    opening_mask: zk_ext_mask_lc_at::<F, L>(
-                        *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
-                    ),
                     commitment: level_proof.next_w_commitment(),
                     basis: BasisMode::Lagrange,
                     w_len: next_w_len,
@@ -316,20 +254,8 @@ where
                         &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(
-                        setup,
-                        transcript,
-                        prepared,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
-                    )
+                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
                 })?;
                 // The trailing-Direct witness shape is already validated in
                 // `verify_folded_batched_proof` before this loop.

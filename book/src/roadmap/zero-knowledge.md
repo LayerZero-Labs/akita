@@ -30,5 +30,4 @@ ZK construction; it belongs in host integration docs, not here.
   `sec:zk-open`.
 - [Foundations → Zero-knowledge background](../foundations/zero-knowledge.md)
   (leakage + masking background).
-- `specs/akita-zk-commitment-hiding.md`, `specs/akita-zk-sumcheck-hiding-plain.md`,
-  `specs/akita-zk-v-hiding.md` (what is implemented vs plain-opening gap).
+- Archived prefix specs under `specs/archive/2026-Q2/` (preserved on `zk-wip`).

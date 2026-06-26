@@ -16,7 +16,7 @@ use std::array::from_fn;
 use std::mem::size_of;
 
 use crate::kernels::crt_ntt::NttSlotCache;
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 
 mod block_parallel;
@@ -30,7 +30,7 @@ mod fused_quotients;
 mod i8_matvec;
 mod ntt_matvec;
 mod single_cyclic;
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests;
 
 use block_parallel::*;
@@ -38,9 +38,9 @@ use capacity::*;
 pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
 use common::*;
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 use crt_matvec::precompute_dense_mat_ntt_with_params;
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) use crt_matvec::{mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_vec_mul_unchecked};
 #[cfg(test)]
 pub use decompose::check_decomposed_rows_i8_match;

@@ -33,7 +33,6 @@ tracing = "0.1"
 default = []
 jl-test-fixtures = []
 parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
-zk = ["akita-sumcheck/zk"]
 
 [dev-dependencies]
 rand = "0.8"

@@ -8,7 +8,6 @@
 //! `f_key` (asserted below).
 
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 

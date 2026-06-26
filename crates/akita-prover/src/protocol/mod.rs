@@ -5,15 +5,11 @@ pub mod extension_opening_reduction;
 pub mod fold_grind;
 pub mod fold_grind_observer;
 pub mod jl;
-#[cfg(feature = "zk")]
-pub(crate) mod masking;
 pub mod prg;
 pub mod ring_relation;
 pub mod ring_relation_witness;
 pub mod ring_switch;
 pub mod sumcheck;
-#[cfg(feature = "zk")]
-pub(crate) mod zk_hiding_commit;
 
 pub use akita_types::RingRelationInstance;
 pub use core::{

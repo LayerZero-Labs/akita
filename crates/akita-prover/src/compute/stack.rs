@@ -359,13 +359,7 @@ mod tests {
     const D: usize = 32;
 
     fn test_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
-        SetupMatrixEnvelope {
-            max_setup_len,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
-        }
+        SetupMatrixEnvelope { max_setup_len }
     }
 
     #[test]

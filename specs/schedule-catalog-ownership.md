@@ -1,5 +1,10 @@
 # Spec: Schedule catalog ownership and opt-in shipped tables
 
+> **Pre-zk-strip historical.** This spec predates the zk-strip
+> ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
+> `zk_enabled` or `feature = "zk"` describe removed catalog paths preserved on
+> `zk-wip`.
+
 | Field         | Value |
 |---------------|-------|
 | Author(s)     | Quang Dao |

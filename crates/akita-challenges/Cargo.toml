@@ -45,7 +45,6 @@ harness = false
 [features]
 default = []
 parallel = ["akita-field/parallel"]
-zk = ["akita-transcript/zk"]
 
 [lints]
 workspace = true
