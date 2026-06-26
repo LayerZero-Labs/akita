@@ -502,7 +502,7 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
     validate_schedule_onehot_chunk_size::<Cfg>(schedule)?;
-    validate_ring_dim_plan_at_entry(schedule, setup.expanded.seed())?;
+    let schedule_ctx = validate_schedule_context_at_entry(schedule, setup.expanded.seed())?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         &setup.expanded,
@@ -518,6 +518,7 @@ where
         transcript,
         claims,
         schedule,
+        &schedule_ctx,
         basis,
         setup_contribution_mode,
     )
