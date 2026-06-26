@@ -158,6 +158,103 @@ impl AkitaScheduleLookupKey {
     }
 }
 
+/// Root layout metadata frozen when a standalone commitment group is created.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CommitmentGroupLayout {
+    /// Per-group root schedule entry shape.
+    pub key: AkitaScheduleLookupKey,
+    /// Root block size exponent used for this group's committed `t_hat` shape.
+    pub m_vars: usize,
+    /// Root block count exponent used for this group's committed `t_hat` shape.
+    pub r_vars: usize,
+    /// Gadget basis selected for the standalone group commit.
+    pub log_basis: u32,
+    /// A-role row count selected for the committed inner rows.
+    pub n_a: usize,
+    /// Conservative B-role row count used by the standalone precommit.
+    pub conservative_n_b: usize,
+}
+
+impl CommitmentGroupLayout {
+    /// Build frozen group metadata from the concrete commit params.
+    pub fn from_params(key: AkitaScheduleLookupKey, params: &LevelParams) -> Self {
+        Self {
+            key,
+            m_vars: params.m_vars,
+            r_vars: params.r_vars,
+            log_basis: params.log_basis,
+            n_a: params.a_key.row_len(),
+            conservative_n_b: params.b_key.row_len(),
+        }
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        push_usize(bytes, self.key.num_vars);
+        push_usize(bytes, self.key.num_t_vectors);
+        push_usize(bytes, self.key.num_w_vectors);
+        push_usize(bytes, self.key.num_z_vectors);
+        push_usize(bytes, self.m_vars);
+        push_usize(bytes, self.r_vars);
+        push_u32(bytes, self.log_basis);
+        push_usize(bytes, self.n_a);
+        push_usize(bytes, self.conservative_n_b);
+    }
+
+    /// Validate that this layout is a well-formed standalone commitment group.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        if self.key.num_t_vectors == 0 || self.key.num_w_vectors != 1 || self.key.num_z_vectors != 1
+        {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout must use K t-vectors, one w-vector, and one z-vector"
+                    .to_string(),
+            ));
+        }
+        if self.n_a == 0 || self.conservative_n_b == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout requires nonzero A rows and conservative B rows"
+                    .to_string(),
+            ));
+        }
+        if self.log_basis == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout requires nonzero log_basis".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Grouped root schedule lookup key for a main commitment plus earlier groups.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GroupBatchAkitaScheduleLookupKey {
+    /// Main group shape as `(num_polys, num_variables)`.
+    pub main: (usize, usize),
+    /// Previously committed groups in caller-supplied transcript order.
+    pub precommitteds: Vec<CommitmentGroupLayout>,
+}
+
+impl GroupBatchAkitaScheduleLookupKey {
+    /// Number of commitment groups in this grouped root.
+    pub fn num_commitment_groups(&self) -> usize {
+        self.precommitteds.len() + 1
+    }
+
+    /// Validate per-group metadata.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        let (main_num_polys, main_num_vars) = self.main;
+        if main_num_polys == 0 || main_num_vars == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "grouped root main group must have nonzero polynomial and variable counts"
+                    .to_string(),
+            ));
+        }
+        for layout in &self.precommitteds {
+            layout.validate()?;
+        }
+        Ok(())
+    }
+}
+
 /// Number of gadget decomposition levels needed for `r` over field `F`.
 pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
@@ -248,6 +345,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     num_public_rows: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
+    lp.reject_grouped_root("w_ring_element_count_with_counts_for_layout_bits")?;
     let e_hat_count = num_w_vectors
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
@@ -1018,5 +1116,26 @@ mod tests {
             .validate_scalar_root_batch()
             .expect_err("grouped schedule key must reject scalar lookup");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn group_batch_key_allows_mixed_group_arities() {
+        let pre = CommitmentGroupLayout {
+            key: AkitaScheduleLookupKey::new(12, 1, 1, 1),
+            m_vars: 4,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let grouped = GroupBatchAkitaScheduleLookupKey {
+            main: (3, 20),
+            precommitteds: vec![pre],
+        };
+
+        grouped
+            .validate()
+            .expect("mixed arities are grouped metadata");
+        assert_eq!(grouped.num_commitment_groups(), 2);
     }
 }

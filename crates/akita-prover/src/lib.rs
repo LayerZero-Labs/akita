@@ -21,9 +21,10 @@ use akita_types::{
 };
 
 pub use api::{
-    batched_commit, batched_commit_with_params, commit, commit_setup_prefix, commit_with_params,
-    prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
-    CommitmentWithHint,
+    batched_commit, batched_commit_with_params, commit, commit_group, commit_setup_prefix,
+    commit_with_params, prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup,
+    CommitmentProver, CommitmentWithHint, CommittedGroupHandle, CommittedGroupScheduleMeta,
+    CommittedGroupWithHint,
 };
 
 pub use backend::{
@@ -233,7 +234,6 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     }
 
     /// Build the single-claim batch used by recursive suffix fold levels.
-    #[allow(dead_code)]
     pub(crate) fn new_suffix(
         opening_point: &[PointF],
         recursive_num_vars: usize,

@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn commit_group_returns_frozen_conservative_layout() {
+    const NV: usize = 16;
+    const GROUP_SIZE: usize = 1;
+
+    let key = akita_types::AkitaScheduleLookupKey::new(NV, GROUP_SIZE, 1, 1);
+    let layout = OneHotCfg::get_params_for_group_commit(&key).expect("group commit layout");
+    let total_field = (layout.num_blocks * layout.block_len)
+        .checked_mul(ONEHOT_D)
+        .expect("total field size overflow");
+    assert_eq!(total_field % BENCH_ONEHOT_K, 0);
+    let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
+
+    let setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, GROUP_SIZE)
+        .expect("setup");
+    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
+    let handle =
+        <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(&setup, &polys, &stack)
+            .expect("commit group");
+
+    assert_eq!(handle.schedule.layout.key, key);
+    assert_eq!(handle.schedule.layout.m_vars, layout.m_vars);
+    assert_eq!(handle.schedule.layout.r_vars, layout.r_vars);
+    assert_eq!(handle.schedule.layout.log_basis, OneHotCfg::basis_range().0);
+    assert_eq!(handle.schedule.layout.n_a, layout.a_key.row_len());
+    assert_eq!(
+        handle.schedule.layout.conservative_n_b,
+        layout.b_key.row_len()
+    );
+    assert_eq!(
+        handle.commitment.u.len(),
+        handle.schedule.layout.conservative_n_b
+    );
+}
+
+#[test]
 fn batched_onehot_roundtrip_matches_public_shape_context() {
     // NV chosen large enough that the runtime schedule yields at least two
     // fold steps so the proof is fold-rooted (not terminal-rooted). Under

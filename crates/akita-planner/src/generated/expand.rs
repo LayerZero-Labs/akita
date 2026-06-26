@@ -242,6 +242,7 @@ impl GeneratedFoldStep {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            precommitted_groups: Vec::new(),
         }
         .with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims);
         Ok(params)

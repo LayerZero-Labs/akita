@@ -8,7 +8,7 @@ use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatchShape;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -225,10 +225,18 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         return Ok(None);
     };
 
-    Ok(Some(matrix_envelope_for_schedule::<Cfg>(
-        &schedule,
-        opening_batch,
-    )?))
+    let mut envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, opening_batch)?;
+    if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+        let group_key = AkitaScheduleLookupKey::new(
+            opening_batch.num_vars(),
+            opening_batch.num_polynomials(),
+            1,
+            1,
+        );
+        let group_params = Cfg::get_params_for_group_commit(&group_key)?;
+        accumulate_matrix_envelope_for_level::<Cfg>(&group_params, &mut envelope.max_setup_len)?;
+    }
+    Ok(Some(envelope))
 }
 
 /// Extract setup-level params from a runtime `Schedule`.
@@ -264,9 +272,8 @@ where
     })
 }
 
-/// Packed setup envelope spanning every level in `schedule` (including the
-/// root-direct / fold-root opening_batch widening) and, with the `zk` feature,
-/// the ZK blinding + hiding accumulators.
+/// Packed setup envelope spanning every level in `schedule` and, with the
+/// `zk` feature, the ZK blinding + hiding accumulators.
 pub fn matrix_envelope_for_schedule<Cfg>(
     schedule: &Schedule,
     opening_batch: &OpeningBatchShape,
@@ -275,20 +282,17 @@ where
     Cfg: CommitmentConfig,
 {
     let setup_levels: Vec<LevelParams> = setup_level_params_from_runtime_schedule(&schedule.steps);
-    let mut envelope = matrix_envelope_for_levels::<Cfg>(&setup_levels)?;
-    accumulate_root_matrix_envelope_for_opening_batch(
-        schedule,
-        opening_batch,
-        &mut envelope.max_setup_len,
-    )?;
+    let envelope = matrix_envelope_for_levels::<Cfg>(&setup_levels)?;
     #[cfg(feature = "zk")]
     {
+        let mut envelope = envelope;
         accumulate_zk_blinding_envelope::<Cfg>(schedule, opening_batch, &mut envelope)?;
         accumulate_zk_hiding_envelope::<Cfg>(schedule, opening_batch, &mut envelope)?;
         Ok(envelope)
     }
     #[cfg(not(feature = "zk"))]
     {
+        let _ = opening_batch;
         Ok(envelope)
     }
 }
@@ -322,59 +326,6 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
     };
     *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len).max(f_len);
     Ok(())
-}
-
-fn accumulate_root_matrix_envelope_for_opening_batch(
-    schedule: &Schedule,
-    opening_batch: &OpeningBatchShape,
-    max_setup_len: &mut usize,
-) -> Result<(), AkitaError> {
-    let Some(root_params) = root_commit_params_from_schedule(schedule)? else {
-        return Ok(());
-    };
-    let root_len = root_runtime_matrix_len_for_opening_batch(&root_params, opening_batch)?;
-    *max_setup_len = (*max_setup_len).max(root_len);
-    Ok(())
-}
-
-fn root_runtime_matrix_len_for_opening_batch(
-    lp: &LevelParams,
-    opening_batch: &OpeningBatchShape,
-) -> Result<usize, AkitaError> {
-    let num_claims = opening_batch.num_claims();
-    let max_group_poly_count = opening_batch.num_polynomials();
-    let d_width = lp
-        .num_blocks
-        .checked_mul(num_claims)
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("batched D setup width overflow".to_string()))?;
-    let t_cols_per_vector = lp
-        .a_key
-        .row_len()
-        .checked_mul(lp.num_digits_open)
-        .and_then(|n| n.checked_mul(lp.num_blocks))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("batched B setup vector width overflow".to_string())
-        })?;
-    let full_b_width = max_group_poly_count
-        .checked_mul(t_cols_per_vector)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched B setup width overflow".to_string()))?;
-    let d_len =
-        lp.d_key.row_len().checked_mul(d_width).ok_or_else(|| {
-            AkitaError::InvalidSetup("batched D setup envelope overflow".to_string())
-        })?;
-    let b_len = lp
-        .b_key
-        .row_len()
-        .checked_mul(full_b_width.div_ceil(lp.tier_split.max(1)))
-        .ok_or_else(|| AkitaError::InvalidSetup("batched B setup envelope overflow".to_string()))?;
-    let f_len = match lp.f_key.as_ref() {
-        Some(fk) => fk.row_len().checked_mul(fk.col_len()).ok_or_else(|| {
-            AkitaError::InvalidSetup("batched F setup envelope overflow".to_string())
-        })?,
-        None => 0,
-    };
-    Ok(b_len.max(d_len).max(f_len))
 }
 
 #[cfg(feature = "zk")]
@@ -444,12 +395,13 @@ fn accumulate_zk_hiding_envelope<Cfg: CommitmentConfig>(
     Ok(())
 }
 
+#[cfg(any(feature = "zk", test))]
 fn root_commit_params_from_schedule(
     schedule: &Schedule,
 ) -> Result<Option<LevelParams>, AkitaError> {
     match schedule.steps.first() {
-        Some(Step::Fold(root_step)) => Ok(Some(root_step.params.clone())),
-        Some(Step::Direct(direct)) => Ok(direct.params.clone()),
+        Some(akita_types::Step::Fold(root_step)) => Ok(Some(root_step.params.clone())),
+        Some(akita_types::Step::Direct(direct)) => Ok(direct.params.clone()),
         None => Err(AkitaError::InvalidSetup(
             "schedule has no steps".to_string(),
         )),
@@ -465,8 +417,8 @@ fn zk_hiding_witness_len<Cfg: CommitmentConfig>(
         .steps
         .iter()
         .filter_map(|step| match step {
-            Step::Fold(fold) => Some(fold),
-            Step::Direct(_) => None,
+            akita_types::Step::Fold(fold) => Some(fold),
+            akita_types::Step::Direct(_) => None,
         })
         .collect::<Vec<_>>();
     let mut len = 0usize;

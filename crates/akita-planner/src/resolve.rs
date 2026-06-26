@@ -12,16 +12,17 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
     terminal_direct_witness_shape_for_key, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, GroupBatchAkitaScheduleLookupKey, LevelParams,
+    MRowLayout, Schedule, Step,
 };
 
 use crate::catalog_identity::validate_catalog_identity;
-use crate::find_schedule;
 use crate::generated::{
     table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
     GeneratedStep,
 };
 use crate::PlannerPolicy;
+use crate::{find_group_batch_schedule, find_schedule};
 
 ///
 /// Convert the public runtime lookup key into a generated-table lookup key.
@@ -73,6 +74,33 @@ pub fn resolve_schedule(
         );
     }
     find_schedule(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
+}
+
+/// Resolve a grouped-root schedule without falling back to a scalar table key.
+///
+/// Phase 1 has no generated grouped entries yet, so catalog handling only
+/// validates identity before delegating to the grouped DP fallback.
+pub fn resolve_group_batch_schedule(
+    key: &GroupBatchAkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    catalog: Option<GeneratedScheduleTable>,
+) -> Result<Schedule, AkitaError> {
+    if let Some(table) = catalog {
+        validate_catalog_identity(
+            &table,
+            policy,
+            &ring_challenge_config,
+            &fold_challenge_shape_at_level,
+        )?;
+    }
+    find_group_batch_schedule(
         key,
         policy,
         ring_challenge_config,

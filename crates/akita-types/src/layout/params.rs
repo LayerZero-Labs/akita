@@ -8,6 +8,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
+use crate::schedule::CommitmentGroupLayout;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
@@ -30,6 +31,82 @@ pub enum MRowLayout {
     /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
     /// the terminal fold level where `final_witness` ships on the wire.
     WithoutDBlock,
+}
+
+/// Group-local root parameters for a precommitted commitment group.
+///
+/// These fields mirror the group-local pieces of [`LevelParams`]. Widths are
+/// derived from the Ajtai keys and block geometry rather than stored twice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupRootParams {
+    /// Frozen standalone group layout bound into the grouped root key.
+    pub layout: CommitmentGroupLayout,
+    /// Inner Ajtai matrix (A) used by this group.
+    pub a_key: AjtaiKeyParams,
+    /// Outer commitment matrix (B) used by this group.
+    pub b_key: AjtaiKeyParams,
+    /// Number of committed blocks (`2^r_vars`) for this group.
+    pub num_blocks: usize,
+    /// Number of ring elements per block (`2^m_vars`) for this group.
+    pub block_len: usize,
+    /// Block size exponent.
+    pub m_vars: usize,
+    /// Block count exponent.
+    pub r_vars: usize,
+    /// Gadget decomposition depth for committed coefficients.
+    pub num_digits_commit: usize,
+    /// Gadget decomposition depth for opening-side values.
+    pub num_digits_open: usize,
+    /// One-hot chunk size for this root group (`0` for dense, currently unused).
+    pub onehot_chunk_size: usize,
+    /// Fold-linf cap inputs for this group-local root relation.
+    pub fold_linf_cap_config: FoldWitnessLinfCapConfig,
+    /// Cached folded-witness digit count for a singleton group relation.
+    pub num_digits_fold_one: usize,
+}
+
+impl GroupRootParams {
+    /// Width of this group's A matrix.
+    #[inline]
+    pub fn inner_width(&self) -> usize {
+        self.a_key.col_len()
+    }
+
+    /// Width of this group's B matrix.
+    #[inline]
+    pub fn outer_width(&self) -> usize {
+        self.b_key.col_len()
+    }
+
+    /// Width contribution to the shared D matrix (`w_hat_g` segment).
+    pub fn d_segment_width(&self) -> Result<usize, AkitaError> {
+        self.num_digits_open
+            .checked_mul(self.num_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("group D segment width overflow".to_string()))
+    }
+
+    /// Width contribution of this group's decomposed folded response.
+    pub fn z_segment_width(&self, num_digits_fold: usize) -> Result<usize, AkitaError> {
+        self.inner_width()
+            .checked_mul(num_digits_fold)
+            .ok_or_else(|| AkitaError::InvalidSetup("group z segment width overflow".to_string()))
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        self.layout.append_descriptor_bytes(bytes);
+        self.a_key.append_descriptor_bytes(bytes);
+        self.b_key.append_descriptor_bytes(bytes);
+        push_usize(bytes, self.num_blocks);
+        push_usize(bytes, self.block_len);
+        push_usize(bytes, self.m_vars);
+        push_usize(bytes, self.r_vars);
+        push_usize(bytes, self.num_digits_commit);
+        push_usize(bytes, self.num_digits_open);
+        push_usize(bytes, self.onehot_chunk_size);
+        append_fold_linf_policy_descriptor_bytes(bytes, self.fold_linf_cap_config.policy);
+        push_u128(bytes, self.fold_linf_cap_config.challenge_l2_sq_max);
+        push_usize(bytes, self.num_digits_fold_one);
+    }
 }
 
 /// Unified per-level parameters for one Akita recursion level.
@@ -103,6 +180,11 @@ pub struct LevelParams {
     /// Optional cached [`crate::sis::num_digits_fold`] for a batched root `num_claims > 1`.
     pub cached_num_digits_fold_claims: usize,
     pub cached_num_digits_fold_value: usize,
+    /// Precommitted group-local params for a grouped root. Empty for scalar
+    /// levels; when non-empty, the top-level fields describe the final/new
+    /// group and `d_key` describes the shared D matrix over all group `w_hat`
+    /// segments.
+    pub precommitted_groups: Vec<GroupRootParams>,
 }
 
 impl LevelParams {
@@ -143,6 +225,7 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            precommitted_groups: Vec::new(),
         }
     }
 
@@ -194,7 +277,24 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            precommitted_groups: Vec::new(),
         }
+    }
+
+    /// True when this level carries grouped-root metadata.
+    #[inline]
+    pub fn has_precommitted_groups(&self) -> bool {
+        !self.precommitted_groups.is_empty()
+    }
+
+    /// Reject grouped-root params at scalar-only call sites.
+    pub fn reject_grouped_root(&self, context: &str) -> Result<(), AkitaError> {
+        if self.has_precommitted_groups() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{context} does not support grouped root params yet"
+            )));
+        }
+        Ok(())
     }
 
     /// Worst-case L1 mass of the fold-round challenge.
@@ -539,6 +639,12 @@ impl LevelParams {
                 None => bytes.push(0),
             }
         }
+        if !self.precommitted_groups.is_empty() {
+            push_usize(bytes, self.precommitted_groups.len());
+            for group in &self.precommitted_groups {
+                group.append_descriptor_bytes(bytes);
+            }
+        }
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -726,6 +832,7 @@ impl LevelParams {
         num_public_outputs: usize,
         layout: MRowLayout,
     ) -> Result<usize, AkitaError> {
+        self.reject_grouped_root("m_row_count_for")?;
         self.a_start(num_commitments, num_public_outputs, layout)?
             .checked_add(self.a_key.row_len())
             .ok_or_else(Self::m_row_overflow)
@@ -819,6 +926,7 @@ impl LevelParams {
             field_bits_hint: self.field_bits_hint,
             cached_num_digits_fold_claims: self.cached_num_digits_fold_claims,
             cached_num_digits_fold_value: self.cached_num_digits_fold_value,
+            precommitted_groups: self.precommitted_groups.clone(),
         };
         let field_bits = self.field_bits_for_cache();
         Ok(rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims))
@@ -883,6 +991,7 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            precommitted_groups: self.precommitted_groups.clone(),
         }
         .with_fold_linf_cap_config(field_bits, 0)
     }
