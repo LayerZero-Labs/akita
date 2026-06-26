@@ -165,6 +165,29 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
     {
         self.ensure_ring_dim::<D>()?;
         if !self.recomposed_inner_row_coeffs.is_empty() {
+            if self.decomposed_digits.block_sizes().len()
+                != self.recomposed_inner_row_block_sizes.len()
+            {
+                return Err(AkitaError::InvalidInput(
+                    "commitment hint block metadata mismatch".to_string(),
+                ));
+            }
+            let ring_count = self
+                .recomposed_inner_row_block_sizes
+                .iter()
+                .try_fold(0usize, |acc, &block_size| {
+                    acc.checked_add(block_size).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "commitment hint recomposed block size overflow".to_string(),
+                        )
+                    })
+                })?;
+            if ring_count.checked_mul(D) != Some(self.recomposed_inner_row_coeffs.len()) {
+                return Err(AkitaError::InvalidInput(
+                    "commitment hint recomposed block metadata does not cover coefficients"
+                        .to_string(),
+                ));
+            }
             return Ok(());
         }
         if num_digits_open == 0 {
@@ -257,6 +280,19 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
     pub fn ring_dim(&self) -> usize {
         self.decomposed_digits.ring_dim()
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_storage_for_test(
+        decomposed_digits: FlatDigitBlocks,
+        recomposed_inner_row_coeffs: Vec<F>,
+        recomposed_inner_row_block_sizes: Vec<usize>,
+    ) -> Self {
+        Self {
+            decomposed_digits,
+            recomposed_inner_row_coeffs,
+            recomposed_inner_row_block_sizes,
+        }
+    }
 }
 
 impl<F: FieldCore + Valid> Valid for AkitaCommitmentHint<F> {
@@ -269,15 +305,37 @@ impl<F: FieldCore + Valid> Valid for AkitaCommitmentHint<F> {
             ));
         }
         let ring_dim = self.decomposed_digits.ring_dim();
-        if !self.recomposed_inner_row_coeffs.is_empty()
-            && !self
-                .recomposed_inner_row_coeffs
-                .len()
-                .is_multiple_of(ring_dim)
+        if self.recomposed_inner_row_coeffs.is_empty() {
+            if !self.recomposed_inner_row_block_sizes.is_empty() {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint recomposed block metadata without coefficients".to_string(),
+                ));
+            }
+            return Ok(());
+        }
+        if !self
+            .recomposed_inner_row_coeffs
+            .len()
+            .is_multiple_of(ring_dim)
         {
             return Err(SerializationError::InvalidData(
                 "commitment hint recomposed coefficient length is not a multiple of ring_dim"
                     .to_string(),
+            ));
+        }
+        let ring_count = self
+            .recomposed_inner_row_block_sizes
+            .iter()
+            .try_fold(0usize, |acc, &block_size| {
+                acc.checked_add(block_size).ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "commitment hint recomposed block size overflow".to_string(),
+                    )
+                })
+            })?;
+        if ring_count.checked_mul(ring_dim) != Some(self.recomposed_inner_row_coeffs.len()) {
+            return Err(SerializationError::InvalidData(
+                "commitment hint recomposed block metadata does not cover coefficients".to_string(),
             ));
         }
         Ok(())
@@ -331,6 +389,12 @@ where
                 "unsupported ring dimension for commitment hint: {ring_dim}"
             ))),
         }?;
+        if decomposed_digits.ring_dim() != ring_dim {
+            return Err(SerializationError::InvalidData(format!(
+                "commitment hint wire ring_dim {ring_dim} does not match digit storage {}",
+                decomposed_digits.ring_dim()
+            )));
+        }
         let recomposed_inner_row_coeffs =
             Vec::<F>::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let recomposed_inner_row_block_sizes =
@@ -344,5 +408,75 @@ where
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::CyclotomicRing;
+    use akita_field::Fp32;
+    use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Valid};
+
+    type TestF = Fp32<251>;
+    const D: usize = 32;
+
+    fn sample_hint() -> AkitaCommitmentHint<TestF> {
+        let decomposed = FlatDigitBlocks::from_blocks::<D>(vec![vec![[1i8; D], [2i8; D]]]);
+        let ring = CyclotomicRing::<TestF, D>::from_coefficients([TestF::one(); D]);
+        AkitaCommitmentHint::from_batched_commit::<D>(
+            vec![decomposed],
+            vec![vec![vec![ring]]],
+        )
+    }
+
+    #[test]
+    fn commitment_hint_serde_roundtrip() {
+        let hint = sample_hint();
+        let mut bytes = Vec::new();
+        hint.serialize_compressed(&mut bytes).expect("serialize hint");
+        assert_eq!(bytes.len(), hint.serialized_size(Compress::Yes));
+        let decoded = AkitaCommitmentHint::<TestF>::deserialize_compressed(&bytes[..], &())
+            .expect("deserialize hint");
+        assert_eq!(decoded, hint);
+    }
+
+    #[test]
+    fn commitment_hint_valid_rejects_recomposed_metadata_sum_mismatch() {
+        let hint = sample_hint();
+        let bad: AkitaCommitmentHint<TestF> = AkitaCommitmentHint::from_storage_for_test(
+            hint.decomposed_digits().clone(),
+            hint.recomposed_inner_row_coeffs().to_vec(),
+            {
+                let mut sizes = hint.recomposed_inner_row_block_sizes().to_vec();
+                sizes.push(1);
+                sizes
+            },
+        );
+        let err = bad.check().expect_err("metadata sum mismatch must fail");
+        assert!(matches!(err, SerializationError::InvalidData(_)));
+    }
+
+    #[test]
+    fn commitment_hint_valid_rejects_metadata_without_coefficients() {
+        let hint = sample_hint();
+        let bad: AkitaCommitmentHint<TestF> = AkitaCommitmentHint::from_storage_for_test(
+            hint.decomposed_digits().clone(),
+            Vec::new(),
+            hint.recomposed_inner_row_block_sizes().to_vec(),
+        );
+        let err = bad.check().expect_err("metadata without coeffs must fail");
+        assert!(matches!(err, SerializationError::InvalidData(_)));
+    }
+
+    #[test]
+    fn commitment_hint_deserialize_rejects_unsupported_ring_dim() {
+        let mut bytes = Vec::new();
+        sample_hint()
+            .serialize_compressed(&mut bytes)
+            .expect("serialize hint");
+        bytes[0] = 48;
+        let err = AkitaCommitmentHint::<TestF>::deserialize_compressed(&bytes[..], &());
+        assert!(err.is_err());
     }
 }

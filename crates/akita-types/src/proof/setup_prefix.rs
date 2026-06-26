@@ -1079,6 +1079,35 @@ mod tests {
     }
 
     #[test]
+    fn setup_prefix_slot_check_rejects_hint_ring_dim_mismatch() {
+        use crate::proof::{AkitaCommitmentHint, FlatDigitBlocks};
+        use akita_field::Prime32Offset99 as F;
+
+        let id = SetupPrefixSlotId {
+            setup_seed_digest: [7u8; 32],
+            d_setup: 64,
+            natural_len: 1,
+            n_prefix: 64,
+            level_params_digest: [9u8; 32],
+        };
+        let hint = AkitaCommitmentHint::from_batched_commit::<32>(
+            vec![FlatDigitBlocks::from_blocks::<32>(vec![Vec::new()])],
+            vec![vec![Vec::new()]],
+        );
+        let slot = SetupPrefixSlot {
+            id,
+            natural_len: id.natural_len,
+            padded_len: id.n_prefix,
+            commitment: SetupPrefixPublicCommitment {
+                rows: vec![FlatRingVec::from_coeffs(vec![F::zero(); 64])],
+            },
+            hint,
+        };
+        let err = slot.check().expect_err("ring_dim mismatch must fail");
+        assert!(matches!(err, SerializationError::InvalidData(_)));
+    }
+
+    #[test]
     fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
         use crate::proof::{AkitaCommitmentHint, FlatDigitBlocks};
         use akita_field::Prime32Offset99 as F;
