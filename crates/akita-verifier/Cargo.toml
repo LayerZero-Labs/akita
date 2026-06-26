@@ -28,6 +28,7 @@ tracing = "0.1"
 
 [features]
 default = ["schedules-default"]
+test-support = []
 schedules-default = ["akita-config/schedules-default"]
 parallel = [
   "akita-algebra/parallel",

@@ -66,7 +66,9 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
-akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
+akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false, features = [
+  "test-support",
+] }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
 tracing = "0.1"
