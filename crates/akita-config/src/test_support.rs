@@ -99,11 +99,7 @@ where
         return Ok(envelope_params.clone());
     }
     let suffix_policy = policy_of::<SuffixCfg>();
-    let num_claims = if level == 0 {
-        key.num_polynomials
-    } else {
-        1
-    };
+    let num_claims = if level == 0 { key.num_polynomials } else { 1 };
     let fold_shape = EnvelopeCfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.num_vars,
         level,
@@ -229,9 +225,9 @@ where
             let ring = w_ring_element_count_with_counts_for_layout_bits(
                 field_bits, &params, 1, 1, layout,
             )?;
-            let next_w_len = ring
-                .checked_mul(params.ring_dimension)
-                .ok_or_else(|| AkitaError::InvalidSetup("mixed-D witness length overflow".into()))?;
+            let next_w_len = ring.checked_mul(params.ring_dimension).ok_or_else(|| {
+                AkitaError::InvalidSetup("mixed-D witness length overflow".into())
+            })?;
             suffix_plan.push(MixedSuffixFoldPlan {
                 params,
                 current_w_len: w_len,

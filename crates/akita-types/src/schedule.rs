@@ -433,7 +433,7 @@ pub struct DirectStep {
     /// different geometry than the terminal fold (e.g. envelope terminal bytes
     /// with suffix folds at smaller `ring_dimension`). Wave 0 mixed-D rebuilds
     /// suffix-coherent terminal shape instead and leaves this `None`.
-    pub tail_grind_level_params: Option<LevelParams>,
+    pub tail_grind_level_params: Option<Box<LevelParams>>,
 }
 
 impl DirectStep {
@@ -543,7 +543,7 @@ impl Schedule {
                         }
                         None => bytes.push(0),
                     }
-                    match &direct.tail_grind_level_params {
+                    match direct.tail_grind_level_params.as_deref() {
                         Some(params) => {
                             bytes.push(1);
                             params.append_descriptor_bytes(bytes);
@@ -660,7 +660,7 @@ pub fn schedule_terminal_direct_witness_shape(
 /// Returns an error if the schedule has no terminal fold step.
 pub fn terminal_tail_grind_level_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
     if let Some(Step::Direct(direct)) = schedule.steps.last() {
-        if let Some(params) = &direct.tail_grind_level_params {
+        if let Some(params) = direct.tail_grind_level_params.as_deref() {
             return Ok(params.clone());
         }
     }

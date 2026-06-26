@@ -271,6 +271,7 @@ impl GeneratedFoldStep {
     /// Mixed-D ring transition expansion. Shares geometry with
     /// [`Self::expand_to_level_params`] but recomputes ranks at `target_ring_d`;
     /// Phase 4 should fold both into one parameterized expansion core.
+    #[allow(clippy::too_many_arguments)]
     pub fn expand_envelope_witness_at_ring_d(
         &self,
         policy: &PlannerPolicy,
@@ -338,13 +339,8 @@ impl GeneratedFoldStep {
         .ok_or_else(|| no_layout("A"))?;
         let b_bucket = rounded_up_collision_norm_t(sis_family, target_ring_d, log_basis)
             .ok_or_else(|| no_layout("B"))?;
-        let outer_width = decomposed_t_ring_count(
-            n_a,
-            num_digits_open_val,
-            num_blocks,
-            num_claims,
-        )
-        .ok_or_else(|| no_layout("B"))?;
+        let outer_width = decomposed_t_ring_count(n_a, num_digits_open_val, num_blocks, num_claims)
+            .ok_or_else(|| no_layout("B"))?;
         let d_bucket = rounded_up_collision_norm_w(sis_family, target_ring_d, log_basis)
             .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
@@ -397,7 +393,8 @@ impl GeneratedFoldStep {
             onehot_chunk_size,
             tier_split: 1,
             f_key: None,
-            fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
+            ),
             num_digits_fold_one: 1,
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,

@@ -346,7 +346,7 @@ pub fn suffix_witness_hypercube_num_vars(w_len: usize, ring_d: usize) -> Result<
             "suffix witness hypercube requires nonzero ring dimension".into(),
         ));
     }
-    if w_len % ring_d != 0 {
+    if !w_len.is_multiple_of(ring_d) {
         return Err(AkitaError::InvalidSetup(format!(
             "witness length {w_len} is not divisible by ring dimension {ring_d}"
         )));

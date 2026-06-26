@@ -433,7 +433,7 @@ fn mixed_d_suffix_params_recursive_vars_match_runtime_witness_domain() {
 #[test]
 fn mixed_d_schedule_w_len_chain_matches_runtime_layout() {
     use crate::test_support::mixed_d_per_level_schedule;
-    use akita_types::{MRowLayout, w_ring_element_count_with_counts_for_layout_bits};
+    use akita_types::{w_ring_element_count_with_counts_for_layout_bits, MRowLayout};
 
     let key = AkitaScheduleLookupKey::singleton(16);
     let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, 2)

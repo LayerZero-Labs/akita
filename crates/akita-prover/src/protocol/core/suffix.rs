@@ -10,10 +10,10 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::{
-    align_recursive_opening_point, padded_scalar_batch_num_vars, schedule_terminal_direct_witness_shape,
-    terminal_golomb_grind_tail_t_vectors, terminal_tail_grind_level_params,
-    validate_scalar_point_matches_poly_arity, AkitaCommitmentHint, OpeningGroupShape,
-    OpeningPoints, PointVariableSelection,
+    align_recursive_opening_point, padded_scalar_batch_num_vars,
+    schedule_terminal_direct_witness_shape, terminal_golomb_grind_tail_t_vectors,
+    terminal_tail_grind_level_params, validate_scalar_point_matches_poly_arity,
+    AkitaCommitmentHint, OpeningGroupShape, OpeningPoints, PointVariableSelection,
 };
 
 /// Prover state carried between suffix fold levels.
@@ -249,7 +249,7 @@ where
                 AkitaError::InvalidInput(format!(
                     "suffix fold level {level} D{level_d} failed: {err:?}"
                 ))
-            }            )?
+            })?
         };
         if is_terminal_level {
             break out.get_terminal()?;
