@@ -636,7 +636,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 /// Ships `final_witness` in cleartext, absorbed into the transcript at the
 /// `ABSORB_NEXT_LEVEL_WITNESS_BINDING` position in place of the prior `next_w_commitment`.
 /// Drops the redundant proof components at the terminal: `stage1`
-/// (`PackedDigits` structurally enforces digit range), `next_w_commitment`
+/// (segment-typed tail encodes digit range), `next_w_commitment`
 /// (replaced by `final_witness`), and `next_w_eval` (verifier computes
 /// directly from `final_witness`). The terminal M-row layout also drops the
 /// D-row block, so `v` is not serialized at the terminal.

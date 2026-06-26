@@ -113,7 +113,7 @@ impl LevelParams {
     /// Synthetic `LevelParams` carrying only a terminal-direct's `log_basis`.
     ///
     /// `scheduled_next_level_params` returns this stub when the next step
-    /// is a terminal `Direct(PackedDigits)`: that step does not commit
+    /// is a terminal `Direct(SegmentTyped)`: that step does not commit
     /// anything, so it has no Ajtai keys, no block geometry, and no
     /// digit depths. The only field consumers downstream actually read is
     /// `log_basis` (used by `prove_suffix` as
