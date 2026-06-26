@@ -186,7 +186,7 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// Build the committed witness polynomial from ring-domain digit planes.
 ///
 /// Emits field-domain coefficients in digit-major order (block index innermost):
-/// z-hat, e-hat + t-hat, û_concat, blinding, r-hat.
+/// z-hat, e-hat + t-hat, û_concat, r-hat.
 ///
 /// Within each segment, the power-of-2 block index is the fastest-varying
 /// (innermost) dimension.
@@ -194,14 +194,12 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
 /// planes for one block contiguously), which is natural for ring-domain matvec
 /// and recomposition. This function transposes opening digits to digit-major at
-/// the ring-to-field boundary; ZK blinding streams are already direct
-/// digit-plane sources and are emitted in matrix-column order.
+/// the ring-to-field boundary.
 ///
 /// # Panics
 ///
 /// Panics if the caller supplies digit blocks whose plane counts do not match
-/// the fold layout in `lp`, or if ZK blinding digit counts do not match the
-/// configured blinding columns.
+/// the fold layout in `lp`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     e_hat: &FlatDigitBlocks<D>,
@@ -223,23 +221,17 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let e_hat_planes = e_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
-    let d_blinding_planes = 0usize;
-    let b_blinding_planes = 0usize;
     // Tiered: the hidden decomposed concatenated slice images `û_concat` are a
     // flat contiguous segment emitted immediately after `t̂` (at `offset_u`).
     let u_concat_planes = u_concat_digits.len();
     let z_count = e_hat_planes
-        + d_blinding_planes
         + t_hat_planes
         + u_concat_planes
-        + b_blinding_planes
         + z_folded_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     tracing::debug!(
         e_hat_planes,
-        d_blinding_planes,
         t_hat_planes,
-        b_blinding_planes,
         z_folded_elems = z_folded_centered.len(),
         z_folded_planes = z_folded_centered.len() * num_digits_fold,
         r_elems = r.len(),
