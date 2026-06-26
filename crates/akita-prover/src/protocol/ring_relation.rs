@@ -293,7 +293,12 @@ where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
-    let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits_trusted::<D>(), log_basis)?;
+    let rows = backend.digit_rows::<D>(
+        prepared,
+        row_len,
+        e_hat.flat_digits_trusted::<D>(),
+        log_basis,
+    )?;
     if rows.len() != row_len {
         return Err(AkitaError::InvalidProof);
     }
@@ -316,11 +321,9 @@ where
     let prepared = ring_switch_ctx.prepared();
     match m_row_layout {
         MRowLayout::WithDBlock => {
-            let _span = tracing::info_span!(
-                "compute_relation_v",
-                e_hat_planes = e_hat.plane_count()
-            )
-            .entered();
+            let _span =
+                tracing::info_span!("compute_relation_v", e_hat_planes = e_hat.plane_count())
+                    .entered();
             let v = compute_v_rows(backend, prepared, lp.d_key.row_len(), e_hat, lp.log_basis)?;
             transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
             Ok(v)

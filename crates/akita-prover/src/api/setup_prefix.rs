@@ -344,10 +344,7 @@ mod tests {
         .expect("commit prefix");
         assert_eq!(slot.natural_len, natural_len);
         assert_eq!(slot.padded_len, n_prefix);
-        setup
-            .prefix_slots
-            .insert(slot)
-            .expect("insert");
+        setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
 
@@ -388,10 +385,7 @@ mod tests {
         .expect("commit prefix");
         assert_eq!(slot.natural_len, natural_len);
         assert_eq!(slot.padded_len, n_prefix);
-        setup
-            .prefix_slots
-            .insert(slot)
-            .expect("insert");
+        setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
 

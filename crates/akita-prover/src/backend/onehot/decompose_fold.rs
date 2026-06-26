@@ -64,7 +64,13 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     {
         let num_blocks = challenges.len().min(blocks.num_blocks());
         let block_views: Vec<&[E]> = (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-        decompose_fold_from_views::<E, F, D>(&block_views, challenges, num_blocks, block_len, num_digits)
+        decompose_fold_from_views::<E, F, D>(
+            &block_views,
+            challenges,
+            num_blocks,
+            block_len,
+            num_digits,
+        )
     }
 
     pub(super) fn decompose_fold_batched_single_chunk_onehot(

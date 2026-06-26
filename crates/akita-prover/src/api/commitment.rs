@@ -397,9 +397,8 @@ where
     )?;
     let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
     let mut b_input_digits = vec![[0i8; D]; total_b_input_len];
-    let mut decomposed_inner_rows: Vec<FlatDigitBlocks> = (0..polys.len())
-        .map(|_| FlatDigitBlocks::empty())
-        .collect();
+    let mut decomposed_inner_rows: Vec<FlatDigitBlocks> =
+        (0..polys.len()).map(|_| FlatDigitBlocks::empty()).collect();
     let mut recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
         vec![Vec::new(); polys.len()];
     cfg_chunks_mut!(b_input_digits, b_input_len_per_poly)
@@ -798,8 +797,11 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
                 recomposed_blocks
             ],
-            decomposed_inner_rows: FlatDigitBlocks::from_planes::<D>(vec![[0i8; D]; total_digits], block_sizes)
-                .expect("valid flat digit blocks"),
+            decomposed_inner_rows: FlatDigitBlocks::from_planes::<D>(
+                vec![[0i8; D]; total_digits],
+                block_sizes,
+            )
+            .expect("valid flat digit blocks"),
         }
     }
 

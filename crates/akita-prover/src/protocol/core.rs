@@ -10,10 +10,7 @@ use crate::protocol::ring_switch::{
 use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::protocol::RingRelationProver;
-use crate::{
-    ProverOpeningBatch, ProverTranscriptGrind, RingRelationInstance,
-    RingRelationWitness,
-};
+use crate::{ProverOpeningBatch, ProverTranscriptGrind, RingRelationInstance, RingRelationWitness};
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::parallel::*;

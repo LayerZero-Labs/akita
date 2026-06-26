@@ -498,7 +498,9 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
             + self.natural_len.serialized_size(compress)
             + self.padded_len.serialized_size(compress)
             + self.commitment.serialized_size(compress)
-            + self.hint.serialized_size_for_ring_dim(compress, self.id.d_setup)
+            + self
+                .hint
+                .serialized_size_for_ring_dim(compress, self.id.d_setup)
     }
 }
 
@@ -586,7 +588,10 @@ impl<F: FieldCore> SetupPrefixRegistry<F> {
 
     #[must_use]
     pub fn verifier_slots(&self) -> Vec<SetupPrefixVerifierSlot<F>> {
-        self.slots.values().map(SetupPrefixSlot::verifier_slot).collect()
+        self.slots
+            .values()
+            .map(SetupPrefixSlot::verifier_slot)
+            .collect()
     }
 }
 

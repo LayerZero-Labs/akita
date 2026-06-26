@@ -1,7 +1,4 @@
 use super::*;
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
-use crate::RootTensorProjectionPoly;
 use crate::backend::{RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
@@ -9,11 +6,13 @@ use crate::compute::{
     SuffixOpeningProveBackend, SuffixRingSwitchProveBackend, SuffixTensorProveBackend,
     TensorBackendFor,
 };
+use crate::RootTensorProjectionPoly;
+use akita_field::unreduced::ReduceTo;
+use akita_field::AdditiveGroup;
 use akita_types::{
-    padded_scalar_batch_num_vars, terminal_golomb_grind_tail_t_vectors,
-    validate_scalar_point_matches_poly_arity, AkitaCommitmentHint,
-    OpeningGroupShape, OpeningPoints, PointVariableSelection,
-    schedule_terminal_direct_witness_shape,
+    padded_scalar_batch_num_vars, schedule_terminal_direct_witness_shape,
+    terminal_golomb_grind_tail_t_vectors, validate_scalar_point_matches_poly_arity,
+    AkitaCommitmentHint, OpeningGroupShape, OpeningPoints, PointVariableSelection,
 };
 
 /// Prover state carried between suffix fold levels.
@@ -48,8 +47,13 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 /// This type threads that representation into fold preparation without placing
 /// rows in [`crate::ProverOpeningBatch`].
 #[derive(Debug, Clone)]
-pub(in crate::protocol::core) struct SuffixFoldClaims<'a, PointF: Clone, P, F: FieldCore, const D: usize>
-{
+pub(in crate::protocol::core) struct SuffixFoldClaims<
+    'a,
+    PointF: Clone,
+    P,
+    F: FieldCore,
+    const D: usize,
+> {
     pub(in crate::protocol::core) point: OpeningPoints<'a, PointF>,
     pub(in crate::protocol::core) point_vars: PointVariableSelection,
     pub(in crate::protocol::core) polynomials: &'a [&'a P],
@@ -57,9 +61,7 @@ pub(in crate::protocol::core) struct SuffixFoldClaims<'a, PointF: Clone, P, F: F
     pub(in crate::protocol::core) hint: AkitaCommitmentHint<F, D>,
 }
 
-impl<'a, PointF: Clone, P, F: FieldCore, const D: usize>
-    SuffixFoldClaims<'a, PointF, P, F, D>
-{
+impl<'a, PointF: Clone, P, F: FieldCore, const D: usize> SuffixFoldClaims<'a, PointF, P, F, D> {
     /// Build the single-claim batch used by recursive suffix fold levels.
     pub(in crate::protocol::core) fn new(
         opening_point: &[PointF],
@@ -100,14 +102,15 @@ impl<'a, PointF: Clone, P, F: FieldCore, const D: usize>
         self.polynomials.to_vec()
     }
 
-    pub(in crate::protocol::core) fn to_opening_shape<PolyF>(&self) -> Result<OpeningBatchShape, AkitaError>
+    pub(in crate::protocol::core) fn to_opening_shape<PolyF>(
+        &self,
+    ) -> Result<OpeningBatchShape, AkitaError>
     where
         PolyF: FieldCore,
         P: RootPolyShape<PolyF, D>,
     {
-        let padded_num_vars = padded_scalar_batch_num_vars(
-            self.polynomials.iter().map(|poly| poly.num_vars()),
-        )?;
+        let padded_num_vars =
+            padded_scalar_batch_num_vars(self.polynomials.iter().map(|poly| poly.num_vars()))?;
         validate_scalar_point_matches_poly_arity(self.point().len(), padded_num_vars)?;
         OpeningBatchShape::from_groups(
             padded_num_vars,
@@ -247,7 +250,9 @@ where
                 },
             )
             .map_err(|err| {
-                AkitaError::InvalidInput(format!("suffix fold level {level} D{level_d} failed: {err:?}"))
+                AkitaError::InvalidInput(format!(
+                    "suffix fold level {level} D{level_d} failed: {err:?}"
+                ))
             })?
         };
         if is_terminal_level {

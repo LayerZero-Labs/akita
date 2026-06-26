@@ -437,7 +437,8 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
 
         let mut digit_offset = 0usize;
         let mut recomposed_inner_row_coeffs = Vec::new();
-        let mut recomposed_inner_row_block_sizes = Vec::with_capacity(self.decomposed_inner_row_block_sizes.len());
+        let mut recomposed_inner_row_block_sizes =
+            Vec::with_capacity(self.decomposed_inner_row_block_sizes.len());
         for &digit_block_size in &self.decomposed_inner_row_block_sizes {
             let digit_end = digit_offset + digit_block_size;
             if digit_end > digit_planes.len() {
@@ -637,7 +638,10 @@ impl<F: FieldCore + Valid> Valid for ErasedCommitmentHint<F> {
             ));
         }
         if !self.decomposed_inner_rows.is_empty()
-            && !self.decomposed_inner_rows.len().is_multiple_of(self.ring_dim)
+            && !self
+                .decomposed_inner_rows
+                .len()
+                .is_multiple_of(self.ring_dim)
         {
             return Err(SerializationError::InvalidData(
                 "erased commitment hint decomposed digit length is not a multiple of ring_dim"

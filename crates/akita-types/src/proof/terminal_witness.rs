@@ -301,7 +301,8 @@ mod tests {
 
     #[test]
     fn terminal_e_hat_bytes_from_blocks_uses_plane_major_order() {
-        let e_hat = FlatDigitBlocks::from_blocks::<2>(vec![vec![[1, 2], [3, 4]], vec![[5, 6], [7, 8]]]);
+        let e_hat =
+            FlatDigitBlocks::from_blocks::<2>(vec![vec![[1, 2], [3, 4]], vec![[5, 6], [7, 8]]]);
 
         assert_eq!(
             terminal_e_hat_bytes_from_blocks::<2>(&e_hat, 2).unwrap(),

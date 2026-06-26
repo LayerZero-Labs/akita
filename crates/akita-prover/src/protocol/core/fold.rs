@@ -1221,9 +1221,7 @@ where
     )?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let SuffixFoldClaims {
-        commitment,
-        hint,
-        ..
+        commitment, hint, ..
     } = fold_claims;
     let (instance, witness, commitment) = RingRelationProver::new_suffix(
         opening,
@@ -1259,15 +1257,7 @@ where
 
 /// Runtime ring-dispatch wrapper for one suffix fold level (prepare + prove).
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_suffix_fold_at_ring_d<
-    'stack,
-    Cfg,
-    T,
-    C,
-    O,
-    TS,
-    R,
->(
+pub(in crate::protocol::core) fn prove_suffix_fold_at_ring_d<'stack, Cfg, T, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixRegistry<Cfg::Field>,
     stack: &'stack ProverComputeStack<'stack, Cfg::Field, C, O, TS, R>,

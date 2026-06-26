@@ -70,8 +70,7 @@ pub use setup::{
 pub use setup_prefix::{
     padded_setup_prefix_len, select_setup_prefix_slot, setup_prefix_level_params,
     setup_prefix_slot_id, SetupPrefixPublicCommitment, SetupPrefixRegistry, SetupPrefixSlot,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
-    SETUP_OFFLOAD_D_SETUP,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,

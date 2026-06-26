@@ -200,7 +200,8 @@ mod tests {
         )
         .expect("first expected rows");
         let mut second_digits = vec![[0i8; D]; row_width];
-        second_digits[..block_width].copy_from_slice(&t_hat.flat_digits_trusted::<D>()[row_width..]);
+        second_digits[..block_width]
+            .copy_from_slice(&t_hat.flat_digits_trusted::<D>()[row_width..]);
         let second = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(
             &slot,
             n_b,
