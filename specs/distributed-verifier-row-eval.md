@@ -196,10 +196,17 @@ contribution and the `Z_comb` build are the only `O(W · …)` terms:
 
 ### Non-Goals
 
-- **No prover or planner changes.** Verifier-only. Producing the chunk-grouped
-  witness, setting `witness_chunk` in the schedule, and the distributed prover's
-  partial-fold construction are out of scope. Test fixtures synthesize the
-  resolved layout directly.
+- **No prover or planner changes (this spec).** Verifier-only. The planner side
+  is **implemented** ([`specs/distributed-planner.md`](distributed-planner.md)):
+  it stamps `LevelParams.witness_chunk` per fold level and prices the chunked
+  schedule, so the verifier reads the per-level `num_chunks` the planner set and
+  does not compute the cutover itself. The chunked witness/relation construction —
+  a **single** prover that emits the same proof a future distributed prover will,
+  by building the multi-`z` chunked relation — is specified separately in
+  [`specs/distributed-prover.md`](distributed-prover.md). This spec's tests
+  synthesize the resolved layout directly; once that prover lands, an end-to-end
+  prove→verify roundtrip augments (does not replace) the synthesized fixtures —
+  see Stage 6.
 - **Non-power-of-two chunk count.** Only `W` a power of two dividing `num_blocks`
 (so the `e_hat`/`t_hat` chunk window `B_w` is a clean low-bit window) is in
 scope for the peeled fast path. A dense per-chunk fallback for non-power-of-two
@@ -697,8 +704,11 @@ replicated, why the α-scan is unchanged) lives in the book at
 `[book/src/how/verifying/distributed-relation-verifier.md](../book/src/how/verifying/distributed-relation-verifier.md)`;
 the single-segment row-eval is
 `[book/src/how/verifying/matrix_evaluation.md](../book/src/how/verifying/matrix_evaluation.md)`;
-and the prover side is
-`[book/src/how/proving/distributed-prover.md](../book/src/how/proving/distributed-prover.md)`.
+the prover theory is
+`[book/src/how/proving/distributed-prover.md](../book/src/how/proving/distributed-prover.md)`;
+the planner implementation is
+[`specs/distributed-planner.md`](distributed-planner.md); and the prover
+implementation is [`specs/distributed-prover.md`](distributed-prover.md).
 This spec is the implementation record; on land set `Status: implemented`, fill
 `PR:`, reference the new symbols (`ChunkedWitnessCfg`, `WitnessChunkLayout`,
 `WitnessLayout`, `summarize_chunk_block_carries`). When stable, fold the
@@ -1214,9 +1224,18 @@ Tests:
 ### Stage 6 — End-to-End Verifier Fixtures
 
 After structured and setup components pass independently, add end-to-end verifier
-fixtures that synthesize the resolved chunked layout. These should not require a
-distributed prover yet; the fixtures can materialize the relation row according
-to `WitnessLayout` and compare the verifier's deferred row evaluation against it.
+fixtures that synthesize the resolved chunked layout. These do not require a
+distributed prover; the fixtures materialize the relation row according to
+`WitnessLayout` and compare the verifier's deferred row evaluation against it.
+
+> Once the chunked-relation prover ([`specs/distributed-prover.md`](distributed-prover.md))
+> lands, add a prove→verify roundtrip that proves with a multi-chunk preset and
+> verifies with the same preset (`W ∈ {1,2,4,8}`). This is **additive**: the
+> synthesized-layout fixtures remain the ground-truth (they pin the row-MLE value
+> independent of the prover), while the roundtrip confirms the prover emits the
+> exact `WitnessLayout` the verifier resolves. The prover spec owns that test;
+> the shared `segment_layout` offset computation is the single source of truth
+> both sides consume.
 
 Expected test shape:
 
