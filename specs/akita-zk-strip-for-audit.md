@@ -43,17 +43,17 @@ milestone; transparent path only):
 | 1 | `lhl_blinding` always-on | Done |
 | 2 | ZK-only tests + `*_zk.rs` schedules | Done |
 | 3 | Setup `zkB`/`zkD` matrices + drop `akita-r1cs` | Done |
-| CI | Drop `all-features` / zk schedule-drift legs; transparent merge gate | Done (slice 5 partial) |
+| CI | Drop `all-features` / zk schedule-drift legs; transparent merge gate | Done (#218) |
 
-**Follow-up PRs** (slice 4 split into 5 review PRs; see [Execution](#execution--sequenced-slices)):
+**Follow-up PRs** (slice 4 split into 5 review PRs; CI/feature deletion folded into 4e — no separate slice 5; see [Execution](#execution--sequenced-slices)):
 
 | PR | Scope | Status |
 |----|-------|--------|
 | 4a | Verifier blinding-recompute leaf + verify-side golden | In review |
 | 4b | Verifier fold replay + hiding verify (→ `akita-verifier` = 0) | In review |
-| 4c | Prover orchestration + witness sizing (→ prover/config/planner/setup = 0) | Not started |
-| 4d | Proof schema unification (→ `akita-types`/`akita-sumcheck` = 0) | Not started |
-| 4e | Residual sweep + delete `zk` Cargo features + `akita-r1cs/` dir (→ global grep = 0) | Not started |
+| 4c | Prover blinding/compute leaf (→ prover compute/kernels/ring_switch/ring_relation = 0) | In review |
+| 4d | Prover fold-replay + witness sizing (→ prover/config/planner/setup/sumcheck = 0) | Not started |
+| 4e | Schema unification + residual sweep + delete `zk` Cargo features + `akita-r1cs/` (→ global grep = 0) | Not started |
 
 As of `c998034f`, `main` still carries ~940 `feature = "zk"` lines across
 `crates/**/src` (verifier ~204, prover ~435, types ~275, sumcheck ~29, config ~39,
@@ -298,7 +298,9 @@ build is already the transparent path.
 
 Each slice is independently committable and gated by the transparent test run +
 the Slice-0 golden digest. Slices 1–3 landed in [#218](https://github.com/LayerZero-Labs/akita/pull/218).
-Slice 4 depends on 1–3; slice 5 finishes feature removal and CI grep gates.
+Slice 4 depends on 1–3 and ships as PRs 4a–4e; the final PR (4e) also removes the
+`zk` Cargo features and the `akita-r1cs/` dir (the old "slice 5", now folded in —
+its CI half already landed in #218).
 
 **Slice 0 — Preserve + tripwire.** ✅ *Landed #218*
 - `git branch zk-wip` at current `main`; `git tag -a zk-prefix-snapshot-2026-06`.
@@ -352,7 +354,7 @@ Ordering invariants (must hold regardless of how PRs are merged/split):
   `EqFactoredSumcheckProofMasked` (defined in `akita-sumcheck`) are referenced by
   `levels.rs`/`wire.rs` (schema), `prove_zk` (prover), and `verify_zk` (verifier).
   Delete the *drivers* with their consumer PR, but delete the *type definitions*
-  only in the schema PR (4d), the last referent.
+  only in the schema PR (4e), the last referent.
 - **OI-3 — `--features zk` is not a gate.** It is already broken post-slice-3 and
   stays broken; never "fix" it. Only the default build + golden are gates.
 
@@ -360,9 +362,9 @@ Ordering invariants (must hold regardless of how PRs are merged/split):
 |----|-------|----------------------------|------|
 | 4a | Verifier blinding-recompute leaf | (self-contained; verifier still carries fold cfg) | `ring_switch.rs` B/D blinding + `ring_switch/tests.rs`; delete `slice_mle/zk_blinding.rs` and orphaned `slice_mle/test_fixtures.rs`; `slice_mle/{mod.rs,structured_slice.rs,setup_contribution/fixtures.rs}` blinding parts. **+ add the verify-side golden** (Testing Strategy). Chosen as the *only* verifier zk cluster with zero coupling to the fold signature chain → zero cross-PR dangling refs. |
 | 4b | Verifier fold replay + hiding verify | **akita-verifier (src) → 0** | `core/zk.rs` (`verify_zk_hiding_commitment`), `verify.rs` zk blocks + `zk_hiding_cursor` threading, `stages/*` verify_zk, `core.rs` `mod zk`/imports, `core/{fold,suffix,root_fold}.rs`; un-gate `extension_opening_reduction`; delete `akita-sumcheck` **`verify_zk`** driver. **I3 review focus.** |
-| 4c | Prover orchestration + witness sizing | **akita-prover, akita-config, akita-planner, akita-setup → 0** | `core.rs` `ZkHidingProverState`/`build_zk_hiding_context`/pads; `prove/fold/root_fold/suffix`; `ring_switch/{commit,evals}` blinding; `masking.rs`; `zk_hiding_commit.rs`; `hints` blinding digits + `AkitaCommitmentHint` arity cleanup; `akita-config` `proof_optimized` `zk_hiding_witness_len`; `akita-planner` `resolve`/`catalog_identity`; `akita-setup` sizing; delete `akita-sumcheck` **`prove_zk`** driver. **I3 review focus.** The planner `zk_hiding_witness_len` and prover `build_zk_hiding_context` are deleted *together* (the harmless drift vanishes here). |
-| 4d | Proof schema unification | **akita-types, akita-sumcheck → 0** | `proof/{wire,levels,containers,shapes,ring_relation,proof_size,hints}.rs`: drop `zk_hiding` field, `ZkHidingProof`, the `sumcheck_proof`↔`_masked` / `next_w_eval`↔`_masked` swaps; delete the masked **type definitions** (OI-2). By now these fields have no producer/consumer → pure mechanical deletion. |
-| 4e | Residual sweep + feature deletion | **global `rg` → 0** | All remaining `.rs` cfg(zk) in `akita-pcs` (tests + `src/scheme/tests` + `examples/profile/report.rs`), `akita-algebra`, `akita-challenges`; delete every `zk = [...]` in all 13 `Cargo.toml`; delete the orphaned `crates/akita-r1cs/` dir; docs (book feature-flags page, AGENTS.md); final grep gate. |
+| 4c | Prover blinding/compute leaf | prover `compute/`, `kernels/`, `ring_switch/`, `ring_relation*`, `backend/recursive/hint`, `api` commit wiring → 0 | The mechanical "generate blinding" half (mirror of 4a): cfg(zk) compute-backend B/D kernels (`compute/{cpu,poly,backend,delegating_cpu,stack}`, `kernels/*`); `ring_switch/{commit,evals,coeffs}` blinding; `ring_relation*` blinding; `hints` blinding digits; `api/{commitment,setup_prefix}` wiring. **Defers** all `core/*` orchestration, `zk_hiding_commit.rs`, masked-sumcheck plumbing, and `masking.rs` if a 4d caller remains. Additive-only ⇒ not transcript-sensitive. |
+| 4d | Prover fold-replay + witness sizing | **akita-prover, akita-config, akita-planner, akita-setup, akita-sumcheck → 0** | `core.rs` + `core/{fold,prove,suffix,root_fold,extension_opening_reduction}.rs`; `ZkHidingProverState`/`build_zk_hiding_context`/pads; `zk_hiding_commit.rs`; masked-sumcheck prove plumbing (`sumcheck/**`); delete `akita-sumcheck` **`prove_zk`** driver; `akita-config` `zk_hiding_witness_len` + `akita-planner` `resolve`/`catalog_identity` + `akita-setup` sizing (the drift pair, deleted together). **I3 review focus** (mirror of 4b). |
+| 4e | Schema unification + residual + feature deletion | **global `rg` → 0** | `akita-types` `proof/{wire,levels,containers,shapes,ring_relation,proof_size,hints}.rs`: drop `zk_hiding` field, `ZkHidingProof`, the `sumcheck_proof`↔`_masked` / `next_w_eval`↔`_masked` swaps + the masked **type definitions** (OI-2; now unreferenced → pure dead-field removal); residual `.rs` cfg(zk) in `akita-pcs` (tests + `src/scheme/tests` + `examples/profile/report.rs`), `akita-algebra`, `akita-challenges`; delete every `zk = [...]` in all 13 `Cargo.toml` + leaf stubs; delete the orphaned `crates/akita-r1cs/` dir; docs (book feature-flags page, AGENTS.md); final `rg 'feature = "zk"' crates/` → 0 gate. |
 
 Per-PR Definition of Done (uniform — all must pass to merge):
 1. `cargo nextest run --no-default-features --features parallel,disk-persistence` green.
@@ -378,31 +380,28 @@ by *non*-cfg code — **stop and report the file:line** rather than writing new
 logic. The strip is purely subtractive; anything that requires authoring protocol
 logic is a sign the arms were not cleanly paired and needs human review.
 
-*Verify (whole slice 4):* I1/I2 are most at risk in 4b/4c — gate every PR on the
-golden digest + full transparent e2e. Run `--features zk` once *before* 4a to
-confirm the pre-strip feature still built historically; do **not** expect it after.
+*Verify (whole slice 4):* I1/I2 are most at risk in the fold-replay PRs (4b/4d) —
+gate every PR on the golden digest + full transparent e2e. Run `--features zk` once
+*before* 4a to confirm the pre-strip feature still built historically; do **not**
+expect it after.
 
 **Optional merges (Q1):** 4a+4b may merge if verifier review bandwidth allows;
-4d+4e may merge if the schema diff is small. Do **not** merge across the
-consumer→schema boundary (4c into 4d) — that reintroduces the dangling-reference
-window OI-2 avoids.
+4c+4d may merge if you'd rather review the prover as one unit (both touch only
+`akita-prover`/sizing). Do **not** fold the prover PRs into the schema PR (4e) —
+deleting the proof-type fields while a producer/consumer still references them
+reintroduces the dangling-reference window OI-2 avoids.
 
-**Slice 5 — Delete the `zk` feature + CI cleanup.** ✅ *CI done #218; feature deletion folded into PR 4e*
-- CI: the `test-all-features` job and `zk` schedule-drift line are already removed;
-  `test` is the merge gate. ✅ *Done #218*
-- The remaining slice-5 work — remove every `zk = [...]` line from all 13
-  Cargo.toml files + leaf stubs, and the final grep gate `rg 'feature *= *"zk"' crates/` → 0
-  — is now **PR 4e** (per OI-1, feature deletion must be atomic and come last).
-- *Verify:* full default CI green; `cargo check --features zk` then **errors**
-  (proves the feature is gone).
+After 4e: `cargo check --features zk` **errors** (the feature is gone) and
+`rg 'feature = "zk"' crates/` returns nothing — the audit-clean end state.
 
 #### Survives-complete (un-gate only, no completion work)
 
 The tiered/recursive setup engine and the SegmentTyped terminal witness stack are
 gated on **runtime** ring-dimension/`tier_split`, *orthogonal* to `zk`; the
 `fp32`/`fp128` non-zk arms are the live path. `PackedDigits` becomes dead
-production type after Slice 4 (still used by deleted tests) — leave it and flag a
-follow-up. `schedule_terminal_direct_witness_shape` is already unconditional.
+production type after the prover fold-replay PR (4d, which removes the
+`terminal_direct_witness_shape` selector) — leave it and flag a follow-up.
+`schedule_terminal_direct_witness_shape` is already unconditional.
 
 ### Alternatives Considered
 
@@ -483,8 +482,9 @@ follow-up. `schedule_terminal_direct_witness_shape` is already unconditional.
    auditor view, but contradicts the stated "keep generic infra standalone."
    Recommended default: keep `lhl_blinding` with the doc note; revisit if the
    auditor flags unreferenced code.
-2. **`PackedDigits` dead type** after Slice 4 — delete now (extra reconciliation)
-   or leave as a flagged follow-up? Recommended: follow-up, to keep Slice 4 focused.
+2. **`PackedDigits` dead type** after the prover fold-replay PR (4d) — delete now
+   (extra reconciliation) or leave as a flagged follow-up? Recommended: follow-up,
+   to keep 4d focused.
 3. **`zk-wip` maintenance.** Since finished-ZK is largely a rewrite, treat the
    branch as a *frozen reference* (do not continuously rebase onto `main`). Confirm
    this is acceptable vs. periodic rebase.
