@@ -17,3 +17,6 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q2/planner-owns-schedule-expansion.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
 | `2026-Q2/planner-config-consolidation.md` | superseded | `book/src/how/configuration.md` | 2026-Q2 |
 | `2026-Q2/rust-file-line-cap.md` | archived | _(policy in CI)_ | 2026-Q2 |
+| `2026-Q2/akita-zk-commitment-hiding.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
+| `2026-Q2/akita-zk-sumcheck-hiding-plain.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
+| `2026-Q2/akita-zk-v-hiding.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |

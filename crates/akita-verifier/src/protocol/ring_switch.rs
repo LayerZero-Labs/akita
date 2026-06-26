@@ -11,16 +11,12 @@ use akita_transcript::labels::{
     CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
-#[cfg(feature = "zk")]
-use akita_types::lhl_blinding;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
     LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
     RingRelationSegmentLayout, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
 };
 
-#[cfg(feature = "zk")]
-use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
     compute_r_contribution, high_eq_window, EStructuredSlicesEvaluator, SetupEvaluation,
     SetupEvaluator, SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
@@ -113,12 +109,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) depth_open: usize,
     pub(crate) depth_commit: usize,
     pub(crate) depth_fold: usize,
-    #[cfg(feature = "zk")]
-    pub(crate) d_blinding_segment_len: usize,
-    #[cfg(feature = "zk")]
-    pub(crate) b_blinding_digit_planes_per_point: usize,
-    #[cfg(feature = "zk")]
-    pub(crate) b_blinding_segment_len: usize,
     pub(crate) block_len: usize,
     pub(crate) inner_width: usize,
     pub(crate) log_basis: u32,
@@ -365,16 +355,6 @@ where
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let num_t_vectors = num_polys;
-    #[cfg(feature = "zk")]
-    let d_blinding_segment_len = match m_row_layout {
-        MRowLayout::WithDBlock => lhl_blinding::blinding_digit_plane_count::<F>(n_d, D, log_basis),
-        MRowLayout::WithoutDBlock => 0,
-    };
-    #[cfg(feature = "zk")]
-    let b_blinding_digit_planes_per_point =
-        lhl_blinding::blinding_digit_plane_count::<F>(n_b, D, log_basis);
-    #[cfg(feature = "zk")]
-    let b_blinding_segment_len = b_blinding_digit_planes_per_point;
     // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
     let total_blocks = num_blocks
         .checked_mul(num_claims)
@@ -479,12 +459,6 @@ where
         depth_open,
         depth_commit,
         depth_fold,
-        #[cfg(feature = "zk")]
-        d_blinding_segment_len,
-        #[cfg(feature = "zk")]
-        b_blinding_digit_planes_per_point,
-        #[cfg(feature = "zk")]
-        b_blinding_segment_len,
         block_len,
         inner_width,
         log_basis,
@@ -797,20 +771,12 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             E::zero()
         };
 
-        #[allow(unused_mut)]
-        let mut total = e_structured_contribution
+        let total = e_structured_contribution
             + t_structured_contribution
             + z_structured_contribution
             + setup_contribution
             + r_contribution
             + u_recompose_contribution;
-
-        #[cfg(feature = "zk")]
-        {
-            let b_blinding = compute_b_blinding_part::<F, E, D>(self, x_challenges, setup, alpha)?;
-            let d_blinding = compute_d_blinding_part::<F, E, D>(self, x_challenges, setup, alpha)?;
-            total = total + b_blinding + d_blinding;
-        }
 
         Ok(total)
     }

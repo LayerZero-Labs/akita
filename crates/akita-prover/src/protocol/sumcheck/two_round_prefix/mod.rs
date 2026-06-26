@@ -37,7 +37,7 @@ mod common;
 mod stage1;
 mod stage2;
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests;
 
 pub(crate) use common::{

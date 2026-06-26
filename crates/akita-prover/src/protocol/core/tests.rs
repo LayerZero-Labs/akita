@@ -21,8 +21,6 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
-    #[cfg(feature = "zk")]
-    let mut zk_hiding = ZkHidingProverState::new((1..=16).map(F::from_u64).collect::<Vec<_>>());
     let opening_batch = VerifierOpeningBatch::from_groups(
         point.to_vec(),
         vec![CommitmentGroup {
@@ -36,13 +34,9 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         None,
         &logical_polys,
         &opening_batch,
-        #[cfg(feature = "zk")]
-        None,
         true,
         &mut transcript,
         "recursive",
-        #[cfg(feature = "zk")]
-        &mut zk_hiding,
     )
     .expect("padded logical witnesses should reduce over the opening cube");
 

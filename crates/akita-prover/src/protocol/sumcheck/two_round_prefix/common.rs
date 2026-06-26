@@ -1,10 +1,10 @@
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredUniPoly, UniPoly};
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 use akita_types::range_check_eval_from_s;
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PrefixPoint<E: FieldCore> {
     Finite(E),
@@ -585,14 +585,14 @@ pub(crate) fn interpolate_eq_factored_q_poly<E: FieldCore + FromPrimitiveInt>(
 }
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 2]
 {
     [PrefixPoint::Finite(E::one()), PrefixPoint::Infinity]
 }
 
 /// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 3] {
     [
         PrefixPoint::Finite(E::zero()),
@@ -603,7 +603,7 @@ pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [P
 
 /// Return the bilinear coefficients for a quad ordered as `[t00, t10, t01, t11]`.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn bilinear_coeffs_from_quad<E: FieldCore>(quad: [E; 4]) -> [E; 4] {
     let [t00, t10, t01, t11] = quad;
     [t00, t10 - t00, t01 - t00, t11 - t10 - t01 + t00]
@@ -612,7 +612,7 @@ pub(crate) fn bilinear_coeffs_from_quad<E: FieldCore>(quad: [E; 4]) -> [E; 4] {
 /// Evaluate the bilinear multilinear extension of a quad at ordinary field
 /// points `(x, y)`.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
     let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
     a + x * (b + y * d) + y * c
@@ -621,7 +621,7 @@ pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
 /// Evaluate a quad on a small domain where `Infinity` means "leading
 /// coefficient in that coordinate".
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
     quad: [E; 4],
     x: PrefixPoint<E>,
@@ -639,7 +639,7 @@ pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
 /// Evaluate the stage-1 candidate storage contribution used by the original
 /// `{1, -1, 2, Infinity}^2` proposal.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -657,7 +657,7 @@ pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
 /// composed range-check polynomial `range_check(s(X, Y))`, rather than first
 /// evaluating `s` at `Infinity` and then applying the range check.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -688,7 +688,7 @@ pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
 /// `{1, Infinity}^2` storage: evaluate the bilinear witness first, then apply
 /// `w (w + 1)`.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
     w_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -704,7 +704,7 @@ pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
 /// At `Infinity`, we take the leading coefficient in that coordinate of
 /// `w(X, Y) * (w(X, Y) + 1)`, so the linear `+w` term drops out.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
     w_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -720,7 +720,7 @@ pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
 /// Evaluate the stage-2 local relation contribution for one witness quad, one
 /// local bilinear factor quad, and one fixed scalar factor.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage2_local_relation_eval<E: FieldCore>(
     w_quad: [E; 4],
     local_factor_quad: [E; 4],
@@ -735,7 +735,7 @@ pub(crate) fn stage2_local_relation_eval<E: FieldCore>(
 
 /// Evaluate a quadratic from its values at `{0, 1, Infinity}`.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn eval_quadratic_from_01_inf<E: FieldCore>(
     at_zero: E,
     at_one: E,
@@ -781,7 +781,7 @@ pub(crate) fn add_quadratic_coeffs<E: FieldCore>(lhs: [E; 3], rhs: [E; 3]) -> [E
 }
 
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn coeff_array_to_poly<E: FieldCore, const N: usize>(coeffs: [E; N]) -> UniPoly<E> {
     UniPoly::from_coeffs(coeffs.to_vec())
 }

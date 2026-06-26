@@ -13,13 +13,8 @@ where
         for partial in &reduction.partials {
             partial.serialize_with_mode(&mut writer, compress)?;
         }
-        #[cfg(not(feature = "zk"))]
         reduction
             .sumcheck
-            .serialize_with_mode(&mut writer, compress)?;
-        #[cfg(feature = "zk")]
-        reduction
-            .sumcheck_proof_masked
             .serialize_with_mode(&mut writer, compress)?;
     }
     Ok(())
@@ -38,16 +33,7 @@ where
             .iter()
             .map(|partial| partial.serialized_size(compress))
             .sum::<usize>()
-            + {
-                #[cfg(not(feature = "zk"))]
-                {
-                    reduction.sumcheck.serialized_size(compress)
-                }
-                #[cfg(feature = "zk")]
-                {
-                    reduction.sumcheck_proof_masked.serialized_size(compress)
-                }
-            }
+            + { reduction.sumcheck.serialized_size(compress) }
     })
 }
 
@@ -75,23 +61,9 @@ where
             &(),
         )?);
     }
-    #[cfg(not(feature = "zk"))]
     let sumcheck =
         SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
-    #[cfg(feature = "zk")]
-    let sumcheck_proof_masked = SumcheckProofMasked::deserialize_with_mode(
-        &mut reader,
-        compress,
-        validate,
-        &shape.sumcheck,
-    )?;
-    Ok(Some(ExtensionOpeningReductionProof {
-        partials,
-        #[cfg(not(feature = "zk"))]
-        sumcheck,
-        #[cfg(feature = "zk")]
-        sumcheck_proof_masked,
-    }))
+    Ok(Some(ExtensionOpeningReductionProof { partials, sumcheck }))
 }
 
 fn serialize_fold_grind_nonce<W: Write>(
@@ -303,26 +275,16 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
                     compress,
                 )?;
                 for stage in &stage1.stages {
-                    #[cfg(not(feature = "zk"))]
                     stage
                         .sumcheck_proof
-                        .serialize_with_mode(&mut writer, compress)?;
-                    #[cfg(feature = "zk")]
-                    stage
-                        .sumcheck_proof_masked
                         .serialize_with_mode(&mut writer, compress)?;
                     for claim in &stage.child_claims {
                         claim.serialize_with_mode(&mut writer, compress)?;
                     }
                 }
                 stage1.s_claim.serialize_with_mode(&mut writer, compress)?;
-                #[cfg(not(feature = "zk"))]
                 stage2
                     .sumcheck_proof
-                    .serialize_with_mode(&mut writer, compress)?;
-                #[cfg(feature = "zk")]
-                stage2
-                    .sumcheck_proof_masked
                     .serialize_with_mode(&mut writer, compress)?;
                 serialize_stage3_sumcheck(stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
                 stage2
@@ -349,13 +311,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
                     *fold_grind_nonce,
                     compress,
                 )?;
-                #[cfg(not(feature = "zk"))]
                 stage2
                     .sumcheck_proof
-                    .serialize_with_mode(&mut writer, compress)?;
-                #[cfg(feature = "zk")]
-                stage2
-                    .sumcheck_proof_masked
                     .serialize_with_mode(&mut writer, compress)?;
                 stage2
                     .final_witness
@@ -385,33 +342,16 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
                     .stages
                     .iter()
                     .map(|stage| {
-                        ({
-                            #[cfg(not(feature = "zk"))]
-                            {
-                                stage.sumcheck_proof.serialized_size(compress)
-                            }
-                            #[cfg(feature = "zk")]
-                            {
-                                stage.sumcheck_proof_masked.serialized_size(compress)
-                            }
-                        }) + stage
-                            .child_claims
-                            .iter()
-                            .map(|claim| claim.serialized_size(compress))
-                            .sum::<usize>()
+                        ({ stage.sumcheck_proof.serialized_size(compress) })
+                            + stage
+                                .child_claims
+                                .iter()
+                                .map(|claim| claim.serialized_size(compress))
+                                .sum::<usize>()
                     })
                     .sum::<usize>()
                     + stage1.s_claim.serialized_size(compress)
-                    + ({
-                        #[cfg(not(feature = "zk"))]
-                        {
-                            stage2.sumcheck_proof.serialized_size(compress)
-                        }
-                        #[cfg(feature = "zk")]
-                        {
-                            stage2.sumcheck_proof_masked.serialized_size(compress)
-                        }
-                    })
+                    + ({ stage2.sumcheck_proof.serialized_size(compress) })
                     + stage3_sumcheck_serialized_size(stage3_sumcheck_proof.as_ref(), compress)
                     + stage2.next_w_commitment.serialized_size(compress)
                     + stage2.next_w_eval().serialized_size(compress)
@@ -428,16 +368,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
                 terminal_fold_wire_prefix_serialized_size(
                     extension_opening_reduction.as_ref(),
                     compress,
-                ) + {
-                    #[cfg(not(feature = "zk"))]
-                    {
-                        stage2.sumcheck_proof.serialized_size(compress)
-                    }
-                    #[cfg(feature = "zk")]
-                    {
-                        stage2.sumcheck_proof_masked.serialized_size(compress)
-                    }
-                } + stage2.final_witness.serialized_size(compress)
+                ) + { stage2.sumcheck_proof.serialized_size(compress) }
+                    + stage2.final_witness.serialized_size(compress)
             }
         }
     }
@@ -456,17 +388,11 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
             } => {
                 if let Some(reduction) = extension_opening_reduction {
                     reduction.partials.check()?;
-                    #[cfg(not(feature = "zk"))]
                     reduction.sumcheck.check()?;
-                    #[cfg(feature = "zk")]
-                    reduction.sumcheck_proof_masked.check()?;
                 }
                 v.check()?;
                 for stage in &stage1.stages {
-                    #[cfg(not(feature = "zk"))]
                     stage.sumcheck_proof.check()?;
-                    #[cfg(feature = "zk")]
-                    stage.sumcheck_proof_masked.check()?;
                     stage.child_claims.check()?;
                 }
                 stage1.s_claim.check()?;
@@ -475,10 +401,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
                         "Akita level proof must carry intermediate stage-2 proof".to_string(),
                     )
                 })?;
-                #[cfg(not(feature = "zk"))]
                 stage2.sumcheck_proof.check()?;
-                #[cfg(feature = "zk")]
-                stage2.sumcheck_proof_masked.check()?;
                 if let Some(stage3_sumcheck) = stage3_sumcheck_proof {
                     stage3_sumcheck.claim.check()?;
                     stage3_sumcheck.next_w_eval.check()?;
@@ -495,20 +418,14 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
             } => {
                 if let Some(reduction) = extension_opening_reduction {
                     reduction.partials.check()?;
-                    #[cfg(not(feature = "zk"))]
                     reduction.sumcheck.check()?;
-                    #[cfg(feature = "zk")]
-                    reduction.sumcheck_proof_masked.check()?;
                 }
                 let stage2 = stage2.as_terminal().ok_or_else(|| {
                     SerializationError::InvalidData(
                         "terminal level proof must carry terminal stage-2 proof".to_string(),
                     )
                 })?;
-                #[cfg(not(feature = "zk"))]
                 stage2.sumcheck_proof.check()?;
-                #[cfg(feature = "zk")]
-                stage2.sumcheck_proof_masked.check()?;
                 stage2.final_witness.check()
             }
         }
@@ -539,15 +456,7 @@ impl<
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
-            #[cfg(not(feature = "zk"))]
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &stage_shape.sumcheck_proof,
-            )?;
-            #[cfg(feature = "zk")]
-            let sumcheck_proof_masked = EqFactoredSumcheckProofMasked::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -564,10 +473,7 @@ impl<
                 )?);
             }
             stage1_stages.push(AkitaStage1StageProof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: sumcheck,
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked,
                 child_claims,
             });
         }
@@ -575,15 +481,7 @@ impl<
             stages: stage1_stages,
             s_claim: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
-        #[cfg(not(feature = "zk"))]
         let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.stage2_sumcheck_proof,
-        )?;
-        #[cfg(feature = "zk")]
-        let stage2_sumcheck_proof_masked = SumcheckProofMasked::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -596,20 +494,14 @@ impl<
             ctx.stage3_sumcheck.as_ref(),
         )?;
         let stage2 = AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-            #[cfg(not(feature = "zk"))]
             sumcheck_proof: stage2_sumcheck_proof,
-            #[cfg(feature = "zk")]
-            sumcheck_proof_masked: stage2_sumcheck_proof_masked,
             next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
                 &ctx.next_commit_coeffs,
             )?,
-            #[cfg(not(feature = "zk"))]
             next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            #[cfg(feature = "zk")]
-            next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         });
         let out = Self::Intermediate {
             extension_opening_reduction,
@@ -645,13 +537,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
             self.fold_grind_nonce,
             compress,
         )?;
-        #[cfg(not(feature = "zk"))]
         stage2
             .sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        #[cfg(feature = "zk")]
-        stage2
-            .sumcheck_proof_masked
             .serialize_with_mode(&mut writer, compress)?;
         stage2
             .final_witness
@@ -666,16 +553,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
         terminal_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
             compress,
-        ) + {
-            #[cfg(not(feature = "zk"))]
-            {
-                stage2.sumcheck_proof.serialized_size(compress)
-            }
-            #[cfg(feature = "zk")]
-            {
-                stage2.sumcheck_proof_masked.serialized_size(compress)
-            }
-        } + stage2.final_witness.serialized_size(compress)
+        ) + { stage2.sumcheck_proof.serialized_size(compress) }
+            + stage2.final_witness.serialized_size(compress)
     }
 }
 
@@ -683,20 +562,14 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for TerminalLevelProof<F,
     fn check(&self) -> Result<(), SerializationError> {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
-            #[cfg(not(feature = "zk"))]
             reduction.sumcheck.check()?;
-            #[cfg(feature = "zk")]
-            reduction.sumcheck_proof_masked.check()?;
         }
         let stage2 = self.stage2.as_terminal().ok_or_else(|| {
             SerializationError::InvalidData(
                 "terminal level proof must carry terminal stage-2 proof".to_string(),
             )
         })?;
-        #[cfg(not(feature = "zk"))]
         stage2.sumcheck_proof.check()?;
-        #[cfg(feature = "zk")]
-        stage2.sumcheck_proof_masked.check()?;
         stage2.final_witness.check()
     }
 }
@@ -721,15 +594,7 @@ impl<
                 validate,
                 ctx.extension_opening_reduction.as_ref(),
             )?;
-        #[cfg(not(feature = "zk"))]
         let stage2_sumcheck = SumcheckProof::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.stage2_sumcheck,
-        )?;
-        #[cfg(feature = "zk")]
-        let stage2_sumcheck_proof_masked = SumcheckProofMasked::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -745,10 +610,7 @@ impl<
             extension_opening_reduction,
             fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck,
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: stage2_sumcheck_proof_masked,
                 final_witness,
             }),
         };
@@ -780,13 +642,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
             compress,
         )?;
         for stage in &self.stage1.stages {
-            #[cfg(not(feature = "zk"))]
             stage
                 .sumcheck_proof
-                .serialize_with_mode(&mut writer, compress)?;
-            #[cfg(feature = "zk")]
-            stage
-                .sumcheck_proof_masked
                 .serialize_with_mode(&mut writer, compress)?;
             for claim in &stage.child_claims {
                 claim.serialize_with_mode(&mut writer, compress)?;
@@ -795,13 +652,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
         self.stage1
             .s_claim
             .serialize_with_mode(&mut writer, compress)?;
-        #[cfg(not(feature = "zk"))]
         stage2
             .sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
-        #[cfg(feature = "zk")]
-        stage2
-            .sumcheck_proof_masked
             .serialize_with_mode(&mut writer, compress)?;
         serialize_stage3_sumcheck(self.stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
         stage2
@@ -826,33 +678,16 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
             .stages
             .iter()
             .map(|stage| {
-                ({
-                    #[cfg(not(feature = "zk"))]
-                    {
-                        stage.sumcheck_proof.serialized_size(compress)
-                    }
-                    #[cfg(feature = "zk")]
-                    {
-                        stage.sumcheck_proof_masked.serialized_size(compress)
-                    }
-                }) + stage
-                    .child_claims
-                    .iter()
-                    .map(|claim| claim.serialized_size(compress))
-                    .sum::<usize>()
+                ({ stage.sumcheck_proof.serialized_size(compress) })
+                    + stage
+                        .child_claims
+                        .iter()
+                        .map(|claim| claim.serialized_size(compress))
+                        .sum::<usize>()
             })
             .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
-            + ({
-                #[cfg(not(feature = "zk"))]
-                {
-                    stage2.sumcheck_proof.serialized_size(compress)
-                }
-                #[cfg(feature = "zk")]
-                {
-                    stage2.sumcheck_proof_masked.serialized_size(compress)
-                }
-            })
+            + ({ stage2.sumcheck_proof.serialized_size(compress) })
             + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + stage2.next_w_commitment.serialized_size(compress)
             + stage2.next_w_eval().serialized_size(compress)
@@ -863,17 +698,11 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
     fn check(&self) -> Result<(), SerializationError> {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
-            #[cfg(not(feature = "zk"))]
             reduction.sumcheck.check()?;
-            #[cfg(feature = "zk")]
-            reduction.sumcheck_proof_masked.check()?;
         }
         self.v.check()?;
         for stage in &self.stage1.stages {
-            #[cfg(not(feature = "zk"))]
             stage.sumcheck_proof.check()?;
-            #[cfg(feature = "zk")]
-            stage.sumcheck_proof_masked.check()?;
             stage.child_claims.check()?;
         }
         self.stage1.s_claim.check()?;
@@ -882,10 +711,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
                 "fold root proof must carry intermediate stage-2 proof".to_string(),
             )
         })?;
-        #[cfg(not(feature = "zk"))]
         stage2.sumcheck_proof.check()?;
-        #[cfg(feature = "zk")]
-        stage2.sumcheck_proof_masked.check()?;
         if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
             stage3_sumcheck.claim.check()?;
             stage3_sumcheck.next_w_eval.check()?;
@@ -920,15 +746,7 @@ impl<
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
-            #[cfg(not(feature = "zk"))]
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &stage_shape.sumcheck_proof,
-            )?;
-            #[cfg(feature = "zk")]
-            let sumcheck_proof_masked = EqFactoredSumcheckProofMasked::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -945,10 +763,7 @@ impl<
                 )?);
             }
             stage1_stages.push(AkitaStage1StageProof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: sumcheck,
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked,
                 child_claims,
             });
         }
@@ -956,15 +771,7 @@ impl<
             stages: stage1_stages,
             s_claim: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
-        #[cfg(not(feature = "zk"))]
         let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.stage2_sumcheck_proof,
-        )?;
-        #[cfg(feature = "zk")]
-        let stage2_sumcheck_proof_masked = SumcheckProofMasked::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -977,20 +784,14 @@ impl<
             ctx.stage3_sumcheck.as_ref(),
         )?;
         let stage2 = AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-            #[cfg(not(feature = "zk"))]
             sumcheck_proof: stage2_sumcheck_proof,
-            #[cfg(feature = "zk")]
-            sumcheck_proof_masked: stage2_sumcheck_proof_masked,
             next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
                 &ctx.next_commit_coeffs,
             )?,
-            #[cfg(not(feature = "zk"))]
             next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            #[cfg(feature = "zk")]
-            next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         });
         let out = Self {
             extension_opening_reduction,
@@ -1018,16 +819,10 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
         match self {
             Self::Fold(fold) => fold.serialize_with_mode(&mut writer, compress),
             Self::Terminal(terminal) => terminal.serialize_with_mode(&mut writer, compress),
-            Self::ZeroFold {
-                witnesses,
-                #[cfg(feature = "zk")]
-                b_blinding_digits,
-            } => {
+            Self::ZeroFold { witnesses } => {
                 for witness in witnesses {
                     witness.serialize_with_mode(&mut writer, compress)?;
                 }
-                #[cfg(feature = "zk")]
-                b_blinding_digits.serialize_with_mode(&mut writer, compress)?;
                 Ok(())
             }
         }
@@ -1037,23 +832,13 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
         match self {
             Self::Fold(fold) => fold.serialized_size(compress),
             Self::Terminal(terminal) => terminal.serialized_size(compress),
-            Self::ZeroFold {
-                witnesses,
-                #[cfg(feature = "zk")]
-                b_blinding_digits,
-            } => {
+            Self::ZeroFold { witnesses } => {
                 let witness_size = witnesses
                     .iter()
                     .map(|witness| witness.serialized_size(compress))
                     .sum::<usize>();
-                #[cfg(feature = "zk")]
-                {
-                    witness_size + b_blinding_digits.serialized_size(compress)
-                }
-                #[cfg(not(feature = "zk"))]
-                {
-                    witness_size
-                }
+
+                witness_size
             }
         }
     }
@@ -1064,16 +849,10 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedRootProof
         match self {
             Self::Fold(fold) => fold.check(),
             Self::Terminal(terminal) => terminal.check(),
-            Self::ZeroFold {
-                witnesses,
-                #[cfg(feature = "zk")]
-                b_blinding_digits,
-            } => {
+            Self::ZeroFold { witnesses } => {
                 for witness in witnesses {
                     witness.check()?;
                 }
-                #[cfg(feature = "zk")]
-                b_blinding_digits.check()?;
                 Ok(())
             }
         }
@@ -1088,8 +867,6 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        #[cfg(feature = "zk")]
-        self.zk_hiding.serialize_with_mode(&mut writer, compress)?;
         self.root.serialize_with_mode(&mut writer, compress)?;
         for step in &self.steps {
             step.serialize_with_mode(&mut writer, compress)?;
@@ -1098,12 +875,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        #[cfg(feature = "zk")]
-        let zk_size = self.zk_hiding.serialized_size(compress);
-        #[cfg(not(feature = "zk"))]
-        let zk_size = 0;
-        zk_size
-            + self.root.serialized_size(compress)
+        self.root.serialized_size(compress)
             + self
                 .steps
                 .iter()
@@ -1114,8 +886,6 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
 
 impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
-        #[cfg(feature = "zk")]
-        self.zk_hiding.check()?;
         self.root.check()?;
         for step in &self.steps {
             step.check()?;
@@ -1150,12 +920,6 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
                 }
             }
             AkitaBatchedRootProof::ZeroFold { .. } => {
-                #[cfg(feature = "zk")]
-                if !self.zk_hiding.is_empty() {
-                    return Err(SerializationError::InvalidData(
-                        "root-direct ZK hiding payload must be empty".to_string(),
-                    ));
-                }
                 if !self.steps.is_empty() {
                     return Err(SerializationError::InvalidData(
                         "root-direct batched proof must not carry recursive-suffix steps"
@@ -1181,9 +945,6 @@ impl<
         ctx: &AkitaBatchedProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        #[cfg(feature = "zk")]
-        let zk_hiding =
-            ZkHidingProof::<F>::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = match ctx {
             AkitaBatchedProofShape::Fold {
                 root_shape,
@@ -1226,8 +987,6 @@ impl<
                     steps.push(step);
                 }
                 Self {
-                    #[cfg(feature = "zk")]
-                    zk_hiding,
                     root: AkitaBatchedRootProof::Fold(fold),
                     steps,
                 }
@@ -1240,8 +999,6 @@ impl<
                     terminal_shape,
                 )?;
                 Self {
-                    #[cfg(feature = "zk")]
-                    zk_hiding,
                     root: AkitaBatchedRootProof::Terminal(terminal),
                     steps: Vec::new(),
                 }
@@ -1257,17 +1014,8 @@ impl<
                         shape,
                     )?);
                 }
-                #[cfg(feature = "zk")]
-                let b_blinding_digits =
-                    Vec::<Vec<i8>>::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 Self {
-                    #[cfg(feature = "zk")]
-                    zk_hiding,
-                    root: AkitaBatchedRootProof::ZeroFold {
-                        witnesses,
-                        #[cfg(feature = "zk")]
-                        b_blinding_digits,
-                    },
+                    root: AkitaBatchedRootProof::ZeroFold { witnesses },
                     steps: Vec::new(),
                 }
             }

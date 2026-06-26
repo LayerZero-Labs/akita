@@ -1,6 +1,4 @@
 use super::repeated_b::repeated_b_commitment_rows;
-#[cfg(feature = "zk")]
-use super::repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use super::*;
 use crate::backend::{RingSwitchQuotientView, RingSwitchRelationView};
 use crate::compute::{
@@ -214,9 +212,7 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     lp: &LevelParams,
     challenges: &Challenges,
     e_hat_flat: &[[i8; D]],
-    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
-    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     e_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
@@ -342,18 +338,7 @@ where
     }
     let mut a_quotients = relation_rows.a_quotients;
     let b_cyclic = relation_rows.b_cyclic;
-    #[cfg(feature = "zk")]
-    let mut d_cyclic = relation_rows.d_cyclic;
-    #[cfg(not(feature = "zk"))]
     let d_cyclic = relation_rows.d_cyclic;
-    #[cfg(feature = "zk")]
-    add_zk_d_blinding_cyclic_rows(
-        backend,
-        prepared,
-        n_d_active,
-        d_blinding_digits,
-        &mut d_cyclic,
-    )?;
     for z_segment in z_segments {
         let segment_rows = RingSwitchQuotientKernel::quotient_rows(
             backend,
@@ -375,31 +360,13 @@ where
         // Tiered: the COMMIT block is F (computed below), not B.
         Vec::new()
     } else if use_relation_b_rows {
-        #[cfg(feature = "zk")]
-        let mut rows = b_cyclic;
-        #[cfg(not(feature = "zk"))]
-        let rows = b_cyclic;
-        #[cfg(feature = "zk")]
-        {
-            let blinding = b_blinding_digits.first().ok_or(AkitaError::InvalidProof)?;
-            add_zk_b_blinding_cyclic_rows(
-                backend,
-                prepared,
-                n_b,
-                blinding.flat_digits().len(),
-                blinding,
-                &mut rows,
-            )?;
-        }
-        rows
+        b_cyclic
     } else {
         repeated_b_commitment_rows(
             backend,
             prepared,
             n_b,
             t_hat,
-            #[cfg(feature = "zk")]
-            b_blinding_digits,
             &[num_polys],
             blocks_per_claim,
             lp.log_basis,
