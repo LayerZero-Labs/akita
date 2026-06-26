@@ -412,7 +412,6 @@ fn mixed_d_suffix_params_recursive_vars_match_runtime_witness_domain() {
     use crate::test_support::mixed_d_per_level_schedule;
     use akita_types::suffix_witness_hypercube_num_vars;
 
-    let key = AkitaScheduleLookupKey::singleton(16);
     let switch = 2usize;
     let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, switch)
         .expect("mixed schedule");
@@ -435,7 +434,6 @@ fn mixed_d_schedule_w_len_chain_matches_runtime_layout() {
     use crate::test_support::mixed_d_per_level_schedule;
     use akita_types::{w_ring_element_count_with_counts_for_layout_bits, MRowLayout};
 
-    let key = AkitaScheduleLookupKey::singleton(16);
     let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, 2)
         .expect("mixed schedule");
     let field_bits = fp128::D64Full::decomposition().field_bits();

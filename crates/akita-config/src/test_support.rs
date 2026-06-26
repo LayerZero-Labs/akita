@@ -202,8 +202,7 @@ where
         let mut prev_ring_d = envelope_folds[switch_at_fold - 1].params.ring_dimension;
         let mut suffix_plan: Vec<MixedSuffixFoldPlan> = Vec::new();
 
-        for level in switch_at_fold..num_fold_levels {
-            let envelope_step = &envelope_folds[level];
+        for (level, envelope_step) in envelope_folds.iter().enumerate().skip(switch_at_fold) {
             let params = if level == switch_at_fold {
                 mixed_level_params::<EnvelopeCfg, SuffixCfg>(
                     lookup_key,
