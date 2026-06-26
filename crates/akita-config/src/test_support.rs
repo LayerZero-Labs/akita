@@ -34,9 +34,10 @@ fn mixed_level_params(
     let mut params = envelope_params.clone();
     params.ring_dimension = suffix_d;
     params.stage1_config = suffix_params.stage1_config.clone();
-    params.num_blocks = params.num_blocks.checked_mul(scale).ok_or_else(|| {
-        AkitaError::InvalidSetup("mixed-D num_blocks scale overflow".into())
-    })?;
+    params.num_blocks = params
+        .num_blocks
+        .checked_mul(scale)
+        .ok_or_else(|| AkitaError::InvalidSetup("mixed-D num_blocks scale overflow".into()))?;
     params.a_key = suffix_params.a_key.clone();
     params.b_key = suffix_params.b_key.clone();
     params.d_key = suffix_params.d_key.clone();
@@ -134,10 +135,7 @@ where
         .checked_add(terminal.direct_bytes)
         .ok_or_else(|| AkitaError::InvalidSetup("mixed-D total_bytes overflow".into()))?;
 
-    let mut steps = mixed_folds
-        .into_iter()
-        .map(Step::Fold)
-        .collect::<Vec<_>>();
+    let mut steps = mixed_folds.into_iter().map(Step::Fold).collect::<Vec<_>>();
     steps.push(Step::Direct(terminal));
 
     Ok(Schedule { steps, total_bytes })

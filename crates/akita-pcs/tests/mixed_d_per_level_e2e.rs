@@ -16,8 +16,8 @@ use akita_prover::{
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    digest_effective_schedule, validate_ring_dim_plan_at_entry, AkitaBatchedProof, BasisMode,
-    SetupContributionMode,
+    digest_effective_schedule, validate_ring_dim_plan_at_entry, validate_schedule_context_at_entry,
+    AkitaBatchedProof, BasisMode, SetupContributionMode,
 };
 use akita_verifier::test_support::batched_verify_with_schedule;
 use common::*;
@@ -33,9 +33,8 @@ const MIXED_D_SWITCH_FOLD: usize = 2;
 const NUM_VARS: usize = 16;
 
 const ORACLE_EFFECTIVE_SCHEDULE_DIGEST: [u8; 32] = [
-    0x02, 0xaa, 0x80, 0x00, 0x14, 0xed, 0xa8, 0xd7, 0x06, 0x56, 0xe7, 0xc2, 0xb2, 0x3b,
-    0xc0, 0x5b, 0xa7, 0x95, 0x5c, 0x58, 0xfd, 0xf7, 0x7e, 0x4c, 0x06, 0x8e, 0x73, 0xd2, 0xba,
-    0x9b, 0x0a, 0xeb,
+    0x02, 0xaa, 0x80, 0x00, 0x14, 0xed, 0xa8, 0xd7, 0x06, 0x56, 0xe7, 0xc2, 0xb2, 0x3b, 0xc0, 0x5b,
+    0xa7, 0x95, 0x5c, 0x58, 0xfd, 0xf7, 0x7e, 0x4c, 0x06, 0x8e, 0x73, 0xd2, 0xba, 0x9b, 0x0a, 0xeb,
 ];
 const ORACLE_PROOF_BYTES: &[u8] =
     include_bytes!("fixtures/wave0_uniform_handbuilt_d128_nv16.proof.bin");
@@ -75,8 +74,7 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
         let point = random_point(NUM_VARS, 0xcede_0002);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup =
-            <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, 1).expect("setup");
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
         let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -86,20 +84,15 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
                 .expect("commit");
 
         // switch past last fold => identical to shipped D128Full table schedule
-        let schedule = mixed_d_per_level_schedule::<Cfg, SuffixCfg>(
-            NUM_VARS,
-            1,
-            4,
-        )
-        .expect("uniform hand-built schedule");
+        let schedule = mixed_d_per_level_schedule::<Cfg, SuffixCfg>(NUM_VARS, 1, 4)
+            .expect("uniform hand-built schedule");
 
         let opening_batch =
             akita_types::OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
         let poly_refs = [&poly];
         let claims = prove_input(&point, &poly_refs, &commitment, hint);
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"test/mixed_d_uniform_baseline");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"test/mixed_d_uniform_baseline");
         bind_transcript_instance_descriptor::<F, _, Cfg>(
             setup.expanded.as_ref(),
             &opening_batch,
@@ -108,6 +101,8 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
             &mut prover_transcript,
         )
         .expect("bind descriptor");
+        let schedule_ctx =
+            validate_schedule_context_at_entry(&schedule, setup.expanded.seed()).expect("plan");
         let proof = prove::<Cfg, _, DensePoly<F, D>, _, _, _, _, D>(
             &setup.expanded,
             &setup.prefix_slots,
@@ -115,6 +110,7 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
             &mut prover_transcript,
             claims,
             &schedule,
+            &schedule_ctx,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
         )
@@ -137,8 +133,7 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
         .expect("deserialize proof");
 
         let openings = [opening];
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"test/mixed_d_uniform_baseline");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/mixed_d_uniform_baseline");
         batched_verify_with_schedule::<Cfg, _, D>(
             &decoded,
             &verifier_setup,
@@ -165,8 +160,7 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
         let point = random_point(NUM_VARS, 0xcede_0002);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup =
-            <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, 1).expect("setup");
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, 1).expect("setup");
         assert_eq!(setup.expanded.seed().gen_ring_dim, 128);
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
         let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -177,12 +171,9 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
             <Scheme as CommitmentProver<F, D>>::commit(&setup, commit_input, &stack)
                 .expect("commit");
 
-        let schedule = mixed_d_per_level_schedule::<Cfg, SuffixCfg>(
-            NUM_VARS,
-            1,
-            MIXED_D_SWITCH_FOLD,
-        )
-        .expect("mixed-D schedule");
+        let schedule =
+            mixed_d_per_level_schedule::<Cfg, SuffixCfg>(NUM_VARS, 1, MIXED_D_SWITCH_FOLD)
+                .expect("mixed-D schedule");
         assert_mixed_d_fixture_schedule(&schedule);
 
         let plan = validate_ring_dim_plan_at_entry(&schedule, setup.expanded.seed())
@@ -197,8 +188,7 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
         let poly_refs = [&poly];
         let claims = prove_input(&point, &poly_refs, &commitment, hint);
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"test/mixed_d_per_level_e2e");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"test/mixed_d_per_level_e2e");
         bind_transcript_instance_descriptor::<F, _, Cfg>(
             setup.expanded.as_ref(),
             &opening_batch,
@@ -207,6 +197,8 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
             &mut prover_transcript,
         )
         .expect("bind descriptor");
+        let schedule_ctx =
+            validate_schedule_context_at_entry(&schedule, setup.expanded.seed()).expect("plan");
         let proof = prove::<Cfg, _, DensePoly<F, D>, _, _, _, _, D>(
             &setup.expanded,
             &setup.prefix_slots,
@@ -214,6 +206,7 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
             &mut prover_transcript,
             claims,
             &schedule,
+            &schedule_ctx,
             BasisMode::Lagrange,
             SetupContributionMode::Direct,
         )
@@ -263,8 +256,7 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
         let openings = [opening];
         let verify_claims = verify_input(&point, &openings, &commitment);
 
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"test/mixed_d_per_level_e2e");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/mixed_d_per_level_e2e");
         batched_verify_with_schedule::<Cfg, _, D>(
             &decoded,
             &verifier_setup,
@@ -276,8 +268,7 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
         )
         .expect("verify");
 
-        let mut replay_transcript =
-            AkitaTranscript::<F>::new(b"test/mixed_d_per_level_e2e");
+        let mut replay_transcript = AkitaTranscript::<F>::new(b"test/mixed_d_per_level_e2e");
         batched_verify_with_schedule::<Cfg, _, D>(
             &proof,
             &verifier_setup,
