@@ -491,12 +491,6 @@ where
     T: Transcript<Cfg::Field>,
 {
     let ring_plan = &schedule_ctx.ring_plan;
-    let root_ring_d = ring_plan.dim_at(0)?;
-    if root_ring_d != D {
-        return Err(AkitaError::InvalidSetup(format!(
-            "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
-        )));
-    }
 
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
@@ -512,6 +506,12 @@ where
             )?;
         }
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
+            let root_ring_d = ring_plan.dim_at(0)?;
+            if root_ring_d != D {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
+                )));
+            }
             verify_folded_batched_proof::<Cfg::Field, Cfg::ExtField, T, D>(
                 proof,
                 setup,
