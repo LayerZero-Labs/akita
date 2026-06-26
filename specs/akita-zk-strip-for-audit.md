@@ -45,17 +45,21 @@ milestone; transparent path only):
 | 3 | Setup `zkB`/`zkD` matrices + drop `akita-r1cs` | Done |
 | CI | Drop `all-features` / zk schedule-drift legs; transparent merge gate | Done (slice 5 partial) |
 
-**Follow-up PR(s):**
+**Follow-up PRs** (slice 4 split into 5 review PRs; see [Execution](#execution--sequenced-slices)):
 
-| Slice | Scope | Status |
-|-------|-------|--------|
-| 4 | Core protocol orchestration (`fold`, masked sumcheck, `zk_hiding`, blinding hints, etc.) | Not started |
-| 5 | Delete `zk` Cargo features; final CI grep gate | Partial (CI only) |
+| PR | Scope | Status |
+|----|-------|--------|
+| 4a | Verifier ZK leaves + verify-side golden | Not started |
+| 4b | Verifier fold replay (→ `akita-verifier` = 0) | Not started |
+| 4c | Prover orchestration + witness sizing (→ prover/config/planner/setup = 0) | Not started |
+| 4d | Proof schema unification (→ `akita-types`/`akita-sumcheck` = 0) | Not started |
+| 4e | Residual sweep + delete `zk` Cargo features + `akita-r1cs/` dir (→ global grep = 0) | Not started |
 
-After #218 merges, `main` still carries ~650 `#[cfg(feature = "zk")]` sites in
-prover/verifier/types/sumcheck (dead on the default build). `--features zk` does
-not build. Auditors reviewing transparent code can use `main`; full "zero ZK in
-tree" waits for slices 4–5.
+As of `c998034f`, `main` still carries ~940 `feature = "zk"` lines across
+`crates/**/src` (verifier ~204, prover ~435, types ~275, sumcheck ~29, config ~39,
+setup ~15, planner ~14, pcs ~60, algebra ~7, challenges ~6) — all dead on the
+default build. `--features zk` does not build. Auditors reviewing transparent code
+can use `main`; full "zero ZK in tree" waits for PRs 4a–4e.
 
 Preservation: branch `zk-wip` and tag `zk-prefix-snapshot-2026-06` at `2c6b6b1f`.
 
@@ -135,9 +139,14 @@ Affected surfaces:
       succeeds (transparent merge gate; #218).
 - [ ] `cargo clippy --all --all-targets -- -D warnings` and the `--no-default-features` variant both pass without any `zk` feature in existence.
 - [x] The Slice-0 golden-byte digests (transparent folded proofs for fixed
-      instances + fixed seeds) are **byte-identical** across slices 0–3:
-      `fp128::D64Full` nv=15 → `7d860d0b…cfb0a` (90,007 bytes);
-      `fp128::D64OneHot` nv=20 → `d0df7b19…c88c` (86,324 bytes).
+      instances + fixed seeds) are **byte-identical** across all slices. The
+      **source of truth is the test constants in
+      `crates/akita-pcs/tests/transparent_proof_golden.rs`** (currently
+      `fp128::D64Full` nv=15 → `c99fcc18…b767072`; `fp128::D64OneHot` nv=20 →
+      `4849bef9…cd0daf1b`). **These constants must NOT be edited during slices
+      4–5** — a changed digest means a slice altered transparent bytes (an I1
+      violation), not a re-pin. Re-pinning is allowed *only* for a deliberate,
+      reviewed wire-format change, which the strip is not.
 - [x] `lhl_blinding` compiles in the default build, its unit tests pass, and it is
       no longer behind any `cfg`.
 - [x] A `zk-wip` branch and an annotated tag (`zk-prefix-snapshot-2026-06`)
@@ -160,6 +169,13 @@ cargo clippy --all --all-targets --no-default-features -- -D warnings
 pins SHA-256 of serialized transparent proofs for two **folded** (not root-direct)
 instances: `fp128::D64Full` nv=15 and `fp128::D64OneHot` nv=20. Pair with
 transcript-determinism assertions in the same file.
+
+**Verify-side golden** (added in PR 4a, *before* any verifier deletion): extend
+the golden test so it deserializes the pinned proof bytes and asserts the
+verifier **accepts** them. The existing tripwire pins prover output; this pins
+verifier *behavior* on a fixed proof, so any accidental change to the transparent
+verify path during 4a/4b fails immediately. It must stay green through every
+slice 4 PR.
 
 **`--features zk` leg:** was run on slices 0–2 only. After slice 3 (`akita-r1cs`
 removed) and slice 2 (zk schedules deleted), `cargo … --all-features` is expected
@@ -317,31 +333,68 @@ Slice 4 depends on 1–3; slice 5 finishes feature removal and CI grep gates.
   `akita-verifier` and `akita-sumcheck`.
 - *Verify:* default green + setup serde roundtrip; golden digest unchanged.
 
-**Slice 4 — Tear down core orchestration (the heart).** ⏳ *Follow-up PR*
-- Prover: delete `ZkHidingProverState`, `build_zk_hiding_context`, pad helpers
-  (`core.rs`); the prove.rs construction/writeback; B/D blinding in
-  `ring_switch/{commit,evals}.rs`; `masking.rs`; `zk_hiding_commit.rs`.
-- Verifier: delete `verify_zk_hiding_commitment` (`core/zk.rs`), the
-  `zk_hiding_cursor`/`ZkRelationAccumulator` threading, `slice_mle/zk_blinding.rs`.
-- Types/sumcheck: drop the `_masked` field-swaps (`levels.rs`/`wire.rs`),
-  `zk_hiding` field, `ZkHidingProof`, `SumcheckProofMasked`/`EqFactoredSumcheckProofMasked`,
-  and the `prove_zk`/`verify_zk` drivers.
-- **Reconcile the fold signature chain together** (`prepare_root`/`prove_root`/
-  `prove_fold`/`prove_terminal_root_fold_with_params`/`bind_next_witness_for_ring_switch`):
-  drop the `zk_hiding` param, un-gate surviving `not(zk)` params, collapse the
-  `+ mask` arms to plain, and the `terminal_direct_witness_shape`
-  PackedDigits→SegmentTyped selector.
-- *Verify:* this is where I1/I2 are most at risk — gate on the golden digest +
-  full transparent e2e. (Run `--features zk` once *before* this slice to confirm
-  the pre-strip feature still worked; do not expect it after.)
+**Slice 4 — Tear down core orchestration (the heart).** ⏳ *Follow-up — split into 5 review PRs 4a–4e*
 
-**Slice 5 — Delete the `zk` feature + CI cleanup.** ⏳ *Partial (#218: CI only)*
-- Remove the `test-all-features` job and the `zk` schedule-drift line from
-  `.github/workflows/ci.yml`; keep `test` as the merge gate. ✅ *Done #218*
-- Remove every `zk = [...]` line from the 13 Cargo.toml files and the leaf stubs.
-- Grep gate: `rg 'feature *= *"zk"' crates/` → 0.
-- *Verify:* full default CI green; `cargo check --workspace` errors out on any
-  stray `--features zk` (proves the feature is gone).
+Slice 4 is large (~700 dead-on-default cfg sites), so it ships as **five sequential
+PRs for maintainer reviewability**. The split is a *review* convenience, not a
+correctness boundary: because every zk site is dead on the default build, *any*
+ordering keeps the default build green and the golden digests unchanged. The
+order below is chosen so that **consumers are deleted before the schema they
+consume**, making the final schema PR a pure dead-field removal (lowest risk).
+
+Ordering invariants (must hold regardless of how PRs are merged/split):
+- **OI-1 — Cargo features stay until 4e.** PRs 4a–4d delete only `.rs` cfg code;
+  they do **not** touch any `zk = [...]` Cargo feature. Removing one crate's `zk`
+  feature while another crate's feature graph still references it (e.g.
+  `akita-pcs/zk → akita-verifier/zk`) breaks feature resolution. All feature
+  deletion is atomic in 4e.
+- **OI-2 — Masked-type definitions die last.** `SumcheckProofMasked` /
+  `EqFactoredSumcheckProofMasked` (defined in `akita-sumcheck`) are referenced by
+  `levels.rs`/`wire.rs` (schema), `prove_zk` (prover), and `verify_zk` (verifier).
+  Delete the *drivers* with their consumer PR, but delete the *type definitions*
+  only in the schema PR (4d), the last referent.
+- **OI-3 — `--features zk` is not a gate.** It is already broken post-slice-3 and
+  stays broken; never "fix" it. Only the default build + golden are gates.
+
+| PR | Title | Crates driven to 0 cfg(zk) | Owns |
+|----|-------|----------------------------|------|
+| 4a | Verifier ZK leaves | (verifier non-fold) | `core/zk.rs`, `slice_mle/zk_blinding.rs`, slice_mle fixtures, `verify.rs` zk blocks, `stages/*` verify_zk, verifier `ring_switch.rs` blinding, `core.rs mod zk`. **+ add the verify-side golden** (Testing Strategy). |
+| 4b | Verifier fold replay | **akita-verifier (src) → 0** | `core/{fold,suffix,root_fold}.rs`; un-gate `extension_opening_reduction`; delete `akita-sumcheck` **`verify_zk`** driver. **I3 review focus.** |
+| 4c | Prover orchestration + witness sizing | **akita-prover, akita-config, akita-planner, akita-setup → 0** | `core.rs` `ZkHidingProverState`/`build_zk_hiding_context`/pads; `prove/fold/root_fold/suffix`; `ring_switch/{commit,evals}` blinding; `masking.rs`; `zk_hiding_commit.rs`; `hints` blinding digits + `AkitaCommitmentHint` arity cleanup; `akita-config` `proof_optimized` `zk_hiding_witness_len`; `akita-planner` `resolve`/`catalog_identity`; `akita-setup` sizing; delete `akita-sumcheck` **`prove_zk`** driver. **I3 review focus.** The planner `zk_hiding_witness_len` and prover `build_zk_hiding_context` are deleted *together* (the harmless drift vanishes here). |
+| 4d | Proof schema unification | **akita-types, akita-sumcheck → 0** | `proof/{wire,levels,containers,shapes,ring_relation,proof_size,hints}.rs`: drop `zk_hiding` field, `ZkHidingProof`, the `sumcheck_proof`↔`_masked` / `next_w_eval`↔`_masked` swaps; delete the masked **type definitions** (OI-2). By now these fields have no producer/consumer → pure mechanical deletion. |
+| 4e | Residual sweep + feature deletion | **global `rg` → 0** | All remaining `.rs` cfg(zk) in `akita-pcs` (tests + `src/scheme/tests` + `examples/profile/report.rs`), `akita-algebra`, `akita-challenges`; delete every `zk = [...]` in all 13 `Cargo.toml`; delete the orphaned `crates/akita-r1cs/` dir; docs (book feature-flags page, AGENTS.md); final grep gate. |
+
+Per-PR Definition of Done (uniform — all must pass to merge):
+1. `cargo nextest run --no-default-features --features parallel,disk-persistence` green.
+2. `cargo clippy --all --all-targets --no-default-features -- -D warnings` clean — **no new `#[allow(dead_code)]`**; if the strip orphans an item, delete it.
+3. Golden digests in `transparent_proof_golden.rs` **unchanged** (see Acceptance Criteria) and the verify-side golden green.
+4. The PR's "driven to 0" crate(s) report `git grep -c 'feature = "zk"' -- 'crates/<crate>/src/**/*.rs'` = **0** (4e: global, including tests/examples/Cargo).
+5. Net-negative LOC modulo the verify-side test; no new abstractions, shims, renames, or transparent-logic edits.
+
+Escalation rule for the implementing agent: if a deletion is not one of the five
+mechanical patterns (lone-cfg, paired-arm, `cfg_if!`, cfg-param, cfg-field) — e.g.
+removing a zk param leaves a `not(zk)` value undefined, or a symbol is referenced
+by *non*-cfg code — **stop and report the file:line** rather than writing new
+logic. The strip is purely subtractive; anything that requires authoring protocol
+logic is a sign the arms were not cleanly paired and needs human review.
+
+*Verify (whole slice 4):* I1/I2 are most at risk in 4b/4c — gate every PR on the
+golden digest + full transparent e2e. Run `--features zk` once *before* 4a to
+confirm the pre-strip feature still built historically; do **not** expect it after.
+
+**Optional merges (Q1):** 4a+4b may merge if verifier review bandwidth allows;
+4d+4e may merge if the schema diff is small. Do **not** merge across the
+consumer→schema boundary (4c into 4d) — that reintroduces the dangling-reference
+window OI-2 avoids.
+
+**Slice 5 — Delete the `zk` feature + CI cleanup.** ✅ *CI done #218; feature deletion folded into PR 4e*
+- CI: the `test-all-features` job and `zk` schedule-drift line are already removed;
+  `test` is the merge gate. ✅ *Done #218*
+- The remaining slice-5 work — remove every `zk = [...]` line from all 13
+  Cargo.toml files + leaf stubs, and the final grep gate `rg 'feature *= *"zk"' crates/` → 0
+  — is now **PR 4e** (per OI-1, feature deletion must be atomic and come last).
+- *Verify:* full default CI green; `cargo check --features zk` then **errors**
+  (proves the feature is gone).
 
 #### Survives-complete (un-gate only, no completion work)
 
