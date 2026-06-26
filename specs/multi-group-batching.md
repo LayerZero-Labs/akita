@@ -421,19 +421,9 @@ num_vars in supported family ranges
 
 ## Conservative-Rank Configuration
 
-Add a new `akita-config` family:
-
-```text
-akita_config::conservative_rank
-```
-
-It should mirror `proof_optimized` naming and presets, for example:
-
-```text
-conservative_rank::fp128::D64OneHot
-```
-
-Conservative-rank presets are one-hot-only for the initial grouped rollout. Dense backends and tiered
+Conservative-rank standalone group commits use the existing one-hot
+`proof_optimized` presets. The widening is selected by
+`CommitmentConfig::get_params_for_group_commit`; dense backends and tiered
 multi-group roots should return explicit `AkitaError`.
 
 ### Standalone Conservative Commit
@@ -997,7 +987,6 @@ still work, and unsupported grouped proof paths fail explicitly.
 - Add `CommitmentGroupLayout`.
 - Add `CommittedGroupScheduleMeta` and `CommittedGroupHandle`.
 - Add standalone `commit_group`.
-- Add `conservative_rank` one-hot presets.
 - Implement conservative B rank selection for standalone groups.
 - Keep `commit_final`, grouped opening, and folded grouped root prove guarded
 until Phase 2.

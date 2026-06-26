@@ -50,6 +50,23 @@ pub struct GeneratedScheduleKey {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedPrecommittedGroupKey {
+    pub key: GeneratedScheduleKey,
+    pub m_vars: usize,
+    pub r_vars: usize,
+    pub log_basis: u32,
+    pub n_a: usize,
+    pub conservative_n_b: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedGroupBatchScheduleKey {
+    /// Main group shape for the final commitment.
+    pub main: akita_types::AkitaScheduleLookupKey,
+    pub precommitteds: &'static [GeneratedPrecommittedGroupKey],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleTableEntry {
     pub key: GeneratedScheduleKey,
     pub steps: &'static [GeneratedStep],

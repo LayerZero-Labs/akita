@@ -139,6 +139,11 @@ impl<const P: u64> FpExt8MulBackend for Fp64<P> {}
 impl<const P: u128> FpExt8MulBackend for Fp128<P> {}
 
 /// Degree-8 ring subfield element in canonical basis `[1, e1, ..., e7]`.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
+#[cfg_attr(
+    feature = "jolt-compat",
+    allocative(bound = "F: FieldCore + allocative::Allocative")
+)]
 #[repr(transparent)]
 pub struct FpExt8<F: FieldCore> {
     /// Coefficients in basis `[1, e1, ..., e7]`.

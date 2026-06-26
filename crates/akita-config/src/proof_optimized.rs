@@ -8,7 +8,7 @@ use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatchShape;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -199,10 +199,22 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         return Ok(None);
     };
 
-    Ok(Some(matrix_envelope_for_schedule::<Cfg>(
-        &schedule,
-        opening_batch,
-    )?))
+    let mut envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, opening_batch)?;
+    if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+        // Standalone conservative `commit_group` layouts are included here.
+        // Final grouped-root schedules from `get_group_batch_schedule` are not
+        // scanned yet; Phase 2 must extend this envelope before grouped opening
+        // prove paths rely on setup capacity.
+        let group_key =
+            AkitaScheduleLookupKey::new(opening_batch.num_vars(), opening_batch.num_polynomials());
+        if let Ok(group_params) = Cfg::get_params_for_group_commit(&group_key) {
+            accumulate_matrix_envelope_for_level::<Cfg>(
+                &group_params,
+                &mut envelope.max_setup_len,
+            )?;
+        }
+    }
+    Ok(Some(envelope))
 }
 
 /// Extract setup-level params from a runtime `Schedule`.
@@ -232,8 +244,8 @@ where
     Ok(SetupMatrixEnvelope { max_setup_len })
 }
 
-/// Packed setup envelope spanning every level in `schedule` (including the
-/// root-direct / fold-root opening_batch widening).
+/// Packed setup envelope spanning every level in `schedule`, including root
+/// runtime widening for the requested opening batch.
 pub fn matrix_envelope_for_schedule<Cfg>(
     schedule: &Schedule,
     opening_batch: &OpeningBatchShape,
@@ -339,8 +351,8 @@ fn root_commit_params_from_schedule(
     schedule: &Schedule,
 ) -> Result<Option<LevelParams>, AkitaError> {
     match schedule.steps.first() {
-        Some(Step::Fold(root_step)) => Ok(Some(root_step.params.clone())),
-        Some(Step::Direct(direct)) => Ok(direct.params.clone()),
+        Some(akita_types::Step::Fold(root_step)) => Ok(Some(root_step.params.clone())),
+        Some(akita_types::Step::Direct(direct)) => Ok(direct.params.clone()),
         None => Err(AkitaError::InvalidSetup(
             "schedule has no steps".to_string(),
         )),
