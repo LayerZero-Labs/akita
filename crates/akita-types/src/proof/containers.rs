@@ -16,6 +16,12 @@ pub struct FlatRingVec<F> {
     ring_dim: usize,
 }
 
+/// In-memory owned ring-element storage without a tagged ring dimension.
+///
+/// Wire encoding remains [`FlatRingVec`]; use [`FlatRingVec::as_ring_slice`] at
+/// protocol boundaries where `D` is known from the schedule.
+pub type RingBuf<F> = FlatRingVec<F>;
+
 /// Serializer for a borrowed slice of ring elements without a length header.
 pub struct RingSliceSerializer<'a, F: FieldCore, const D: usize>(pub &'a [CyclotomicRing<F, D>]);
 

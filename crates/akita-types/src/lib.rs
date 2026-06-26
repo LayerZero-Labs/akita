@@ -98,7 +98,7 @@ pub use proof::{
     ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
     FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningBatchLimits, OpeningBatchShape,
     OpeningGroupShape, OpeningPoints, PointVariableSelection, PreparedOpeningPoint,
-    ProverCommitmentRows, PublicMatrixSeed, RelationOnlyStage2Inputs, RingCommitment,
+    ProverCommitmentRows, PublicMatrixSeed, RelationOnlyStage2Inputs, RingBuf, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLayout, RingRelationSegmentLengths, RingSliceSerializer,
     SegmentTypedWitness, SegmentTypedWitnessShape, SetupMatrixEnvelope,
