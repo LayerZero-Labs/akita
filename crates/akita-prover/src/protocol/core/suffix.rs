@@ -198,7 +198,6 @@ where
                     (ring_backend, &ring_prepared),
                     expanded.as_ref(),
                 )?;
-                let level_prefix_slots = prefix_slots;
                 let prepared_fold =
                     prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
                         &level_stack,
@@ -216,7 +215,7 @@ where
                     })?;
                 prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
                     expanded,
-                    level_prefix_slots,
+                    prefix_slots,
                     &level_stack,
                     transcript,
                     level,
