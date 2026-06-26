@@ -538,6 +538,50 @@ impl<F: FieldCore> SetupPrefixSlotAny<F> {
             Self::D256(slot) => slot.verifier_slot(),
         }
     }
+
+    /// Ring dimension of this slot (`id.d_setup`).
+    #[must_use]
+    pub fn ring_d(&self) -> usize {
+        match self {
+            Self::D32(_) => 32,
+            Self::D64(_) => 64,
+            Self::D128(_) => 128,
+            Self::D256(_) => 256,
+        }
+    }
+
+    /// View the slot at compile-time ring degree `D` when it matches [`Self::ring_d`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `D` does not match the stored variant.
+    pub fn as_d<const D: usize>(&self) -> Result<&SetupPrefixSlot<F, D>, AkitaError> {
+        if self.ring_d() != D {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup prefix slot ring_d={} does not match requested D={D}",
+                self.ring_d()
+            )));
+        }
+        Ok(match self {
+            Self::D32(slot) => {
+                let slot = slot as *const SetupPrefixSlot<F, 32> as *const SetupPrefixSlot<F, D>;
+                // SAFETY: `ring_d()` check guarantees `D == 32`.
+                unsafe { &*slot }
+            }
+            Self::D64(slot) => {
+                let slot = slot as *const SetupPrefixSlot<F, 64> as *const SetupPrefixSlot<F, D>;
+                unsafe { &*slot }
+            }
+            Self::D128(slot) => {
+                let slot = slot as *const SetupPrefixSlot<F, 128> as *const SetupPrefixSlot<F, D>;
+                unsafe { &*slot }
+            }
+            Self::D256(slot) => {
+                let slot = slot as *const SetupPrefixSlot<F, 256> as *const SetupPrefixSlot<F, D>;
+                unsafe { &*slot }
+            }
+        })
+    }
 }
 
 impl<F: FieldCore> From<SetupPrefixSlot<F, 32>> for SetupPrefixSlotAny<F> {
@@ -896,64 +940,6 @@ where
     }
 }
 
-/// Return the packed role widths `(W_A, W_B, W_D)` for one active level shape.
-fn active_setup_role_widths(
-    level_params: &LevelParams,
-    opening_batch: &OpeningBatchShape,
-) -> Result<(usize, usize, usize), AkitaError> {
-    let w_a = level_params
-        .block_len
-        .checked_mul(level_params.num_digits_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
-    let num_claims = opening_batch.num_polynomials();
-    let max_group_poly_count = opening_batch.num_polynomials();
-    let w_d = num_claims
-        .checked_mul(level_params.num_blocks)
-        .and_then(|n| n.checked_mul(level_params.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
-    let w_b = max_group_poly_count
-        .checked_mul(level_params.a_key.row_len())
-        .and_then(|n| n.checked_mul(level_params.num_blocks))
-        .and_then(|n| n.checked_mul(level_params.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
-    Ok((w_a, w_b, w_d))
-}
-
-/// Active packed setup footprint in ring slots: `max(n_a W_A, n_b W_B, n_d W_D)`.
-fn active_setup_ring_slots(
-    level_params: &LevelParams,
-    opening_batch: &OpeningBatchShape,
-) -> Result<usize, AkitaError> {
-    let (w_a, w_b, w_d) = active_setup_role_widths(level_params, opening_batch)?;
-    let a_slots = level_params
-        .a_key
-        .row_len()
-        .checked_mul(w_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let b_slots = level_params
-        .b_key
-        .row_len()
-        .checked_mul(w_b)
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let d_slots = level_params
-        .d_key
-        .row_len()
-        .checked_mul(w_d)
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    Ok(a_slots.max(b_slots).max(d_slots))
-}
-
-/// Active flat coefficient count `N_active^F = D_setup * N_active^R`.
-pub fn active_setup_field_len(
-    level_params: &LevelParams,
-    opening_batch: &OpeningBatchShape,
-    d_setup: usize,
-) -> Result<usize, AkitaError> {
-    active_setup_ring_slots(level_params, opening_batch)?
-        .checked_mul(d_setup)
-        .ok_or_else(|| AkitaError::InvalidSetup("active setup field length overflow".to_string()))
-}
-
 /// Smallest power-of-two flat prefix length covering `natural_field_len`.
 #[must_use]
 pub fn padded_setup_prefix_len(natural_field_len: usize) -> usize {
@@ -1114,25 +1100,57 @@ mod tests {
     }
 
     #[test]
-    fn active_setup_field_len_matches_packed_role_maximum() {
-        let lp = sample_level_params();
-        let opening_batch = OpeningBatchShape::new(5, 3).expect("opening batch");
-        let (w_a, w_b, w_d) = active_setup_role_widths(&lp, &opening_batch).expect("widths");
-        let expected_ring_slots = lp
-            .a_key
-            .row_len()
-            .checked_mul(w_a)
-            .unwrap()
-            .max(lp.b_key.row_len().checked_mul(w_b).unwrap())
-            .max(lp.d_key.row_len().checked_mul(w_d).unwrap());
-        assert_eq!(
-            active_setup_ring_slots(&lp, &opening_batch).expect("ring slots"),
-            expected_ring_slots
+    fn select_setup_prefix_slot_rejects_coverage_mismatch() {
+        use akita_field::Prime32Offset99 as F;
+
+        let level_params = sample_level_params();
+        let d_setup = 32usize;
+        let natural_len = 33usize;
+        let n_prefix = padded_setup_prefix_len(natural_len);
+        let seed = AkitaSetupSeed {
+            max_num_vars: 1,
+            max_num_batched_polys: 1,
+            gen_ring_dim: d_setup,
+            max_setup_len: 2,
+            public_matrix_seed: [3u8; 32],
+        };
+        let prefix_params =
+            setup_prefix_level_params(&level_params, n_prefix, d_setup).expect("prefix params");
+        let id = setup_prefix_slot_id(
+            setup_seed_digest(&seed).expect("seed digest"),
+            d_setup,
+            natural_len,
+            n_prefix,
+            digest_level_params(std::slice::from_ref(
+                &prefix_params.expect("eligible prefix params"),
+            )),
         );
-        assert_eq!(
-            active_setup_field_len(&lp, &opening_batch, SETUP_OFFLOAD_D_SETUP).expect("field len"),
-            expected_ring_slots * SETUP_OFFLOAD_D_SETUP
-        );
+        let slot = SetupPrefixVerifierSlot {
+            id,
+            natural_len,
+            padded_len: n_prefix,
+            commitment: SetupPrefixPublicCommitment {
+                rows: vec![FlatRingVec::from_coeffs(vec![F::zero()])],
+            },
+        };
+        let mut registry = SetupPrefixVerifierRegistry::<F>::new();
+        registry.insert(slot).expect("insert slot");
+
+        let err = select_setup_prefix_slot(
+            &seed,
+            2,
+            |candidate| {
+                registry
+                    .get(candidate)
+                    .map(|slot| (slot, slot.natural_len + 1, slot.padded_len))
+            },
+            &level_params,
+            natural_len,
+            d_setup,
+            "slot does not cover request",
+        )
+        .expect_err("mismatched lookup metadata must fail closed");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]

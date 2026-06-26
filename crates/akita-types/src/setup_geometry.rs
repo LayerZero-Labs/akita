@@ -1,13 +1,13 @@
 //! Challenge-free setup product geometry shared by prover and verifier.
 //!
-//! [`setup_geometry_at`] factors the row-layout footprint (`required`) out of
-//! [`crate::SetupContributionPlan::prepare`] so NTT sizing and offload decisions
-//! do not depend on `tau1` / fold challenges.
+//! [`compute_setup_layout`] factors the row-layout footprint (`required`) out of
+//! [`crate::SetupContributionPlan::prepare`] so NTT sizing, prefix offload, and
+//! NTT envelope checks do not depend on `tau1` / fold challenges.
 
 use akita_field::{AkitaError, FieldCore};
 
 use crate::layout::{LevelParams, MRowLayout};
-use crate::proof::AkitaExpandedSetup;
+use crate::proof::{AkitaExpandedSetup, OpeningBatchShape};
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;
 
@@ -32,12 +32,6 @@ pub struct SetupRelationShape {
     pub num_public_rows: usize,
     pub tier_split: usize,
     pub n_f: usize,
-}
-
-/// Challenge-free lambda-axis ring-row footprint for one setup level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SetupGeometry {
-    pub required: usize,
 }
 
 /// Full row-layout footprint used by weight materialization and geometry tests.
@@ -296,22 +290,40 @@ pub fn compute_setup_layout(
     })
 }
 
-/// Shape-only setup geometry for fold level `level`.
+/// Required setup ring rows for one level shape (challenge-free).
 ///
 /// # Errors
 ///
-/// Returns an error when `level` is not a fold step or layout parameters are
-/// invalid.
-pub fn setup_geometry_at(
-    level: usize,
-    schedule: &Schedule,
-    relation_shape: &SetupRelationShape,
-) -> Result<SetupGeometry, AkitaError> {
-    schedule.get_execution_schedule(level)?;
-    let footprint = compute_setup_layout(relation_shape)?;
-    Ok(SetupGeometry {
-        required: footprint.required,
-    })
+/// Returns an error when layout parameters are inconsistent.
+pub fn setup_required_for_shape(relation_shape: &SetupRelationShape) -> Result<usize, AkitaError> {
+    Ok(compute_setup_layout(relation_shape)?.required)
+}
+
+/// Flat coefficient count for setup-prefix sizing at offload ring `d_setup`.
+///
+/// Uses the same [`compute_setup_layout`] footprint as setup sumcheck and
+/// [`setup_active_ring_elems_at`].
+///
+/// # Errors
+///
+/// Returns an error when layout parameters are inconsistent or the product overflows.
+pub fn active_setup_field_len(
+    level_params: &LevelParams,
+    opening_batch: &OpeningBatchShape,
+    m_row_layout: MRowLayout,
+    depth_fold: usize,
+    d_setup: usize,
+) -> Result<usize, AkitaError> {
+    let shape = SetupRelationShape::from_level_params(
+        level_params,
+        opening_batch.num_polynomials(),
+        m_row_layout,
+        depth_fold,
+    )?;
+    let required = setup_required_for_shape(&shape)?;
+    required
+        .checked_mul(d_setup)
+        .ok_or_else(|| AkitaError::InvalidSetup("active setup field length overflow".into()))
 }
 
 /// Active inner (`d_a`) setup ring rows at `level`, fail-closed on envelope overflow.
@@ -328,7 +340,7 @@ pub fn setup_active_ring_elems_at<F: FieldCore>(
 ) -> Result<usize, AkitaError> {
     let exec = schedule.get_execution_schedule(level)?;
     let ring_d = exec.params.ring_dimension;
-    let required = setup_geometry_at(level, schedule, relation_shape)?.required;
+    let required = setup_required_for_shape(relation_shape)?;
     let setup_len = expanded
         .shared_matrix()
         .total_ring_elements_at_dyn(ring_d)?;
@@ -355,9 +367,7 @@ fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, Akit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        gadget_row_scalars, segment_typed_witness_shape, MRowLayout, SetupContributionPlan,
-    };
+    use crate::{gadget_row_scalars, MRowLayout, SetupContributionPlan};
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_field::Prime128OffsetA7F7;
 
@@ -420,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_geometry_at_is_challenge_free() {
+    fn setup_required_for_shape_is_challenge_free() {
         let lp = LevelParams::params_only(
             crate::SisModulusFamily::Q128,
             64,
@@ -437,26 +447,8 @@ mod tests {
         .expect("level params");
         let shape = SetupRelationShape::from_level_params(&lp, 1, MRowLayout::WithDBlock, 2)
             .expect("shape");
-        let schedule = Schedule {
-            steps: vec![
-                crate::Step::Fold(crate::FoldStep {
-                    current_w_len: 64,
-                    next_w_len: 32,
-                    params: lp.clone(),
-                    level_bytes: 0,
-                }),
-                crate::Step::Direct(crate::DirectStep {
-                    current_w_len: 32,
-                    witness_shape: segment_typed_witness_shape(&lp, 128, 1, 1, 1, 1)
-                        .expect("terminal shape"),
-                    direct_bytes: 0,
-                    params: None,
-                }),
-            ],
-            total_bytes: 0,
-        };
-        let geometry = setup_geometry_at(0, &schedule, &shape).expect("geometry");
-        assert!(geometry.required > 0);
+        let required = setup_required_for_shape(&shape).expect("required");
+        assert!(required > 0);
         // Changing eq_tau1 length does not affect geometry (no eq slice used).
         let _ = EqPolynomial::evals(&[test_scalar(1)]).expect("eq");
     }
