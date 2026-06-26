@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-24 |
-| Revised       | 2026-06-27 (stack status, PR map, honest acceptance criteria) |
+| Revised       | 2026-06-27 (stack status, PR map, honest acceptance criteria, D-free PCS facade) |
 | Status        | in progress (Phases 1–3 partial; Phase 4 deferred) |
 | PR            | stacked on `#227`–`#241` (see Stack status) |
 | Supersedes    | partial supersession of `specs/akita-polyops-cutover.md` (storage half); coordinate PR order with `specs/protocol-field-geometry-cutover.md` (shared `PreparedFold` / `prove_suffix` surface) |
@@ -26,7 +26,8 @@ APIs.
   `D64` suffix views).
 - Proof verifies from schedule-bound runtime `D`.
 - `AkitaCommitmentScheme<Cfg>` is D-free on the scheme struct; per-preset macro impls
-  still implement `CommitmentProver<F, D>` / `CommitmentVerifier<F, D>`.
+  expose D-free inherent setup/prove/verify methods while retaining internal
+  `CommitmentProver<F, D>` / `CommitmentVerifier<F, D>` adapter impls.
 
 ### Later target (explicitly deferred)
 
@@ -52,6 +53,7 @@ APIs.
 | [#239](https://github.com/LayerZero-Labs/akita/pull/239) | `quang/runtime-ring-wave6-bulk` | `#236` | 6 | Fold storage demotion (bulk) | Restacked | — |
 | [#240](https://github.com/LayerZero-Labs/akita/pull/240) | `quang/runtime-ring-wave7` | `#239` | 7 | Hint demotion | Restacked | — |
 | [#241](https://github.com/LayerZero-Labs/akita/pull/241) | `quang/runtime-ring-wave7-mixed-d` | `#240` | 7 gate | PCS scheme demotion, mixed-D geometry gate, oracle refresh | Restacked; slow geometry test fixed | `CommitmentProver<F,D>` traits remain |
+| TBD | `quang/runtime-ring-dfree-pcs-api` | restacked `#241` tip | 7 follow-up | D-free inherent PCS facade for normal callers | In progress | Traits remain as internal const-generic adapters |
 
 ### Completed in code (current stack tip)
 
@@ -60,7 +62,8 @@ APIs.
 - Prove-time ring plan validation; uniform suffix loop (no stack-rebuild branch)
 - Fold/hint storage demotion to `RingBuf` / flat storage
 - Hand-built D128→D64 mixed-D fixture proves and verifies
-- `AkitaCommitmentScheme<Cfg>` struct demotion (trait impls still `const D`)
+- `AkitaCommitmentScheme<Cfg>` struct demotion plus inherent D-free setup/prove/verify facade
+  (trait impls still use literal root `D` internally)
 
 ### Incomplete or deferred
 
@@ -68,7 +71,8 @@ APIs.
   `ring_d != policy.ring_dimension`
 - `D_max` field-element envelope sizing; relaxing `gen_ring_dim == Cfg::D` at setup
 - Generated schedule catalogs with multiple `D`s per family
-- Full public trait/API D-erasure (`CommitmentProver<F, D>`, `CommitmentVerifier<F, D>`)
+- Full public trait deletion/replacement (`CommitmentProver<F, D>`,
+  `CommitmentVerifier<F, D>` still exist as adapter traits)
 - Per-role / per-block `d_a`, `d_b`, `d_d` execution inside one fold
 - Prefix-sized NTT caches; full verifier no-panic audit on D-erased proof storage APIs
 - Proof-byte golden pins and bench regression gates beyond smoke/profile
@@ -1549,8 +1553,11 @@ Five sub-steps; keep each compiling.
       byte-identical to the Wave-0 oracle (`mixed_d_per_level_e2e`).
 - [x] Prover≡verifier setup-geometry cross-check (`mixed_d_geometry_crosscheck`).
 - [x] PCS public API: `AkitaCommitmentScheme<Cfg>` without redundant struct `const D`
-      (`akita-pcs/src/scheme/impls.rs` per-preset macro impls; `ensure_root_ring_dim` on
-      `batched_verify`). Traits remain `CommitmentProver<F, D>` / `CommitmentVerifier<F, D>`
+      (`akita-pcs/src/scheme/impls.rs` per-preset macro impls; D-free inherent
+      `setup_prover`, `setup_prover_recursion`, `setup_verifier`, `commit`,
+      `batched_commit`, `commit_group`, `batched_prove`, and `batched_verify` facade;
+      `ensure_root_ring_dim` on `batched_verify`). Traits remain
+      `CommitmentProver<F, D>` / `CommitmentVerifier<F, D>` as internal adapter surfaces
       until rustc can express `Cfg::D` in trait bounds without per-preset duplication.
 - [x] `switch_at_fold == 0` rejected in `mixed_d_per_level_schedule` (Bugbot); unit test
       `mixed_d_schedule_rejects_switch_at_fold_zero`.

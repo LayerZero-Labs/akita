@@ -7,6 +7,238 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 macro_rules! impl_akita_commitment_scheme {
     ($cfg:ty, $field:ty, $ext_field:ty, $d:expr) => {
+        impl $crate::scheme::AkitaCommitmentScheme<$cfg>
+        where
+            $cfg: akita_config::CommitmentConfig<Field = $field, ExtField = $ext_field>,
+            $field: akita_field::FieldCore
+                + akita_field::CanonicalField
+                + akita_field::RandomSampling
+                + akita_field::unreduced::HasWide
+                + akita_field::HalvingField
+                + akita_field::FromPrimitiveInt
+                + akita_field::PseudoMersenneField
+                + akita_serialization::Valid
+                + akita_serialization::AkitaSerialize,
+            $ext_field: akita_types::FpExtEncoding<$field>,
+            $ext_field: akita_field::FrobeniusExtField<$field>
+                + akita_field::FromPrimitiveInt
+                + akita_field::unreduced::HasUnreducedOps
+                + akita_field::unreduced::HasOptimizedFold
+                + akita_serialization::AkitaSerialize,
+        {
+            /// Build prover setup without exposing the root ring dimension as a public type parameter.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the requested capacity, field tower, or generated setup is invalid.
+            pub fn setup_prover(
+                max_num_vars: usize,
+                max_num_polys_per_commitment_group: usize,
+            ) -> Result<akita_prover::AkitaProverSetup<$field>, akita_field::AkitaError> {
+                <Self as akita_prover::CommitmentProver<$field, $d>>::setup_prover(
+                    max_num_vars,
+                    max_num_polys_per_commitment_group,
+                )
+            }
+
+            /// Build recursive prover setup without exposing the root ring dimension as a public type parameter.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if base setup construction or recursive setup-prefix population fails.
+            pub fn setup_prover_recursion(
+                max_num_vars: usize,
+                max_num_polys_per_commitment_group: usize,
+            ) -> Result<akita_prover::AkitaProverSetup<$field>, akita_field::AkitaError> {
+                <Self as akita_prover::CommitmentProver<$field, $d>>::setup_prover_recursion(
+                    max_num_vars,
+                    max_num_polys_per_commitment_group,
+                )
+            }
+
+            /// Derive verifier setup from prover setup.
+            #[must_use]
+            pub fn setup_verifier(
+                setup: &akita_prover::AkitaProverSetup<$field>,
+            ) -> akita_types::AkitaVerifierSetup<$field> {
+                <Self as akita_prover::CommitmentProver<$field, $d>>::setup_verifier(setup)
+            }
+
+            /// Commit a single opening-point bundle without caller-visible root `D`.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error when setup/parameter constraints are not satisfied.
+            pub fn commit<P, B>(
+                setup: &akita_prover::AkitaProverSetup<$field>,
+                polys: &[P],
+                stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
+            ) -> Result<
+                (
+                    akita_types::RingCommitment<$field, $d>,
+                    akita_types::AkitaCommitmentHint<$field>,
+                ),
+                akita_field::AkitaError,
+            >
+            where
+                $field: akita_field::FromPrimitiveInt
+                    + akita_field::unreduced::HasWide
+                    + akita_field::RandomSampling
+                    + 'static,
+                <$field as akita_field::unreduced::HasWide>::Wide:
+                    From<$field> + akita_field::unreduced::ReduceTo<$field>,
+                B: akita_prover::compute::ComputeBackendSetup<$field>,
+                P: akita_prover::compute::RootCommitPoly<$field, $d>,
+                B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
+            {
+                <Self as akita_prover::CommitmentProver<$field, $d>>::commit(setup, polys, stack)
+            }
+
+            /// Commit the polynomial bundle used by a batched prove without caller-visible root `D`.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if input validation, layout selection, or any per-point commitment fails.
+            pub fn batched_commit<P, B>(
+                setup: &akita_prover::AkitaProverSetup<$field>,
+                polys: &[P],
+                stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
+            ) -> Result<
+                (
+                    akita_types::RingCommitment<$field, $d>,
+                    akita_types::AkitaCommitmentHint<$field>,
+                ),
+                akita_field::AkitaError,
+            >
+            where
+                $field: akita_field::FromPrimitiveInt
+                    + akita_field::unreduced::HasWide
+                    + akita_field::RandomSampling
+                    + 'static,
+                <$field as akita_field::unreduced::HasWide>::Wide:
+                    From<$field> + akita_field::unreduced::ReduceTo<$field>,
+                B: akita_prover::compute::ComputeBackendSetup<$field>,
+                P: akita_prover::compute::RootCommitPoly<$field, $d>,
+                B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
+            {
+                <Self as akita_prover::CommitmentProver<$field, $d>>::batched_commit(
+                    setup, polys, stack,
+                )
+            }
+
+            /// Commit one standalone one-hot commitment group without caller-visible root `D`.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the group is empty, dense, exceeds setup capacity, or cannot be planned.
+            pub fn commit_group<P, B>(
+                setup: &akita_prover::AkitaProverSetup<$field>,
+                polys: &[P],
+                stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
+            ) -> Result<
+                akita_prover::CommittedGroupHandle<
+                    akita_types::RingCommitment<$field, $d>,
+                    akita_types::AkitaCommitmentHint<$field>,
+                >,
+                akita_field::AkitaError,
+            >
+            where
+                $field: akita_field::FromPrimitiveInt
+                    + akita_field::unreduced::HasWide
+                    + akita_field::RandomSampling
+                    + 'static,
+                <$field as akita_field::unreduced::HasWide>::Wide:
+                    From<$field> + akita_field::unreduced::ReduceTo<$field>,
+                P: akita_prover::compute::RootCommitPoly<$field, $d>,
+                B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
+            {
+                <Self as akita_prover::CommitmentProver<$field, $d>>::commit_group(
+                    setup, polys, stack,
+                )
+            }
+
+            /// Produce a fused batched opening proof without caller-visible root `D`.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if any opening point is invalid or proof generation fails.
+            #[allow(clippy::too_many_arguments)]
+            pub fn batched_prove<'a, T, P, B>(
+                setup: &akita_prover::AkitaProverSetup<$field>,
+                claims: akita_prover::ProverOpeningBatch<'a, $ext_field, P, $field, $d>,
+                stacks: &'a impl akita_prover::compute::LevelProveStacks<
+                    'a,
+                    $field,
+                    Commit = B,
+                    Opening = B,
+                    Tensor = B,
+                    RingSwitch = B,
+                >,
+                transcript: &mut T,
+                basis: akita_types::BasisMode,
+                setup_contribution_mode: akita_types::SetupContributionMode,
+            ) -> Result<akita_types::AkitaBatchedProof<$field, $ext_field>, akita_field::AkitaError>
+            where
+                T: akita_transcript::Transcript<$field>
+                    + akita_prover::ProverTranscriptGrind<$field>,
+                $field: akita_field::FromPrimitiveInt
+                    + akita_field::unreduced::HasWide
+                    + akita_field::RandomSampling
+                    + 'static,
+                <$field as akita_field::unreduced::HasWide>::Wide: From<$field>
+                    + akita_field::unreduced::ReduceTo<$field>
+                    + akita_field::AdditiveGroup,
+                B: akita_prover::compute::ComputeBackendSetup<$field>,
+                P: akita_prover::compute::RootProvePoly<$field, $d>,
+                B: akita_prover::compute::RootProveFlowBackend<$field, P, $ext_field, $d>
+                    + akita_prover::compute::RecursiveWitnessProveFlowBackend<$field, $ext_field>
+                    + 'a,
+                <B as akita_prover::compute::ComputeBackendSetup<$field>>::PreparedSetup: 'a,
+            {
+                <Self as akita_prover::CommitmentProver<$field, $d>>::batched_prove(
+                    setup,
+                    claims,
+                    stacks,
+                    transcript,
+                    basis,
+                    setup_contribution_mode,
+                )
+            }
+
+            /// Verify a fused batched opening proof without caller-visible root `D`.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error when verification fails.
+            pub fn batched_verify<T: akita_transcript::Transcript<$field>>(
+                proof: &akita_types::AkitaBatchedProof<$field, $ext_field>,
+                setup: &akita_types::AkitaVerifierSetup<$field>,
+                transcript: &mut T,
+                claims: akita_types::VerifierOpeningBatch<
+                    '_,
+                    $ext_field,
+                    &akita_types::RingCommitment<$field, $d>,
+                >,
+                basis: akita_types::BasisMode,
+                setup_contribution_mode: akita_types::SetupContributionMode,
+            ) -> Result<(), akita_field::AkitaError> {
+                <Self as akita_verifier::CommitmentVerifier<$field, $d>>::batched_verify(
+                    proof,
+                    setup,
+                    transcript,
+                    claims,
+                    basis,
+                    setup_contribution_mode,
+                )
+            }
+
+            /// Protocol identifier.
+            #[must_use]
+            pub fn protocol_name() -> &'static [u8] {
+                <Self as akita_verifier::CommitmentVerifier<$field, $d>>::protocol_name()
+            }
+        }
+
         impl akita_prover::CommitmentProver<$field, $d>
             for $crate::scheme::AkitaCommitmentScheme<$cfg>
         where
