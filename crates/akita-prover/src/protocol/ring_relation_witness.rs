@@ -14,6 +14,23 @@ pub struct RingRelationWitness<F: FieldCore> {
 }
 
 impl<F: FieldCore> RingRelationWitness<F> {
+    /// Assemble D-free fold-relation witness storage from prover-side parts.
+    pub fn new(
+        z_folded_rings: DecomposeFoldWitness<F>,
+        fold_grind_nonce: u32,
+        e_hat: FlatDigitBlocks,
+        e_folded: RingBuf<F>,
+        hint: ErasedCommitmentHint<F>,
+    ) -> Self {
+        Self {
+            z_folded_rings,
+            fold_grind_nonce,
+            e_hat,
+            e_folded,
+            hint,
+        }
+    }
+
     /// Assemble D-free fold-relation witness storage from typed kernel outputs.
     pub fn from_typed<const D: usize>(
         z_folded_rings: DecomposeFoldWitness<F>,

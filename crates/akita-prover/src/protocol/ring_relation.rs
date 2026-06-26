@@ -19,8 +19,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec, MRowLayout,
-    OpeningBatchShape, RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks, FlatRingVec,
+    MRowLayout, OpeningBatchShape, RingBuf, RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -526,7 +526,7 @@ impl RingRelationProver {
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F>,
         commitment: FlatRingVec<F>,
-        hint: AkitaCommitmentHint<F, D>,
+        hint: ErasedCommitmentHint<F>,
         polys: &[&'a P],
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
@@ -558,8 +558,6 @@ impl RingRelationProver {
                 "suffix fold commitment has the wrong length".to_string(),
             ));
         }
-        let group_sizes = vec![num_claims];
-        let hints = vec![hint];
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
                 "batched prover opening-point layout mismatch".to_string(),
@@ -596,12 +594,9 @@ impl RingRelationProver {
             let _span = tracing::info_span!("decompose_batched_e_hat").entered();
             decompose_e_hat::<F, D>(&pre_folded_e_by_poly, lp.num_digits_open, lp.log_basis)?
         };
-        let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
-            hints,
-            &group_sizes,
-            lp.num_digits_open,
-            lp.log_basis,
-        )?;
+        let mut hint = hint;
+        hint.ensure_ring_dim::<D>()?;
+        hint.ensure_recomposed_inner_rows::<D>(lp.num_digits_open, lp.log_basis)?;
 
         let opening_backend = opening_ctx.backend();
         let v = compute_v_rows_for_layout::<F, T, RB, D>(
@@ -642,7 +637,8 @@ impl RingRelationProver {
             lp.b_inner_rows_per_group(),
             lp.a_key.row_len(),
         )?;
-        let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
+        let e_folded: Vec<CyclotomicRing<F, D>> =
+            pre_folded_e_by_poly.into_iter().flatten().collect();
 
         let instance = RingRelationInstance::new_from_rings::<D>(
             m_row_layout,
@@ -656,12 +652,12 @@ impl RingRelationProver {
             v,
         )?;
         instance.check_v_shape_for_level::<D>(&lp)?;
-        let witness = RingRelationWitness::from_typed(
+        let witness = RingRelationWitness::new(
             z_folded_rings,
             fold_grind_nonce,
             e_hat,
-            e_folded,
-            flattened_hint,
+            RingBuf::from_ring_elems(&e_folded),
+            hint,
         );
         Ok((instance, witness, commitment))
     }

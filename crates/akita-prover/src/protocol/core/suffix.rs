@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::{RecursiveCommitmentHintCache, RecursiveWitnessFlat};
+use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
     OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootPolyShape,
@@ -12,7 +12,7 @@ use akita_field::AdditiveGroup;
 use akita_types::{
     padded_scalar_batch_num_vars, schedule_terminal_direct_witness_shape,
     terminal_golomb_grind_tail_t_vectors, validate_scalar_point_matches_poly_arity,
-    AkitaCommitmentHint, OpeningGroupShape, OpeningPoints, PointVariableSelection,
+    ErasedCommitmentHint, OpeningGroupShape, OpeningPoints, PointVariableSelection,
 };
 
 /// Prover state carried between suffix fold levels.
@@ -23,8 +23,8 @@ pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
     pub logical_w: Option<RecursiveWitnessFlat>,
     /// Current suffix witness commitment.
     pub commitment: FlatRingVec<F>,
-    /// D-erased suffix commitment hint cache.
-    pub hint: RecursiveCommitmentHintCache<F>,
+    /// D-erased suffix commitment hint.
+    pub hint: ErasedCommitmentHint<F>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next suffix opening point.
@@ -41,7 +41,7 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
     }
 }
 
-/// Single-claim suffix fold input: flat commitment rows plus one typed hint.
+/// Single-claim suffix fold input: flat commitment rows plus one erased hint.
 ///
 /// Suffix levels store commitment as [`FlatRingVec`] in [`SuffixProverState`].
 /// This type threads that representation into fold preparation without placing
@@ -58,7 +58,7 @@ pub(in crate::protocol::core) struct SuffixFoldClaims<
     pub(in crate::protocol::core) point_vars: PointVariableSelection,
     pub(in crate::protocol::core) polynomials: &'a [&'a P],
     pub(in crate::protocol::core) commitment: FlatRingVec<F>,
-    pub(in crate::protocol::core) hint: AkitaCommitmentHint<F, D>,
+    pub(in crate::protocol::core) hint: ErasedCommitmentHint<F>,
 }
 
 impl<'a, PointF: Clone, P, F: FieldCore, const D: usize> SuffixFoldClaims<'a, PointF, P, F, D> {
@@ -68,12 +68,11 @@ impl<'a, PointF: Clone, P, F: FieldCore, const D: usize> SuffixFoldClaims<'a, Po
         recursive_num_vars: usize,
         polynomials: &'a [&'a P],
         commitment: FlatRingVec<F>,
-        hint: RecursiveCommitmentHintCache<F>,
+        hint: ErasedCommitmentHint<F>,
     ) -> Result<Self, AkitaError>
     where
         PointF: FieldCore,
     {
-        let typed_hint = hint.to_typed::<D>()?;
         let opening_batch = OpeningBatchShape::new(recursive_num_vars, 1)?;
         let point_vars = opening_batch
             .groups()
@@ -90,7 +89,7 @@ impl<'a, PointF: Clone, P, F: FieldCore, const D: usize> SuffixFoldClaims<'a, Po
             point_vars,
             polynomials,
             commitment,
-            hint: typed_hint,
+            hint,
         })
     }
 
@@ -381,7 +380,9 @@ mod tests {
     use crate::protocol::core::fold::compute_trace_target;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{FlatDigitBlocks, RingOpeningPoint};
+    use akita_types::{
+        AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks, RingOpeningPoint,
+    };
 
     type TestF = Fp32<251>;
     const D: usize = 4;
@@ -390,9 +391,10 @@ mod tests {
     fn suffix_fold_claims_keeps_flat_commitment_without_opening_batch() {
         let commitment = FlatRingVec::from_coeffs(vec![TestF::one(); D]);
         let polys: &[&CyclotomicRing<TestF, D>] = &[];
-        let hint = AkitaCommitmentHint::<TestF, D>::singleton(
-            FlatDigitBlocks::zeroed::<D>(vec![1]).expect("digit blocks"),
-        );
+        let hint =
+            ErasedCommitmentHint::from_typed::<D>(AkitaCommitmentHint::<TestF, D>::singleton(
+                FlatDigitBlocks::zeroed::<D>(vec![1]).expect("digit blocks"),
+            ));
         let claims = SuffixFoldClaims::<TestF, CyclotomicRing<TestF, D>, TestF, D> {
             point: vec![TestF::one()].into(),
             point_vars: PointVariableSelection::prefix(1, 1).expect("point vars"),

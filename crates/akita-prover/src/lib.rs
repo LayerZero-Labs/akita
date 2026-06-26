@@ -29,9 +29,8 @@ pub use api::{
 
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RootTensorProjectionPoly,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitnessBatchView,
-    SuffixWitnessView,
+    OneHotPoly, RecursiveWitnessFlat, RootTensorProjectionPoly, SingleChunkEntry,
+    SparseRingBlockEntry, SparseRingPoly, SuffixWitnessBatchView, SuffixWitnessView,
 };
 pub use compute::{
     BatchDecomposeFoldOutcome, CommitBackendFor, CommitCluster, CommitmentComputeBackend,

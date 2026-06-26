@@ -495,19 +495,6 @@ impl FlatDigitBlocks {
         })
     }
 
-    /// Construct from flat digits and explicit block sizes when `ring_dim` is known.
-    pub(crate) fn from_stored_parts(
-        digits: Vec<i8>,
-        block_sizes: Vec<usize>,
-        ring_dim: usize,
-    ) -> Self {
-        Self {
-            digits,
-            block_sizes,
-            ring_dim,
-        }
-    }
-
     /// Flatten a block-owned representation into canonical storage.
     pub fn from_blocks<const D: usize>(blocks: Vec<Vec<[i8; D]>>) -> Self {
         let block_sizes: Vec<usize> = blocks.iter().map(Vec::len).collect();

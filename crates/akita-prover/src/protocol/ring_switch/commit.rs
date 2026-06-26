@@ -1,5 +1,6 @@
 use super::*;
 use crate::compute::{CommitInnerPlan, ComputeBackendSetup, OperationCtx};
+use akita_types::ErasedCommitmentHint;
 
 /// Result of committing the next logical recursive witness.
 pub struct NextWitnessCommitment<F: FieldCore> {
@@ -8,7 +9,7 @@ pub struct NextWitnessCommitment<F: FieldCore> {
     /// Commitment to the physical next-level witness.
     pub commitment: FlatRingVec<F>,
     /// Prover hint for `commitment`.
-    pub hint: RecursiveCommitmentHintCache<F>,
+    pub hint: ErasedCommitmentHint<F>,
 }
 
 /// Commit the D-agnostic ring-switch witness `w` at the caller-selected ring
@@ -143,7 +144,7 @@ where
             Ok(NextWitnessCommitment {
                 witness: None,
                 commitment: FlatRingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                hint: ErasedCommitmentHint::from_typed_recursive(wh)?,
             })
         } else {
             let committed_w =
@@ -159,7 +160,7 @@ where
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
                 commitment: FlatRingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                hint: ErasedCommitmentHint::from_typed_recursive(wh)?,
             })
         }
     })

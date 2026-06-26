@@ -53,7 +53,7 @@ where
     let mut hint = witness.hint;
     hint.ensure_ring_dim::<D>()?;
     hint.ensure_recomposed_inner_rows::<D>(lp.num_digits_open, lp.log_basis)?;
-    let t_hat = hint.flat_decomposed_digits();
+    let t_hat = hint.decomposed_digits();
     let recomposed_inner_rows = hint.recomposed_inner_rows_trusted::<D>()?;
     let e_folded = witness.e_folded.as_ring_slice_trusted::<D>();
     let z_folded_rings = &witness.z_folded_rings;
@@ -64,7 +64,7 @@ where
         lp,
         &instance.challenges,
         witness.e_hat.flat_digits_trusted::<D>(),
-        &t_hat,
+        t_hat,
         &recomposed_inner_rows,
         e_folded,
         instance.ring_multiplier_point(),
@@ -82,7 +82,7 @@ where
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
             &witness.e_hat,
-            &t_hat,
+            t_hat,
             &u_concat_digits,
             z_folded_rings.centered_coeffs_trusted::<D>(),
             &r,

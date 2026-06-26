@@ -254,24 +254,15 @@ where
 /// Runtime ring-degree-erased commitment hint for setup-prefix slots and similar storage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErasedCommitmentHint<F: FieldCore> {
-    decomposed_inner_rows: Vec<i8>,
-    decomposed_inner_row_block_sizes: Vec<usize>,
+    decomposed_digits: FlatDigitBlocks,
     recomposed_inner_row_coeffs: Vec<F>,
     recomposed_inner_row_block_sizes: Vec<usize>,
-    ring_dim: usize,
 }
 
 impl<F: FieldCore> ErasedCommitmentHint<F> {
     /// Flatten a typed prover hint for D-free slot storage.
     pub fn from_typed<const D: usize>(hint: AkitaCommitmentHint<F, D>) -> Self {
-        let (flat_hint_digits, recomposed_inner_rows) = hint.into_flat_parts();
-        let decomposed_inner_row_block_sizes = flat_hint_digits.block_sizes().to_vec();
-        let decomposed_inner_rows = flat_hint_digits
-            .flat_digits_trusted::<D>()
-            .iter()
-            .flat_map(|plane| plane.iter().copied())
-            .collect();
-
+        let (decomposed_digits, recomposed_inner_rows) = hint.into_flat_parts();
         let (recomposed_inner_row_coeffs, recomposed_inner_row_block_sizes) =
             if let Some(recomposed_inner_rows) = recomposed_inner_rows {
                 let recomposed_inner_row_block_sizes: Vec<usize> =
@@ -294,12 +285,27 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
             };
 
         Self {
-            decomposed_inner_rows,
-            decomposed_inner_row_block_sizes,
+            decomposed_digits,
             recomposed_inner_row_coeffs,
             recomposed_inner_row_block_sizes,
-            ring_dim: D,
         }
+    }
+
+    /// Flatten a typed recursive-commitment hint that must carry recomposed inner rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the typed hint does not carry recomposed inner rows.
+    pub fn from_typed_recursive<const D: usize>(
+        hint: AkitaCommitmentHint<F, D>,
+    ) -> Result<Self, AkitaError> {
+        let erased = Self::from_typed(hint);
+        if erased.recomposed_inner_row_coeffs.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "missing recomposed inner rows in recursive commitment hint".to_string(),
+            ));
+        }
+        Ok(erased)
     }
 
     /// Reconstruct the typed prover hint without recomputing inner rows.
@@ -309,27 +315,14 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
     /// Returns an error if the requested ring dimension does not match the stored hint,
     /// or if flattened block metadata is inconsistent.
     pub fn to_typed<const D: usize>(&self) -> Result<AkitaCommitmentHint<F, D>, AkitaError> {
-        if self.ring_dim != D {
-            return Err(AkitaError::InvalidInput(format!(
-                "erased commitment hint ring_d={} does not match requested D={D}",
-                self.ring_dim
-            )));
-        }
-        if self.decomposed_inner_row_block_sizes.len()
-            != self.recomposed_inner_row_block_sizes.len()
+        self.decomposed_digits.ensure_ring_dim::<D>()?;
+        if self.decomposed_digits.block_sizes().len() != self.recomposed_inner_row_block_sizes.len()
         {
             return Err(AkitaError::InvalidInput(
                 "erased commitment hint block metadata mismatch".to_string(),
             ));
         }
 
-        let (flat_digits, digit_remainder) = self.decomposed_inner_rows.as_chunks::<D>();
-        if !digit_remainder.is_empty() {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.decomposed_inner_rows.len(),
-            });
-        }
         let (flat_recomposed_rows, recomposed_remainder) =
             self.recomposed_inner_row_coeffs.as_chunks::<D>();
         if !recomposed_remainder.is_empty() {
@@ -339,19 +332,13 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
             });
         }
 
-        let mut digit_offset = 0usize;
         let mut recomposed_offset = 0usize;
         let mut recomposed_inner_rows =
             Vec::with_capacity(self.recomposed_inner_row_block_sizes.len());
 
-        for (&digit_block_size, &recomposed_block_size) in self
-            .decomposed_inner_row_block_sizes
-            .iter()
-            .zip(self.recomposed_inner_row_block_sizes.iter())
-        {
-            let digit_end = digit_offset + digit_block_size;
+        for &recomposed_block_size in &self.recomposed_inner_row_block_sizes {
             let recomposed_end = recomposed_offset + recomposed_block_size;
-            if digit_end > flat_digits.len() || recomposed_end > flat_recomposed_rows.len() {
+            if recomposed_end > flat_recomposed_rows.len() {
                 return Err(AkitaError::InvalidInput(
                     "erased commitment hint block data is truncated".to_string(),
                 ));
@@ -362,22 +349,17 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
                     .map(|coeffs| CyclotomicRing::from_coefficients(*coeffs))
                     .collect(),
             );
-            digit_offset = digit_end;
             recomposed_offset = recomposed_end;
         }
 
-        if digit_offset != flat_digits.len() || recomposed_offset != flat_recomposed_rows.len() {
+        if recomposed_offset != flat_recomposed_rows.len() {
             return Err(AkitaError::InvalidInput(
                 "erased commitment hint has trailing block data".to_string(),
             ));
         }
 
-        let decomposed_inner_rows = FlatDigitBlocks::from_planes::<D>(
-            flat_digits.to_vec(),
-            self.decomposed_inner_row_block_sizes.clone(),
-        )?;
         Ok(AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-            decomposed_inner_rows,
+            self.decomposed_digits.clone(),
             recomposed_inner_rows,
         ))
     }
@@ -386,22 +368,12 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
     ///
     /// Returns an error if the requested ring dimension does not match storage.
     pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        if self.ring_dim != D {
-            return Err(AkitaError::InvalidInput(format!(
-                "erased commitment hint ring_d={} does not match requested D={D}",
-                self.ring_dim
-            )));
-        }
-        Ok(())
+        self.decomposed_digits.ensure_ring_dim::<D>()
     }
 
-    /// Flattened inner-row digit blocks for ring-switch (`t_hat` view).
-    pub fn flat_decomposed_digits(&self) -> FlatDigitBlocks {
-        FlatDigitBlocks::from_stored_parts(
-            self.decomposed_inner_rows.clone(),
-            self.decomposed_inner_row_block_sizes.clone(),
-            self.ring_dim,
-        )
+    /// Borrow flattened inner-row digit blocks for ring-switch (`t_hat` view).
+    pub fn decomposed_digits(&self) -> &FlatDigitBlocks {
+        &self.decomposed_digits
     }
 
     /// Populate recomposed inner rows from flattened digit storage when absent.
@@ -427,19 +399,13 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
             ));
         }
 
-        let (digit_planes, digit_rem) = self.decomposed_inner_rows.as_chunks::<D>();
-        if !digit_rem.is_empty() {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.decomposed_inner_rows.len(),
-            });
-        }
+        let digit_planes = self.decomposed_digits.flat_digits_trusted::<D>();
 
         let mut digit_offset = 0usize;
         let mut recomposed_inner_row_coeffs = Vec::new();
         let mut recomposed_inner_row_block_sizes =
-            Vec::with_capacity(self.decomposed_inner_row_block_sizes.len());
-        for &digit_block_size in &self.decomposed_inner_row_block_sizes {
+            Vec::with_capacity(self.decomposed_digits.block_sizes().len());
+        for &digit_block_size in self.decomposed_digits.block_sizes() {
             let digit_end = digit_offset + digit_block_size;
             if digit_end > digit_planes.len() {
                 return Err(AkitaError::InvalidInput(
@@ -448,7 +414,7 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
             }
             let block_planes = &digit_planes[digit_offset..digit_end];
             digit_offset = digit_end;
-            if block_planes.len() % num_digits_open != 0 {
+            if !block_planes.len().is_multiple_of(num_digits_open) {
                 return Err(AkitaError::InvalidSetup(format!(
                     "decomposed inner row block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
                     block_planes.len()
@@ -515,7 +481,7 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
 
     #[must_use]
     pub fn ring_dim(&self) -> usize {
-        self.ring_dim
+        self.decomposed_digits.ring_dim()
     }
 
     pub(crate) fn serialize_with_mode_for_ring_dim<W: Write>(
@@ -527,10 +493,10 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
     where
         F: AkitaSerialize,
     {
-        if self.ring_dim != ring_dim {
+        if self.decomposed_digits.ring_dim() != ring_dim {
             return Err(SerializationError::InvalidData(format!(
                 "erased commitment hint ring_d={} does not match slot id d_setup={ring_dim}",
-                self.ring_dim
+                self.decomposed_digits.ring_dim()
             )));
         }
         match ring_dim {
@@ -576,7 +542,7 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
     where
         F: AkitaSerialize,
     {
-        if self.ring_dim != ring_dim {
+        if self.decomposed_digits.ring_dim() != ring_dim {
             return 0;
         }
         match ring_dim {
@@ -624,35 +590,19 @@ impl<F: FieldCore> ErasedCommitmentHint<F> {
 
 impl<F: FieldCore + Valid> Valid for ErasedCommitmentHint<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        if !crate::SUPPORTED_RING_DIMS.contains(&self.ring_dim) {
-            return Err(SerializationError::InvalidData(format!(
-                "erased commitment hint has unsupported ring_dim={}",
-                self.ring_dim
-            )));
-        }
-        if self.decomposed_inner_row_block_sizes.len()
-            != self.recomposed_inner_row_block_sizes.len()
+        self.decomposed_digits.check()?;
+        if self.decomposed_digits.block_sizes().len() != self.recomposed_inner_row_block_sizes.len()
         {
             return Err(SerializationError::InvalidData(
                 "erased commitment hint block metadata mismatch".to_string(),
             ));
         }
-        if !self.decomposed_inner_rows.is_empty()
-            && !self
-                .decomposed_inner_rows
-                .len()
-                .is_multiple_of(self.ring_dim)
-        {
-            return Err(SerializationError::InvalidData(
-                "erased commitment hint decomposed digit length is not a multiple of ring_dim"
-                    .to_string(),
-            ));
-        }
+        let ring_dim = self.decomposed_digits.ring_dim();
         if !self.recomposed_inner_row_coeffs.is_empty()
             && !self
                 .recomposed_inner_row_coeffs
                 .len()
-                .is_multiple_of(self.ring_dim)
+                .is_multiple_of(ring_dim)
         {
             return Err(SerializationError::InvalidData(
                 "erased commitment hint recomposed coefficient length is not a multiple of ring_dim"
