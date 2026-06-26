@@ -12,7 +12,7 @@ use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, padded_setup_prefix_len,
     setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams, MRowLayout,
-    OpeningBatchShape, SetupPrefixSlotAny, SETUP_OFFLOAD_D_SETUP,
+    OpeningBatchShape, SETUP_OFFLOAD_D_SETUP,
 };
 
 fn commit_setup_prefix_for_level<F, B>(
@@ -60,7 +60,7 @@ where
         n_prefix,
         natural_len,
     )?;
-    setup.prefix_slots.insert(SetupPrefixSlotAny::D64(slot))?;
+    setup.prefix_slots.insert(slot)?;
     Ok(())
 }
 

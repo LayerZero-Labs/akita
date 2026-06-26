@@ -18,7 +18,7 @@ pub(super) fn decompose_fold_batched_tensor_dense<F, const D: usize>(
     block_len: usize,
     num_digits: usize,
     log_basis: u32,
-) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>
+) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {

@@ -4,10 +4,7 @@ use crate::api::commitment::{
 };
 use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
-use crate::{
-    tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat,
-};
+use crate::{tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;

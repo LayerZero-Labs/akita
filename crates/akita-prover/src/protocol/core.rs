@@ -10,10 +10,7 @@ use crate::protocol::ring_switch::{
 use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::protocol::RingRelationProver;
-use crate::{
-    ProverOpeningBatch, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
-    RingRelationWitness,
-};
+use crate::{ProverOpeningBatch, ProverTranscriptGrind, RingRelationInstance, RingRelationWitness};
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::parallel::*;
@@ -31,7 +28,6 @@ use akita_transcript::labels::{
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::dispatch_ring_dim_result;
 use akita_types::FpExtEncoding;
 use akita_types::{
     append_claim_values_to_transcript, basis_weights, batched_eval_target_from_opening_batch,
@@ -49,7 +45,7 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
     CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingBuf, RingCommitment,
+    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingBuf,
     RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
     SetupPrefixRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
     VerifierOpeningBatch,
@@ -107,7 +103,7 @@ pub(in crate::protocol::core) struct Stage3ProveOutput<L: FieldCore> {
 
 fn scalar_opening_from_folded_ring<F, E, const D: usize>(
     folded_ring: &CyclotomicRing<F, D>,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     inner_opening_point: &[E],
     basis: BasisMode,
 ) -> Result<E, AkitaError>
@@ -116,7 +112,7 @@ where
     E: FpExtEncoding<F>,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
-        return (*folded_ring * prepared_point.packed_inner_point.sigma_m1())
+        return (*folded_ring * prepared_point.packed_inner_ring_trusted::<D>().sigma_m1())
             .coefficients()
             .first()
             .copied()

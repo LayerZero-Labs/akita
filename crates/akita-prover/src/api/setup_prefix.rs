@@ -12,7 +12,7 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     digest_level_params, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
-    FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
+    ErasedCommitmentHint, FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -33,7 +33,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     setup_seed_digest: [u8; 32],
     n_prefix: usize,
     natural_len: usize,
-) -> Result<SetupPrefixSlot<F, D>, AkitaError>
+) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
@@ -100,7 +100,7 @@ where
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut decomposed_inner_rows = FlatDigitBlocks::zeroed(block_sizes)?;
+    let mut decomposed_inner_rows = FlatDigitBlocks::zeroed::<D>(block_sizes)?;
     let dst_blocks = decomposed_inner_rows.split_blocks_mut();
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
@@ -135,7 +135,7 @@ where
     )?;
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
-    b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits());
+    b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits_trusted::<D>());
     let u = backend.digit_rows::<D>(
         prepared,
         level_params.b_key.row_len(),
@@ -165,8 +165,8 @@ where
         id,
         natural_len,
         padded_len: n_prefix,
-        commitment: RingCommitment { u },
-        hint,
+        commitment: RingCommitment { u }.into(),
+        hint: ErasedCommitmentHint::from_typed::<D>(hint),
     })
 }
 
@@ -230,7 +230,7 @@ mod tests {
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
         active_setup_field_len, setup_seed_digest, MRowLayout, OpeningBatchShape,
-        SetupMatrixEnvelope, SetupPrefixSlotAny, SisModulusFamily,
+        SetupMatrixEnvelope, SisModulusFamily,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
@@ -344,10 +344,7 @@ mod tests {
         .expect("commit prefix");
         assert_eq!(slot.natural_len, natural_len);
         assert_eq!(slot.padded_len, n_prefix);
-        setup
-            .prefix_slots
-            .insert(SetupPrefixSlotAny::D32(slot))
-            .expect("insert");
+        setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
 
@@ -388,10 +385,7 @@ mod tests {
         .expect("commit prefix");
         assert_eq!(slot.natural_len, natural_len);
         assert_eq!(slot.padded_len, n_prefix);
-        setup
-            .prefix_slots
-            .insert(SetupPrefixSlotAny::D64(slot))
-            .expect("insert");
+        setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
 

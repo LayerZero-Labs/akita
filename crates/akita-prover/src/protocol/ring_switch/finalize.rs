@@ -17,7 +17,7 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_finalize<F, E, T, const D: usize>(
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,

@@ -17,7 +17,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AppendToTranscript,
     FlatDigitBlocks, FlatRingVec, OpeningBatchShape, OpeningGroupShape, OpeningPoints,
-    PointVariableSelection, RingCommitment,
+    PointVariableSelection, RingBuf, RingCommitment,
 };
 
 pub use api::{
@@ -29,9 +29,8 @@ pub use api::{
 
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RootTensorProjectionPoly,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitnessBatchView,
-    SuffixWitnessView,
+    OneHotPoly, RecursiveWitnessFlat, RootTensorProjectionPoly, SingleChunkEntry,
+    SparseRingBlockEntry, SparseRingPoly, SuffixWitnessBatchView, SuffixWitnessView,
 };
 pub use compute::{
     BatchDecomposeFoldOutcome, CommitBackendFor, CommitCluster, CommitmentComputeBackend,
@@ -233,48 +232,109 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
             groups: regrouped,
         })
     }
-
-    /// Build the single-claim batch used by recursive suffix fold levels.
-    pub(crate) fn new_suffix(
-        opening_point: &[PointF],
-        recursive_num_vars: usize,
-        polynomials: &'a [&'a P],
-        commitment: CommitmentWithHint<CommitF, D>,
-    ) -> Result<Self, AkitaError>
-    where
-        PointF: FieldCore,
-    {
-        let opening_batch = OpeningBatchShape::new(recursive_num_vars, 1)?;
-        let point_vars = opening_batch
-            .groups()
-            .first()
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("recursive opening batch requires one group".to_string())
-            })?
-            .point_vars
-            .clone();
-        let mut padded_point = opening_point.to_vec();
-        padded_point.resize(recursive_num_vars, PointF::zero());
-        Ok(Self {
-            point: padded_point.into(),
-            groups: vec![ProverCommitmentGroup {
-                point_vars,
-                polynomials,
-                commitment,
-            }],
-        })
-    }
 }
 
 /// Prover-side output of the decompose + challenge-fold step.
+///
+/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
+/// closures borrow typed ring rows via [`Self::z_folded_rings_trusted`] and
+/// [`Self::centered_coeffs_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
-    /// Folded witness rows in ring form.
-    pub z_folded_rings: Vec<CyclotomicRing<F, D>>,
-    /// Centered integer coefficients for each `z_folded_rings` row.
-    pub centered_coeffs: Vec<[i32; D]>,
-    /// Infinity norm of `centered_coeffs`.
+pub struct DecomposeFoldWitness<F: FieldCore> {
+    /// Folded witness rows in flat ring storage.
+    pub z_folded_rings: RingBuf<F>,
+    /// Centered integer coefficients for each [`z_folded_rings`] row, stored row-major flat.
+    ///
+    /// Hot paths borrow typed rows via [`Self::centered_coeffs_trusted`].
+    centered_coeffs_flat: Vec<i32>,
+    /// Infinity norm of the flat centered coefficient storage above.
     pub centered_inf_norm: u32,
+    /// Ring dimension (field coefficients per ring element), fixed at construction.
+    ring_dim: usize,
+}
+
+impl<F: FieldCore> DecomposeFoldWitness<F> {
+    /// Construct from typed ring rows at a kernel boundary.
+    pub fn from_parts<const D: usize>(
+        z_folded_rings: Vec<CyclotomicRing<F, D>>,
+        centered_coeffs: Vec<[i32; D]>,
+        centered_inf_norm: u32,
+    ) -> Self {
+        debug_assert_eq!(z_folded_rings.len(), centered_coeffs.len());
+        Self {
+            z_folded_rings: RingBuf::from_ring_elems(&z_folded_rings),
+            centered_coeffs_flat: centered_coeffs
+                .iter()
+                .flat_map(|row| row.iter().copied())
+                .collect(),
+            centered_inf_norm,
+            ring_dim: D,
+        }
+    }
+
+    /// Stored ring dimension (coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Number of folded witness rows.
+    pub fn row_count(&self) -> usize {
+        self.centered_coeffs_flat
+            .len()
+            .checked_div(self.ring_dim)
+            .unwrap_or(0)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "decompose fold witness ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if !self.centered_coeffs_flat.len().is_multiple_of(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.centered_coeffs_flat.len(),
+            });
+        }
+        if !self.z_folded_rings.can_decode_vec(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.z_folded_rings.coeff_len(),
+            });
+        }
+        let ring_count = self.z_folded_rings.count();
+        let row_count = self.centered_coeffs_flat.len() / D;
+        if ring_count != row_count {
+            return Err(AkitaError::InvalidInput(
+                "decompose fold witness ring row count mismatch".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Borrow folded ring rows after [`Self::ensure_ring_dim`].
+    pub fn z_folded_rings_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
+        debug_assert_eq!(self.ring_dim, D);
+        self.z_folded_rings.as_ring_slice_trusted::<D>()
+    }
+
+    /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].
+    pub fn centered_coeffs_trusted<const D: usize>(&self) -> &[[i32; D]] {
+        debug_assert_eq!(self.ring_dim, D);
+        let (chunks, rem) = self.centered_coeffs_flat.as_chunks::<D>();
+        debug_assert!(rem.is_empty());
+        chunks
+    }
+
+    /// Owned copy of centered coefficient rows after [`Self::ensure_ring_dim`].
+    pub fn centered_coeffs_owned<const D: usize>(&self) -> Vec<[i32; D]> {
+        self.centered_coeffs_trusted::<D>().to_vec()
+    }
 }
 
 /// Prover-side output of the inner Ajtai commit step.
@@ -283,5 +343,5 @@ pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
     pub recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Digit decompositions of `A * s_i` in flat column-major order plus
     /// explicit block boundaries.
-    pub decomposed_inner_rows: FlatDigitBlocks<D>,
+    pub decomposed_inner_rows: FlatDigitBlocks,
 }

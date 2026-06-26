@@ -22,7 +22,7 @@ fn expand_onehot_accum<const D: usize>(
 fn finish_decompose_fold<F: CanonicalField, const D: usize>(
     compressed_accum: Vec<[i32; D]>,
     num_digits: usize,
-) -> DecomposeFoldWitness<F, D> {
+) -> DecomposeFoldWitness<F> {
     let modulus = (-F::one()).to_canonical_u128() + 1;
     let coeff_accum = {
         let _span = tracing::info_span!("onehot_expand_accum").entered();
@@ -38,7 +38,7 @@ fn decompose_fold_from_views<E, F, const D: usize>(
     num_blocks: usize,
     block_len: usize,
     num_digits: usize,
-) -> DecomposeFoldWitness<F, D>
+) -> DecomposeFoldWitness<F>
 where
     E: OneHotEntry,
     F: CanonicalField,
@@ -57,14 +57,20 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-    ) -> DecomposeFoldWitness<F, D>
+    ) -> DecomposeFoldWitness<F>
     where
         E: OneHotEntry,
         F: CanonicalField,
     {
         let num_blocks = challenges.len().min(blocks.num_blocks());
         let block_views: Vec<&[E]> = (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-        decompose_fold_from_views(&block_views, challenges, num_blocks, block_len, num_digits)
+        decompose_fold_from_views::<E, F, D>(
+            &block_views,
+            challenges,
+            num_blocks,
+            block_len,
+            num_digits,
+        )
     }
 
     pub(super) fn decompose_fold_batched_single_chunk_onehot(
@@ -72,7 +78,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-    ) -> Option<DecomposeFoldWitness<F, D>>
+    ) -> Option<DecomposeFoldWitness<F>>
     where
         F: CanonicalField,
     {
@@ -91,7 +97,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             return None;
         }
         let active_blocks = flat_blocks.len().min(total_blocks);
-        Some(decompose_fold_from_views(
+        Some(decompose_fold_from_views::<SingleChunkEntry, F, D>(
             &flat_blocks,
             challenges,
             active_blocks,
@@ -105,7 +111,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-    ) -> Option<DecomposeFoldWitness<F, D>>
+    ) -> Option<DecomposeFoldWitness<F>>
     where
         F: CanonicalField,
     {
@@ -124,7 +130,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             return None;
         }
         let active_blocks = flat_blocks.len().min(total_blocks);
-        Some(decompose_fold_from_views(
+        Some(decompose_fold_from_views::<MultiChunkEntry, F, D>(
             &flat_blocks,
             challenges,
             active_blocks,
@@ -139,7 +145,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         tensor: &TensorChallengeSet,
         block_len: usize,
         num_digits: usize,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>
+    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
     where
         F: CanonicalField,
     {

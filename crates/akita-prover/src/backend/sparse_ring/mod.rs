@@ -390,7 +390,7 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
+    ) -> DecomposeFoldWitness<F> {
         let blocks = self
             .blocks_for(block_len)
             .expect("SparseRingPoly::decompose_fold: invalid block_len");
@@ -409,7 +409,7 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
         Ok(Some(tensor_fold::decompose_fold_batched_tensor_sparse(
             polys, tensor, block_len, num_digits,
         )?))

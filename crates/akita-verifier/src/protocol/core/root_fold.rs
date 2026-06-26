@@ -156,12 +156,13 @@ where
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
     let fold_grind_nonce = proof.fold_grind_nonce()?;
+    let fold_commitment = FlatRingVec::from_ring_elems(&commitment.u);
     let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
         shared_opening_point,
         opening_batch.clone(),
         vec![CommitmentGroup {
             claims: openings,
-            commitment: commitment.u.as_slice(),
+            commitment: (),
         }],
     )?;
     let prepared = PreparedFoldReplay {
@@ -169,6 +170,7 @@ where
         m_row_layout,
         fold_grind_nonce,
         v: proof.fold_v_buf()?,
+        fold_commitment: &fold_commitment,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

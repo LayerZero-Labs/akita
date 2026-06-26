@@ -31,8 +31,8 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
-    instance: &RingRelationInstance<F, D>,
-    witness: RingRelationWitness<F, D>,
+    instance: &RingRelationInstance<F>,
+    witness: RingRelationWitness<F>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
     retain_terminal_artifacts: bool,
@@ -46,33 +46,30 @@ where
         + AkitaSerialize,
     B: RingSwitchProveBackend<F, D>,
 {
-    let num_claims = instance.opening_batch().num_polynomials();
-    let RingRelationWitness {
-        z_folded_rings,
-        fold_grind_nonce: _,
-        e_hat,
-        e_folded,
-        mut hint,
-    } = witness;
+    witness.z_folded_rings.ensure_ring_dim::<D>()?;
+    witness.e_hat.ensure_ring_dim::<D>()?;
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-    hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
-    let (decomposed_inner_rows, recomposed_inner_rows) = hint.into_flat_parts();
-    let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
-        AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
-    })?;
+    let num_claims = instance.opening_batch().num_polynomials();
+    let mut hint = witness.hint;
+    hint.ensure_ring_dim::<D>()?;
+    hint.ensure_recomposed_inner_rows::<D>(lp.num_digits_open, lp.log_basis)?;
+    let t_hat = hint.decomposed_digits();
+    let recomposed_inner_rows = hint.recomposed_inner_rows_trusted::<D>()?;
+    let e_folded = witness.e_folded.as_ring_slice_trusted::<D>();
+    let z_folded_rings = &witness.z_folded_rings;
     let opening_batch = instance.opening_batch();
 
     let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
         ring_switch_ctx,
         lp,
         &instance.challenges,
-        e_hat.flat_digits(),
-        &decomposed_inner_rows,
+        witness.e_hat.flat_digits_trusted::<D>(),
+        t_hat,
         &recomposed_inner_rows,
-        &e_folded,
+        e_folded,
         instance.ring_multiplier_point(),
         instance.row_coefficient_rings()?,
-        &z_folded_rings.centered_coeffs,
+        z_folded_rings.centered_coeffs_trusted::<D>(),
         z_folded_rings.centered_inf_norm,
         instance.y()?,
         opening_batch.num_polynomials(),
@@ -80,14 +77,14 @@ where
         lp.inner_width(),
         instance.m_row_layout(),
     )?;
-    let z_centered = z_folded_rings.centered_coeffs.clone();
+    let z_centered = z_folded_rings.centered_coeffs_owned::<D>();
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
-            &e_hat,
-            &decomposed_inner_rows,
+            &witness.e_hat,
+            t_hat,
             &u_concat_digits,
-            &z_folded_rings.centered_coeffs,
+            z_folded_rings.centered_coeffs_trusted::<D>(),
             &r,
             lp,
             num_claims,
@@ -95,7 +92,7 @@ where
     };
     let terminal_artifacts = if retain_terminal_artifacts {
         Some(RingSwitchTerminalArtifacts {
-            e_folded,
+            e_folded: e_folded.to_vec(),
             recomposed_inner_rows,
             z_folded_centered: z_centered,
             r,
@@ -202,8 +199,8 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// the fold layout in `lp`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
-    e_hat: &FlatDigitBlocks<D>,
-    t_hat: &FlatDigitBlocks<D>,
+    e_hat: &FlatDigitBlocks,
+    t_hat: &FlatDigitBlocks,
     u_concat_digits: &[[i8; D]],
     z_folded_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
@@ -219,8 +216,8 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let block_len = lp.block_len;
     let levels = r_decomp_levels::<F>(log_basis);
 
-    let e_hat_planes = e_hat.flat_digits().len();
-    let t_hat_planes = t_hat.flat_digits().len();
+    let e_hat_planes = e_hat.plane_count();
+    let t_hat_planes = t_hat.plane_count();
     // Tiered: the hidden decomposed concatenated slice images `û_concat` are a
     // flat contiguous segment emitted immediately after `t̂` (at `offset_u`).
     let u_concat_planes = u_concat_digits.len();
@@ -271,13 +268,13 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     );
     akita_types::emit_witness_planes_block_inner(
         &mut out,
-        e_hat.flat_digits(),
+        e_hat.flat_digits_trusted::<D>(),
         w_block_count,
         depth_open,
     );
     akita_types::emit_witness_planes_block_inner(
         &mut out,
-        t_hat.flat_digits(),
+        t_hat.flat_digits_trusted::<D>(),
         t_block_count,
         t_planes_per_block,
     );

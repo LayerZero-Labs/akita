@@ -1,5 +1,6 @@
 use super::*;
 use crate::compute::{CommitInnerPlan, ComputeBackendSetup, OperationCtx};
+use akita_types::ErasedCommitmentHint;
 
 /// Result of committing the next logical recursive witness.
 pub struct NextWitnessCommitment<F: FieldCore> {
@@ -8,7 +9,7 @@ pub struct NextWitnessCommitment<F: FieldCore> {
     /// Commitment to the physical next-level witness.
     pub commitment: FlatRingVec<F>,
     /// Prover hint for `commitment`.
-    pub hint: RecursiveCommitmentHintCache<F>,
+    pub hint: ErasedCommitmentHint<F>,
 }
 
 /// Commit the D-agnostic ring-switch witness `w` at the caller-selected ring
@@ -77,7 +78,7 @@ where
         commit_layout.log_basis,
     )?;
 
-    let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
+    let outer_input = inner.decomposed_inner_rows.flat_digits_trusted::<D>();
     validate_commit_outer_input_nonempty(outer_input.len())?;
     let u: Vec<CyclotomicRing<F, D>> = if commit_layout.f_key.is_some() {
         // Tiered: u_final = F·decompose(blockdiag(B')·t̂). ZK blinding of the F
@@ -86,13 +87,13 @@ where
             backend,
             prepared,
             commit_layout,
-            &outer_input,
+            outer_input,
         )?
     } else {
         let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
             prepared,
             commit_layout.b_key.row_len(),
-            &outer_input,
+            outer_input,
             commit_layout.log_basis,
         )?;
         if u.len() != commit_layout.b_key.row_len() {
@@ -143,7 +144,7 @@ where
             Ok(NextWitnessCommitment {
                 witness: None,
                 commitment: FlatRingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                hint: ErasedCommitmentHint::from_typed_recursive(wh)?,
             })
         } else {
             let committed_w =
@@ -159,7 +160,7 @@ where
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
                 commitment: FlatRingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                hint: ErasedCommitmentHint::from_typed_recursive(wh)?,
             })
         }
     })

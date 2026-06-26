@@ -489,10 +489,9 @@ mod tests {
         #[test]
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
-                use akita_algebra::CyclotomicRing;
                 use akita_types::{
-                    setup_seed_digest, AkitaCommitmentHint, FlatDigitBlocks, RingCommitment,
-                    SetupPrefixSlot, SetupPrefixSlotAny, SetupPrefixSlotId,
+                    setup_seed_digest, AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks,
+                    FlatRingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -507,22 +506,23 @@ mod tests {
                     n_prefix: TEST_D,
                     level_params_digest: [9u8; 32],
                 };
-                let decomposed = FlatDigitBlocks::<TEST_D>::from_blocks(vec![Vec::new()]);
+                let decomposed = FlatDigitBlocks::from_blocks::<TEST_D>(vec![Vec::new()]);
                 let recomposed = vec![Vec::new()];
-                let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                    decomposed, recomposed,
-                );
+                let hint: AkitaCommitmentHint<TestF, TEST_D> =
+                    AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+                        decomposed, recomposed,
+                    );
                 setup
                     .prefix_slots
-                    .insert(SetupPrefixSlotAny::D64(SetupPrefixSlot {
+                    .insert(SetupPrefixSlot {
                         id,
                         natural_len: 1,
                         padded_len: TEST_D,
-                        commitment: RingCommitment {
-                            u: vec![CyclotomicRing::zero()],
+                        commitment: SetupPrefixPublicCommitment {
+                            rows: vec![FlatRingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
                         },
-                        hint,
-                    }))
+                        hint: ErasedCommitmentHint::from_typed::<TEST_D>(hint),
+                    })
                     .unwrap();
                 save_prover_setup::<TestF, Cfg>(&setup, MAX_VARS, 1).unwrap();
 
@@ -673,7 +673,7 @@ mod tests {
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.b_key.row_len(),
-                            inner.decomposed_inner_rows.flat_digits(),
+                            inner.decomposed_inner_rows.flat_digits_trusted::<TEST_D>(),
                             lp.log_basis,
                         )
                         .unwrap()

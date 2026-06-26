@@ -121,10 +121,10 @@ where
             )));
         }
     }
-    if inner.decomposed_inner_rows.flat_digits().len() != expected_flat_digits {
+    if inner.decomposed_inner_rows.plane_count() != expected_flat_digits {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} total decomposed inner commitment digits, expected {}",
-            inner.decomposed_inner_rows.flat_digits().len(),
+            inner.decomposed_inner_rows.plane_count(),
             expected_flat_digits
         )));
     }
@@ -397,9 +397,8 @@ where
     )?;
     let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
     let mut b_input_digits = vec![[0i8; D]; total_b_input_len];
-    let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
-        .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
-        .collect::<Result<_, _>>()?;
+    let mut decomposed_inner_rows: Vec<FlatDigitBlocks> =
+        (0..polys.len()).map(|_| FlatDigitBlocks::empty()).collect();
     let mut recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
         vec![Vec::new(); polys.len()];
     cfg_chunks_mut!(b_input_digits, b_input_len_per_poly)
@@ -417,7 +416,7 @@ where
                     params.num_digits_open,
                     params.log_basis,
                 )?;
-                dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
+                dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits_trusted::<D>());
                 *decomposed = inner.decomposed_inner_rows;
                 *recomposed = inner.recomposed_inner_rows;
                 Ok(())
@@ -798,8 +797,11 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
                 recomposed_blocks
             ],
-            decomposed_inner_rows: FlatDigitBlocks::new(vec![[0i8; D]; total_digits], block_sizes)
-                .expect("valid flat digit blocks"),
+            decomposed_inner_rows: FlatDigitBlocks::from_planes::<D>(
+                vec![[0i8; D]; total_digits],
+                block_sizes,
+            )
+            .expect("valid flat digit blocks"),
         }
     }
 
@@ -824,14 +826,14 @@ mod tests {
     #[test]
     fn commit_inner_shape_rejects_recomposition_mismatch() {
         let mut inner = inner_witness(1, 1, vec![2]);
-        inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
+        inner.decomposed_inner_rows.flat_digits_trusted_mut::<D>()[0][0] = 1;
         assert!(check_decomposed_rows_i8_match(&inner, 1, 2, 4).is_err());
     }
 
     #[test]
     fn commit_inner_shape_rejects_nonzero_digits_on_zero_row() {
         let mut inner = inner_witness(1, 3, vec![6]);
-        inner.decomposed_inner_rows.flat_digits_mut()[2][0] = 1;
+        inner.decomposed_inner_rows.flat_digits_trusted_mut::<D>()[2][0] = 1;
         assert!(check_decomposed_rows_i8_match(&inner, 3, 2, 4).is_err());
     }
 

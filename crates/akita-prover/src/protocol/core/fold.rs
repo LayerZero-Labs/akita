@@ -1,8 +1,11 @@
+use super::suffix::SuffixFoldClaims;
 use super::*;
 use crate::compute::{
     tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, OpeningProveBackendFor,
-    ProverComputeStack, RingSwitchProveBackend, RootOpeningSource, RootProvePoly, TensorBackendFor,
+    ProverComputeStack, RingSwitchProveBackend, RootOpeningSource, RootProvePoly,
+    SuffixOpeningProveBackend, SuffixRingSwitchProveBackend, SuffixTensorProveBackend,
+    TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -15,12 +18,12 @@ use akita_types::CleartextWitnessShape;
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
 ) -> Result<(RingRelationSegmentLayout, akita_types::TraceWeightLayout), AkitaError> {
-    let segment = instance.segment_layout(lp)?;
+    let segment = instance.segment_layout::<D>(lp)?;
     let layout =
         trace_weight_layout_from_segment(lp, &segment, col_bits, ring_bits, num_trace_blocks)?;
     Ok((segment, layout))
@@ -29,8 +32,8 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
 #[allow(clippy::too_many_arguments)]
 fn build_recursive_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
-    prepared: &PreparedOpeningPoint<F, E, D>,
+    instance: &RingRelationInstance<F>,
+    prepared: &PreparedOpeningPoint<F, E>,
     trace_scale: E,
     output_scale: E,
     col_bits: usize,
@@ -41,7 +44,8 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
+    let (_, layout) =
+        trace_layout_for_instance::<F, D>(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
     let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
     build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
@@ -49,8 +53,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn build_root_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    instance: &RingRelationInstance<F>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
     trace_claim_scales: Option<&[E]>,
     output_scale: E,
@@ -68,7 +72,7 @@ where
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
-        trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
+        trace_layout_for_instance::<F, D>(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
     let public_weights = trace_public_weights_root_terms::<F, E, D>(
         lp,
         instance.opening_batch(),
@@ -85,26 +89,26 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
     pub(in crate::protocol::core) trace_scale: L,
 }
 
-pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
+pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore> {
     pub(in crate::protocol::core) commitment: RingBuf<F>,
-    pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
-    pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
+    pub(in crate::protocol::core) instance: RingRelationInstance<F>,
+    pub(in crate::protocol::core) witness: RingRelationWitness<F>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
     pub(in crate::protocol::core) trace_eval_target: L,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L, D>>,
+    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L>>,
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
     pub(in crate::protocol::core) trace_scale: L,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<L>>,
 }
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
-    point: &RingMultiplierOpeningPoint<F, D>,
+    point: &RingMultiplierOpeningPoint<F>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let b = point.b_rings().ok_or_else(|| {
+    let b = point.b_rings::<D>().ok_or_else(|| {
         AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
     })?;
-    let a = point.a_rings().ok_or_else(|| {
+    let a = point.a_rings::<D>().ok_or_else(|| {
         AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
     })?;
     Ok((b, a))
@@ -114,7 +118,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     poly: &Q,
-    point: &RingMultiplierOpeningPoint<F, D>,
+    point: &RingMultiplierOpeningPoint<F>,
     block_len: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
@@ -145,7 +149,7 @@ pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, Q, B, c
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
-    prepared_point: &PreparedOpeningPoint<F, C, D>,
+    prepared_point: &PreparedOpeningPoint<F, C>,
     block_len: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
@@ -175,7 +179,7 @@ where
 pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     folded_rings: &[CyclotomicRing<F, D>],
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     protocol_point: &[E],
     alpha_bits: usize,
     basis: BasisMode,
@@ -269,7 +273,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     block_order: BlockOrder,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-) -> Result<PreparedFold<F, E, D>, AkitaError>
+) -> Result<PreparedFold<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     E: FpExtEncoding<F>
@@ -430,7 +434,7 @@ where
 #[allow(clippy::needless_lifetimes)]
 fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R, const D: usize>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R, D>,
-) -> Result<PreparedFold<F, E, D>, AkitaError>
+) -> Result<PreparedFold<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
@@ -495,8 +499,7 @@ where
         transcript,
     )?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-    let commitment = fold_claims.single_fold_commitment()?;
-    let (instance, witness) = RingRelationProver::new(
+    let (instance, witness, commitment) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
         prepared_point.ring_opening_point.clone(),
@@ -587,7 +590,7 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, C, O, TS, R, Cfg, c
     transcript: &mut T,
     level: usize,
     scheduled: &ExecutionSchedule,
-    prepared_fold: PreparedFold<F, L, D>,
+    prepared_fold: PreparedFold<F, L>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
@@ -618,7 +621,7 @@ where
 {
     let lp = &scheduled.params;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
-    let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
+    let commitment_u = prepared_fold.commitment.as_ring_slice_trusted::<D>();
     let build_output = ring_switch_build_w::<F, R, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
@@ -978,7 +981,7 @@ pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
     prefix_slots: &SetupPrefixRegistry<F>,
     lp: &LevelParams,
     next_level_params: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     tau1: &[L],
     alpha: L,
     sumcheck_challenges: &[L],
@@ -1030,4 +1033,316 @@ where
         }
         SetupContributionMode::Direct => Ok(None),
     }
+}
+
+/// Suffix fold preparation: extension opening reduction plus ring-relation build.
+///
+/// Same contract as [`prepare_fold_inner`] with `pad_base_evals = true`, but
+/// takes [`SuffixFoldClaims`] so commitment rows stay in [`FlatRingVec`] storage.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prepare_suffix_fold_inner<
+    'a,
+    F,
+    E,
+    T,
+    P,
+    C,
+    O,
+    TS,
+    R,
+    const D: usize,
+>(
+    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
+    needs_extension_reduction: bool,
+    fold_claims: super::suffix::SuffixFoldClaims<'a, E, P, F, D>,
+    eor_polys: &[&P],
+    eor_opening_batch: &VerifierOpeningBatch<'_, E>,
+    transcript: &mut T,
+    non_eor_protocol_point: Vec<E>,
+    validate_non_eor: impl FnOnce() -> Result<(), AkitaError>,
+    level_params: &LevelParams,
+    alpha_bits: usize,
+    basis: BasisMode,
+    block_order: BlockOrder,
+    m_row_layout: MRowLayout,
+    terminal_tail_t_vectors: Option<usize>,
+) -> Result<PreparedFold<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + MulBaseUnreduced<F>
+        + AkitaSerialize,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
+    F: RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    P: RootProvePoly<F, D>,
+    TS: TensorBackendFor<F, P, E, D>,
+    C: ComputeBackendSetup<F>,
+    O: DigitRowsComputeBackend<F>
+        + OpeningProveBackendFor<F, P, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+    R: DigitRowsComputeBackend<F>,
+{
+    let opening_batch = fold_claims.to_opening_shape::<F>()?;
+    let fold_polys = fold_claims.flat_polys();
+    let tensor = stack.tensor();
+    let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
+        let proved = prove_extension_opening_reduction::<F, E, T, P, TS, D>(
+            tensor.backend(),
+            Some(tensor.prepared()),
+            eor_polys,
+            eor_opening_batch,
+            true,
+            transcript,
+            "recursive",
+        )?;
+        (
+            proved.protocol_point,
+            Some(proved.row_coefficients),
+            Some(proved.reduction),
+        )
+    } else {
+        validate_non_eor()?;
+        (non_eor_protocol_point, Some(vec![E::one()]), None)
+    };
+
+    let fold_refs = fold_polys.to_vec();
+    finish_suffix_prepared_fold::<F, E, T, P, C, O, TS, R, D>(FinishSuffixFoldArgs {
+        stack,
+        fold_claims,
+        fold_refs: &fold_refs,
+        protocol_point: &protocol_point,
+        reduction,
+        row_coefficients,
+        trace_opening_batch: &opening_batch,
+        level_params,
+        alpha_bits,
+        basis,
+        block_order,
+        transcript,
+        m_row_layout,
+        terminal_tail_t_vectors,
+    })
+}
+
+struct FinishSuffixFoldArgs<'a, 'p, F, E, T, P, C, O, TS, R, const D: usize>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore,
+    C: ComputeBackendSetup<F>,
+    O: ComputeBackendSetup<F>,
+    TS: ComputeBackendSetup<F>,
+    R: ComputeBackendSetup<F>,
+{
+    stack: &'a ProverComputeStack<'a, F, C, O, TS, R>,
+    fold_claims: super::suffix::SuffixFoldClaims<'a, E, P, F, D>,
+    fold_refs: &'a [&'a P],
+    protocol_point: &'a [E],
+    reduction: Option<ExtensionOpeningReduction<E>>,
+    row_coefficients: Option<Vec<E>>,
+    trace_opening_batch: &'a OpeningBatchShape,
+    level_params: &'a LevelParams,
+    alpha_bits: usize,
+    basis: BasisMode,
+    block_order: BlockOrder,
+    transcript: &'p mut T,
+    m_row_layout: MRowLayout,
+    terminal_tail_t_vectors: Option<usize>,
+}
+
+fn finish_suffix_prepared_fold<'a, 'p, F, E, T, P, C, O, TS, R, const D: usize>(
+    args: FinishSuffixFoldArgs<'a, 'p, F, E, T, P, C, O, TS, R, D>,
+) -> Result<PreparedFold<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + MulBaseUnreduced<F>
+        + AkitaSerialize,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
+    P: RootOpeningSource<F, D>,
+    O: DigitRowsComputeBackend<F> + OpeningProveBackendFor<F, P, D>,
+    R: DigitRowsComputeBackend<F>,
+    C: ComputeBackendSetup<F>,
+    TS: ComputeBackendSetup<F>,
+{
+    let FinishSuffixFoldArgs {
+        stack,
+        fold_claims,
+        fold_refs,
+        protocol_point,
+        reduction,
+        row_coefficients,
+        trace_opening_batch,
+        level_params,
+        alpha_bits,
+        basis,
+        block_order,
+        transcript,
+        m_row_layout,
+        terminal_tail_t_vectors,
+    } = args;
+    let opening = stack.opening();
+    let prepared_point = prepare_opening_point::<F, E, D>(
+        protocol_point,
+        basis,
+        level_params,
+        alpha_bits,
+        block_order,
+    )?;
+    let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_point(
+        opening.backend(),
+        Some(opening.prepared()),
+        fold_refs,
+        &prepared_point,
+        level_params.block_len,
+    )?;
+    for pt in &prepared_point.padded_point {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
+        &reduction,
+        &folded_rings,
+        &prepared_point,
+        protocol_point,
+        alpha_bits,
+        basis,
+        trace_opening_batch,
+        row_coefficients,
+        transcript,
+    )?;
+    let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
+    let SuffixFoldClaims {
+        commitment, hint, ..
+    } = fold_claims;
+    let (instance, witness, commitment) = RingRelationProver::new_suffix(
+        opening,
+        stack.ring_switch(),
+        prepared_point.ring_opening_point.clone(),
+        prepared_point.ring_multiplier_point.clone(),
+        commitment,
+        hint,
+        fold_refs,
+        e_folded_by_claim,
+        level_params.clone(),
+        transcript,
+        row_coefficient_rings,
+        trace_opening_batch.clone(),
+        m_row_layout,
+        terminal_tail_t_vectors,
+    )?;
+    let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
+    // Suffix preparation always uses `pad_base_evals = true` (see `prepare_suffix_fold_inner`).
+    let row_coefficients = None;
+    let trace_claim_scales = None;
+    Ok(PreparedFold {
+        commitment,
+        instance,
+        witness,
+        extension_opening_reduction,
+        trace_eval_target: trace_target.trace_eval_target,
+        trace_scale: trace_target.trace_scale,
+        trace_prepared_point: Some(prepared_point),
+        trace_claim_scales,
+        row_coefficients,
+    })
+}
+
+/// Runtime ring-dispatch wrapper for one suffix fold level (prepare + prove).
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prove_suffix_fold_at_ring_d<'stack, Cfg, T, C, O, TS, R>(
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixRegistry<Cfg::Field>,
+    stack: &'stack ProverComputeStack<'stack, Cfg::Field, C, O, TS, R>,
+    transcript: &mut T,
+    level: usize,
+    level_d: usize,
+    current_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
+    level_params: &LevelParams,
+    scheduled: &ExecutionSchedule,
+    m_row_layout: MRowLayout,
+    tail_t_vectors: Option<usize>,
+    setup_contribution_mode: SetupContributionMode,
+    is_terminal_level: bool,
+    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+) -> Result<FoldProveOutput<Cfg::Field, Cfg::ExtField>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>,
+    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    C: CommitmentComputeBackend<Cfg::Field> + ComputeBackendSetup<Cfg::Field> + 'stack,
+    O: SuffixOpeningProveBackend<Cfg::Field>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    TS: SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    R: SuffixRingSwitchProveBackend<Cfg::Field>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+{
+    use akita_types::dispatch_ring_dim_result;
+
+    dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+        let prepared_fold = super::suffix::prepare_suffix::<
+            Cfg::Field,
+            Cfg::ExtField,
+            T,
+            C,
+            O,
+            TS,
+            R,
+            { D_LEVEL },
+        >(
+            stack,
+            transcript,
+            current_state,
+            level,
+            level_params,
+            m_row_layout,
+            tail_t_vectors,
+        )?;
+        prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
+            expanded,
+            prefix_slots,
+            stack,
+            transcript,
+            level,
+            scheduled,
+            prepared_fold,
+            setup_contribution_mode,
+            is_terminal_level,
+            terminal_direct_witness_shape,
+        )
+    })
 }

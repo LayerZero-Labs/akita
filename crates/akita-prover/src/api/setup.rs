@@ -30,6 +30,22 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         self.expanded.seed().gen_ring_dim
     }
 
+    /// Reject use of this setup with a mismatched compile-time ring degree.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `D` does not match [`Self::gen_ring_dim`].
+    #[inline]
+    pub fn ensure_compile_time_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.gen_ring_dim() != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "setup gen_ring_dim={} does not match scheme ring degree D={D}",
+                self.gen_ring_dim()
+            )));
+        }
+        Ok(())
+    }
+
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// # Errors
@@ -177,11 +193,23 @@ mod tests {
     }
 
     #[test]
+    fn ensure_compile_time_ring_dim_rejects_mismatch() {
+        let setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            32,
+            8,
+            1,
+            SetupMatrixEnvelope { max_setup_len: 1 },
+        )
+        .expect("generate setup");
+        setup.ensure_compile_time_ring_dim::<32>().expect("match");
+        assert!(setup.ensure_compile_time_ring_dim::<64>().is_err());
+    }
+
+    #[test]
     fn prover_setup_check_validates_prefix_slots() {
-        use akita_algebra::CyclotomicRing;
         use akita_types::{
-            AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, SetupPrefixSlot,
-            SetupPrefixSlotAny, SetupPrefixSlotId,
+            AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks, FlatRingVec,
+            SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
@@ -191,13 +219,13 @@ mod tests {
             SetupMatrixEnvelope { max_setup_len: 1 },
         )
         .expect("generate setup");
-        let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
+        let decomposed = FlatDigitBlocks::from_blocks::<32>(vec![Vec::new()]);
         let recomposed = vec![Vec::new()];
-        let hint =
+        let hint: AkitaCommitmentHint<Prime128Offset275, 32> =
             AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
         setup
             .prefix_slots
-            .insert(SetupPrefixSlotAny::D32(SetupPrefixSlot {
+            .insert(SetupPrefixSlot {
                 id: SetupPrefixSlotId {
                     setup_seed_digest: [1u8; 32],
                     d_setup: 32,
@@ -207,11 +235,11 @@ mod tests {
                 },
                 natural_len: 1,
                 padded_len: 3,
-                commitment: RingCommitment {
-                    u: vec![CyclotomicRing::zero()],
+                commitment: SetupPrefixPublicCommitment {
+                    rows: vec![FlatRingVec::from_coeffs(vec![Prime128Offset275::zero()])],
                 },
-                hint,
-            }))
+                hint: ErasedCommitmentHint::from_typed::<32>(hint),
+            })
             .expect("insert malformed slot");
 
         let err = setup

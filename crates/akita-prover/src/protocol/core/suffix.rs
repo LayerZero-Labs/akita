@@ -2,14 +2,18 @@ use super::*;
 use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, SuffixOpeningProveBackend,
-    SuffixRingSwitchProveBackend, SuffixTensorProveBackend, TensorBackendFor,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootPolyShape,
+    SuffixOpeningProveBackend, SuffixRingSwitchProveBackend, SuffixTensorProveBackend,
+    TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::schedule_terminal_direct_witness_shape;
-use akita_types::terminal_golomb_grind_tail_t_vectors;
+use akita_types::{
+    padded_scalar_batch_num_vars, schedule_terminal_direct_witness_shape,
+    terminal_golomb_grind_tail_t_vectors, validate_scalar_point_matches_poly_arity,
+    ErasedCommitmentHint, OpeningGroupShape, OpeningPoints, PointVariableSelection,
+};
 
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
@@ -19,8 +23,8 @@ pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
     pub logical_w: Option<RecursiveWitnessFlat>,
     /// Current suffix witness commitment.
     pub commitment: FlatRingVec<F>,
-    /// D-erased suffix commitment hint cache.
-    pub hint: RecursiveCommitmentHintCache<F>,
+    /// D-erased suffix commitment hint.
+    pub hint: ErasedCommitmentHint<F>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next suffix opening point.
@@ -34,6 +38,86 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
         self.logical_w.as_ref().unwrap_or(&self.w)
+    }
+}
+
+/// Single-claim suffix fold input: flat commitment rows plus one erased hint.
+///
+/// Suffix levels store commitment as [`FlatRingVec`] in [`SuffixProverState`].
+/// This type threads that representation into fold preparation without placing
+/// rows in [`crate::ProverOpeningBatch`].
+#[derive(Debug, Clone)]
+pub(in crate::protocol::core) struct SuffixFoldClaims<
+    'a,
+    PointF: Clone,
+    P,
+    F: FieldCore,
+    const D: usize,
+> {
+    pub(in crate::protocol::core) point: OpeningPoints<'a, PointF>,
+    pub(in crate::protocol::core) point_vars: PointVariableSelection,
+    pub(in crate::protocol::core) polynomials: &'a [&'a P],
+    pub(in crate::protocol::core) commitment: FlatRingVec<F>,
+    pub(in crate::protocol::core) hint: ErasedCommitmentHint<F>,
+}
+
+impl<'a, PointF: Clone, P, F: FieldCore, const D: usize> SuffixFoldClaims<'a, PointF, P, F, D> {
+    /// Build the single-claim batch used by recursive suffix fold levels.
+    pub(in crate::protocol::core) fn new(
+        opening_point: &[PointF],
+        recursive_num_vars: usize,
+        polynomials: &'a [&'a P],
+        commitment: FlatRingVec<F>,
+        hint: ErasedCommitmentHint<F>,
+    ) -> Result<Self, AkitaError>
+    where
+        PointF: FieldCore,
+    {
+        let opening_batch = OpeningBatchShape::new(recursive_num_vars, 1)?;
+        let point_vars = opening_batch
+            .groups()
+            .first()
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("recursive opening batch requires one group".to_string())
+            })?
+            .point_vars
+            .clone();
+        let mut padded_point = opening_point.to_vec();
+        padded_point.resize(recursive_num_vars, PointF::zero());
+        Ok(Self {
+            point: padded_point.into(),
+            point_vars,
+            polynomials,
+            commitment,
+            hint,
+        })
+    }
+
+    pub(in crate::protocol::core) fn point(&self) -> &[PointF] {
+        self.point.as_ref()
+    }
+
+    pub(in crate::protocol::core) fn flat_polys(&self) -> Vec<&'a P> {
+        self.polynomials.to_vec()
+    }
+
+    pub(in crate::protocol::core) fn to_opening_shape<PolyF>(
+        &self,
+    ) -> Result<OpeningBatchShape, AkitaError>
+    where
+        PolyF: FieldCore,
+        P: RootPolyShape<PolyF, D>,
+    {
+        let padded_num_vars =
+            padded_scalar_batch_num_vars(self.polynomials.iter().map(|poly| poly.num_vars()))?;
+        validate_scalar_point_matches_poly_arity(self.point().len(), padded_num_vars)?;
+        OpeningBatchShape::from_groups(
+            padded_num_vars,
+            vec![OpeningGroupShape {
+                point_vars: self.point_vars.clone(),
+                num_polynomials: self.polynomials.len(),
+            }],
+        )
     }
 }
 
@@ -144,43 +228,30 @@ where
         let out = {
             let stack = stacks.prove_stack_at_level(level);
             stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), level_d)?;
-            dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                let prepared_fold =
-                    prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
-                        stack,
-                        transcript,
-                        current_state,
-                        level,
-                        level_params,
-                        m_row_layout,
-                        tail_t_vectors,
-                    )
-                    .map_err(|err| {
-                        AkitaError::InvalidInput(format!(
-                            "suffix prepare level {level} D{D_LEVEL} failed: {err:?}"
-                        ))
-                    })?;
-                prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
-                    expanded,
-                    prefix_slots,
-                    stack,
-                    transcript,
-                    level,
-                    &scheduled,
-                    prepared_fold,
-                    setup_contribution_mode,
-                    is_terminal_level,
-                    if is_terminal_level {
-                        Some(terminal_direct_witness_shape)
-                    } else {
-                        None
-                    },
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!(
-                        "suffix prove_fold level {level} D{D_LEVEL} failed: {err:?}"
-                    ))
-                })
+            super::fold::prove_suffix_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
+                expanded,
+                prefix_slots,
+                stack,
+                transcript,
+                level,
+                level_d,
+                current_state,
+                level_params,
+                &scheduled,
+                m_row_layout,
+                tail_t_vectors,
+                setup_contribution_mode,
+                is_terminal_level,
+                if is_terminal_level {
+                    Some(terminal_direct_witness_shape)
+                } else {
+                    None
+                },
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!(
+                    "suffix fold level {level} D{level_d} failed: {err:?}"
+                ))
             })?
         };
         if is_terminal_level {
@@ -223,7 +294,7 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
+pub(in crate::protocol::core) fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     current_state: SuffixProverState<F, L>,
@@ -231,7 +302,7 @@ fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-) -> Result<PreparedFold<F, L, D>, AkitaError>
+) -> Result<PreparedFold<F, L>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -267,7 +338,6 @@ where
         ..
     } = current_state;
     let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
-    let typed_hint = hint.to_typed::<D>()?;
     let opening_point = &sumcheck_challenges;
 
     commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
@@ -279,26 +349,19 @@ where
     let eor_opening_batch =
         VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let commitment_u = commitment.as_ring_slice::<D>()?;
-    let suffix_commitment = (
-        RingCommitment {
-            u: commitment_u.to_vec(),
-        },
-        typed_hint,
-    );
-    let fold_claims = ProverOpeningBatch::new_suffix(
+    let fold_claims = SuffixFoldClaims::new(
         opening_point,
         recursive_num_vars,
         &fold_polys,
-        suffix_commitment,
+        commitment,
+        hint,
     )?;
-    prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
+    super::fold::prepare_suffix_fold_inner::<F, L, T, _, C, O, TS, R, D>(
         stack,
         needs_extension_reduction,
         fold_claims,
         &logical_polys[..],
         &eor_opening_batch,
-        true,
         transcript,
         opening_point.to_vec(),
         || Ok(()),
@@ -317,14 +380,34 @@ mod tests {
     use crate::protocol::core::fold::compute_trace_target;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
-    use akita_types::RingOpeningPoint;
+    use akita_types::{
+        AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks, RingOpeningPoint,
+    };
 
     type TestF = Fp32<251>;
     const D: usize = 4;
 
     #[test]
+    fn suffix_fold_claims_keeps_flat_commitment_without_opening_batch() {
+        let commitment = FlatRingVec::from_coeffs(vec![TestF::one(); D]);
+        let polys: &[&CyclotomicRing<TestF, D>] = &[];
+        let hint =
+            ErasedCommitmentHint::from_typed::<D>(AkitaCommitmentHint::<TestF, D>::singleton(
+                FlatDigitBlocks::zeroed::<D>(vec![1]).expect("digit blocks"),
+            ));
+        let claims = SuffixFoldClaims::<TestF, CyclotomicRing<TestF, D>, TestF, D> {
+            point: vec![TestF::one()].into(),
+            point_vars: PointVariableSelection::prefix(1, 1).expect("point vars"),
+            polynomials: polys,
+            commitment: commitment.clone(),
+            hint,
+        };
+        assert_eq!(claims.commitment, commitment);
+    }
+
+    #[test]
     fn non_zk_eor_mismatch_is_rejected() {
-        let prepared_point: PreparedOpeningPoint<TestF, TestF, D> = PreparedOpeningPoint {
+        let prepared_point: PreparedOpeningPoint<TestF, TestF> = PreparedOpeningPoint {
             padded_point: Vec::new(),
             ring_opening_point: RingOpeningPoint {
                 a: vec![TestF::one()],
@@ -334,7 +417,7 @@ mod tests {
                 a: vec![TestF::one()],
                 b: vec![TestF::one()],
             }),
-            packed_inner_point: CyclotomicRing::<TestF, D>::zero(),
+            packed_inner_point: RingBuf::from_single(&CyclotomicRing::<TestF, D>::zero()),
         };
         let folded_rings = [CyclotomicRing::<TestF, D>::zero()];
         let reduction = Some(ExtensionOpeningReduction {

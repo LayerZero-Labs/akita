@@ -43,7 +43,7 @@ pub use direct_witness::{
     segment_typed_witness_shape, terminal_direct_witness_shape,
     terminal_direct_witness_shape_for_key, CleartextWitnessProof, CleartextWitnessShape,
 };
-pub use hints::AkitaCommitmentHint;
+pub use hints::{AkitaCommitmentHint, ErasedCommitmentHint};
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
@@ -70,8 +70,7 @@ pub use setup::{
 pub use setup_prefix::{
     padded_setup_prefix_len, select_setup_prefix_slot, setup_prefix_level_params,
     setup_prefix_slot_id, SetupPrefixPublicCommitment, SetupPrefixRegistry, SetupPrefixSlot,
-    SetupPrefixSlotAny, SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
-    SETUP_OFFLOAD_D_SETUP,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,

@@ -241,7 +241,7 @@ mod tests {
     fn nonconstant_ring_multiplier_point<F, const D: usize>(
         block_len: usize,
         num_blocks: usize,
-    ) -> RingMultiplierOpeningPoint<F, D>
+    ) -> RingMultiplierOpeningPoint<F>
     where
         F: FieldCore + FromPrimitiveInt,
     {
@@ -255,7 +255,7 @@ mod tests {
                     }
                 }))
             })
-            .collect();
+            .collect::<Vec<CyclotomicRing<F, D>>>();
         let b = (0..num_blocks)
             .map(|idx| {
                 CyclotomicRing::from_coefficients(from_fn(|k| {
@@ -266,8 +266,8 @@ mod tests {
                     }
                 }))
             })
-            .collect();
-        RingMultiplierOpeningPoint::from_ring(a, b)
+            .collect::<Vec<CyclotomicRing<F, D>>>();
+        RingMultiplierOpeningPoint::from_ring::<D>(&a, &b)
     }
 
     #[test]
@@ -324,10 +324,10 @@ mod tests {
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars: ring_multiplier_point
-                    .b_rings()
+                    .b_rings::<D>()
                     .expect("nonconstant test point has ring b weights"),
                 fold_scalars: ring_multiplier_point
-                    .a_rings()
+                    .a_rings::<D>()
                     .expect("nonconstant test point has ring a weights"),
                 block_len: lp.block_len,
             },
@@ -345,7 +345,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness) =
+        let (instance, witness, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -482,7 +482,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness) =
+        let (instance, witness, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -655,7 +655,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness) =
+        let (instance, witness, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -807,7 +807,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness) =
+        let (instance, witness, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,

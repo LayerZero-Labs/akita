@@ -97,11 +97,11 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usi
 
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
 #[derive(Debug, Clone)]
-pub struct RingRelationInstance<F: FieldCore, const D: usize> {
+pub struct RingRelationInstance<F: FieldCore> {
     m_row_layout: MRowLayout,
     pub challenges: Challenges,
     opening_point: RingOpeningPoint<F>,
-    ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: RingMultiplierOpeningPoint<F>,
     opening_batch: OpeningBatchShape,
     gamma: Vec<F>,
     row_coefficient_rings: RingBuf<F>,
@@ -109,16 +109,16 @@ pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     pub v: RingBuf<F>,
 }
 
-impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
+impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     /// Construct a validated ring-relation statement from already-sampled inputs.
     ///
     /// Does not sample from the transcript; callers must absorb/sample before calling.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new<const D: usize>(
         m_row_layout: MRowLayout,
         challenges: Challenges,
         opening_point: RingOpeningPoint<F>,
-        ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
         opening_batch: OpeningBatchShape,
         gamma: Vec<F>,
         row_coefficient_rings: RingBuf<F>,
@@ -153,18 +153,18 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
 
     /// Construct a validated ring-relation statement from typed ring-element vectors.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_from_rings(
+    pub fn new_from_rings<const D: usize>(
         m_row_layout: MRowLayout,
         challenges: Challenges,
         opening_point: RingOpeningPoint<F>,
-        ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
         opening_batch: OpeningBatchShape,
         gamma: Vec<F>,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         y: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
     ) -> Result<Self, AkitaError> {
-        Self::new(
+        Self::new::<D>(
             m_row_layout,
             challenges,
             opening_point,
@@ -189,7 +189,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         &self.opening_point
     }
 
-    pub fn ring_multiplier_point(&self) -> &RingMultiplierOpeningPoint<F, D> {
+    pub fn ring_multiplier_point(&self) -> &RingMultiplierOpeningPoint<F> {
         &self.ring_multiplier_point
     }
 
@@ -197,25 +197,30 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         &self.gamma
     }
 
-    pub fn row_coefficient_rings(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+    pub fn row_coefficient_rings<const D: usize>(
+        &self,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         self.row_coefficient_rings.as_ring_slice::<D>()
     }
 
-    pub fn y(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+    pub fn y<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         self.y.as_ring_slice::<D>()
     }
 
-    pub fn v_as_ring_slice(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+    pub fn v_as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         self.v.as_ring_slice::<D>()
     }
 
     /// Validate layout-dependent D-row payload shape.
-    pub fn check_v_shape_for_level(&self, lp: &LevelParams) -> Result<(), AkitaError> {
+    pub fn check_v_shape_for_level<const D: usize>(
+        &self,
+        lp: &LevelParams,
+    ) -> Result<(), AkitaError> {
         let expected = match self.m_row_layout {
             MRowLayout::WithDBlock => lp.d_key.row_len(),
             MRowLayout::WithoutDBlock => 0,
         };
-        if self.v_as_ring_slice()?.len() != expected {
+        if self.v_as_ring_slice::<D>()?.len() != expected {
             return Err(AkitaError::InvalidInput(
                 "ring relation v rows do not match M-row layout".to_string(),
             ));
@@ -224,7 +229,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
     }
 
     /// Build base-field `gamma` and embedded row rings from transcript-sampled coefficients.
-    pub fn gamma_and_row_rings_from_coefficients<L>(
+    pub fn gamma_and_row_rings_from_coefficients<const D: usize, L>(
         row_coefficients: &[L],
     ) -> Result<(Vec<F>, RingBuf<F>), AkitaError>
     where
@@ -243,7 +248,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
     }
 
     /// Witness-column segment layout shared by prover and verifier ring-switch paths.
-    pub fn segment_layout(
+    pub fn segment_layout<const D: usize>(
         &self,
         lp: &LevelParams,
     ) -> Result<RingRelationSegmentLayout, AkitaError> {
@@ -335,7 +340,7 @@ mod tests {
         let opening_batch = OpeningBatchShape::new(2, 1).expect("valid opening batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let err = RingRelationInstance::<F, D>::new_from_rings(
+        let err = RingRelationInstance::<F>::new_from_rings::<D>(
             MRowLayout::WithoutDBlock,
             test_challenges(&lp, opening_batch.num_polynomials()),
             opening_point,
@@ -360,7 +365,7 @@ mod tests {
         let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let instance = RingRelationInstance::<F, D>::new_from_rings(
+        let instance = RingRelationInstance::<F>::new_from_rings::<D>(
             MRowLayout::WithDBlock,
             test_challenges(&lp, opening_batch.num_polynomials()),
             opening_point,
@@ -373,7 +378,7 @@ mod tests {
         )
         .expect("same-axis relation");
 
-        let layout = instance.segment_layout(&lp).expect("layout");
+        let layout = instance.segment_layout::<D>(&lp).expect("layout");
         let lens = ring_relation_segment_lengths::<F, D>(
             &lp,
             RingRelationOpeningCounts {
@@ -391,7 +396,7 @@ mod tests {
             lens.z_len + lens.e_len + lens.t_len + lens.u_len
         );
         instance
-            .check_v_shape_for_level(&lp)
+            .check_v_shape_for_level::<D>(&lp)
             .expect("v rows match layout");
     }
 }

@@ -410,7 +410,7 @@ mod tests {
             num_blocks_per_claim: lp.num_blocks,
             num_claims,
         };
-        let instance = RingRelationInstance::<F, D>::new_from_rings(
+        let instance = RingRelationInstance::<F>::new_from_rings::<D>(
             m_row_layout,
             challenges,
             opening_point,
@@ -421,7 +421,7 @@ mod tests {
             vec![CyclotomicRing::<F, D>::zero(); num_claims],
             Vec::new(),
         )?;
-        instance.segment_layout(lp)
+        instance.segment_layout::<D>(lp)
     }
 
     fn fixture() -> StructuredFixture {

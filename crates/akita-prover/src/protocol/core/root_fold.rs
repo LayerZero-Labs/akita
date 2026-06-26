@@ -46,7 +46,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
     basis: BasisMode,
-) -> Result<PreparedFold<F, E, D>, AkitaError>
+) -> Result<PreparedFold<F, E>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
