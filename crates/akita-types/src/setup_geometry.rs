@@ -326,6 +326,32 @@ pub fn active_setup_field_len(
         .ok_or_else(|| AkitaError::InvalidSetup("active setup field length overflow".into()))
 }
 
+/// Active inner (`d_a`) setup ring rows for one fold, fail-closed on envelope overflow.
+///
+/// Used by stage-3 setup-product sumcheck and prefix offload to agree on the
+/// challenge-free footprint before weights are materialized.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the shared matrix
+/// prefix available at `fold_ring_d`.
+pub fn setup_active_ring_elems_for_fold<F: FieldCore>(
+    expanded: &AkitaExpandedSetup<F>,
+    relation_shape: &SetupRelationShape,
+    fold_ring_d: usize,
+) -> Result<usize, AkitaError> {
+    let required = setup_required_for_shape(relation_shape)?;
+    let setup_len = expanded
+        .shared_matrix()
+        .total_ring_elements_at_dyn(fold_ring_d)?;
+    if required > setup_len {
+        return Err(AkitaError::InvalidSetup(
+            "shared matrix is too small for selected setup product".into(),
+        ));
+    }
+    Ok(required)
+}
+
 /// Active inner (`d_a`) setup ring rows at `level`, fail-closed on envelope overflow.
 ///
 /// # Errors
@@ -339,17 +365,7 @@ pub fn setup_active_ring_elems_at<F: FieldCore>(
     relation_shape: &SetupRelationShape,
 ) -> Result<usize, AkitaError> {
     let exec = schedule.get_execution_schedule(level)?;
-    let ring_d = exec.params.ring_dimension;
-    let required = setup_required_for_shape(relation_shape)?;
-    let setup_len = expanded
-        .shared_matrix()
-        .total_ring_elements_at_dyn(ring_d)?;
-    if required > setup_len {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix is too small for selected setup product".into(),
-        ));
-    }
-    Ok(required)
+    setup_active_ring_elems_for_fold(expanded, relation_shape, exec.params.ring_dimension)
 }
 
 #[inline]

@@ -64,3 +64,20 @@ fn setup_contribution_matches_recursive_with_pow2_z_offset_carry() {
     SetupContributionFixture::from_shape(&SetupContributionShape::pow2_z_offset_carry())
         .assert_direct_matches_recursive();
 }
+
+#[test]
+fn stage3_geometry_matches_setup_contribution_plan_on_fixtures() {
+    for shape in [
+        SetupContributionShape::root_single_point(),
+        SetupContributionShape::recursive_multigroup(),
+        SetupContributionShape::tiered_root_single_point(),
+        SetupContributionShape::terminal_relation_only(),
+        SetupContributionShape::dense_non_pow2_z(),
+        SetupContributionShape::batched_root(),
+        SetupContributionShape::e_t_offset_carry(),
+        SetupContributionShape::pow2_z_offset_carry(),
+    ] {
+        SetupContributionFixture::from_shape(&shape)
+            .assert_geometry_matches_setup_contribution_plan();
+    }
+}
