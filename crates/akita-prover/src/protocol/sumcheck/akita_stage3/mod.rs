@@ -17,10 +17,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, setup_active_ring_elems_for_fold,
-    AkitaExpandedSetup, FpExtEncoding, LevelParams, RingRelationInstance, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupPrefixRegistry, SetupRelationShape, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot, setup_required_for_shape,
+    stage3_offload_natural_field_len, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SetupPrefixRegistry,
+    SetupRelationShape, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -254,9 +254,7 @@ where
     let (required, mut bar_omega, alpha_pows) =
         prepare_setup_sumcheck_terms::<F, E, D>(expanded, lp, relation, tau1, alpha, x_challenges)?;
 
-    let natural_field_len = required.checked_mul(SETUP_OFFLOAD_D_SETUP).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
-    })?;
+    let natural_field_len = stage3_offload_natural_field_len(required, SETUP_OFFLOAD_D_SETUP)?;
     let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
     let setup_prefix_selection = select_setup_prefix_slot(
         expanded.seed(),
@@ -373,7 +371,8 @@ where
     let alpha_pows = scalar_powers(alpha, D);
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
     let relation_shape = SetupRelationShape::from(&inputs);
-    let required = setup_active_ring_elems_for_fold(expanded, &relation_shape, D)?;
+    let required = setup_required_for_shape(&relation_shape)?;
+    ensure_setup_envelope(expanded, required, D)?;
     let num_t_vectors = relation.opening_batch().num_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
         lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
@@ -393,11 +392,7 @@ where
         None,
         None,
     )?;
-    if plan.required() != required {
-        return Err(AkitaError::InvalidSetup(
-            "setup contribution plan disagrees with shared setup geometry".to_string(),
-        ));
-    }
+    let required = plan.required();
     let bar_omega = plan.materialize_bar_omega();
     Ok((required, bar_omega, alpha_pows.to_vec()))
 }

@@ -326,10 +326,50 @@ pub fn active_setup_field_len(
         .ok_or_else(|| AkitaError::InvalidSetup("active setup field length overflow".into()))
 }
 
+/// Fail-closed envelope guard: `required` inner (`d_a`) rows must fit the shared
+/// matrix prefix at `fold_ring_d`.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the envelope.
+pub fn ensure_setup_envelope<F: FieldCore>(
+    expanded: &AkitaExpandedSetup<F>,
+    required: usize,
+    fold_ring_d: usize,
+) -> Result<(), AkitaError> {
+    let setup_len = expanded
+        .shared_matrix()
+        .total_ring_elements_at_dyn(fold_ring_d)?;
+    if required > setup_len {
+        return Err(AkitaError::InvalidSetup(
+            "shared matrix is too small for selected setup product".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Flat coefficient count for stage-3 prefix offload (`natural_field_len`).
+///
+/// Uses `d_setup` (setup-prefix slot ring dimension, today [`crate::SETUP_OFFLOAD_D_SETUP`]),
+/// not fold `ring_d`. Prefix slots are minted at `d_setup`; see `specs/setup-prefix-ladder.md`.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] on overflow.
+pub fn stage3_offload_natural_field_len(
+    required: usize,
+    d_setup: usize,
+) -> Result<usize, AkitaError> {
+    required.checked_mul(d_setup).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup product natural field length overflow".into())
+    })
+}
+
 /// Active inner (`d_a`) setup ring rows for one fold, fail-closed on envelope overflow.
 ///
-/// Used by stage-3 setup-product sumcheck and prefix offload to agree on the
-/// challenge-free footprint before weights are materialized.
+/// Used by [`RingDimPlan::context_at`](crate::RingDimPlan::context_at) and schedule
+/// validation. Stage-3 prove/verify should derive `required` from
+/// [`SetupContributionPlan::prepare`] and call [`ensure_setup_envelope`] separately.
 ///
 /// # Errors
 ///
@@ -341,14 +381,7 @@ pub fn setup_active_ring_elems_for_fold<F: FieldCore>(
     fold_ring_d: usize,
 ) -> Result<usize, AkitaError> {
     let required = setup_required_for_shape(relation_shape)?;
-    let setup_len = expanded
-        .shared_matrix()
-        .total_ring_elements_at_dyn(fold_ring_d)?;
-    if required > setup_len {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix is too small for selected setup product".into(),
-        ));
-    }
+    ensure_setup_envelope(expanded, required, fold_ring_d)?;
     Ok(required)
 }
 
@@ -447,25 +480,158 @@ mod tests {
 
     #[test]
     fn setup_required_for_shape_is_challenge_free() {
-        let lp = LevelParams::params_only(
-            crate::SisModulusFamily::Q128,
-            64,
-            3,
-            1,
-            1,
-            1,
-            akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
-        )
-        .with_decomp(2, 1, 3, 2, 64)
-        .expect("level params");
-        let shape = SetupRelationShape::from_level_params(&lp, 1, MRowLayout::WithDBlock, 2)
-            .expect("shape");
+        let block_len = 12;
+        let depth_commit = 3;
+        let depth_fold = 2;
+        let z_range = block_len * depth_commit;
+        let shape = SetupRelationShape {
+            num_t_vectors: 2,
+            num_blocks: 4,
+            num_claims: 1,
+            depth_open: 16,
+            depth_commit,
+            depth_fold,
+            block_len,
+            inner_width: z_range,
+            n_a: 1,
+            n_d: 0,
+            m_row_layout: MRowLayout::WithoutDBlock,
+            n_b: 0,
+            num_segments: 1,
+            rows: 2,
+            num_polys_per_segment: vec![2],
+            num_public_rows: 0,
+            tier_split: 1,
+            n_f: 0,
+        };
         let required = setup_required_for_shape(&shape).expect("required");
         assert!(required > 0);
-        // Changing eq_tau1 length does not affect geometry (no eq slice used).
-        let _ = EqPolynomial::evals(&[test_scalar(1)]).expect("eq");
+
+        let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
+        let mut inputs_a = SetupContributionPlanInputs {
+            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            num_t_vectors: 2,
+            num_blocks: 4,
+            num_claims: 1,
+            depth_open: 16,
+            depth_commit,
+            depth_fold,
+            block_len,
+            inner_width: z_range,
+            n_a: 1,
+            n_d: 0,
+            m_row_layout: MRowLayout::WithoutDBlock,
+            n_b: 0,
+            num_segments: 1,
+            rows: 2,
+            num_polys_per_segment: vec![2],
+            num_public_rows: 0,
+            tier_split: 1,
+            n_f: 0,
+        };
+        let plan_a = SetupContributionPlan::prepare::<F>(
+            &inputs_a,
+            &[test_scalar(99), test_scalar(100)],
+            None,
+            None,
+            &fold_gadget,
+            0,
+            64,
+            0,
+            0,
+            None,
+            None,
+        )
+        .expect("plan a");
+        inputs_a.eq_tau1 = vec![test_scalar(1); 8];
+        let plan_b = SetupContributionPlan::prepare::<F>(
+            &inputs_a,
+            &[test_scalar(77), test_scalar(88)],
+            None,
+            None,
+            &fold_gadget,
+            0,
+            64,
+            0,
+            0,
+            None,
+            None,
+        )
+        .expect("plan b");
+        assert_eq!(required, plan_a.required());
+        assert_eq!(plan_a.required(), plan_b.required());
+    }
+
+    #[test]
+    fn ensure_setup_envelope_rejects_undersized_matrix() {
+        let shape = SetupRelationShape {
+            num_t_vectors: 1,
+            num_blocks: 4,
+            num_claims: 1,
+            depth_open: 8,
+            depth_commit: 2,
+            depth_fold: 3,
+            block_len: 16,
+            inner_width: 32,
+            n_a: 2,
+            n_d: 1,
+            m_row_layout: MRowLayout::WithDBlock,
+            n_b: 2,
+            num_segments: 1,
+            rows: 8,
+            num_polys_per_segment: vec![1],
+            num_public_rows: 1,
+            tier_split: 1,
+            n_f: 0,
+        };
+        let required = setup_required_for_shape(&shape).expect("required");
+        let seed = crate::AkitaSetupSeed {
+            max_num_vars: 32,
+            max_num_batched_polys: 1,
+            gen_ring_dim: 32,
+            max_setup_len: 1,
+            public_matrix_seed: [1u8; 32],
+        };
+        let shared = crate::derive_public_matrix_flat::<F, 32>(1, &seed.public_matrix_seed);
+        let expanded =
+            crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared);
+        let err = ensure_setup_envelope(&expanded, required, 32).expect_err("undersized");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn compute_setup_layout_rejects_non_pow2_num_blocks() {
+        let shape = SetupRelationShape {
+            num_t_vectors: 1,
+            num_blocks: 3,
+            num_claims: 1,
+            depth_open: 8,
+            depth_commit: 2,
+            depth_fold: 3,
+            block_len: 16,
+            inner_width: 32,
+            n_a: 2,
+            n_d: 1,
+            m_row_layout: MRowLayout::WithDBlock,
+            n_b: 2,
+            num_segments: 1,
+            rows: 8,
+            num_polys_per_segment: vec![1],
+            num_public_rows: 0,
+            tier_split: 1,
+            n_f: 0,
+        };
+        let err = compute_setup_layout(&shape).expect_err("non-pow2 blocks");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn stage3_offload_natural_field_len_uses_d_setup() {
+        let required = 128usize;
+        let d_setup = crate::SETUP_OFFLOAD_D_SETUP;
+        assert_eq!(
+            stage3_offload_natural_field_len(required, d_setup).expect("len"),
+            required * d_setup
+        );
     }
 }
