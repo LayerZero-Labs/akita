@@ -1,6 +1,7 @@
 use crate::report::print_layout;
 use crate::workload::{onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
+#[cfg(not(feature = "profile-ci"))]
 use akita_config::tensor_verifier;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
@@ -213,10 +214,12 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d64",
         run: run_profile_onehot_fp128_d64,
     },
+    #[cfg(not(feature = "profile-ci"))]
     ProfileMode {
         name: "dense_fp128_d128",
         run: run_profile_dense_fp128_d128,
     },
+    #[cfg(not(feature = "profile-ci"))]
     ProfileMode {
         name: "onehot_fp128_d128",
         run: run_profile_onehot_fp128_d128,
@@ -224,12 +227,14 @@ const PROFILE_MODES: &[ProfileMode] = &[
     // Direct comparison mode from the tensor-verifier branch. The generated
     // tensor preset is D64-only, so this is intentionally not part of the D32
     // benchmark matrix or `AKITA_MODE=all` sweep.
+    #[cfg(not(feature = "profile-ci"))]
     ProfileMode {
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
     // Tiered second-tier commitment (F). Only tiers with a batch (B > A), so
     // run with `AKITA_NUM_POLYS=16` or more; excluded from the `all` sweep.
+    #[cfg(not(feature = "profile-ci"))]
     ProfileMode {
         name: "onehot_fp128_d64_tiered",
         run: run_profile_onehot_fp128_d64_tiered,
@@ -278,12 +283,16 @@ const PROFILE_MODES: &[ProfileMode] = &[
 
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
+    #[cfg(not(feature = "profile-ci"))]
     "onehot_fp128_d64_tensor",
+    #[cfg(not(feature = "profile-ci"))]
     "onehot_fp128_d64_tiered",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
+    #[cfg(not(feature = "profile-ci"))]
     "dense_fp128_d128",
+    #[cfg(not(feature = "profile-ci"))]
     "onehot_fp128_d128",
     "dense_fp32_d128",
     "onehot_fp32_d128",
@@ -353,6 +362,7 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
     type Cfg = tensor_verifier::fp128::D64OneHotTensor;
     let prime = fp128_prime_label();
@@ -369,6 +379,7 @@ fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tensor", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp128_d64_tiered(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHotTiered;
     let prime = fp128_prime_label();
@@ -396,6 +407,7 @@ fn run_profile_onehot_fp128_d32(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d32", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp128_d128(nv: usize, num_polys: usize) {
     type Cfg = fp128::D128Full;
     assert_singleton_mode("dense_fp128_d128", num_polys);
@@ -409,6 +421,7 @@ fn run_profile_dense_fp128_d128(nv: usize, num_polys: usize) {
     );
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp128_d128(nv: usize, num_polys: usize) {
     type Cfg = fp128::D128OneHot;
     let title = fp128_onehot_title(128, nv, num_polys);
