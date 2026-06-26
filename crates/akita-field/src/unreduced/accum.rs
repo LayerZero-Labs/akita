@@ -10,6 +10,7 @@ use super::*;
 ///
 /// Products are split into two 64-bit limbs stored as u128 slots. The second
 /// limb is zero for `Fp32 × Fp32` products.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fp32ProductAccum(pub [u128; 2]);
 
@@ -87,6 +88,7 @@ impl Neg for Fp32ProductAccum {
 /// Headroom: each single product contributes at most 7 × P² ≈ 2^65 per
 /// slot (slot 0 is the worst case). The u128 capacity of 2^128 allows up
 /// to 2^63 accumulations before overflow.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FpExt4Fp32ProductAccum(pub [u128; 4]);
 
@@ -166,6 +168,7 @@ impl Neg for FpExt4Fp32ProductAccum {
 ///
 /// Each product is ≤ 128 bits, split into two u64 halves stored as u128 slots.
 /// Headroom: 2^64 additions per slot before overflow.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fp64ProductAccum(pub [u128; 2]);
 
@@ -243,6 +246,7 @@ impl Neg for Fp64ProductAccum {
 ///
 /// Headroom: each `Fp64ProductAccum` slot holds u64 halves in u128,
 /// so 2^64 accumulations before overflow.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FpExt2Fp64ProductAccum(pub [u128; 4]);
 
@@ -319,6 +323,7 @@ impl Neg for FpExt2Fp64ProductAccum {
 ///
 /// Each `mul_wide_u64` produces 3 u64 limbs; stored as `[u128; 3]`.
 /// Headroom: 2^64 additions per slot.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fp128MulU64Accum(pub [u128; 3]);
 
@@ -404,6 +409,7 @@ impl Neg for Fp128MulU64Accum {
 ///
 /// Each `mul_wide` produces 4 u64 limbs; stored as `[u128; 4]`.
 /// Headroom: 2^64 additions per slot.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fp128ProductAccum(pub [u128; 4]);
 
@@ -496,6 +502,7 @@ impl Neg for Fp128ProductAccum {
 /// Pair accumulator for extension fields.
 ///
 /// Wraps two base-field accumulators `(c0, c1)` component-wise.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccumPair<A>(pub A, pub A);
 

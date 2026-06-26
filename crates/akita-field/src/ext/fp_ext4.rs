@@ -217,6 +217,11 @@ pub(crate) fn fp_ext4_mul_to_accum_fp32<const P: u32>(
 /// `e_j = zeta^(jm) + zeta^(-jm)` for `m = D / 8` inside a compatible
 /// cyclotomic ring. The scalar arithmetic is independent of the concrete ring
 /// dimension `D`.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
+#[cfg_attr(
+    feature = "jolt-compat",
+    allocative(bound = "F: FieldCore + allocative::Allocative")
+)]
 #[repr(transparent)]
 pub struct FpExt4<F: FieldCore> {
     /// Coefficients in basis `[1, e1, e2, e3]`.
