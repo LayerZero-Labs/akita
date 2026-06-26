@@ -169,6 +169,7 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 /// Type-erased prepared-setup NTT cache over supported protocol ring degrees.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NttSlotCacheAny {
     /// Ring degree 32.
