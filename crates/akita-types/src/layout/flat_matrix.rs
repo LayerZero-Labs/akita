@@ -53,19 +53,30 @@ impl<F: FieldCore> FlatMatrix<F> {
     /// Total number of ring elements when viewed at dimension D.
     #[inline]
     pub fn total_ring_elements_at<const D: usize>(&self) -> Result<usize, AkitaError> {
-        if D == 0 {
+        self.total_ring_elements_at_dyn(D)
+    }
+
+    /// Runtime sibling of [`Self::total_ring_elements_at`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ring_d` is zero, does not divide `gen_ring_dim`, or
+    /// the viewed element count overflows.
+    #[inline]
+    pub fn total_ring_elements_at_dyn(&self, ring_d: usize) -> Result<usize, AkitaError> {
+        if ring_d == 0 {
             return Err(AkitaError::InvalidSetup(
                 "ring dimension must be non-zero".to_string(),
             ));
         }
-        if self.gen_ring_dim == 0 || !self.gen_ring_dim.is_multiple_of(D) {
+        if self.gen_ring_dim == 0 || !self.gen_ring_dim.is_multiple_of(ring_d) {
             return Err(AkitaError::InvalidSetup(format!(
-                "D={D} does not divide setup gen_ring_dim={}",
+                "D={ring_d} does not divide setup gen_ring_dim={}",
                 self.gen_ring_dim
             )));
         }
         self.total_ring_elements()
-            .checked_mul(self.gen_ring_dim / D)
+            .checked_mul(self.gen_ring_dim / ring_d)
             .ok_or_else(|| AkitaError::InvalidSetup("matrix dimension overflow".to_string()))
     }
 

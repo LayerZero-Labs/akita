@@ -15,8 +15,10 @@ pub mod layout;
 pub mod lhl_blinding;
 pub mod proof;
 pub mod proof_size;
+pub mod ring_dim_plan;
 pub mod schedule;
 pub mod setup_contribution;
+pub mod setup_geometry;
 pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
@@ -117,7 +119,14 @@ pub use schedule::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, DirectStep,
     ExecutionSchedule, FoldStep, GroupBatchAkitaScheduleLookupKey, Schedule, Step,
 };
+pub use ring_dim_plan::{
+    CommitmentRingDims, RingDimPlan, RingLevelContext, MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
+};
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
+pub use setup_geometry::{
+    compute_setup_layout, setup_active_ring_elems_at, setup_geometry_at, SetupGeometry,
+    SetupRelationShape,
+};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use tail_golomb_rice_low_bits::{
     cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule, WIRE_RICE_LOW_BITS_DELTA,
