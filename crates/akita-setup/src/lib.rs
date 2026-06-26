@@ -491,8 +491,8 @@ mod tests {
             with_test_cache_dir("prefix-slots", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_types::{
-                    setup_seed_digest, AkitaCommitmentHint, FlatDigitBlocks, RingCommitment,
-                    SetupPrefixSlot, SetupPrefixSlotAny, SetupPrefixSlotId,
+                    setup_seed_digest, AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks,
+                    FlatRingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -514,15 +514,15 @@ mod tests {
                 );
                 setup
                     .prefix_slots
-                    .insert(SetupPrefixSlotAny::D64(SetupPrefixSlot {
+                    .insert(SetupPrefixSlot {
                         id,
                         natural_len: 1,
                         padded_len: TEST_D,
-                        commitment: RingCommitment {
-                            u: vec![CyclotomicRing::zero()],
+                        commitment: SetupPrefixPublicCommitment {
+                            rows: vec![FlatRingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
                         },
-                        hint,
-                    }))
+                        hint: ErasedCommitmentHint::from_typed(hint),
+                    })
                     .unwrap();
                 save_prover_setup::<TestF, Cfg>(&setup, MAX_VARS, 1).unwrap();
 

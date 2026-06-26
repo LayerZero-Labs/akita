@@ -8,7 +8,7 @@
 use crate::instance_descriptor::{digest_level_params, setup_seed_digest, DescriptorDigest};
 use crate::proof::{
     setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
-    AkitaCommitmentHint, FlatRingVec, RingCommitment,
+    AkitaCommitmentHint, ErasedCommitmentHint, FlatRingVec, RingCommitment,
 };
 use crate::LevelParams;
 use akita_algebra::CyclotomicRing;
@@ -383,23 +383,65 @@ where
 
 /// Prover-ready metadata for one setup-prefix slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixSlot<F: FieldCore, const D: usize> {
+pub struct SetupPrefixSlot<F: FieldCore> {
     pub id: SetupPrefixSlotId,
     pub natural_len: usize,
     pub padded_len: usize,
-    pub commitment: RingCommitment<F, D>,
-    pub hint: AkitaCommitmentHint<F, D>,
+    pub commitment: SetupPrefixPublicCommitment<F>,
+    pub hint: ErasedCommitmentHint<F>,
 }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for SetupPrefixSlot<F, D> {
+impl<F: FieldCore> SetupPrefixSlot<F> {
+    #[must_use]
+    pub fn id(&self) -> &SetupPrefixSlotId {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn natural_len(&self) -> usize {
+        self.natural_len
+    }
+
+    #[must_use]
+    pub fn padded_len(&self) -> usize {
+        self.padded_len
+    }
+
+    /// Ring dimension of this slot (`id.d_setup`).
+    #[must_use]
+    pub fn ring_d(&self) -> usize {
+        self.id.d_setup
+    }
+
+    /// Strip prover-only hint material for verifier metadata.
+    #[must_use]
+    pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
+        SetupPrefixVerifierSlot {
+            id: self.id,
+            natural_len: self.natural_len,
+            padded_len: self.padded_len,
+            commitment: self.commitment.clone(),
+        }
+    }
+
+    /// Rebuild the typed commitment when `D` matches [`Self::ring_d`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when row widths do not match `D`.
+    pub fn commitment_as_ring<const D: usize>(&self) -> Result<RingCommitment<F, D>, AkitaError> {
+        RingCommitment::try_from(&self.commitment)
+    }
+
+    /// Rebuild the typed prover hint when `D` matches [`Self::ring_d`].
+    pub fn hint_as_typed<const D: usize>(&self) -> Result<AkitaCommitmentHint<F, D>, AkitaError> {
+        self.hint.to_typed::<D>()
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.id.check()?;
-        if self.id.d_setup != D {
-            return Err(SerializationError::InvalidData(format!(
-                "setup prefix prover slot d_setup {} does not match D={D}",
-                self.id.d_setup
-            )));
-        }
         if self.natural_len == 0 || self.natural_len > self.padded_len {
             return Err(SerializationError::InvalidData(
                 "setup prefix prover slot natural_len must be in 1..=padded_len".to_string(),
@@ -416,11 +458,27 @@ impl<F: FieldCore + Valid, const D: usize> Valid for SetupPrefixSlot<F, D> {
             ));
         }
         self.commitment.check()?;
+        for row in &self.commitment.rows {
+            if row.coeff_len() != self.id.d_setup {
+                return Err(SerializationError::InvalidData(format!(
+                    "setup prefix commitment row has {} coefficients, expected {}",
+                    row.coeff_len(),
+                    self.id.d_setup
+                )));
+            }
+        }
+        if self.hint.ring_dim() != self.id.d_setup {
+            return Err(SerializationError::InvalidData(format!(
+                "setup prefix hint ring_dim {} does not match slot id d_setup {}",
+                self.hint.ring_dim(),
+                self.id.d_setup
+            )));
+        }
         self.hint.check()
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for SetupPrefixSlot<F, D> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -431,7 +489,8 @@ impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for SetupPref
             .serialize_with_mode(&mut writer, compress)?;
         self.padded_len.serialize_with_mode(&mut writer, compress)?;
         self.commitment.serialize_with_mode(&mut writer, compress)?;
-        self.hint.serialize_with_mode(&mut writer, compress)
+        self.hint
+            .serialize_with_mode_for_ring_dim(&mut writer, compress, self.id.d_setup)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -439,11 +498,11 @@ impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for SetupPref
             + self.natural_len.serialized_size(compress)
             + self.padded_len.serialized_size(compress)
             + self.commitment.serialized_size(compress)
-            + self.hint.serialized_size(compress)
+            + self.hint.serialized_size_for_ring_dim(compress, self.id.d_setup)
     }
 }
 
-impl<F, const D: usize> AkitaDeserialize for SetupPrefixSlot<F, D>
+impl<F> AkitaDeserialize for SetupPrefixSlot<F>
 where
     F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
 {
@@ -458,10 +517,18 @@ where
         let id = SetupPrefixSlotId::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let padded_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let commitment =
-            RingCommitment::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let hint =
-            AkitaCommitmentHint::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let commitment = SetupPrefixPublicCommitment::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?;
+        let hint = ErasedCommitmentHint::deserialize_with_mode_for_ring_dim(
+            &mut reader,
+            compress,
+            validate,
+            id.d_setup,
+        )?;
         let out = Self {
             id,
             natural_len,
@@ -476,221 +543,10 @@ where
     }
 }
 
-impl<F: FieldCore, const D: usize> SetupPrefixSlot<F, D> {
-    /// Strip prover-only hint material for verifier metadata.
-    #[must_use]
-    pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
-        SetupPrefixVerifierSlot {
-            id: self.id,
-            natural_len: self.natural_len,
-            padded_len: self.padded_len,
-            commitment: self.commitment.clone().into(),
-        }
-    }
-}
-
-/// Erased setup-prefix slot: commitment/hint stay D-typed; keying uses `id.d_setup`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SetupPrefixSlotAny<F: FieldCore> {
-    D32(SetupPrefixSlot<F, 32>),
-    D64(SetupPrefixSlot<F, 64>),
-    D128(SetupPrefixSlot<F, 128>),
-    D256(SetupPrefixSlot<F, 256>),
-}
-
-impl<F: FieldCore> SetupPrefixSlotAny<F> {
-    #[must_use]
-    pub fn id(&self) -> &SetupPrefixSlotId {
-        match self {
-            Self::D32(slot) => &slot.id,
-            Self::D64(slot) => &slot.id,
-            Self::D128(slot) => &slot.id,
-            Self::D256(slot) => &slot.id,
-        }
-    }
-
-    #[must_use]
-    pub fn natural_len(&self) -> usize {
-        match self {
-            Self::D32(slot) => slot.natural_len,
-            Self::D64(slot) => slot.natural_len,
-            Self::D128(slot) => slot.natural_len,
-            Self::D256(slot) => slot.natural_len,
-        }
-    }
-
-    #[must_use]
-    pub fn padded_len(&self) -> usize {
-        match self {
-            Self::D32(slot) => slot.padded_len,
-            Self::D64(slot) => slot.padded_len,
-            Self::D128(slot) => slot.padded_len,
-            Self::D256(slot) => slot.padded_len,
-        }
-    }
-
-    #[must_use]
-    pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
-        match self {
-            Self::D32(slot) => slot.verifier_slot(),
-            Self::D64(slot) => slot.verifier_slot(),
-            Self::D128(slot) => slot.verifier_slot(),
-            Self::D256(slot) => slot.verifier_slot(),
-        }
-    }
-
-    /// Ring dimension of this slot (`id.d_setup`).
-    #[must_use]
-    pub fn ring_d(&self) -> usize {
-        match self {
-            Self::D32(_) => 32,
-            Self::D64(_) => 64,
-            Self::D128(_) => 128,
-            Self::D256(_) => 256,
-        }
-    }
-
-    /// View the slot at compile-time ring degree `D` when it matches [`Self::ring_d`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] when `D` does not match the stored variant.
-    pub fn as_d<const D: usize>(&self) -> Result<&SetupPrefixSlot<F, D>, AkitaError> {
-        if self.ring_d() != D {
-            return Err(AkitaError::InvalidSetup(format!(
-                "setup prefix slot ring_d={} does not match requested D={D}",
-                self.ring_d()
-            )));
-        }
-        Ok(match self {
-            Self::D32(slot) => {
-                let slot = slot as *const SetupPrefixSlot<F, 32> as *const SetupPrefixSlot<F, D>;
-                // SAFETY: `ring_d()` check guarantees `D == 32`.
-                unsafe { &*slot }
-            }
-            Self::D64(slot) => {
-                let slot = slot as *const SetupPrefixSlot<F, 64> as *const SetupPrefixSlot<F, D>;
-                unsafe { &*slot }
-            }
-            Self::D128(slot) => {
-                let slot = slot as *const SetupPrefixSlot<F, 128> as *const SetupPrefixSlot<F, D>;
-                unsafe { &*slot }
-            }
-            Self::D256(slot) => {
-                let slot = slot as *const SetupPrefixSlot<F, 256> as *const SetupPrefixSlot<F, D>;
-                unsafe { &*slot }
-            }
-        })
-    }
-}
-
-impl<F: FieldCore> From<SetupPrefixSlot<F, 32>> for SetupPrefixSlotAny<F> {
-    fn from(slot: SetupPrefixSlot<F, 32>) -> Self {
-        Self::D32(slot)
-    }
-}
-
-impl<F: FieldCore> From<SetupPrefixSlot<F, 64>> for SetupPrefixSlotAny<F> {
-    fn from(slot: SetupPrefixSlot<F, 64>) -> Self {
-        Self::D64(slot)
-    }
-}
-
-impl<F: FieldCore> From<SetupPrefixSlot<F, 128>> for SetupPrefixSlotAny<F> {
-    fn from(slot: SetupPrefixSlot<F, 128>) -> Self {
-        Self::D128(slot)
-    }
-}
-
-impl<F: FieldCore> From<SetupPrefixSlot<F, 256>> for SetupPrefixSlotAny<F> {
-    fn from(slot: SetupPrefixSlot<F, 256>) -> Self {
-        Self::D256(slot)
-    }
-}
-
-impl<F: FieldCore + Valid> Valid for SetupPrefixSlotAny<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            Self::D32(slot) => slot.check(),
-            Self::D64(slot) => slot.check(),
-            Self::D128(slot) => slot.check(),
-            Self::D256(slot) => slot.check(),
-        }
-    }
-}
-
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlotAny<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        match self {
-            Self::D32(slot) => slot.serialize_with_mode(writer, compress),
-            Self::D64(slot) => slot.serialize_with_mode(writer, compress),
-            Self::D128(slot) => slot.serialize_with_mode(writer, compress),
-            Self::D256(slot) => slot.serialize_with_mode(writer, compress),
-        }
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        match self {
-            Self::D32(slot) => slot.serialized_size(compress),
-            Self::D64(slot) => slot.serialized_size(compress),
-            Self::D128(slot) => slot.serialized_size(compress),
-            Self::D256(slot) => slot.serialized_size(compress),
-        }
-    }
-}
-
-impl<F> AkitaDeserialize for SetupPrefixSlotAny<F>
-where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-{
-    type Context = ();
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let id = SetupPrefixSlotId::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let padded_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        crate::dispatch_ring_dim_result!(id.d_setup, |D| {
-            let commitment = RingCommitment::<F, D>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?;
-            let hint = AkitaCommitmentHint::<F, D>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?;
-            let slot = SetupPrefixSlot {
-                id,
-                natural_len,
-                padded_len,
-                commitment,
-                hint,
-            };
-            if validate == Validate::Yes {
-                slot.check()?;
-            }
-            Ok(slot.into())
-        })
-        .map_err(|err| SerializationError::InvalidData(err.to_string()))
-    }
-}
-
 /// In-memory registry of prover-ready setup-prefix slots (keyed on `SetupPrefixSlotId`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetupPrefixRegistry<F: FieldCore> {
-    slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlotAny<F>>,
+    slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlot<F>>,
 }
 
 impl<F: FieldCore> SetupPrefixRegistry<F> {
@@ -710,30 +566,27 @@ impl<F: FieldCore> SetupPrefixRegistry<F> {
     }
 
     #[must_use]
-    pub fn get(&self, id: &SetupPrefixSlotId) -> Option<&SetupPrefixSlotAny<F>> {
+    pub fn get(&self, id: &SetupPrefixSlotId) -> Option<&SetupPrefixSlot<F>> {
         self.slots.get(id)
     }
 
-    pub fn insert(&mut self, slot: SetupPrefixSlotAny<F>) -> Result<(), AkitaError> {
-        if self.slots.contains_key(slot.id()) {
+    pub fn insert(&mut self, slot: SetupPrefixSlot<F>) -> Result<(), AkitaError> {
+        if self.slots.contains_key(&slot.id) {
             return Err(AkitaError::InvalidSetup(
                 "duplicate setup prefix slot id".to_string(),
             ));
         }
-        self.slots.insert(*slot.id(), slot);
+        self.slots.insert(slot.id, slot);
         Ok(())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlotAny<F>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlot<F>)> {
         self.slots.iter()
     }
 
     #[must_use]
     pub fn verifier_slots(&self) -> Vec<SetupPrefixVerifierSlot<F>> {
-        self.slots
-            .values()
-            .map(SetupPrefixSlotAny::verifier_slot)
-            .collect()
+        self.slots.values().map(SetupPrefixSlot::verifier_slot).collect()
     }
 }
 
@@ -799,7 +652,7 @@ where
         let mut out = Self::new();
         for _ in 0..slot_count {
             let slot =
-                SetupPrefixSlotAny::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                SetupPrefixSlot::deserialize_with_mode(&mut reader, compress, validate, &())?;
             out.insert(slot)
                 .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         }
@@ -1230,8 +1083,7 @@ mod tests {
 
     #[test]
     fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
-        use crate::proof::FlatDigitBlocks;
-        use akita_algebra::CyclotomicRing;
+        use crate::proof::{AkitaCommitmentHint, FlatDigitBlocks};
         use akita_field::Prime32Offset99 as F;
 
         let id = SetupPrefixSlotId {
@@ -1244,25 +1096,24 @@ mod tests {
         let slot = || {
             let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
             let recomposed = vec![Vec::new()];
-            let hint =
+            let typed_hint =
                 AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
+            let hint = ErasedCommitmentHint::from_typed(typed_hint);
             SetupPrefixSlot {
                 id,
                 natural_len: id.natural_len,
                 padded_len: id.n_prefix,
-                commitment: RingCommitment {
-                    u: vec![CyclotomicRing::<F, 32>::zero()],
+                commitment: SetupPrefixPublicCommitment {
+                    rows: vec![FlatRingVec::from_coeffs(vec![F::zero()])],
                 },
                 hint,
             }
         };
 
         let mut registry = SetupPrefixRegistry::<F>::new();
+        registry.insert(slot()).expect("first insert");
         registry
-            .insert(SetupPrefixSlotAny::D32(slot()))
-            .expect("first insert");
-        registry
-            .insert(SetupPrefixSlotAny::D32(slot()))
+            .insert(slot())
             .expect_err("duplicate insert must fail");
 
         assert_eq!(registry.len(), 1);

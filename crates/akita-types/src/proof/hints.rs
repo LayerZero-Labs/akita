@@ -238,3 +238,284 @@ where
         Ok(out)
     }
 }
+
+/// Runtime ring-degree-erased commitment hint for setup-prefix slots and similar storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErasedCommitmentHint<F: FieldCore> {
+    decomposed_inner_rows: Vec<i8>,
+    decomposed_inner_row_block_sizes: Vec<usize>,
+    recomposed_inner_row_coeffs: Vec<F>,
+    recomposed_inner_row_block_sizes: Vec<usize>,
+    ring_dim: usize,
+}
+
+impl<F: FieldCore> ErasedCommitmentHint<F> {
+    /// Flatten a typed prover hint for D-free slot storage.
+    pub fn from_typed<const D: usize>(hint: AkitaCommitmentHint<F, D>) -> Self {
+        let (flat_hint_digits, recomposed_inner_rows) = hint.into_flat_parts();
+        let decomposed_inner_row_block_sizes = flat_hint_digits.block_sizes().to_vec();
+        let total_digit_planes: usize = flat_hint_digits.flat_digits().len();
+        let mut decomposed_inner_rows = Vec::with_capacity(total_digit_planes * D);
+        for plane in flat_hint_digits.flat_digits() {
+            decomposed_inner_rows.extend_from_slice(plane);
+        }
+
+        let (recomposed_inner_row_coeffs, recomposed_inner_row_block_sizes) =
+            if let Some(recomposed_inner_rows) = recomposed_inner_rows {
+                let recomposed_inner_row_block_sizes: Vec<usize> =
+                    recomposed_inner_rows.iter().map(Vec::len).collect();
+                let total_recomposed_inner_rows: usize =
+                    recomposed_inner_row_block_sizes.iter().sum();
+                let mut recomposed_inner_row_coeffs =
+                    Vec::with_capacity(total_recomposed_inner_rows * D);
+                for block in &recomposed_inner_rows {
+                    for ring in block {
+                        recomposed_inner_row_coeffs.extend_from_slice(ring.coefficients());
+                    }
+                }
+                (
+                    recomposed_inner_row_coeffs,
+                    recomposed_inner_row_block_sizes,
+                )
+            } else {
+                (Vec::new(), Vec::new())
+            };
+
+        Self {
+            decomposed_inner_rows,
+            decomposed_inner_row_block_sizes,
+            recomposed_inner_row_coeffs,
+            recomposed_inner_row_block_sizes,
+            ring_dim: D,
+        }
+    }
+
+    /// Reconstruct the typed prover hint without recomputing inner rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match the stored hint,
+    /// or if flattened block metadata is inconsistent.
+    pub fn to_typed<const D: usize>(&self) -> Result<AkitaCommitmentHint<F, D>, AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "erased commitment hint ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if self.decomposed_inner_row_block_sizes.len()
+            != self.recomposed_inner_row_block_sizes.len()
+        {
+            return Err(AkitaError::InvalidInput(
+                "erased commitment hint block metadata mismatch".to_string(),
+            ));
+        }
+
+        let (flat_digits, digit_remainder) = self.decomposed_inner_rows.as_chunks::<D>();
+        if !digit_remainder.is_empty() {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.decomposed_inner_rows.len(),
+            });
+        }
+        let (flat_recomposed_rows, recomposed_remainder) =
+            self.recomposed_inner_row_coeffs.as_chunks::<D>();
+        if !recomposed_remainder.is_empty() {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.recomposed_inner_row_coeffs.len(),
+            });
+        }
+
+        let mut digit_offset = 0usize;
+        let mut recomposed_offset = 0usize;
+        let mut decomposed_inner_rows = Vec::with_capacity(flat_digits.len());
+        let mut recomposed_inner_rows =
+            Vec::with_capacity(self.recomposed_inner_row_block_sizes.len());
+
+        for (&digit_block_size, &recomposed_block_size) in self
+            .decomposed_inner_row_block_sizes
+            .iter()
+            .zip(self.recomposed_inner_row_block_sizes.iter())
+        {
+            let digit_end = digit_offset + digit_block_size;
+            let recomposed_end = recomposed_offset + recomposed_block_size;
+            if digit_end > flat_digits.len() || recomposed_end > flat_recomposed_rows.len() {
+                return Err(AkitaError::InvalidInput(
+                    "erased commitment hint block data is truncated".to_string(),
+                ));
+            }
+
+            decomposed_inner_rows.extend_from_slice(&flat_digits[digit_offset..digit_end]);
+            recomposed_inner_rows.push(
+                flat_recomposed_rows[recomposed_offset..recomposed_end]
+                    .iter()
+                    .map(|coeffs| CyclotomicRing::from_coefficients(*coeffs))
+                    .collect(),
+            );
+            digit_offset = digit_end;
+            recomposed_offset = recomposed_end;
+        }
+
+        if digit_offset != flat_digits.len() || recomposed_offset != flat_recomposed_rows.len() {
+            return Err(AkitaError::InvalidInput(
+                "erased commitment hint has trailing block data".to_string(),
+            ));
+        }
+
+        let decomposed_inner_rows = FlatDigitBlocks::new(
+            decomposed_inner_rows,
+            self.decomposed_inner_row_block_sizes.clone(),
+        )?;
+        Ok(AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+            decomposed_inner_rows,
+            recomposed_inner_rows,
+        ))
+    }
+
+    #[must_use]
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    pub(crate) fn serialize_with_mode_for_ring_dim<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+        ring_dim: usize,
+    ) -> Result<(), SerializationError>
+    where
+        F: AkitaSerialize,
+    {
+        if self.ring_dim != ring_dim {
+            return Err(SerializationError::InvalidData(format!(
+                "erased commitment hint ring_d={} does not match slot id d_setup={ring_dim}",
+                self.ring_dim
+            )));
+        }
+        match ring_dim {
+            32 => self
+                .to_typed::<32>()
+                .map_err(|err| {
+                    SerializationError::InvalidData(format!(
+                        "erased commitment hint retyped serialization failed: {err}"
+                    ))
+                })?
+                .serialize_with_mode(&mut writer, compress),
+            64 => self
+                .to_typed::<64>()
+                .map_err(|err| {
+                    SerializationError::InvalidData(format!(
+                        "erased commitment hint retyped serialization failed: {err}"
+                    ))
+                })?
+                .serialize_with_mode(&mut writer, compress),
+            128 => self
+                .to_typed::<128>()
+                .map_err(|err| {
+                    SerializationError::InvalidData(format!(
+                        "erased commitment hint retyped serialization failed: {err}"
+                    ))
+                })?
+                .serialize_with_mode(&mut writer, compress),
+            256 => self
+                .to_typed::<256>()
+                .map_err(|err| {
+                    SerializationError::InvalidData(format!(
+                        "erased commitment hint retyped serialization failed: {err}"
+                    ))
+                })?
+                .serialize_with_mode(&mut writer, compress),
+            _ => Err(SerializationError::InvalidData(format!(
+                "unsupported ring dimension for erased commitment hint: {ring_dim}"
+            ))),
+        }
+    }
+
+    pub(crate) fn serialized_size_for_ring_dim(&self, compress: Compress, ring_dim: usize) -> usize
+    where
+        F: AkitaSerialize,
+    {
+        if self.ring_dim != ring_dim {
+            return 0;
+        }
+        match ring_dim {
+            32 => self
+                .to_typed::<32>()
+                .map(|typed| typed.serialized_size(compress))
+                .unwrap_or(0),
+            64 => self
+                .to_typed::<64>()
+                .map(|typed| typed.serialized_size(compress))
+                .unwrap_or(0),
+            128 => self
+                .to_typed::<128>()
+                .map(|typed| typed.serialized_size(compress))
+                .unwrap_or(0),
+            256 => self
+                .to_typed::<256>()
+                .map(|typed| typed.serialized_size(compress))
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    pub(crate) fn deserialize_with_mode_for_ring_dim<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        ring_dim: usize,
+    ) -> Result<Self, SerializationError>
+    where
+        F: Valid + AkitaDeserialize<Context = ()>,
+    {
+        crate::dispatch_ring_dim_result!(ring_dim, |D| {
+            let typed = AkitaCommitmentHint::<F, D>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?;
+            Ok(Self::from_typed(typed))
+        })
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for ErasedCommitmentHint<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        if !crate::SUPPORTED_RING_DIMS.contains(&self.ring_dim) {
+            return Err(SerializationError::InvalidData(format!(
+                "erased commitment hint has unsupported ring_dim={}",
+                self.ring_dim
+            )));
+        }
+        if self.decomposed_inner_row_block_sizes.len()
+            != self.recomposed_inner_row_block_sizes.len()
+        {
+            return Err(SerializationError::InvalidData(
+                "erased commitment hint block metadata mismatch".to_string(),
+            ));
+        }
+        if !self.decomposed_inner_rows.is_empty()
+            && !self.decomposed_inner_rows.len().is_multiple_of(self.ring_dim)
+        {
+            return Err(SerializationError::InvalidData(
+                "erased commitment hint decomposed digit length is not a multiple of ring_dim"
+                    .to_string(),
+            ));
+        }
+        if !self.recomposed_inner_row_coeffs.is_empty()
+            && !self
+                .recomposed_inner_row_coeffs
+                .len()
+                .is_multiple_of(self.ring_dim)
+        {
+            return Err(SerializationError::InvalidData(
+                "erased commitment hint recomposed coefficient length is not a multiple of ring_dim"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+}

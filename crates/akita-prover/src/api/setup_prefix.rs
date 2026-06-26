@@ -12,7 +12,7 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     digest_level_params, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
-    FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
+    ErasedCommitmentHint, FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -33,7 +33,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     setup_seed_digest: [u8; 32],
     n_prefix: usize,
     natural_len: usize,
-) -> Result<SetupPrefixSlot<F, D>, AkitaError>
+) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
@@ -165,8 +165,8 @@ where
         id,
         natural_len,
         padded_len: n_prefix,
-        commitment: RingCommitment { u },
-        hint,
+        commitment: RingCommitment { u }.into(),
+        hint: ErasedCommitmentHint::from_typed(hint),
     })
 }
 
@@ -230,7 +230,7 @@ mod tests {
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
         active_setup_field_len, setup_seed_digest, MRowLayout, OpeningBatchShape,
-        SetupMatrixEnvelope, SetupPrefixSlotAny, SisModulusFamily,
+        SetupMatrixEnvelope, SisModulusFamily,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(slot.padded_len, n_prefix);
         setup
             .prefix_slots
-            .insert(SetupPrefixSlotAny::D32(slot))
+            .insert(slot)
             .expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(slot.padded_len, n_prefix);
         setup
             .prefix_slots
-            .insert(SetupPrefixSlotAny::D64(slot))
+            .insert(slot)
             .expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
