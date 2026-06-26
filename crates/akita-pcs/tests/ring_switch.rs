@@ -255,7 +255,7 @@ mod tests {
                     }
                 }))
             })
-            .collect();
+            .collect::<Vec<CyclotomicRing<F, D>>>();
         let b = (0..num_blocks)
             .map(|idx| {
                 CyclotomicRing::from_coefficients(from_fn(|k| {
@@ -266,8 +266,8 @@ mod tests {
                     }
                 }))
             })
-            .collect();
-        RingMultiplierOpeningPoint::from_ring(a, b)
+            .collect::<Vec<CyclotomicRing<F, D>>>();
+        RingMultiplierOpeningPoint::from_ring::<D>(&a, &b)
     }
 
     #[test]

@@ -166,7 +166,7 @@ where
         natural_len,
         padded_len: n_prefix,
         commitment: RingCommitment { u }.into(),
-        hint: ErasedCommitmentHint::from_typed(hint),
+        hint: ErasedCommitmentHint::from_typed::<D>(hint),
     })
 }
 
