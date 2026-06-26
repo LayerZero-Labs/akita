@@ -651,8 +651,6 @@ where
     Ok(AkitaScheduleLookupKey::new(
         opening_batch.num_vars(),
         opening_batch.num_polynomials(),
-        1,
-        1,
     ))
 }
 

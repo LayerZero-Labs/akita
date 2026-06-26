@@ -5,7 +5,7 @@ fn commit_group_returns_frozen_conservative_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let key = akita_types::AkitaScheduleLookupKey::new(NV, GROUP_SIZE, 1, 1);
+    let key = akita_types::AkitaScheduleLookupKey::new(NV, GROUP_SIZE);
     let layout = OneHotCfg::get_params_for_group_commit(&key).expect("group commit layout");
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(ONEHOT_D)

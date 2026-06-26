@@ -16,7 +16,7 @@ use akita_prover::AkitaProverSetup;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{CommitmentProver, ProverCommitmentGroup, ProverOpeningBatch};
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
@@ -61,23 +61,38 @@ fn schedule_bytes_with_realized_terminal_z<FF, L>(
     schedule: &Schedule,
 ) -> usize
 where
-    FF: FieldCore,
-    L: FieldCore,
+    FF: FieldCore + CanonicalField + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
 {
     let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
         return schedule.total_bytes;
     };
-    let CleartextWitnessShape::SegmentTyped(scheduled) = scheduled_shape else {
+    let CleartextWitnessShape::SegmentTyped(_) = scheduled_shape else {
         return schedule.total_bytes;
     };
-    let CleartextWitnessProof::SegmentTyped(witness) = proof.final_witness() else {
+    let CleartextWitnessProof::SegmentTyped(_) = proof.final_witness() else {
         return schedule.total_bytes;
     };
 
+    let scheduled_terminal_bytes = match schedule.steps.as_slice() {
+        [.., akita_types::Step::Fold(terminal), akita_types::Step::Direct(direct)] => {
+            terminal.level_bytes + direct.direct_bytes
+        }
+        _ => return schedule.total_bytes,
+    };
+    let realized_terminal_bytes = proof
+        .steps
+        .iter()
+        .rev()
+        .find(|step| step.final_w_len().is_some())
+        .map_or_else(
+            || proof.root.serialized_size(Compress::No),
+            |step| step.serialized_size(Compress::No),
+        );
     schedule
         .total_bytes
-        .saturating_sub(scheduled.z_payload_bytes)
-        .saturating_add(witness.z_payload.len())
+        .saturating_sub(scheduled_terminal_bytes)
+        .saturating_add(realized_terminal_bytes)
 }
 
 static INIT_RAYON: Once = Once::new();

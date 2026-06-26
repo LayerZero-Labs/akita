@@ -28,7 +28,7 @@ use sha2::{Digest, Sha256};
 const GOLDEN_D64_FULL_NV15_SHA256: &str =
     "c99fcc1867742d10ac4b9c1bc0aa62081085ef5abd37a6f813ec59563b767072";
 const GOLDEN_D64_ONEHOT_NV20_SHA256: &str =
-    "4849bef9b51c9327e39044960abb6c477756ff5a2fa8f0e3d00a8db1cd0daf1b";
+    "522f80ed695cd7c13999bac8a07b6e3edcbd5330934e54431bff4a8c58cfb5c0";
 
 fn fixed_opening_point(nv: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
