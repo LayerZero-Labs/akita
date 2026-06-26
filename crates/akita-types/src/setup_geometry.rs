@@ -367,9 +367,9 @@ pub fn stage3_offload_natural_field_len(
 
 /// Active inner (`d_a`) setup ring rows for one fold, fail-closed on envelope overflow.
 ///
-/// Used by [`RingDimPlan::context_at`](crate::RingDimPlan::context_at) and schedule
-/// validation. Stage-3 prove/verify should derive `required` from
-/// [`crate::SetupContributionPlan::prepare`] and call [`ensure_setup_envelope`] separately.
+/// Used by [`RingDimPlan::context_at`](crate::RingDimPlan::context_at), schedule
+/// validation, and stage-3 prove/verify. [`crate::SetupContributionPlan::prepare`] must
+/// agree with this count; geometry is authoritative for envelope sizing.
 ///
 /// # Errors
 ///
