@@ -1240,8 +1240,9 @@ where
         terminal_tail_t_vectors,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
-    let row_coefficients = Some(row_coefficients);
-    let trace_claim_scales = trace_target.trace_claim_scales;
+    // Suffix preparation always uses `pad_base_evals = true` (see `prepare_suffix_fold_inner`).
+    let row_coefficients = None;
+    let trace_claim_scales = None;
     Ok(PreparedFold {
         commitment,
         instance,

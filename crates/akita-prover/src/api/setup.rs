@@ -30,6 +30,22 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         self.expanded.seed().gen_ring_dim
     }
 
+    /// Reject use of this setup with a mismatched compile-time ring degree.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `D` does not match [`Self::gen_ring_dim`].
+    #[inline]
+    pub fn ensure_compile_time_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.gen_ring_dim() != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "setup gen_ring_dim={} does not match scheme ring degree D={D}",
+                self.gen_ring_dim()
+            )));
+        }
+        Ok(())
+    }
+
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// # Errors
@@ -174,6 +190,19 @@ mod tests {
         )
         .expect_err("zero setup length must not produce an undecodable setup");
         assert!(zero_len.to_string().contains("max_setup_len"));
+    }
+
+    #[test]
+    fn ensure_compile_time_ring_dim_rejects_mismatch() {
+        let setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            32,
+            8,
+            1,
+            SetupMatrixEnvelope { max_setup_len: 1 },
+        )
+        .expect("generate setup");
+        setup.ensure_compile_time_ring_dim::<32>().expect("match");
+        assert!(setup.ensure_compile_time_ring_dim::<64>().is_err());
     }
 
     #[test]
