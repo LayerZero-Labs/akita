@@ -127,6 +127,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-protocol"
+version = "0.1.0"
+dependencies = [
+ "akita-challenges",
+ "akita-field",
+ "akita-sumcheck",
+ "akita-types",
+]
+
+[[package]]
 name = "akita-prover"
 version = "0.1.0"
 dependencies = [
