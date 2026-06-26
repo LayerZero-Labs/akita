@@ -140,18 +140,6 @@ pub(super) fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckPro
         .collect()
 }
 
-#[cfg(feature = "zk")]
-pub(super) fn sumcheck_proof_masked_shape<F: FieldCore>(
-    masks: &SumcheckProofMasked<F>,
-) -> SumcheckProofShape {
-    masks
-        .masked_round_polys
-        .iter()
-        .map(|p| p.coeffs_except_linear_term.len())
-        .collect()
-}
-
-#[cfg(not(feature = "zk"))]
 fn eq_factored_sumcheck_shape<F: FieldCore>(
     sc: &EqFactoredSumcheckProof<F>,
 ) -> EqFactoredSumcheckProofShape {
@@ -160,17 +148,6 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
         .first()
         .map_or(0, |p| p.coeffs_except_linear_term.len());
     (sc.round_polys.len(), degree)
-}
-
-#[cfg(feature = "zk")]
-fn eq_factored_sumcheck_proof_masked_shape<F: FieldCore>(
-    masks: &EqFactoredSumcheckProofMasked<F>,
-) -> EqFactoredSumcheckProofShape {
-    let degree = masks
-        .masked_round_polys
-        .first()
-        .map_or(0, |p| p.coeffs_except_linear_term.len());
-    (masks.masked_round_polys.len(), degree)
 }
 
 pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
@@ -191,19 +168,11 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
             .stages
             .iter()
             .map(|stage| AkitaStage1StageShape {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: eq_factored_sumcheck_shape(&stage.sumcheck_proof),
-                #[cfg(feature = "zk")]
-                sumcheck_proof: eq_factored_sumcheck_proof_masked_shape(
-                    &stage.sumcheck_proof_masked,
-                ),
                 child_claims: stage.child_claims.len(),
             })
             .collect(),
-        #[cfg(not(feature = "zk"))]
         stage2_sumcheck_proof: sumcheck_shape(&stage2.sumcheck_proof),
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof: sumcheck_proof_masked_shape(&stage2.sumcheck_proof_masked),
         stage3_sumcheck: stage3_sumcheck_proof.map(SetupSumcheckProof::shape),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
     }
@@ -426,14 +395,6 @@ impl AkitaDeserialize for LevelProofShape {
 impl Valid for CleartextWitnessShape {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
-            Self::PackedDigits((num_elems, bits_per_elem)) => {
-                if *bits_per_elem == 0 || *bits_per_elem > 6 {
-                    return Err(SerializationError::InvalidData(
-                        "bits_per_elem out of range".to_string(),
-                    ));
-                }
-                checked_shape_len(*num_elems)?;
-            }
             Self::FieldElements(coeff_len) => checked_shape_len(*coeff_len)?,
             Self::SegmentTyped(shape) => shape.check()?,
         }
@@ -448,11 +409,6 @@ impl AkitaSerialize for CleartextWitnessShape {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         match self {
-            Self::PackedDigits((num_elems, bits_per_elem)) => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                num_elems.serialize_with_mode(&mut writer, compress)?;
-                bits_per_elem.serialize_with_mode(&mut writer, compress)?;
-            }
             Self::FieldElements(coeff_len) => {
                 1u8.serialize_with_mode(&mut writer, compress)?;
                 coeff_len.serialize_with_mode(&mut writer, compress)?;
@@ -468,9 +424,6 @@ impl AkitaSerialize for CleartextWitnessShape {
     fn serialized_size(&self, compress: Compress) -> usize {
         let tag = 1usize;
         match self {
-            Self::PackedDigits((num_elems, bits_per_elem)) => {
-                tag + num_elems.serialized_size(compress) + bits_per_elem.serialized_size(compress)
-            }
             Self::FieldElements(coeff_len) => tag + coeff_len.serialized_size(compress),
             Self::SegmentTyped(shape) => tag + shape.serialized_size(compress),
         }
@@ -488,10 +441,9 @@ impl AkitaDeserialize for CleartextWitnessShape {
         let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = match tag {
             0 => {
-                let num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let bits_per_elem =
-                    u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                Self::PackedDigits((num_elems, bits_per_elem))
+                return Err(SerializationError::InvalidData(
+                    "legacy PackedDigits witness shape tag is retired".to_string(),
+                ));
             }
             1 => {
                 let coeff_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;

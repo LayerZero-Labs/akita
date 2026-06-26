@@ -137,22 +137,8 @@ where
         MRowLayout::WithDBlock => n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    #[cfg(feature = "zk")]
-    let d_blinding_segment_len = segment_lengths.d_blinding_len;
-    #[cfg(feature = "zk")]
-    let b_blinding_segment_len = segment_lengths.b_blinding_len;
     let rows = lp.m_row_count_for(1, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
-    #[cfg(feature = "zk")]
-    let total_cols = w_len
-        .checked_add(d_blinding_segment_len)
-        .and_then(|cols| cols.checked_add(t_len))
-        .and_then(|cols| cols.checked_add(u_seg_len))
-        .and_then(|cols| cols.checked_add(b_blinding_segment_len))
-        .and_then(|cols| cols.checked_add(z_len))
-        .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
-        .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
-    #[cfg(not(feature = "zk"))]
     let total_cols = w_len
         .checked_add(t_len)
         .and_then(|cols| cols.checked_add(u_seg_len))
@@ -327,30 +313,6 @@ where
         })
         .collect();
 
-    #[cfg(feature = "zk")]
-    let d_blinding_segment: Vec<E> = if d_blinding_segment_len == 0 {
-        Vec::new()
-    } else {
-        let d_weights = &eq_tau1[d_start..(d_start + n_d_active)];
-        let d_zk_view = setup
-            .zk_d_matrix()
-            .ring_view::<D>(n_d, d_blinding_segment_len)?;
-        let d_zk = d_zk_view.as_slice();
-        let d_zk_stride = d_zk_view.num_cols();
-        cfg_into_iter!(0..d_blinding_segment_len)
-            .map(|local| {
-                let mut acc = E::zero();
-                for (row_idx, eq_i) in d_weights.iter().enumerate() {
-                    if !eq_i.is_zero() {
-                        acc += *eq_i
-                            * eval_ring_at_pows(&d_zk[row_idx * d_zk_stride + local], alpha_pows);
-                    }
-                }
-                acc
-            })
-            .collect()
-    };
-
     let mut challenge_sums_by_t_block = vec![E::zero(); t_total_blocks];
     for claim_idx in 0..num_claims {
         let dst_offset = claim_idx * num_blocks;
@@ -423,31 +385,6 @@ where
         Vec::new()
     };
 
-    #[cfg(feature = "zk")]
-    let b_blinding_segment: Vec<E> = if b_blinding_segment_len == 0 {
-        Vec::new()
-    } else {
-        // The single commitment's ZK B blinding segment reuses the stored B row view.
-        let b_zk_view = setup
-            .zk_b_matrix()
-            .ring_view::<D>(n_b, b_blinding_segment_len)?;
-        let b_zk = b_zk_view.as_slice();
-        let b_zk_stride = b_zk_view.num_cols();
-        cfg_into_iter!(0..b_blinding_segment_len)
-            .map(|idx| {
-                let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
-                let mut acc = E::zero();
-                for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
-                    if !eq_i.is_zero() {
-                        acc += *eq_i
-                            * eval_ring_at_pows(&b_zk[row_idx * b_zk_stride + idx], alpha_pows);
-                    }
-                }
-                acc
-            })
-            .collect()
-    };
-
     let z_base: Vec<E> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
             let local_k = k;
@@ -492,10 +429,6 @@ where
     out.extend(w_segment);
     out.extend(t_segment);
     out.extend(u_segment);
-    #[cfg(feature = "zk")]
-    out.extend(b_blinding_segment);
-    #[cfg(feature = "zk")]
-    out.extend(d_blinding_segment);
     out.extend(r_tail);
     out.resize(x_len, E::zero());
     Ok(out)

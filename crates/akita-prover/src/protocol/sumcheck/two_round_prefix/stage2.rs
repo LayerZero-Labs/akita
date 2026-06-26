@@ -17,7 +17,7 @@ pub(crate) enum BooleanCorner {
 
 impl BooleanCorner {
     pub(crate) const ALL: [Self; 4] = [Self::ZeroZero, Self::ZeroOne, Self::OneZero, Self::OneOne];
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     pub(crate) const DEFAULT_STAGE2_NORM: Self = Self::ZeroZero;
     pub(crate) const DEFAULT_STAGE2_RELATION: Self = Self::ZeroZero;
 
@@ -56,7 +56,7 @@ pub(crate) struct Stage2CompressedGrid<E: FieldCore> {
 }
 
 impl<E: FieldCore> Stage2CompressedGrid<E> {
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     pub(crate) fn from_full_grid(full_grid: [E; 9], omitted_corner: BooleanCorner) -> Self {
         let omitted_idx = omitted_corner.grid_index();
         let mut out_idx = 0usize;
@@ -101,7 +101,7 @@ pub(crate) struct Stage2BivariateSkipProof<E: FieldCore> {
 
 /// Return the stage-2 full-domain grid in row-major `x`-major order over
 /// `{0, 1, Infinity}^2`.
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
     mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
 ) -> [E; 9] {
@@ -115,7 +115,7 @@ pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
 
 /// Evaluate a biquadratic from its full `{0, 1, Infinity}^2` grid.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn eval_biquadratic_from_full_grid<E: FieldCore>(
     full_grid: [E; 9],
     x: PrefixPoint<E>,

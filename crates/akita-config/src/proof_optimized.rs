@@ -8,7 +8,7 @@ use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatchShape;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -165,21 +165,12 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
 /// every intermediate count in `1..=max` forces table misses on `2` and `3` even
 /// though setup-matrix footprints are determined by the endpoint batch sizes.
 /// Role footprints can be non-monotone in `num_vars`, but not in these skipped
-/// intermediate batch counts for the shipped table key shapes under non-zk builds.
-/// With `zk`, blinding column sizing can peak at intermediate batch counts, so
-/// scan the full `1..=max` range there.
+/// intermediate batch counts for the shipped table key shapes.
 pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<usize> {
     if max_num_batched_polys <= 1 {
         vec![1]
     } else {
-        #[cfg(feature = "zk")]
-        {
-            (1..=max_num_batched_polys).collect()
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            vec![1, max_num_batched_polys]
-        }
+        vec![1, max_num_batched_polys]
     }
 }
 
@@ -208,10 +199,22 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         return Ok(None);
     };
 
-    Ok(Some(matrix_envelope_for_schedule::<Cfg>(
-        &schedule,
-        opening_batch,
-    )?))
+    let mut envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, opening_batch)?;
+    if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+        // Standalone conservative `commit_group` layouts are included here.
+        // Final grouped-root schedules from `get_group_batch_schedule` are not
+        // scanned yet; Phase 2 must extend this envelope before grouped opening
+        // prove paths rely on setup capacity.
+        let group_key =
+            AkitaScheduleLookupKey::new(opening_batch.num_vars(), opening_batch.num_polynomials());
+        if let Ok(group_params) = Cfg::get_params_for_group_commit(&group_key) {
+            accumulate_matrix_envelope_for_level::<Cfg>(
+                &group_params,
+                &mut envelope.max_setup_len,
+            )?;
+        }
+    }
+    Ok(Some(envelope))
 }
 
 /// Extract setup-level params from a runtime `Schedule`.
@@ -241,9 +244,8 @@ where
     Ok(SetupMatrixEnvelope { max_setup_len })
 }
 
-/// Packed setup envelope spanning every level in `schedule` (including the
-/// root-direct / fold-root opening_batch widening) and, with the `zk` feature,
-/// the ZK blinding + hiding accumulators.
+/// Packed setup envelope spanning every level in `schedule`, including root
+/// runtime widening for the requested opening batch.
 pub fn matrix_envelope_for_schedule<Cfg>(
     schedule: &Schedule,
     opening_batch: &OpeningBatchShape,
@@ -349,8 +351,8 @@ fn root_commit_params_from_schedule(
     schedule: &Schedule,
 ) -> Result<Option<LevelParams>, AkitaError> {
     match schedule.steps.first() {
-        Some(Step::Fold(root_step)) => Ok(Some(root_step.params.clone())),
-        Some(Step::Direct(direct)) => Ok(direct.params.clone()),
+        Some(akita_types::Step::Fold(root_step)) => Ok(Some(root_step.params.clone())),
+        Some(akita_types::Step::Direct(direct)) => Ok(direct.params.clone()),
         None => Err(AkitaError::InvalidSetup(
             "schedule has no steps".to_string(),
         )),
@@ -398,11 +400,11 @@ macro_rules! impl_proof_optimized_preset {
     };
     (@schedule_catalog tiered ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
-            #[cfg(all(feature = $feat, not(feature = "zk")))]
+            #[cfg(feature = $feat)]
             {
                 Some(akita_schedules::$table())
             }
-            #[cfg(not(all(feature = $feat, not(feature = "zk"))))]
+            #[cfg(not(feature = $feat))]
             {
                 None
             }

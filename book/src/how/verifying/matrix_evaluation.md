@@ -67,12 +67,10 @@ claims that Akita proves.**
 The witness column layout is:
 
 ```text
-z_hat ‖ e_hat ‖ t_hat ‖ b_zk ‖ d_zk ‖ r_tail
+z_hat ‖ e_hat ‖ t_hat ‖ r_tail
 ```
 
-Each segment occupies a disjoint, contiguous range of columns. The `b_zk` and
-`d_zk` blinding segments are present only in zero-knowledge builds and are empty
-otherwise.
+Each segment occupies a disjoint, contiguous range of columns.
 
 `z_hat` leads the layout so the committed-fold block sits at column offset `0`,
 which keeps the verifier on the fast multi-factor tensor path for the `z`
@@ -100,8 +98,6 @@ from **outermost to innermost**, so the last-named axis is the fastest-varying:
 | `e_hat` | `do · C · B` | `dig → claim → block` | opening witness |
 | `t_hat` | `do · n_A · C · B` | `a_row → dig → claim → block` | per-`A`-row opening witness |
 | `z_hat` | `dc · df · block_len` | `dc → df → block` | committed fold response |
-| `b_zk` | (zk only) | blinding planes | `B`-side blinding |
-| `d_zk` | (zk only) | blinding planes | `D`-side blinding |
 | `r_tail` | `rows · levels` | `level → row` | gadget residue rows |
 
 For example, `e_hat` has the digit index as its outermost axis, then the claim

@@ -1,5 +1,10 @@
 # Spec: Packed Setup Layout Repack
 
+> **Pre-zk-strip historical.** This spec predates the zk-strip
+> ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
+> `feature = "zk"` or `zkB`/`zkD` matrices describe removed code preserved on
+> `zk-wip`.
+
 | Field     | Value |
 |-----------|-------|
 | Author(s) | Quang Dao |

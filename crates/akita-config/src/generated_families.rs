@@ -32,11 +32,8 @@ pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
 pub struct GeneratedFamily {
     /// On-disk module file name (without `.rs`) and the basename used
     /// to derive the static `&[GeneratedScheduleTableEntry]` const name.
-    /// The `_zk` suffix is appended by the binary at emit time.
     pub module_name: &'static str,
-    /// On-disk const name for the table entries array. The binary
-    /// rewrites `_SCHEDULES` -> `_ZK_SCHEDULES` when the `zk` feature
-    /// is enabled.
+    /// On-disk const name for the table entries array.
     pub const_name: &'static str,
     /// Cargo feature on `akita-schedules` / `akita-config` for this family.
     pub schedule_feature: &'static str,
@@ -145,7 +142,6 @@ pub fn wiring_emit_spec(family: &GeneratedFamily, output_dir: std::path::PathBuf
         regen: family.regen,
         ring_challenge_config: family.ring_challenge_config,
         fold_challenge_shape_at_level: family.fold_challenge_shape_at_level,
-        zk_enabled: false,
         generator_command: "",
     }
 }
@@ -154,7 +150,6 @@ pub fn wiring_emit_spec(family: &GeneratedFamily, output_dir: std::path::PathBuf
 pub fn emit_spec_for_family(
     family: &GeneratedFamily,
     output_dir: std::path::PathBuf,
-    zk_enabled: bool,
     generator_command: &'static str,
 ) -> Result<EmitSpec, AkitaError> {
     Ok(EmitSpec {
@@ -168,7 +163,6 @@ pub fn emit_spec_for_family(
         regen: family.regen,
         ring_challenge_config: family.ring_challenge_config,
         fold_challenge_shape_at_level: family.fold_challenge_shape_at_level,
-        zk_enabled,
         generator_command,
     })
 }
@@ -220,7 +214,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         tensor_verifier::fp128::D64OneHotTensor
     ),
     // Tiered companion of `fp128_d64_onehot`
-    #[cfg(not(feature = "zk"))]
     family_row!(
         "fp128_d64_onehot_tiered",
         "FP128_D64_ONEHOT_TIERED_SCHEDULES",

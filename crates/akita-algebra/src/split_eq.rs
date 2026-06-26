@@ -257,7 +257,7 @@ impl<E: FieldCore + FromPrimitiveInt> GruenSplitEq<E> {
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::poly::fold_evals_in_place;

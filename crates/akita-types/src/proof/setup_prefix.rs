@@ -749,6 +749,7 @@ fn active_setup_role_widths(
     level_params: &LevelParams,
     opening_batch: &OpeningBatchShape,
 ) -> Result<(usize, usize, usize), AkitaError> {
+    level_params.reject_grouped_root("active_setup_role_widths")?;
     let w_a = level_params
         .block_len
         .checked_mul(level_params.num_digits_commit)
@@ -996,10 +997,6 @@ mod tests {
             max_num_batched_polys: 1,
             gen_ring_dim: d_setup,
             max_setup_len: 2,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
             public_matrix_seed: [3u8; 32],
         };
         let prefix_params =
@@ -1078,13 +1075,6 @@ mod tests {
         let slot = || {
             let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
             let recomposed = vec![Vec::new()];
-            #[cfg(feature = "zk")]
-            let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                decomposed,
-                recomposed,
-                FlatDigitBlocks::empty(),
-            );
-            #[cfg(not(feature = "zk"))]
             let hint =
                 AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
             SetupPrefixSlot {

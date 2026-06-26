@@ -2,8 +2,6 @@
 use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
-#[cfg(feature = "zk")]
-use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
 use crate::{
@@ -40,7 +38,6 @@ mod finalize;
 #[cfg(test)]
 mod tests;
 
-#[cfg(not(feature = "zk"))]
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_next_w, commit_w, NextWitnessCommitment};

@@ -57,11 +57,9 @@ pub use layout::{
     extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
     monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView,
-    RingOpeningPoint,
+    sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, GroupRootParams, LevelParams, MRowLayout,
+    RingMatrixView, RingOpeningPoint,
 };
-#[cfg(feature = "zk")]
-pub use proof::ZkHidingProof;
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
@@ -96,7 +94,7 @@ pub use proof::{
     CleartextWitnessShape, CommitmentGroup, CommitmentVerifier, DummyProof,
     ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FlatDigitBlockIter,
     FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningBatchLimits, OpeningBatchShape,
-    OpeningGroupShape, OpeningPoints, PackedDigits, PointVariableSelection, PreparedOpeningPoint,
+    OpeningGroupShape, OpeningPoints, PointVariableSelection, PreparedOpeningPoint,
     ProverCommitmentRows, PublicMatrixSeed, RelationOnlyStage2Inputs, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLayout, RingRelationSegmentLengths, RingSliceSerializer,
@@ -116,8 +114,8 @@ pub use schedule::{
     schedule_terminal_direct_witness_shape, scheduled_next_level_params, w_ring_element_count,
     w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, ExecutionSchedule, FoldStep, Schedule,
-    Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, DirectStep,
+    ExecutionSchedule, FoldStep, GroupBatchAkitaScheduleLookupKey, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};

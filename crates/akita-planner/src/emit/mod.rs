@@ -35,7 +35,6 @@ pub struct EmitSpec {
     pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    pub zk_enabled: bool,
     pub generator_command: &'static str,
 }
 
@@ -185,7 +184,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = ",
             "GeneratedScheduleCatalogIdentity {{\n",
             "    family_name: \"{family_name}\",\n",
-            "    zk_enabled: {zk_enabled},\n",
             "    sis_family: {sis_family},\n",
             "    ring_dimension: {ring_dimension},\n",
             "    decomposition: {decomposition},\n",
@@ -204,7 +202,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         ),
         ring_dims = ring_dims,
         family_name = identity.family_name,
-        zk_enabled = identity.zk_enabled,
         sis_family = emit_sis_family(identity.sis_family),
         ring_dimension = identity.ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
@@ -223,23 +220,11 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
 }
 
 fn output_module_name(spec: &EmitSpec) -> String {
-    if spec.zk_enabled {
-        format!("{}_zk", spec.module_name)
-    } else {
-        spec.module_name.to_string()
-    }
+    spec.module_name.to_string()
 }
 
 fn output_const_name(spec: &EmitSpec) -> String {
-    if spec.zk_enabled {
-        let base = spec
-            .const_name
-            .strip_suffix("_SCHEDULES")
-            .expect("generated schedule const name should end in _SCHEDULES");
-        format!("{base}_ZK_SCHEDULES")
-    } else {
-        spec.const_name.to_string()
-    }
+    spec.const_name.to_string()
 }
 
 /// Emit one family module (entries + embedded catalog identity).
@@ -287,7 +272,6 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
 
     let identity = expected_catalog_identity(
         spec.family_name,
-        spec.zk_enabled,
         &spec.policy,
         &memory_entries,
         spec.ring_challenge_config,
@@ -308,11 +292,7 @@ fn table_fn_name(module_name: &str) -> String {
 }
 
 fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
-    writeln!(
-        out,
-        "#[cfg(all(feature = \"fp128-d64-onehot-tiered\", not(feature = \"zk\")))]"
-    )
-    .map_err(|e| e.to_string())?;
+    writeln!(out, "#[cfg(feature = \"fp128-d64-onehot-tiered\")]").map_err(|e| e.to_string())?;
     writeln!(out, "pub mod fp128_d64_onehot_tiered;").map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -322,8 +302,8 @@ fn emit_tiered_table_accessor() -> String {
         "/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries\n",
         "/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with\n",
         "/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored\n",
-        "/// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.\n",
-        "#[cfg(all(feature = \"fp128-d64-onehot-tiered\", not(feature = \"zk\")))]\n",
+        "/// fields.\n",
+        "#[cfg(feature = \"fp128-d64-onehot-tiered\")]\n",
         "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
         "    GeneratedScheduleTable {\n",
         "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
@@ -350,11 +330,7 @@ fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
             continue;
         }
         writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"zk\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {module_name}_zk;").map_err(|e| e.to_string())?;
     }
     if !tiered_wired {
         emit_tiered_module_declaration(&mut out)?;
@@ -370,18 +346,10 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
     let fn_name = table_fn_name(spec.module_name);
     let feat = spec.schedule_feature;
     let module_name = spec.module_name;
-    let zk_module = format!("{module_name}_zk");
     let const_name = spec.const_name;
-    let zk_const_base = spec.const_name.strip_suffix("_SCHEDULES").ok_or_else(|| {
-        format!(
-            "generated schedule const name should end in _SCHEDULES: {}",
-            spec.const_name
-        )
-    })?;
-    let zk_const = format!("{zk_const_base}_ZK_SCHEDULES");
     Ok(format!(
         "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            entries: {zk_module}::{zk_const},\n            identity: {zk_module}::CATALOG_IDENTITY,\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
+         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
 }
 

@@ -12,7 +12,6 @@ struct LayoutSummary {
     r_vars: usize,
     log_basis: u32,
     n_a: usize,
-    b_width: usize,
     n_b_at_layout_basis: usize,
     conservative_n_b: usize,
     t_hat_g: usize,
@@ -62,7 +61,6 @@ fn layout_summary(
         r_vars: params.r_vars,
         log_basis: params.log_basis,
         n_a: params.a_key.row_len(),
-        b_width,
         n_b_at_layout_basis: params.b_key.row_len(),
         conservative_n_b,
         t_hat_g,
@@ -72,17 +70,16 @@ fn layout_summary(
 fn print_layout(result: Result<LayoutSummary, AkitaError>) {
     match result {
         Ok(layout) => print!(
-            ",ok,{},{},{},{},{},{},{},{}",
+            ",ok,{},{},{},{},{},{},{}",
             layout.m_vars,
             layout.r_vars,
             layout.log_basis,
             layout.n_a,
-            layout.b_width,
             layout.n_b_at_layout_basis,
             layout.conservative_n_b,
             layout.t_hat_g
         ),
-        Err(err) => print!(",error:{err:?},,,,,,,,",),
+        Err(err) => print!(",error:{err:?},,,,,,,",),
     }
 }
 

@@ -288,7 +288,7 @@ pub(crate) fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8])
     xof.update(data);
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

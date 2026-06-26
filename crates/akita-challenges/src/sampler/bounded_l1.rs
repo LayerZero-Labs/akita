@@ -233,7 +233,7 @@ fn try_take_bucket<const CHECK_OVERFLOW: bool>(
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;

@@ -13,8 +13,6 @@
 
 mod setup_contribution;
 mod structured_slice;
-#[cfg(feature = "zk")]
-mod zk_blinding;
 
 pub(crate) use setup_contribution::SetupEvaluator;
 pub(crate) use setup_contribution::{SetupEvalPlan, SetupEvaluation, SetupEvaluatorMode};
@@ -23,5 +21,3 @@ pub(super) use structured_slice::{
     StructuredSliceMleEvaluator, TStructuredSlicesEvaluator, ZDenseSlicesEvaluator,
     ZStructuredPow2SlicesEvaluator,
 };
-#[cfg(feature = "zk")]
-pub(super) use zk_blinding::{compute_b_blinding_part, compute_d_blinding_part};

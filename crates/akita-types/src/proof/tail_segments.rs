@@ -33,7 +33,7 @@ pub struct TailSegmentLayout {
     pub e_field_elems: usize,
     pub t_field_elems: usize,
     pub r_field_elems: usize,
-    /// Hypercube length after expansion to digit planes (matches legacy `PackedDigits::num_elems`).
+    /// Hypercube length after expansion to digit planes (legacy packed layout used the same count).
     pub logical_num_elems: usize,
 }
 

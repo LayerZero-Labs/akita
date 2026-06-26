@@ -16,16 +16,12 @@ use crate::kernels::linear::{
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
     selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
 };
-#[cfg(feature = "zk")]
-use crate::validation::MAX_I8_LOG_BASIS;
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::AkitaExpandedSetup;
 use std::array::from_fn;
 use std::sync::Arc;
-#[cfg(feature = "zk")]
-use std::sync::OnceLock;
 
 /// CPU backend using the existing Rust/Rayon kernels.
 #[derive(Debug, Default, Clone, Copy)]
@@ -37,10 +33,6 @@ pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     ntt_shared: NttSlotCache<D>,
     ntt_i8_capacity: CrtI8CapacityProfile,
-    #[cfg(feature = "zk")]
-    ntt_zk_b: OnceLock<NttSlotCache<D>>,
-    #[cfg(feature = "zk")]
-    ntt_zk_d: OnceLock<NttSlotCache<D>>,
 }
 
 /// CRT/NTT profile and universal i8 capacity metadata for a prepared setup.
@@ -111,82 +103,6 @@ fn validate_digit_row_request(
     Ok(())
 }
 
-#[cfg(feature = "zk")]
-fn zk_digit_rows_from_slot<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
-    row_len: usize,
-    row_width: usize,
-    total_ring_elements: usize,
-    digits: &[[i8; D]],
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-    if digits.is_empty() {
-        return Ok(vec![CyclotomicRing::zero(); row_len]);
-    }
-    if digits.len() > row_width {
-        return Err(AkitaError::InvalidSetup(
-            "ZK matrix digit columns exceed row width".to_string(),
-        ));
-    }
-    validate_digit_row_request(row_len, row_width, total_ring_elements)?;
-    mat_vec_mul_ntt_single_i8(slot, row_len, row_width, digits, MAX_I8_LOG_BASIS)
-}
-
-#[cfg(feature = "zk")]
-fn zk_cyclic_digit_rows_from_slot<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
-    row_len: usize,
-    row_width: usize,
-    total_ring_elements: usize,
-    digits: &[[i8; D]],
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-    if digits.is_empty() {
-        return Ok(vec![CyclotomicRing::zero(); row_len]);
-    }
-    if digits.len() > row_width {
-        return Err(AkitaError::InvalidSetup(
-            "ZK matrix digit columns exceed row width".to_string(),
-        ));
-    }
-    validate_digit_row_request(row_len, row_width, total_ring_elements)?;
-    mat_vec_mul_ntt_single_i8_cyclic(slot, row_len, row_width, digits, MAX_I8_LOG_BASIS)
-}
-
-#[cfg(feature = "zk")]
-fn zk_b_slot<F: FieldCore + CanonicalField, const D: usize>(
-    prepared: &CpuPreparedSetup<F, D>,
-) -> Result<&NttSlotCache<D>, AkitaError> {
-    if let Some(slot) = prepared.ntt_zk_b.get() {
-        return Ok(slot);
-    }
-    let total = prepared
-        .expanded
-        .zk_b_matrix
-        .total_ring_elements_at::<D>()?;
-    let slot = build_ntt_slot(prepared.expanded.zk_b_matrix.ring_view::<D>(1, total)?)?;
-    let _ = prepared.ntt_zk_b.set(slot);
-    prepared.ntt_zk_b.get().ok_or_else(|| {
-        AkitaError::InvalidSetup("failed to initialize ZK B prepared slot".to_string())
-    })
-}
-
-#[cfg(feature = "zk")]
-fn zk_d_slot<F: FieldCore + CanonicalField, const D: usize>(
-    prepared: &CpuPreparedSetup<F, D>,
-) -> Result<&NttSlotCache<D>, AkitaError> {
-    if let Some(slot) = prepared.ntt_zk_d.get() {
-        return Ok(slot);
-    }
-    let total = prepared
-        .expanded
-        .zk_d_matrix
-        .total_ring_elements_at::<D>()?;
-    let slot = build_ntt_slot(prepared.expanded.zk_d_matrix.ring_view::<D>(1, total)?)?;
-    let _ = prepared.ntt_zk_d.set(slot);
-    prepared.ntt_zk_d.get().ok_or_else(|| {
-        AkitaError::InvalidSetup("failed to initialize ZK D prepared slot".to_string())
-    })
-}
-
 impl<F> ComputeBackendSetup<F> for CpuBackend
 where
     F: FieldCore + CanonicalField,
@@ -204,10 +120,6 @@ where
             expanded,
             ntt_shared,
             ntt_i8_capacity,
-            #[cfg(feature = "zk")]
-            ntt_zk_b: OnceLock::new(),
-            #[cfg(feature = "zk")]
-            ntt_zk_d: OnceLock::new(),
         })
     }
 
@@ -413,46 +325,6 @@ where
             log_basis,
         )
     }
-
-    #[cfg(feature = "zk")]
-    fn zk_b_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        zk_digit_rows_from_slot(
-            zk_b_slot(prepared)?,
-            row_len,
-            row_width,
-            prepared
-                .expanded
-                .zk_b_matrix
-                .total_ring_elements_at::<D>()?,
-            digits,
-        )
-    }
-
-    #[cfg(feature = "zk")]
-    fn zk_d_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        zk_digit_rows_from_slot(
-            zk_d_slot(prepared)?,
-            row_len,
-            row_width,
-            prepared
-                .expanded
-                .zk_d_matrix
-                .total_ring_elements_at::<D>()?,
-            digits,
-        )
-    }
 }
 
 impl<F> CyclicRowsComputeBackend<F> for CpuBackend
@@ -480,46 +352,6 @@ where
             digits.len(),
             digits,
             log_basis,
-        )
-    }
-
-    #[cfg(feature = "zk")]
-    fn zk_b_cyclic_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        zk_cyclic_digit_rows_from_slot(
-            zk_b_slot(prepared)?,
-            row_len,
-            row_width,
-            prepared
-                .expanded
-                .zk_b_matrix
-                .total_ring_elements_at::<D>()?,
-            digits,
-        )
-    }
-
-    #[cfg(feature = "zk")]
-    fn zk_d_cyclic_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        zk_cyclic_digit_rows_from_slot(
-            zk_d_slot(prepared)?,
-            row_len,
-            row_width,
-            prepared
-                .expanded
-                .zk_d_matrix
-                .total_ring_elements_at::<D>()?,
-            digits,
         )
     }
 }
@@ -591,8 +423,6 @@ mod tests {
     use crate::validation::MAX_I8_LOG_BASIS;
     use crate::AkitaProverSetup;
     use akita_field::Fp64;
-    #[cfg(feature = "zk")]
-    use akita_types::FlatMatrix;
     use akita_types::SetupMatrixEnvelope;
     use std::sync::Arc;
 
@@ -600,63 +430,13 @@ mod tests {
     const D: usize = 32;
 
     fn setup_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
-        SetupMatrixEnvelope {
-            max_setup_len,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
-        }
-    }
-
-    #[cfg(feature = "zk")]
-    fn setup_envelope_with_zk(
-        max_setup_len: usize,
-        max_zk_b_len: usize,
-        max_zk_d_len: usize,
-    ) -> SetupMatrixEnvelope {
-        SetupMatrixEnvelope {
-            max_setup_len,
-            max_zk_b_len,
-            max_zk_d_len,
-        }
+        SetupMatrixEnvelope { max_setup_len }
     }
 
     fn prepared() -> CpuPreparedSetup<F, D> {
         let setup =
             AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
         CpuBackend.prepare_setup(&setup).unwrap()
-    }
-
-    #[cfg(feature = "zk")]
-    fn direct_negacyclic_rows(
-        matrix: &FlatMatrix<F>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Vec<CyclotomicRing<F, D>> {
-        let view = matrix.ring_view::<D>(row_len, row_width).unwrap();
-        let digit_rings = digits
-            .iter()
-            .map(|digit| {
-                CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
-                    F::from_i64(digit[idx] as i64)
-                }))
-            })
-            .collect::<Vec<_>>();
-        (0..row_len)
-            .map(|row_idx| {
-                let row_start = row_idx * row_width;
-                let mut acc = CyclotomicRing::<F, D>::zero();
-                for (entry, digit) in view.as_slice()[row_start..row_start + digit_rings.len()]
-                    .iter()
-                    .zip(digit_rings.iter())
-                {
-                    entry.mul_accumulate_into(digit, &mut acc);
-                }
-                acc
-            })
-            .collect()
     }
 
     #[test]
@@ -751,35 +531,6 @@ mod tests {
         )
         .expect("direct cyclic digit rows");
         assert_eq!(via_backend, direct);
-    }
-
-    #[cfg(feature = "zk")]
-    #[test]
-    fn cpu_zk_digit_rows_match_direct_negacyclic_product() {
-        let row_len = 2;
-        let row_width = 3;
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(
-            8,
-            1,
-            setup_envelope_with_zk(32, row_len * row_width, row_len * row_width),
-        )
-        .unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let digits = vec![[1i8; D], [-2i8; D]];
-
-        let b_rows = CpuBackend
-            .zk_b_digit_rows::<D>(&prepared, row_len, row_width, &digits)
-            .expect("backend zkB digit rows");
-        let b_direct =
-            direct_negacyclic_rows(setup.expanded.zk_b_matrix(), row_len, row_width, &digits);
-        assert_eq!(b_rows, b_direct);
-
-        let d_rows = CpuBackend
-            .zk_d_digit_rows::<D>(&prepared, row_len, row_width, &digits)
-            .expect("backend zkD digit rows");
-        let d_direct =
-            direct_negacyclic_rows(setup.expanded.zk_d_matrix(), row_len, row_width, &digits);
-        assert_eq!(d_rows, d_direct);
     }
 
     #[test]

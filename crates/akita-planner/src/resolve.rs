@@ -12,16 +12,17 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
     terminal_direct_witness_shape_for_key, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, GroupBatchAkitaScheduleLookupKey, LevelParams,
+    MRowLayout, Schedule, Step,
 };
 
 use crate::catalog_identity::validate_catalog_identity;
-use crate::find_schedule;
 use crate::generated::{
     table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
     GeneratedStep,
 };
 use crate::PlannerPolicy;
+use crate::{find_group_batch_schedule, find_schedule};
 
 ///
 /// Convert the public runtime lookup key into a generated-table lookup key.
@@ -65,6 +66,33 @@ pub fn resolve_schedule(
         );
     }
     find_schedule(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
+}
+
+/// Resolve a grouped-root schedule without falling back to a scalar table key.
+///
+/// Phase 1 has no generated grouped entries yet, so catalog handling only
+/// validates identity before delegating to the grouped DP fallback.
+pub fn resolve_group_batch_schedule(
+    key: &GroupBatchAkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    catalog: Option<GeneratedScheduleTable>,
+) -> Result<Schedule, AkitaError> {
+    if let Some(table) = catalog {
+        validate_catalog_identity(
+            &table,
+            policy,
+            &ring_challenge_config,
+            &fold_challenge_shape_at_level,
+        )?;
+    }
+    find_group_batch_schedule(
         key,
         policy,
         ring_challenge_config,
@@ -125,10 +153,7 @@ pub fn schedule_from_entry(
     let mut total = 0usize;
     let mut fold_level = 0usize;
     let mut current_w_len = expected_root_w_len;
-    #[cfg(feature = "zk")]
-    let mut current_log_basis = policy.decomposition.log_basis;
     let mut terminal_witness_field_len: Option<usize> = None;
-    #[cfg(not(feature = "zk"))]
     let mut last_fold_lp: Option<LevelParams> = None;
 
     for (idx, step) in entry.steps.iter().enumerate() {
@@ -229,10 +254,7 @@ pub fn schedule_from_entry(
                 total = total.checked_add(level_bytes).ok_or_else(|| {
                     AkitaError::InvalidSetup("proof byte total overflow".to_string())
                 })?;
-                #[cfg(not(feature = "zk"))]
-                {
-                    last_fold_lp = Some(lp.clone());
-                }
+                last_fold_lp = Some(lp.clone());
                 steps.push(Step::Fold(FoldStep {
                     params: lp,
                     current_w_len,
@@ -241,13 +263,6 @@ pub fn schedule_from_entry(
                 }));
                 fold_level += 1;
                 current_w_len = next_w_len;
-                #[cfg(feature = "zk")]
-                {
-                    current_log_basis = match next {
-                        GeneratedStep::Fold(next_level) => next_level.log_basis,
-                        GeneratedStep::Direct(_) => level.log_basis,
-                    };
-                }
             }
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
@@ -280,23 +295,14 @@ pub fn schedule_from_entry(
                         )
                     })?;
                     let terminal_fold_level = fold_level.saturating_sub(1);
-                    #[cfg(not(feature = "zk"))]
                     let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
                         AkitaError::InvalidSetup(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    #[cfg(feature = "zk")]
-                    let terminal_lp_stub = LevelParams::log_basis_stub(current_log_basis);
-                    #[cfg(not(feature = "zk"))]
                     let terminal_log_basis = terminal_lp.log_basis;
-                    #[cfg(feature = "zk")]
-                    let terminal_log_basis = current_log_basis;
                     let witness_shape = terminal_direct_witness_shape_for_key(
-                        #[cfg(not(feature = "zk"))]
                         terminal_lp,
-                        #[cfg(feature = "zk")]
-                        &terminal_lp_stub,
                         field_bits,
                         key,
                         terminal_fold_level,
