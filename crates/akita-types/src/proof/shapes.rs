@@ -140,18 +140,7 @@ pub(super) fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckPro
         .collect()
 }
 
-#[cfg(feature = "zk")]
-pub(super) fn sumcheck_proof_masked_shape<F: FieldCore>(
-    masks: &SumcheckProofMasked<F>,
-) -> SumcheckProofShape {
-    masks
-        .masked_round_polys
-        .iter()
-        .map(|p| p.coeffs_except_linear_term.len())
-        .collect()
-}
 
-#[cfg(not(feature = "zk"))]
 fn eq_factored_sumcheck_shape<F: FieldCore>(
     sc: &EqFactoredSumcheckProof<F>,
 ) -> EqFactoredSumcheckProofShape {
@@ -162,16 +151,6 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
     (sc.round_polys.len(), degree)
 }
 
-#[cfg(feature = "zk")]
-fn eq_factored_sumcheck_proof_masked_shape<F: FieldCore>(
-    masks: &EqFactoredSumcheckProofMasked<F>,
-) -> EqFactoredSumcheckProofShape {
-    let degree = masks
-        .masked_round_polys
-        .first()
-        .map_or(0, |p| p.coeffs_except_linear_term.len());
-    (masks.masked_round_polys.len(), degree)
-}
 
 pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
@@ -191,19 +170,11 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
             .stages
             .iter()
             .map(|stage| AkitaStage1StageShape {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: eq_factored_sumcheck_shape(&stage.sumcheck_proof),
-                #[cfg(feature = "zk")]
-                sumcheck_proof: eq_factored_sumcheck_proof_masked_shape(
-                    &stage.sumcheck_proof_masked,
-                ),
                 child_claims: stage.child_claims.len(),
             })
             .collect(),
-        #[cfg(not(feature = "zk"))]
         stage2_sumcheck_proof: sumcheck_shape(&stage2.sumcheck_proof),
-        #[cfg(feature = "zk")]
-        stage2_sumcheck_proof: sumcheck_proof_masked_shape(&stage2.sumcheck_proof_masked),
         stage3_sumcheck: stage3_sumcheck_proof.map(SetupSumcheckProof::shape),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
     }

@@ -196,13 +196,12 @@ fn terminal_fold_num_polynomials(
 
 /// Canonical terminal direct witness shape for planner and table materialization.
 ///
-/// Non-zk builds use segment-typed encoding; zk builds keep legacy `PackedDigits`.
-/// The scalar same-point terminal fold has one public row and one commitment
-/// group, so only the polynomial multiplicity varies.
+/// Uses segment-typed encoding. The scalar same-point terminal fold has one public
+/// row and one commitment group, so only the polynomial multiplicity varies.
 ///
 /// # Errors
 ///
-/// Propagates [`segment_typed_witness_shape`] errors on the non-zk path.
+/// Propagates [`segment_typed_witness_shape`] errors.
 pub fn terminal_direct_witness_shape(
     terminal_lp: &LevelParams,
     field_bits: u32,
@@ -210,28 +209,17 @@ pub fn terminal_direct_witness_shape(
     terminal_log_basis: u32,
     num_polynomials: usize,
 ) -> Result<CleartextWitnessShape, AkitaError> {
-    #[cfg(feature = "zk")]
-    {
-        let _ = (terminal_lp, field_bits, current_w_len, num_polynomials);
-        Ok(CleartextWitnessShape::PackedDigits((
-            current_w_len,
-            terminal_log_basis,
-        )))
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        let _ = (current_w_len, terminal_log_basis);
-        // Single public row, single commitment group for the scalar same-point
-        // batch; `e`/`t` segments both scale with `num_polynomials`.
-        segment_typed_witness_shape(
-            terminal_lp,
-            field_bits,
-            num_polynomials,
-            num_polynomials,
-            1,
-            1,
-        )
-    }
+    let _ = (current_w_len, terminal_log_basis);
+    // Single public row, single commitment group for the scalar same-point
+    // batch; `e`/`t` segments both scale with `num_polynomials`.
+    segment_typed_witness_shape(
+        terminal_lp,
+        field_bits,
+        num_polynomials,
+        num_polynomials,
+        1,
+        1,
+    )
 }
 
 /// [`terminal_direct_witness_shape`] with the polynomial count derived from a schedule key.

@@ -1,10 +1,8 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
-#[cfg(not(feature = "zk"))]
 use akita_algebra::CompressedUniPoly;
 use akita_field::Prime128Offset275;
 use akita_serialization::Valid;
-#[cfg(not(feature = "zk"))]
 use akita_sumcheck::SumcheckProof;
 
 type F = Prime128Offset275;
@@ -207,35 +205,22 @@ fn tiny_stage1() -> AkitaStage1Proof<F> {
 
 fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
     AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-        #[cfg(not(feature = "zk"))]
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
         },
-        #[cfg(feature = "zk")]
-        sumcheck_proof_masked: SumcheckProofMasked {
-            masked_round_polys: Vec::new(),
-        },
         next_w_commitment: FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()])
             .into_compact(),
-        #[cfg(not(feature = "zk"))]
         next_w_eval: F::zero(),
-        #[cfg(feature = "zk")]
-        next_w_eval_masked: F::zero(),
     })
 }
 
 fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
     ExtensionOpeningReductionProof {
         partials: vec![F::zero(), F::one()],
-        #[cfg(not(feature = "zk"))]
         sumcheck: SumcheckProof {
             round_polys: vec![CompressedUniPoly {
                 coeffs_except_linear_term: vec![F::zero(), F::one()],
             }],
-        },
-        #[cfg(feature = "zk")]
-        sumcheck_proof_masked: SumcheckProofMasked {
-            masked_round_polys: Vec::new(),
         },
     }
 }
@@ -270,13 +255,8 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
         Some(tiny_reduction()),
         vec![CyclotomicRing::<F, D>::zero()],
         tiny_stage1(),
-        #[cfg(not(feature = "zk"))]
         SumcheckProof {
             round_polys: Vec::new(),
-        },
-        #[cfg(feature = "zk")]
-        SumcheckProofMasked {
-            masked_round_polys: Vec::new(),
         },
         FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
         F::zero(),
@@ -304,19 +284,12 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert_eq!(decoded_with_reduction, with_reduction);
 }
 
-#[cfg(not(feature = "zk"))]
 fn tiny_terminal_stage2() -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: Vec::new(),
     }
 }
 
-#[cfg(feature = "zk")]
-fn tiny_terminal_stage2_masked() -> SumcheckProofMasked<F> {
-    SumcheckProofMasked {
-        masked_round_polys: Vec::new(),
-    }
-}
 
 #[test]
 fn terminal_level_proof_serde_round_trip() {
@@ -326,10 +299,7 @@ fn terminal_level_proof_serde_round_trip() {
 
     let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         None,
-        #[cfg(not(feature = "zk"))]
         tiny_terminal_stage2(),
-        #[cfg(feature = "zk")]
-        tiny_terminal_stage2_masked(),
         final_witness.clone(),
         7,
     );
@@ -358,10 +328,7 @@ fn terminal_level_proof_serde_round_trip() {
 
     let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         Some(tiny_reduction()),
-        #[cfg(not(feature = "zk"))]
         tiny_terminal_stage2(),
-        #[cfg(feature = "zk")]
-        tiny_terminal_stage2_masked(),
         final_witness,
         0,
     );

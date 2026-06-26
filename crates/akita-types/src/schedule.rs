@@ -150,7 +150,6 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 
 /// Total ring elements in the recursive witness polynomial.
 ///
-/// Components: `e_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts::<F>(lp, 1, 1)
 }
@@ -243,39 +242,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
             lp.log_basis,
         ))
         .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    {
-        // Terminal layout drops the D-block from the relation entirely, so
-        // its per-row blinding is also unused. Intermediate layout keeps the
-        // D-block blinding as before.
-        let d_blinding_count = match layout {
-            crate::layout::MRowLayout::WithDBlock => {
-                crate::lhl_blinding::blinding_column_count_from_bits(
-                    lp.d_key.row_len(),
-                    lp.ring_dimension,
-                    lp.log_basis,
-                    field_bits as usize,
-                )
-            }
-            crate::layout::MRowLayout::WithoutDBlock => 0,
-        };
-        let b_blinding_count = crate::lhl_blinding::blinding_column_count_from_bits(
-            lp.b_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-            field_bits as usize,
-        );
-        e_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(u_concat_count))
-            .and_then(|n| n.checked_add(b_blinding_count))
-            .and_then(|n| n.checked_add(d_blinding_count))
-            .and_then(|n| n.checked_add(z_pre_count))
-            .and_then(|n| n.checked_add(r_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
-    }
-    #[cfg(not(feature = "zk"))]
-    {
+
         e_hat_count
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(u_concat_count))
@@ -283,7 +250,6 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
             .and_then(|n| n.checked_add(r_count))
             .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
     }
-}
 
 /// Parameters for one fold level in the computed schedule.
 #[derive(Clone, Debug)]
@@ -600,10 +566,7 @@ mod tests {
     use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
-    #[cfg(not(feature = "zk"))]
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
-    #[cfg(feature = "zk")]
-    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 
     type F = Prime128OffsetA7F7;
 
@@ -634,7 +597,6 @@ mod tests {
         assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
     }
 
-    #[cfg(not(feature = "zk"))]
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
@@ -645,24 +607,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zk")]
-    fn dummy_sumcheck_proof_masked<F: FieldCore>(
-        rounds: usize,
-        degree: usize,
-    ) -> SumcheckProofMasked<F> {
-        let compressed_rounds = || {
-            (0..rounds)
-                .map(|_| CompressedUniPoly {
-                    coeffs_except_linear_term: vec![F::zero(); degree],
-                })
-                .collect()
-        };
-        SumcheckProofMasked {
-            masked_round_polys: compressed_rounds(),
-        }
-    }
 
-    #[cfg(not(feature = "zk"))]
     fn dummy_eq_factored_sumcheck<F: FieldCore>(
         rounds: usize,
         degree: usize,
@@ -679,38 +624,13 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zk")]
-    fn dummy_eq_factored_sumcheck_proof_masked<F: FieldCore>(
-        rounds: usize,
-        degree: usize,
-    ) -> EqFactoredSumcheckProofMasked<F> {
-        let rounds_for = || {
-            (0..rounds)
-                .map(|_| EqFactoredUniPoly {
-                    coeffs_except_linear_term: vec![
-                        F::zero();
-                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                    ],
-                })
-                .collect()
-        };
-        EqFactoredSumcheckProofMasked {
-            masked_round_polys: rounds_for(),
-        }
-    }
 
     fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {
             stages: stage1_tree_stage_shapes(rounds, b)
                 .into_iter()
                 .map(|shape| AkitaStage1StageProof {
-                    #[cfg(not(feature = "zk"))]
                     sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
-                    #[cfg(feature = "zk")]
-                    sumcheck_proof_masked: dummy_eq_factored_sumcheck_proof_masked(
-                        rounds,
-                        shape.sumcheck_proof.1,
-                    ),
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
                 .collect(),
@@ -746,15 +666,9 @@ mod tests {
             fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
                 next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
-                #[cfg(not(feature = "zk"))]
                 next_w_eval: F::zero(),
-                #[cfg(feature = "zk")]
-                next_w_eval_masked: F::zero(),
             }),
             stage3_sumcheck_proof: None,
         };
@@ -833,10 +747,7 @@ mod tests {
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
-                #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
-                #[cfg(feature = "zk")]
-                dummy_sumcheck_proof_masked(rounds, 3),
                 final_witness,
                 0,
             );
@@ -913,10 +824,7 @@ mod tests {
                     None,
                     vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
                     dummy_stage1_proof(rounds, b),
-                    #[cfg(not(feature = "zk"))]
                     dummy_sumcheck(rounds, 3),
-                    #[cfg(feature = "zk")]
-                    dummy_sumcheck_proof_masked(rounds, 3),
                     next_commitment,
                     F::zero(),
                 );
@@ -946,23 +854,12 @@ mod tests {
         let partials = extension_width.saturating_mul(num_claims);
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![F::zero(); partials],
-            #[cfg(not(feature = "zk"))]
             sumcheck: dummy_sumcheck(
                 opening_vars - extension_width.trailing_zeros() as usize,
                 EXTENSION_OPENING_REDUCTION_DEGREE,
             ),
-            #[cfg(feature = "zk")]
-            sumcheck_proof_masked: dummy_sumcheck_proof_masked(
-                opening_vars - extension_width.trailing_zeros() as usize,
-                EXTENSION_OPENING_REDUCTION_DEGREE,
-            ),
         };
-        #[cfg(not(feature = "zk"))]
         let sumcheck_bytes = reduction.sumcheck.serialized_size(Compress::No);
-        #[cfg(feature = "zk")]
-        let sumcheck_bytes = reduction
-            .sumcheck_proof_masked
-            .serialized_size(Compress::No);
 
         assert_eq!(
             extension_opening_reduction_proof_bytes(128, partials, opening_vars, extension_width)
