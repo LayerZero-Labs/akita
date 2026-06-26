@@ -228,18 +228,16 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Standalone conservative layout used by `commit_group`.
+    /// Schedule used to derive the standalone conservative layout for `commit_group`.
     ///
     /// The group layout is planned at the minimum configured root basis, then
-    /// its B rank is widened for the maximum configured root basis.
+    /// its B rank is widened separately by [`Self::get_params_for_group_commit`].
     ///
     /// # Errors
     ///
     /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
-    /// unsupported SIS buckets, or schedules without root commit params.
-    fn get_params_for_group_commit(
-        key: &AkitaScheduleLookupKey,
-    ) -> Result<LevelParams, AkitaError> {
+    /// or unsupported SIS buckets.
+    fn group_commit_schedule(key: &AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
         if Self::TIERED_COMMITMENT {
             return Err(AkitaError::InvalidSetup(
                 "tiered standalone commitment groups are not supported; see specs/multi-group-batching.md"
@@ -256,28 +254,60 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 "standalone commitment group key must contain at least one polynomial".to_string(),
             ));
         }
+        key.validate()?;
 
-        let (min_basis, max_basis) = Self::basis_range();
+        let (min_basis, _) = Self::basis_range();
         let mut policy = policy_of::<Self>();
         policy.basis_range = (min_basis, min_basis);
         policy.decomposition.log_basis = min_basis;
-        let mut params = akita_planner::find_schedule(
+        akita_planner::find_schedule(
             *key,
             &policy,
             Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
         )
-        .and_then(|schedule| match schedule.steps.first() {
-            Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "root-direct group schedule is missing commit params".to_string(),
-                )
-            }),
-            None => Err(AkitaError::InvalidSetup(
-                "group commit schedule has no steps".to_string(),
-            )),
-        })?;
+    }
+
+    /// Whether `commit_group`'s own min-basis schedule starts with a root fold.
+    ///
+    /// This is deliberately derived from [`Self::group_commit_schedule`], not the
+    /// normal prove schedule, because standalone precommit may be valid for a
+    /// conservative layout even when the runtime prove schedule has a different
+    /// shape or is unavailable.
+    fn group_commit_schedule_starts_with_fold(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<bool, AkitaError> {
+        Ok(matches!(
+            Self::group_commit_schedule(key)?.steps.first(),
+            Some(Step::Fold(_))
+        ))
+    }
+
+    /// Standalone conservative layout used by `commit_group`.
+    ///
+    /// The group layout is planned at the minimum configured root basis, then
+    /// its B rank is widened for the maximum configured root basis.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
+    /// unsupported SIS buckets, or schedules without root commit params.
+    fn get_params_for_group_commit(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<LevelParams, AkitaError> {
+        let (min_basis, max_basis) = Self::basis_range();
+        let mut params =
+            Self::group_commit_schedule(key).and_then(|schedule| match schedule.steps.first() {
+                Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+                Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "root-direct group schedule is missing commit params".to_string(),
+                    )
+                }),
+                None => Err(AkitaError::InvalidSetup(
+                    "group commit schedule has no steps".to_string(),
+                )),
+            })?;
         if params.log_basis != min_basis {
             return Err(AkitaError::InvalidSetup(
                 "group commit planner did not use the minimum configured log_basis".to_string(),

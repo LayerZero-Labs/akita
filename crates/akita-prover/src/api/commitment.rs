@@ -528,6 +528,18 @@ where
     Ok(schedule_root_fold_step(&schedule).is_some())
 }
 
+fn should_transform_group_commitment<Cfg, const D: usize>(
+    key: &AkitaScheduleLookupKey,
+) -> Result<bool, AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
+    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(key.num_vars) {
+        return Ok(false);
+    }
+    Cfg::group_commit_schedule_starts_with_fold(key)
+}
+
 /// Commit a group of polynomials under config `Cfg`.
 ///
 /// The prover crate owns input validation, the root tensor-projection
@@ -680,11 +692,10 @@ where
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
     let key = validate_group_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
-    let opening_batch = OpeningBatchShape::new(key.num_vars, key.num_polynomials)?;
     let params = Cfg::get_params_for_group_commit(&key)?;
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
-    let (commitment, hint) = if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
+    let (commitment, hint) = if should_transform_group_commitment::<Cfg, D>(&key)? {
         let transformed = polys
             .iter()
             .map(|poly| {

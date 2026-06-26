@@ -159,6 +159,84 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
 }
 
 #[test]
+fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
+    use akita_types::{CleartextWitnessShape, DecompositionParams, DirectStep, Schedule, Step};
+
+    #[derive(Clone)]
+    struct GroupLayoutRejectCfg;
+
+    impl CommitmentConfig for GroupLayoutRejectCfg {
+        type Field = akita_field::Fp32<251>;
+        type ExtField = akita_field::Fp32<251>;
+        const D: usize = 8;
+
+        fn decomposition() -> DecompositionParams {
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 1,
+                log_open_bound: Some(8),
+            }
+        }
+
+        fn ring_challenge_config(
+            _d: usize,
+        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+            Ok(akita_challenges::SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            })
+        }
+
+        fn sis_modulus_family() -> akita_types::SisModulusFamily {
+            akita_types::SisModulusFamily::Q32
+        }
+
+        fn max_setup_matrix_size(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+        ) -> Result<SetupMatrixEnvelope, AkitaError> {
+            Ok(SetupMatrixEnvelope {
+                max_setup_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            })
+        }
+
+        fn basis_range() -> (u32, u32) {
+            (3, 3)
+        }
+
+        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+            Ok(Schedule {
+                steps: vec![Step::Direct(DirectStep {
+                    current_w_len: 1 << 8,
+                    witness_shape: CleartextWitnessShape::FieldElements(1 << 8),
+                    direct_bytes: 0,
+                    params: None,
+                })],
+                total_bytes: 0,
+            })
+        }
+
+        fn get_params_for_group_commit(
+            _key: &AkitaScheduleLookupKey,
+        ) -> Result<LevelParams, AkitaError> {
+            Err(AkitaError::InvalidSetup(
+                "synthetic group layout miss".to_string(),
+            ))
+        }
+    }
+
+    let opening_batch = OpeningBatchShape::new(8, 1).expect("singleton opening batch");
+    let envelope = setup_matrix_envelope_for_shape::<GroupLayoutRejectCfg>(&opening_batch)
+        .expect("runtime setup envelope should not abort on optional group layout miss")
+        .expect("runtime schedule is supported");
+    assert_eq!(envelope.max_setup_len, 1);
+}
+
+#[test]
 #[cfg(not(feature = "zk"))]
 fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
     // Locks in the fix for the descriptor-binding bug at

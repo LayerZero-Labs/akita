@@ -216,8 +216,12 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         // prove paths rely on setup capacity.
         let group_key =
             AkitaScheduleLookupKey::new(opening_batch.num_vars(), opening_batch.num_polynomials());
-        let group_params = Cfg::get_params_for_group_commit(&group_key)?;
-        accumulate_matrix_envelope_for_level::<Cfg>(&group_params, &mut envelope.max_setup_len)?;
+        if let Ok(group_params) = Cfg::get_params_for_group_commit(&group_key) {
+            accumulate_matrix_envelope_for_level::<Cfg>(
+                &group_params,
+                &mut envelope.max_setup_len,
+            )?;
+        }
     }
     Ok(Some(envelope))
 }
