@@ -20,7 +20,6 @@ use akita_types::{
     SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
-pub mod conservative_rank;
 pub mod generated_families;
 pub mod proof_optimized;
 pub mod tensor_verifier;
@@ -252,10 +251,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 "standalone commitment groups require a one-hot config".to_string(),
             ));
         }
-        if key.num_t_vectors == 0 || key.num_w_vectors != 1 || key.num_z_vectors != 1 {
+        if key.num_polynomials == 0 {
             return Err(AkitaError::InvalidSetup(
-                "standalone commitment group key must use K t-vectors, one w-vector, and one z-vector"
-                    .to_string(),
+                "standalone commitment group key must contain at least one polynomial".to_string(),
             ));
         }
 
@@ -677,7 +675,7 @@ mod fp128_policy_tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_supports_batched_keys() {
-        let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
+        let key = AkitaScheduleLookupKey::new(30, 4);
 
         let selection = fp128::best_onehot_schedule(key)
             .expect("selector should resolve batched onehot schedules")

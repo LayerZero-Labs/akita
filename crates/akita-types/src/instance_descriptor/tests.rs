@@ -77,33 +77,14 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            222,
+            221,
             [
-                0xfb, 0x65, 0xb1, 0x77, 0x75, 0xa1, 0x98, 0x84, 0xbc, 0xa8, 0xb5, 0xf3, 0x27, 0x51,
-                0xeb, 0x88, 0xd7, 0x91, 0xe6, 0xb0, 0xaa, 0x5a, 0x9d, 0x40, 0xf2, 0x51, 0x0a, 0xbd,
-                0x2a, 0x23, 0x5e, 0x08,
-            ]
-        )
-    );
-}
-
-#[cfg(feature = "zk")]
-#[test]
-fn fold_linf_descriptor_canonical_digest_pinned_zk() {
-    let mut descriptor = sample_descriptor();
-    descriptor.setup.protocol_features = ProtocolFeatureSet { zk: true };
-    let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
-    assert_eq!(
-        (bytes.len(), blake2b_256(&bytes)),
-        (
-            222,
-            [
-                0x88, 0x86, 0xb8, 0x3b, 0x6a, 0x84, 0x7a, 0x4f, 0xbf, 0xbb, 0x6c, 0xcb, 0xfe, 0xd1,
-                0xc4, 0xa8, 0x36, 0x1a, 0x33, 0xbc, 0x8a, 0x0b, 0x8f, 0x70, 0x23, 0x73, 0x91, 0x24,
-                0xef, 0x43, 0xbc, 0x9d,
+                0x89, 0x2a, 0xd5, 0x49, 0xae, 0xec, 0xea, 0x86, 0x29, 0x96, 0x65, 0x42, 0x30, 0x4f,
+                0xdc, 0xf0, 0xd7, 0xc2, 0xc2, 0xed, 0x24, 0x34, 0xfb, 0xd4, 0x48, 0x73, 0x14, 0x1a,
+                0x1a, 0x6c, 0xcd, 0x3d,
             ]
         ),
-        "update pinned zk digest after collapsing descriptor extension degrees"
+        "update pinned digest after dropping CallSection num_claims from the wire"
     );
 }
 
@@ -305,7 +286,7 @@ fn opening_batch_digest_binds_point_variable_selection_order() {
         2,
         vec![OpeningGroupShape {
             point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
-            num_claims: 1,
+            num_polynomials: 1,
         }],
     )
     .expect("forward");
@@ -313,7 +294,7 @@ fn opening_batch_digest_binds_point_variable_selection_order() {
         2,
         vec![OpeningGroupShape {
             point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
-            num_claims: 1,
+            num_polynomials: 1,
         }],
     )
     .expect("swapped");
@@ -330,7 +311,6 @@ fn call_section_exposes_group_partition() {
     let call = CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call");
 
     assert_eq!(call.num_polys, 3);
-    assert_eq!(call.num_claims, 3);
     assert_eq!(call.num_commitment_groups, 2);
     assert_eq!(call.num_polys_per_commitment_group, vec![1, 2]);
     assert_eq!(call.point_variable_selections, vec![vec![0, 1, 2, 3]; 2]);

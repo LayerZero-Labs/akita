@@ -13,18 +13,16 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
+    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig,
-    FoldWitnessNorms,
+    rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape, terminal_fold_segment_counts,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
-    Schedule, Step,
+    terminal_direct_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -186,7 +184,10 @@ fn derive_candidate_level_params(
         };
         let delta_commit = num_digits_s_commit(decomp, false);
         let delta_open = num_digits_open(decomp);
-        let Some(norm_s) = rounded_up_collision_norm_s(
+        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
+            continue;
+        };
+        let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
             family,
             d,
             decomp,
@@ -197,13 +198,8 @@ fn derive_candidate_level_params(
             policy.ring_subfield_norm_bound,
             r,
             1,
+            width_s as u64,
         ) else {
-            continue;
-        };
-        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
-            continue;
-        };
-        let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
             continue;
         };
         let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -237,7 +233,7 @@ fn derive_candidate_level_params(
             (1, b_key, None)
         };
 
-        let candidate_params = LevelParams {
+        let Ok(candidate_params) = LevelParams {
             ring_dimension: policy.ring_dimension,
             log_basis,
             a_key,
@@ -248,6 +244,7 @@ fn derive_candidate_level_params(
             m_vars: reduced_vars - r,
             r_vars: r,
             stage1_config: ring_challenge_cfg.clone(),
+            op_norm_rejection,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: delta_commit,
             num_digits_open: delta_open,
@@ -262,12 +259,13 @@ fn derive_candidate_level_params(
             cached_num_digits_fold_value: 1,
             precommitted_groups: Vec::new(),
         }
-        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1);
+        .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
+            continue;
+        };
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            1,
             1,
             1,
             MRowLayout::WithDBlock,
@@ -277,7 +275,6 @@ fn derive_candidate_level_params(
         let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
             policy.decomposition.field_bits(),
             &candidate_params,
-            1,
             1,
             1,
             MRowLayout::WithoutDBlock,
@@ -327,7 +324,7 @@ fn extension_opening_reduction_level_bytes(
         return Ok(0);
     }
     let (partials, opening_vars) = if fold_level == 0 {
-        (width.saturating_mul(key.num_w_vectors), key.num_vars)
+        (width.saturating_mul(key.num_polynomials), key.num_vars)
     } else {
         (width, padded_boolean_vars(current_w_len)?)
     };
@@ -379,15 +376,11 @@ impl SuffixResult {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn make_terminal_direct_step(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_public_rows: usize,
-    num_segments: usize,
+    num_polynomials: usize,
     terminal_log_basis: u32,
 ) -> Result<DirectStep, AkitaError> {
     let witness_shape = terminal_direct_witness_shape(
@@ -395,10 +388,7 @@ fn make_terminal_direct_step(
         field_bits,
         current_w_len,
         terminal_log_basis,
-        num_w_vectors,
-        num_t_vectors,
-        num_public_rows,
-        num_segments,
+        num_polynomials,
     )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {
@@ -417,16 +407,17 @@ fn terminal_direct_suffix_cost(
     terminal_fold_level: usize,
     terminal_log_basis: u32,
 ) -> Result<(DirectStep, usize), AkitaError> {
-    let (num_w_vectors, num_t_vectors, num_public_rows, num_segments) =
-        terminal_fold_segment_counts(key, terminal_fold_level);
+    // Scalar same-point root fold: polynomial count at the root, 1 recursively.
+    let num_polynomials = if terminal_fold_level == 0 {
+        key.num_polynomials
+    } else {
+        1
+    };
     let direct = make_terminal_direct_step(
         current_w_len,
         terminal_lp,
         field_bits,
-        num_w_vectors,
-        num_t_vectors,
-        num_public_rows,
-        num_segments,
+        num_polynomials,
         terminal_log_basis,
     )?;
     let direct_bytes = direct.direct_bytes;
@@ -684,11 +675,8 @@ fn compute_root_direct_level_params(
     let (m_vars, r_vars) = if num_vars > alpha {
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
-        let fold_challenge = FoldChallengeNorms {
-            infinity_norm: TensorChallengeShape::Flat.effective_infinity_norm(&ring_challenge_cfg)
-                as u128,
-            l1_norm: TensorChallengeShape::Flat.effective_l1_mass(&ring_challenge_cfg) as u128,
-        };
+        let fold_challenge =
+            akita_types::sis::fold_challenge_norms(&ring_challenge_cfg, TensorChallengeShape::Flat);
         // One-hot root commits a sparse witness (`||s||_inf = 1`,
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
@@ -702,11 +690,10 @@ fn compute_root_direct_level_params(
             fold_witness,
             &ring_challenge_cfg,
             TensorChallengeShape::Flat,
-            decomp.log_commit_bound,
-            log_basis,
+            decomp,
+            policy.onehot_chunk_size,
             num_vars - alpha,
             0,
-            decomp.field_bits(),
         );
         (m_vars, r_vars)
     } else {
@@ -724,7 +711,10 @@ fn compute_root_direct_level_params(
     // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
     // folds the batched-root scaling into the B/D widths (the root commits
     // `num_claims` polynomials) — no separate per-claim-then-scale pass.
-    let Some(norm_s) = rounded_up_collision_norm_s(
+    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
+        return Ok(None);
+    };
+    let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
         sis_family,
         d,
         level_decomp,
@@ -735,13 +725,8 @@ fn compute_root_direct_level_params(
         policy.ring_subfield_norm_bound,
         r_vars,
         num_claims,
+        width_s as u64,
     ) else {
-        return Ok(None);
-    };
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
-        return Ok(None);
-    };
-    let Some(n_a) = min_secure_rank(sis_family, d as u32, norm_s, width_s as u64) else {
         return Ok(None);
     };
     let a_key = AjtaiKeyParams::try_new(sis_family, n_a, width_s, norm_s, d)?;
@@ -795,6 +780,7 @@ fn compute_root_direct_level_params(
         m_vars,
         r_vars,
         stage1_config: ring_challenge_cfg,
+        op_norm_rejection,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
@@ -808,7 +794,7 @@ fn compute_root_direct_level_params(
         cached_num_digits_fold_value: 1,
         precommitted_groups: Vec::new(),
     }
-    .with_fold_linf_cap_config(decomp.field_bits(), num_claims);
+    .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
     Ok(Some(root_direct_params))
 }
 
@@ -854,15 +840,7 @@ fn find_schedule_inner(
         key,
     };
 
-    let t_vectors = key.num_t_vectors;
-    let z_vectors = key.num_z_vectors;
-    if policy.tiered && z_vectors != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
-                .to_string(),
-        ));
-    }
-    key.validate_scalar_root_batch()?;
+    key.validate()?;
 
     let witness_len = 1usize
         .checked_shl(key.num_vars as u32)
@@ -877,8 +855,8 @@ fn find_schedule_inner(
         level: 0,
         current_w_len: witness_len,
     });
-    // The level-0 fold-challenge shape and the `num_claims = t_vectors` batch
-    // factor are folded directly into the committed B/D widths, so a table
+    // The level-0 fold-challenge shape and the `num_claims = num_polynomials`
+    // batch factor are folded directly into the committed B/D widths, so a table
     // miss reproduces the exact root commit layout the table-hit expansion
     // (`expand_to_level_params`) builds — no separate per-claim-then-scale
     // pass. `Ok(None)` is the uncommittable (large-`num_vars`) edge.
@@ -888,7 +866,7 @@ fn find_schedule_inner(
         key.num_vars,
         policy.decomposition.log_basis,
         fold_challenge_shape,
-        t_vectors,
+        key.num_polynomials,
     )?;
     let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
         current_w_len: witness_len,
@@ -935,7 +913,10 @@ fn find_schedule_inner(
             // primitives: norm -> width -> tight rank -> key.
             let family = policy.sis_family;
             let d = policy.ring_dimension;
-            let Some(norm_s) = rounded_up_collision_norm_s(
+            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+                continue;
+            };
+            let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
                 family,
                 d,
                 level_decomp,
@@ -945,14 +926,9 @@ fn find_schedule_inner(
                 policy.onehot_chunk_size,
                 policy.ring_subfield_norm_bound,
                 r_vars,
-                t_vectors,
+                key.num_polynomials,
+                width_s as u64,
             ) else {
-                continue;
-            };
-            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
-                continue;
-            };
-            let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
                 continue;
             };
             let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -960,7 +936,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some(width_t) =
-                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, t_vectors)
+                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, key.num_polynomials)
             else {
                 continue;
             };
@@ -971,7 +947,8 @@ fn find_schedule_inner(
             let Some(norm_w) = rounded_up_collision_norm_w(family, d, candidate_log_basis) else {
                 continue;
             };
-            let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_blocks, t_vectors)
+            let Some(width_w) =
+                decomposed_w_ring_count(num_digits_open, num_blocks, key.num_polynomials)
             else {
                 continue;
             };
@@ -999,7 +976,7 @@ fn find_schedule_inner(
             } else {
                 (1, b_key, None)
             };
-            let candidate_params = LevelParams {
+            let Ok(candidate_params) = LevelParams {
                 ring_dimension: policy.ring_dimension,
                 log_basis: candidate_log_basis,
                 a_key,
@@ -1010,6 +987,7 @@ fn find_schedule_inner(
                 m_vars,
                 r_vars,
                 stage1_config: ring_challenge_cfg.clone(),
+                op_norm_rejection,
                 fold_challenge_shape,
                 num_digits_commit,
                 num_digits_open,
@@ -1023,15 +1001,16 @@ fn find_schedule_inner(
                 cached_num_digits_fold_value: 1,
                 precommitted_groups: Vec::new(),
             }
-            .with_fold_linf_cap_config(field_bits, key.num_t_vectors);
+            .with_fold_linf_cap_config(field_bits, key.num_polynomials) else {
+                continue;
+            };
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
                 let rings = w_ring_element_count_with_counts_for_layout_bits(
                     field_bits,
                     &candidate_params,
-                    key.num_t_vectors,
-                    key.num_w_vectors,
-                    key.num_z_vectors,
+                    key.num_polynomials,
+                    1,
                     layout,
                 )?;
                 rings.checked_mul(policy.ring_dimension).ok_or_else(|| {
@@ -1089,7 +1068,7 @@ fn find_schedule_inner(
                     &candidate_params,
                     None,
                     next_w_len_terminal,
-                    z_vectors,
+                    1,
                     MRowLayout::WithoutDBlock,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_cost;
@@ -1114,7 +1093,7 @@ fn find_schedule_inner(
                     &candidate_params,
                     Some(&suffix_fold.first_fold_params),
                     next_w_len,
-                    z_vectors,
+                    1,
                     MRowLayout::WithDBlock,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;

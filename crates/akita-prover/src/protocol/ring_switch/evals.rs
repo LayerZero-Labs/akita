@@ -96,7 +96,6 @@ where
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
     let num_t_vectors = num_polys;
@@ -114,7 +113,21 @@ where
         });
     }
     let block_len = lp.block_len;
-    let w_len = depth_open * total_blocks;
+    let segment_lengths = ring_relation_segment_lengths::<F, D>(
+        lp,
+        RingRelationOpeningCounts {
+            num_claims,
+            num_t_vectors,
+        },
+        m_row_layout,
+    )?;
+    let w_len = segment_lengths.e_len;
+    let t_len = segment_lengths.t_len;
+    let z_len = segment_lengths.z_len;
+    let u_seg_len = segment_lengths.u_len;
+    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let inner_width = block_len * depth_commit;
+    let z_base_len = inner_width;
     let n_a = lp.a_key.row_len();
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
@@ -124,36 +137,12 @@ where
         MRowLayout::WithDBlock => n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    let t_len = depth_open * n_a * t_total_blocks;
     #[cfg(feature = "zk")]
-    let d_blinding_segment_len = match m_row_layout {
-        MRowLayout::WithDBlock => {
-            akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis)
-        }
-        // Terminal omits the D-block, so its blinding columns vanish too.
-        MRowLayout::WithoutDBlock => 0,
-    };
+    let d_blinding_segment_len = segment_lengths.d_blinding_len;
     #[cfg(feature = "zk")]
-    let b_blinding_digit_planes_per_point =
-        akita_types::zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
-    #[cfg(feature = "zk")]
-    let b_blinding_segment_len = b_blinding_digit_planes_per_point;
-    let inner_width = block_len * depth_commit;
-    let z_base_len = inner_width;
-    let z_len = depth_fold
-        .checked_mul(z_base_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
+    let b_blinding_segment_len = segment_lengths.b_blinding_len;
     let rows = lp.m_row_count_for(1, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
-    // Tiered `û_concat` segment column count (flat, after `t̂`); `0` single-tier.
-    let u_seg_len = if lp.f_key.is_some() {
-        lp.tier_split
-            .checked_mul(n_b)
-            .and_then(|w| w.checked_mul(depth_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("tiered û segment overflow".to_string()))?
-    } else {
-        0
-    };
     #[cfg(feature = "zk")]
     let total_cols = w_len
         .checked_add(d_blinding_segment_len)
@@ -435,13 +424,13 @@ where
     };
 
     #[cfg(feature = "zk")]
-    let b_blinding_segment: Vec<E> = if b_blinding_digit_planes_per_point == 0 {
+    let b_blinding_segment: Vec<E> = if b_blinding_segment_len == 0 {
         Vec::new()
     } else {
         // The single commitment's ZK B blinding segment reuses the stored B row view.
         let b_zk_view = setup
             .zk_b_matrix()
-            .ring_view::<D>(n_b, b_blinding_digit_planes_per_point)?;
+            .ring_view::<D>(n_b, b_blinding_segment_len)?;
         let b_zk = b_zk_view.as_slice();
         let b_zk_stride = b_zk_view.num_cols();
         cfg_into_iter!(0..b_blinding_segment_len)
@@ -499,26 +488,14 @@ where
         })
         .collect();
 
-    let z_first = akita_types::ring_column_z_first(lp);
-    if z_first {
-        out.extend(z_segment);
-        out.extend(w_segment);
-        out.extend(t_segment);
-        out.extend(u_segment);
-        #[cfg(feature = "zk")]
-        out.extend(b_blinding_segment);
-        #[cfg(feature = "zk")]
-        out.extend(d_blinding_segment);
-    } else {
-        out.extend(w_segment);
-        out.extend(t_segment);
-        out.extend(u_segment);
-        #[cfg(feature = "zk")]
-        out.extend(b_blinding_segment);
-        #[cfg(feature = "zk")]
-        out.extend(d_blinding_segment);
-        out.extend(z_segment);
-    }
+    out.extend(z_segment);
+    out.extend(w_segment);
+    out.extend(t_segment);
+    out.extend(u_segment);
+    #[cfg(feature = "zk")]
+    out.extend(b_blinding_segment);
+    #[cfg(feature = "zk")]
+    out.extend(d_blinding_segment);
     out.extend(r_tail);
     out.resize(x_len, E::zero());
     Ok(out)

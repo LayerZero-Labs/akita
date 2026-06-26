@@ -21,8 +21,8 @@ use crate::generated::{
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
+    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_t,
     rounded_up_collision_norm_w,
 };
 use akita_types::{AjtaiKeyParams, DecompositionParams, LevelParams};
@@ -41,7 +41,7 @@ impl GeneratedFoldStep {
     /// and prover (D) matrix widths — the root commits `num_claims`
     /// polynomials. `num_claims == 1` is the singleton root (and every
     /// recursive level); a batched root passes the lookup key's
-    /// `num_t_vectors`. There is no separate per-claim-then-scale pass: the
+    /// `num_polynomials`. There is no separate per-claim-then-scale pass: the
     /// width helpers receive `num_claims` as the `t_vectors` factor.
     ///
     /// The A/B/D widths and audited collision buckets are derived by the
@@ -117,7 +117,9 @@ impl GeneratedFoldStep {
         let num_digits_commit = num_digits_s_commit(decomp, is_root);
         let num_digits_open_val = num_digits_open(decomp);
 
-        let a_bucket = rounded_up_collision_norm_s(
+        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+            .ok_or_else(|| no_layout("A"))?;
+        let (op_norm_rejection, a_bucket, expected_n_a) = choose_op_norm_rejection_for_a_role(
             sis_family,
             ring_d,
             decomp,
@@ -128,10 +130,15 @@ impl GeneratedFoldStep {
             policy.ring_subfield_norm_bound,
             r_vars,
             num_claims,
+            inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
-        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
-            .ok_or_else(|| no_layout("A"))?;
+        if self.n_a as usize != expected_n_a {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated schedule A-rank mismatch: stored n_a = {}, recomputed n_a = {expected_n_a}",
+                self.n_a
+            )));
+        }
 
         let b_bucket = rounded_up_collision_norm_t(sis_family, ring_d, log_basis)
             .ok_or_else(|| no_layout("B"))?;
@@ -230,6 +237,7 @@ impl GeneratedFoldStep {
             m_vars,
             r_vars,
             stage1_config: ring_challenge_cfg,
+            op_norm_rejection,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
             num_digits_open,
@@ -243,9 +251,8 @@ impl GeneratedFoldStep {
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
             precommitted_groups: Vec::new(),
-        }
-        .with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims);
-        Ok(params)
+        };
+        params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
     }
 }
 

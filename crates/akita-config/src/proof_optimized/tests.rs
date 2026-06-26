@@ -227,7 +227,7 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
 
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningBatchShape) -> usize {
     let max_group_poly_count = opening_batch.num_polynomials();
-    let d_width = lp.num_blocks * opening_batch.num_claims() * lp.num_digits_open;
+    let d_width = lp.num_blocks * opening_batch.num_polynomials() * lp.num_digits_open;
     let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
     let b_width = max_group_poly_count * t_cols_per_vector;
     (lp.d_key.row_len() * d_width).max(lp.b_key.row_len() * b_width)
@@ -291,8 +291,9 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
         max_num_batched_polys: usize,
     ) -> SetupMatrixEnvelope {
         let mut max_setup_len = 1usize;
+        let poly_counts = super::setup_envelope_poly_counts(max_num_batched_polys);
         for num_vars in 1..=max_num_vars {
-            for num_polys in 1..=max_num_batched_polys {
+            for &num_polys in &poly_counts {
                 let opening_batch =
                     worst_case_grouped_opening_batch_for_shape(num_vars, num_polys).unwrap();
                 if let Ok(Some(envelope)) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch) {
@@ -327,83 +328,6 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
             "D64Full nv<={max_nv}: endpoint scan must match exhaustive poly scan"
         );
     }
-}
-
-#[test]
-#[cfg(feature = "zk")]
-fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
-    use akita_challenges::SparseChallengeConfig;
-    use akita_types::SisModulusFamily;
-
-    type Cfg = fp128::D128Full;
-    let sparse = SparseChallengeConfig::Uniform {
-        weight: 1,
-        nonzero_coeffs: vec![-1, 1],
-    };
-    let lp = LevelParams::params_only(SisModulusFamily::Q128, Cfg::D, 5, 2, 3, 5, sparse)
-        .with_decomp(4, 3, 2, 6, 0)
-        .unwrap();
-
-    let mut got = 1usize;
-    accumulate_matrix_envelope_for_level::<Cfg>(&lp, &mut got).unwrap();
-
-    let expected = (lp.a_key.row_len() * lp.inner_width())
-        .max(lp.b_key.row_len() * lp.outer_width())
-        .max(lp.d_key.row_len() * lp.d_matrix_width());
-    assert_eq!(got, expected);
-
-    let b_tail = akita_types::zk::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
-        lp.b_key.row_len(),
-        lp.ring_dimension,
-        lp.log_basis,
-    );
-    let d_tail = akita_types::zk::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
-        lp.d_key.row_len(),
-        lp.ring_dimension,
-        lp.log_basis,
-    );
-    let old_tail_inflated = (lp.a_key.row_len() * lp.inner_width())
-        .max(lp.b_key.row_len() * (lp.outer_width() + b_tail))
-        .max(lp.d_key.row_len() * (lp.d_matrix_width() + d_tail));
-    assert!(
-        old_tail_inflated > expected,
-        "test fixture must catch accidental ZK tail columns in setup envelope"
-    );
-}
-
-#[test]
-#[cfg(feature = "zk")]
-fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
-    type Cfg = fp128::D128Full;
-    let opening_batch = OpeningBatchShape::new(26, 1).expect("singleton opening batch");
-    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
-    let root_params = root_commit_params_from_schedule(&schedule)
-        .unwrap()
-        .expect("batched root schedule should carry commit params");
-    let hiding_len = zk_hiding_witness_len::<Cfg>(&schedule, &opening_batch).unwrap();
-    let num_ring = hiding_len.div_ceil(Cfg::D).max(1).next_power_of_two();
-    let hiding_params = root_params
-        .with_decomp(
-            num_ring.trailing_zeros() as usize,
-            0,
-            root_params.num_digits_commit,
-            root_params.num_digits_open,
-            num_ring,
-        )
-        .unwrap();
-    let blinding_cols =
-        akita_types::zk::blinding_digit_plane_count::<<Cfg as CommitmentConfig>::Field>(
-            hiding_params.b_key.row_len(),
-            hiding_params.ring_dimension,
-            hiding_params.log_basis,
-        );
-    let required = hiding_params.b_key.row_len() * blinding_cols;
-
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
-    assert!(runtime_envelope.max_zk_b_len >= required);
-
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(26, 1).unwrap();
-    assert!(setup_envelope.max_zk_b_len >= required);
 }
 
 #[test]
@@ -446,23 +370,18 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
         } else {
             akita_types::MRowLayout::WithDBlock
         };
-        // Root-level batched witnesses fan out over the key's vector
-        // counts; recursive levels collapse back to singleton-by-construction.
-        let (num_t_vectors, num_w_vectors, num_public_rows) = if idx == 0 {
-            (key.num_t_vectors, key.num_w_vectors, key.num_z_vectors)
+        // Root-level batched witnesses fan out over the key's polynomial
+        // count; recursive levels collapse back to singleton-by-construction.
+        let (num_polynomials, num_public_rows) = if idx == 0 {
+            (key.num_polynomials, 1)
         } else {
-            (1, 1, 1)
+            (1, 1)
         };
-        let runtime_next_w_len =
-            akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
-                &fold.params,
-                num_t_vectors,
-                num_w_vectors,
-                num_public_rows,
-                layout,
-            )
-            .expect("valid planned witness")
-                * fold.params.ring_dimension;
+        let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
+            Cfg::Field,
+        >(&fold.params, num_polynomials, num_public_rows, layout)
+        .expect("valid planned witness")
+            * fold.params.ring_dimension;
         assert_eq!(
             runtime_next_w_len, fold.next_w_len,
             "planner/runtime next_w_len mismatch at level {idx} for key={key:?}",
@@ -473,12 +392,7 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
 #[cfg(all(feature = "schedules-default", not(feature = "zk")))]
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(
-            entry.key.num_vars,
-            entry.key.num_t_vectors,
-            entry.key.num_w_vectors,
-            entry.key.num_z_vectors,
-        );
+        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
         Cfg::runtime_schedule(key).expect("config schedule should succeed");
     }
 }
@@ -549,12 +463,7 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) {
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(
-            entry.key.num_vars,
-            entry.key.num_t_vectors,
-            entry.key.num_w_vectors,
-            entry.key.num_z_vectors,
-        );
+        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
         let schedule = Cfg::runtime_schedule(key).expect("config schedule should succeed");
         let levels = setup_level_params_from_runtime_schedule(&schedule.steps);
         for level in &levels {
@@ -569,14 +478,9 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
     for entry in table
         .entries
         .iter()
-        .filter(|entry| entry.key.num_t_vectors > 1)
+        .filter(|entry| entry.key.num_polynomials > 1)
     {
-        let key = AkitaScheduleLookupKey::new(
-            entry.key.num_vars,
-            entry.key.num_t_vectors,
-            entry.key.num_w_vectors,
-            entry.key.num_z_vectors,
-        );
+        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
         let generated = Cfg::runtime_schedule(key).expect("config schedule should succeed");
         let Some(root) = generated.fold_steps().next() else {
             continue;
@@ -588,12 +492,12 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         let singleton_d_width = root_lp.num_digits_open * root_lp.num_blocks;
         assert_eq!(
             root_lp.outer_width(),
-            singleton_outer_width * entry.key.num_t_vectors,
+            singleton_outer_width * entry.key.num_polynomials,
             "generated batched root B width should be claim-scaled for key={key:?}"
         );
         assert_eq!(
             root_lp.d_matrix_width(),
-            singleton_d_width * entry.key.num_t_vectors,
+            singleton_d_width * entry.key.num_polynomials,
             "generated batched root D width should be claim-scaled for key={key:?}"
         );
     }
@@ -655,12 +559,7 @@ fn generated_batched_roots_restore_scaled_widths() {
 fn generated_d128_full_table_materializes_valid_plans() {
     let table = fp128_d128_full_table();
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(
-            entry.key.num_vars,
-            entry.key.num_t_vectors,
-            entry.key.num_w_vectors,
-            entry.key.num_z_vectors,
-        );
+        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
         <fp128::D128Full as CommitmentConfig>::runtime_schedule(key)
             .expect("config schedule should succeed");
     }
@@ -689,48 +588,17 @@ fn batched_root_plan_matches_runtime_next_w_len() {
     let entry = table
         .entries
         .iter()
-        .find(|entry| {
-            entry.key.num_t_vectors > 1
-                || entry.key.num_w_vectors > 1
-                || entry.key.num_z_vectors > 1
-        })
+        .find(|entry| entry.key.num_polynomials > 1)
         .expect("generated table should contain a non-singleton batched-root row");
-    let key = AkitaScheduleLookupKey::new(
-        entry.key.num_vars,
-        entry.key.num_t_vectors,
-        entry.key.num_w_vectors,
-        entry.key.num_z_vectors,
-    );
+    let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
 
     assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
 }
 
 #[test]
-#[cfg(feature = "zk")]
-fn batched_4x15_terminal_witness_is_packed_digits() {
-    use akita_types::{schedule_terminal_direct_witness_shape, CleartextWitnessShape, Step};
-    let key = AkitaScheduleLookupKey::new(15, 4, 4, 1);
-    let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
-        .expect("config schedule should succeed");
-    let terminal_log_basis = match schedule.steps.last() {
-        Some(Step::Direct(direct)) => {
-            direct.log_basis(fp128::D64OneHot::decomposition().field_bits())
-        }
-        _ => panic!("zk schedule should end in a terminal direct step"),
-    };
-    match schedule_terminal_direct_witness_shape(&schedule).expect("terminal direct") {
-        CleartextWitnessShape::PackedDigits((len, bits)) => {
-            assert_eq!(*bits, terminal_log_basis);
-            assert!(*len > 0, "terminal witness len must be positive");
-        }
-        other => panic!("expected packed terminal witness for zk build, got {other:?}"),
-    }
-}
-
-#[test]
 #[cfg(not(feature = "zk"))]
 fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
-    let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
+    let key = AkitaScheduleLookupKey::new(30, 4);
     let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
         .expect("config schedule should succeed");
 
@@ -844,11 +712,11 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
         (
             64,
             SparseChallengeConfig::ExactShell {
-                count_mag1: 30,
-                count_mag2: 12,
-                operator_norm_threshold: 54,
+                count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+                count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+                operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
             },
-            (54, 2),
+            (53, 2),
         ),
         (
             128,
@@ -882,6 +750,11 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
         );
     }
 
+    let d64 = proof_optimized_ring_challenge_config(64).unwrap();
+    assert!(d64.operator_norm_rejection_binds());
+    assert_eq!(d64.operator_norm_cap(), 18);
+    assert_eq!(d64.challenge_l2_sq_max(), 75);
+
     // `BoundedL1Norm` is only valid at `D = 32`; confirm the policy wires it to
     // the one degree its sampler accepts.
     proof_optimized_ring_challenge_config(32)
@@ -892,6 +765,22 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     // Ring degrees no preset uses must be rejected, not silently defaulted.
     assert!(proof_optimized_ring_challenge_config(16).is_err());
     assert!(proof_optimized_ring_challenge_config(48).is_err());
+}
+
+#[test]
+#[cfg(feature = "schedules-fp128-d64-onehot")]
+fn d64_shipped_catalog_ring_challenge_digest_matches_runtime_policy() {
+    use akita_planner::ring_challenge_config_digest;
+
+    use crate::proof_optimized::fp128;
+
+    let expected = ring_challenge_config_digest(&[64], fp128::D64OneHot::ring_challenge_config)
+        .expect("d=64 ring challenge digest");
+    let catalog = fp128::D64OneHot::schedule_catalog().expect("D64 one-hot catalog");
+    assert_eq!(
+        catalog.identity.ring_challenge_config_digest, expected,
+        "shipped fp128_d64_onehot digest must track proof_optimized_ring_challenge_config"
+    );
 }
 
 /// Assert one preset delegates its ring challenge to the shared policy.

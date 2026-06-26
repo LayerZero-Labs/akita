@@ -159,7 +159,7 @@ where
     C: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let num_claims = opening_batch.num_claims();
+    let num_claims = opening_batch.num_polynomials();
     if openings.len() != num_claims || row_coefficients.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -247,7 +247,7 @@ where
         for (claim_idx, &row_coefficient) in row_coefficients
             .iter()
             .enumerate()
-            .take(opening_batch.num_claims())
+            .take(opening_batch.num_polynomials())
         {
             let partial_start = claim_idx * shape.width;
             let mut partial_masks = Vec::with_capacity(shape.width);
@@ -537,22 +537,47 @@ fn verify_stage3<F, E, T, const D: usize>(
     transcript: &mut T,
     rs: &RingSwitchVerifyOutput<E>,
     sumcheck_challenges: &[E],
+    stage2_next_w_eval: E,
     stage3: Option<(&SetupSumcheckProof<E>, &LevelParams)>,
-) -> Result<(), AkitaError>
+) -> Result<Option<Vec<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
+        let witness_rounds = rs.col_bits.checked_add(rs.ring_bits).ok_or_else(|| {
+            AkitaError::InvalidSetup("stage-3 witness round count overflow".to_string())
+        })?;
+        if sumcheck_challenges.len() != witness_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_rounds,
+                actual: sumcheck_challenges.len(),
+            });
+        }
+        let setup_x_challenges = sumcheck_challenges
+            .get(rs.ring_bits..)
+            .ok_or(AkitaError::InvalidProof)?;
+        let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
         let verifier = SetupSumcheckVerifier::new::<F, D>(
             &rs.prepared_row_eval,
-            &sumcheck_challenges[rs.ring_bits..],
+            setup_x_challenges,
             rs.alpha,
         )?;
-        verifier.verify::<F, T, D>(setup, next_fold_level_params, proof, transcript)?;
+        let rho_w = verifier.verify_batched_stage3::<F, T, D>(
+            setup,
+            next_fold_level_params,
+            proof,
+            stage2_next_w_eval,
+            sumcheck_challenges,
+            witness_rounds,
+            eta,
+            transcript,
+        )?;
+        transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
+        return Ok(Some(rho_w));
     }
-    Ok(())
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -577,7 +602,7 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
-            opening_shape.num_claims(),
+            opening_shape.num_polynomials(),
             FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
         )?,
         prepared.fold_grind_nonce,
@@ -586,7 +611,7 @@ where
         transcript,
         &prepared.v,
         prepared.lp.num_blocks,
-        opening_shape.num_claims(),
+        opening_shape.num_polynomials(),
         prepared.lp,
         prepared.m_row_layout,
         prepared.fold_grind_nonce,
@@ -709,7 +734,7 @@ where
         let segment = relation_instance.segment_layout(prepared.lp)?;
         let num_trace_blocks = relation_instance
             .opening_batch()
-            .num_claims()
+            .num_polynomials()
             .checked_mul(prepared.lp.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
@@ -738,6 +763,12 @@ where
             prepared.trace_claim_scales.as_deref(),
         )?)
     };
+    #[cfg(feature = "zk")]
+    if prepared.stage3.is_some() {
+        return Err(AkitaError::InvalidInput(
+            "batched recursive setup stage-3 is not implemented for zk proofs".to_string(),
+        ));
+    }
     let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
     #[cfg(feature = "zk")]
     let trace_claim_mask = {
@@ -770,12 +801,18 @@ where
         #[cfg(feature = "zk")]
         zk_relations,
     )?;
-    verify_stage3::<F, E, T, D>(
+    let stage2_next_w_eval = if prepared.stage3.is_some() {
+        prepared.stage2.next_w_eval()
+    } else {
+        E::zero()
+    };
+    let stage3_challenges = verify_stage3::<F, E, T, D>(
         setup,
         transcript,
         &rs,
         &sumcheck_challenges,
+        stage2_next_w_eval,
         prepared.stage3,
     )?;
-    Ok(sumcheck_challenges)
+    Ok(stage3_challenges.unwrap_or(sumcheck_challenges))
 }

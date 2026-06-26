@@ -3,10 +3,10 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_fold, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_norm_s, rounded_up_collision_norm_t, rounded_up_collision_norm_w,
-    AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, min_secure_rank, num_digits_fold, num_digits_open,
+    num_digits_s_commit, rounded_up_collision_norm_t, rounded_up_collision_norm_w, AjtaiKeyParams,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
     direct_witness_bytes, AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupLayout,
@@ -47,7 +47,9 @@ fn group_root_params_from_layout(
         .checked_shl(layout.m_vars as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped root block_len overflow".to_string()))?;
 
-    let norm_s = rounded_up_collision_norm_s(
+    let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("grouped A width overflow".to_string()))?;
+    let (op_norm_rejection, norm_s, min_n_a) = choose_op_norm_rejection_for_a_role(
         family,
         d,
         level_decomp,
@@ -57,11 +59,15 @@ fn group_root_params_from_layout(
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
         layout.r_vars,
-        layout.key.num_t_vectors,
+        layout.key.num_polynomials,
+        width_s as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no grouped A-role norm".to_string()))?;
-    let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped A width overflow".to_string()))?;
+    if layout.n_a < min_n_a {
+        return Err(AkitaError::InvalidSetup(
+            "precommitted group A rank is below grouped root requirement".to_string(),
+        ));
+    }
     let a_key = AjtaiKeyParams::try_new(family, layout.n_a, width_s, norm_s, d)?;
 
     let b_norm_basis = if conservative_b_rank {
@@ -75,7 +81,7 @@ fn group_root_params_from_layout(
         layout.n_a,
         num_digits_open,
         num_blocks,
-        layout.key.num_t_vectors,
+        layout.key.num_polynomials,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("grouped B width overflow".to_string()))?;
     let n_b = if conservative_b_rank {
@@ -90,8 +96,9 @@ fn group_root_params_from_layout(
         &ring_challenge_cfg,
         fold_challenge_shape,
         d,
+        op_norm_rejection,
         width_s,
-    );
+    )?;
     let challenge = FoldChallengeNorms {
         infinity_norm: fold_challenge_shape.effective_infinity_norm(&ring_challenge_cfg) as u128,
         l1_norm: fold_challenge_shape.effective_l1_mass(&ring_challenge_cfg) as u128,
@@ -113,7 +120,7 @@ fn group_root_params_from_layout(
     );
     let num_digits_fold_one = num_digits_fold(
         layout.r_vars,
-        layout.key.num_t_vectors,
+        layout.key.num_polynomials,
         policy.decomposition.field_bits(),
         layout.log_basis,
         challenge,
@@ -128,12 +135,8 @@ fn group_root_params_from_layout(
         b_key,
         num_blocks,
         block_len,
-        m_vars: layout.m_vars,
-        r_vars: layout.r_vars,
         num_digits_commit,
         num_digits_open,
-        onehot_chunk_size,
-        fold_linf_cap_config,
         num_digits_fold_one,
     })
 }
@@ -222,10 +225,9 @@ fn grouped_root_direct_witness_len(
         })
     };
 
-    let (main_num_polys, main_num_vars) = key.main;
-    let mut total = group_len(main_num_polys, main_num_vars)?;
+    let mut total = group_len(key.main.num_polynomials, key.main.num_vars)?;
     for layout in &key.precommitteds {
-        let precommitted_len = group_len(layout.key.num_t_vectors, layout.key.num_vars)?;
+        let precommitted_len = group_len(layout.key.num_polynomials, layout.key.num_vars)?;
         total = total.checked_add(precommitted_len).ok_or_else(|| {
             AkitaError::InvalidSetup("grouped root-direct witness length overflow".to_string())
         })?;
@@ -257,7 +259,10 @@ fn grouped_root_direct_main_candidate(
         return Ok(None);
     };
 
-    let Some(norm_s) = rounded_up_collision_norm_s(
+    let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+        return Ok(None);
+    };
+    let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
         family,
         d,
         level_decomp,
@@ -268,13 +273,8 @@ fn grouped_root_direct_main_candidate(
         policy.ring_subfield_norm_bound,
         r_vars,
         main_num_polys,
+        width_s as u64,
     ) else {
-        return Ok(None);
-    };
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
-        return Ok(None);
-    };
-    let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
         return Ok(None);
     };
     let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
@@ -321,6 +321,7 @@ fn grouped_root_direct_main_candidate(
         m_vars,
         r_vars,
         stage1_config: ctx.ring_challenge_cfg.clone(),
+        op_norm_rejection,
         fold_challenge_shape: ctx.fold_challenge_shape,
         num_digits_commit,
         num_digits_open,
@@ -334,7 +335,7 @@ fn grouped_root_direct_main_candidate(
         cached_num_digits_fold_value: 1,
         precommitted_groups: ctx.precommitted_groups.to_vec(),
     }
-    .with_fold_linf_cap_config(decomp.field_bits(), main_num_polys);
+    .with_fold_linf_cap_config(decomp.field_bits(), main_num_polys)?;
 
     Ok(Some(params))
 }
@@ -373,7 +374,8 @@ fn compute_grouped_root_direct_level_params(
     }
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let (main_num_polys, main_num_vars) = key.main;
+    let main_num_polys = key.main.num_polynomials;
+    let main_num_vars = key.main.num_vars;
     let candidate_ctx = GroupedRootDirectCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
@@ -444,10 +446,9 @@ pub fn find_group_batch_schedule(
                 .to_string(),
         ));
     }
-    let (_, main_num_vars) = key.main;
     let current_w_len = grouped_root_direct_witness_len(key)?;
     let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: main_num_vars,
+        num_vars: key.main.num_vars,
         level: 0,
         current_w_len,
     });
@@ -502,7 +503,7 @@ mod tests {
 
     fn precommitted(num_polys: usize, num_vars: usize) -> CommitmentGroupLayout {
         CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(num_vars, num_polys, 1, 1),
+            key: AkitaScheduleLookupKey::new(num_vars, num_polys),
             m_vars: 4,
             r_vars: 2,
             log_basis: 3,
@@ -514,7 +515,7 @@ mod tests {
     #[test]
     fn grouped_root_direct_witness_len_sums_mixed_arities() {
         let key = GroupBatchAkitaScheduleLookupKey {
-            main: (3, 20),
+            main: AkitaScheduleLookupKey::new(20, 3),
             precommitteds: vec![precommitted(1, 12), precommitted(2, 8)],
         };
 
@@ -528,7 +529,7 @@ mod tests {
     #[test]
     fn find_group_batch_schedule_rejects_single_group() {
         let key = GroupBatchAkitaScheduleLookupKey {
-            main: (1, 12),
+            main: AkitaScheduleLookupKey::new(12, 1),
             precommitteds: Vec::new(),
         };
 

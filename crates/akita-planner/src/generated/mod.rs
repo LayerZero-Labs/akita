@@ -46,9 +46,7 @@ pub enum GeneratedStep {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleKey {
     pub num_vars: usize,
-    pub num_t_vectors: usize,
-    pub num_w_vectors: usize,
-    pub num_z_vectors: usize,
+    pub num_polynomials: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,8 +61,8 @@ pub struct GeneratedPrecommittedGroupKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedGroupBatchScheduleKey {
-    /// Main group shape as `(num_polys, num_variables)`.
-    pub main: (usize, usize),
+    /// Main group shape for the final commitment.
+    pub main: akita_types::AkitaScheduleLookupKey,
     pub precommitteds: &'static [GeneratedPrecommittedGroupKey],
 }
 

@@ -126,7 +126,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
                 .iter()
                 .map(|group| OpeningGroupShape {
                     point_vars: group.point_vars.clone(),
-                    num_claims: group.poly_count(),
+                    num_polynomials: group.poly_count(),
                 })
                 .collect(),
         )

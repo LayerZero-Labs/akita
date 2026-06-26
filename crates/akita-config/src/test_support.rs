@@ -15,13 +15,13 @@ use akita_types::{AkitaScheduleLookupKey, LevelParams, OpeningBatchShape};
 use crate::CommitmentConfig;
 
 /// Derive the per-polynomial commitment layout optimized for a batch of
-/// `num_claims` polynomials with `num_vars` variables.
+/// `num_polynomials` polynomials with `num_vars` variables.
 ///
 /// First reads the runtime schedule (table hit or DP fallback). When the
 /// schedule is a root fold it returns that root layout; for a direct-only
 /// schedule it falls back to the batched root commit layout
 /// `Cfg::get_params_for_batched_commitment` derives for the same
-/// `num_claims` (so the fallback layout is sized for the requested batch,
+/// `num_polynomials` (so the fallback layout is sized for the requested batch,
 /// not a singleton).
 ///
 /// Tests, benches, and the `profile` example use this to pre-size per-poly
@@ -35,18 +35,18 @@ use crate::CommitmentConfig;
 /// Returns an error if the layout parameters overflow or are invalid.
 pub fn akita_batched_root_layout<Cfg>(
     num_vars: usize,
-    num_claims: usize,
+    num_polynomials: usize,
 ) -> Result<LevelParams, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
-    let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_claims, num_claims, 1);
+    let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_polynomials);
     let schedule = Cfg::runtime_schedule(lookup_key)?;
     if let Some(root) = akita_types::schedule_root_fold_step(&schedule) {
         let layout = root.params.clone();
         tracing::info!(
             num_vars,
-            num_claims,
+            num_polynomials,
             total_bytes = schedule.total_bytes,
             root_m = layout.log_block_len(),
             root_r = layout.log_num_blocks(),
@@ -57,11 +57,11 @@ where
     }
     tracing::info!(
         num_vars,
-        num_claims,
+        num_polynomials,
         "batched root split: schedule is direct-only, falling back to config root layout"
     );
-    // Size the fallback for the requested batch (`num_claims`), not a
+    // Size the fallback for the requested batch (`num_polynomials`), not a
     // singleton — otherwise the per-poly inputs would be smaller than the
     // batched commit layout `Scheme::commit` actually uses.
-    Cfg::get_params_for_batched_commitment(&OpeningBatchShape::new(num_vars, num_claims)?)
+    Cfg::get_params_for_batched_commitment(&OpeningBatchShape::new(num_vars, num_polynomials)?)
 }
