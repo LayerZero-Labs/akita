@@ -68,16 +68,10 @@ where
     let row_width = max_group_poly_count
         .checked_mul(planes_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
-    let b_blinding_digits = vec![FlatDigitBlocks::<D>::empty(); num_polys_per_segment.len()];
-    if b_blinding_digits.len() != num_polys_per_segment.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-
     let mut groups = Vec::with_capacity(num_polys_per_segment.len());
     let mut block_offset = 0usize;
     let mut plane_offset = 0usize;
-    for (&group_poly_count, blinding) in num_polys_per_segment.iter().zip(b_blinding_digits.iter())
-    {
+    for &group_poly_count in num_polys_per_segment {
         let group_block_count = group_poly_count
             .checked_mul(blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
@@ -102,7 +96,7 @@ where
             .flat_digits()
             .get(plane_offset..next_plane_offset)
             .ok_or(AkitaError::InvalidProof)?;
-        groups.push((plane_offset, next_plane_offset, blinding));
+        groups.push((plane_offset, next_plane_offset));
         block_offset = next_block_offset;
         plane_offset = next_plane_offset;
     }
@@ -111,8 +105,7 @@ where
     }
 
     let mut rows = Vec::with_capacity(num_polys_per_segment.len() * n_b);
-    for (start, end, blinding) in groups {
-        let _ = blinding;
+    for (start, end) in groups {
         let group_digits = t_hat
             .flat_digits()
             .get(start..end)
