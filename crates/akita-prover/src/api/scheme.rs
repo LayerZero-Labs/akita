@@ -130,5 +130,5 @@ where
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: RootProvePoly<F, D>,
         B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
-        <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'a;
+        <B as ComputeBackendSetup<F>>::PreparedSetup: 'a;
 }

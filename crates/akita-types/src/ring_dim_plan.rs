@@ -66,10 +66,7 @@ impl RingDimPlan {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when any catalog check fails.
-    pub fn from_schedule(
-        schedule: &Schedule,
-        seed: &AkitaSetupSeed,
-    ) -> Result<Self, AkitaError> {
+    pub fn from_schedule(schedule: &Schedule, seed: &AkitaSetupSeed) -> Result<Self, AkitaError> {
         let num_folds = schedule_num_fold_levels(schedule);
         if num_folds > MAX_FOLD_LEVELS {
             return Err(AkitaError::InvalidSetup(format!(
@@ -221,9 +218,7 @@ fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
 mod tests {
     use super::*;
     use crate::setup_geometry::SetupRelationShape;
-    use crate::{
-        segment_typed_witness_shape, DirectStep, FoldStep, LevelParams, MRowLayout, Step,
-    };
+    use crate::{segment_typed_witness_shape, DirectStep, FoldStep, LevelParams, MRowLayout, Step};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
 
@@ -302,8 +297,8 @@ mod tests {
     fn from_schedule_rejects_non_divisible_envelope() {
         let schedule = two_level_schedule(128);
         let seed = sample_seed(64);
-        let err = RingDimPlan::from_schedule(&schedule, &seed)
-            .expect_err("gen_ring_dim must divide d_a");
+        let err =
+            RingDimPlan::from_schedule(&schedule, &seed).expect_err("gen_ring_dim must divide d_a");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
@@ -324,18 +319,11 @@ mod tests {
         let seed = sample_seed(64);
         let plan = RingDimPlan::from_schedule(&schedule, &seed).expect("plan");
         let lp = sample_lp(64);
-        let shape = SetupRelationShape::from_level_params(
-            &lp,
-            1,
-            MRowLayout::WithDBlock,
-            2,
-        )
-        .expect("shape");
+        let shape = SetupRelationShape::from_level_params(&lp, 1, MRowLayout::WithDBlock, 2)
+            .expect("shape");
         let shared = crate::derive_public_matrix_flat::<F, 64>(1, &seed.public_matrix_seed);
-        let expanded = crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            seed,
-            shared,
-        );
+        let expanded =
+            crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared);
         let err = plan
             .context_at(0, &schedule, &expanded, &shape)
             .expect_err("tiny envelope");

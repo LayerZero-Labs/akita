@@ -115,6 +115,19 @@ pub struct AlgebraSection {
 }
 
 impl AlgebraSection {
+    pub fn for_envelope<F, E>(gen_ring_dim: usize) -> Result<Self, AkitaError>
+    where
+        F: CanonicalField,
+        E: ExtField<F>,
+    {
+        Ok(Self {
+            prime_modulus_be: modulus_be_32::<F>(),
+            ring_dimension_d: usize_to_u32(gen_ring_dim, "ring dimension")?,
+            field_extension_degree: usize_to_u8(1, "field extension degree")?,
+            extension_degree: usize_to_u8(E::EXT_DEGREE, "extension degree")?,
+        })
+    }
+
     /// Build the algebra section for base field `F` and extension field `E` in
     /// cyclotomic ring dimension `D`.
     ///

@@ -185,7 +185,6 @@ pub enum NttSlotCacheAny {
 pub type NttCacheMap = std::collections::HashMap<NttCacheKey, NttSlotCacheAny>;
 
 impl NttSlotCacheAny {
-    /// Ring degree stored in this cache variant.
     #[must_use]
     pub const fn ring_d(&self) -> usize {
         match self {
@@ -193,6 +192,17 @@ impl NttSlotCacheAny {
             Self::D64(_) => 64,
             Self::D128(_) => 128,
             Self::D256(_) => 256,
+        }
+    }
+
+    /// In-memory byte footprint of this cache entry.
+    #[must_use]
+    pub fn cache_bytes(&self) -> usize {
+        match self {
+            Self::D32(cache) => cache.cache_bytes(),
+            Self::D64(cache) => cache.cache_bytes(),
+            Self::D128(cache) => cache.cache_bytes(),
+            Self::D256(cache) => cache.cache_bytes(),
         }
     }
 

@@ -18,8 +18,8 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SetupPrefixRegistry,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -66,7 +66,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
     #[allow(clippy::too_many_arguments)]
     pub fn new<F, T, const D: usize>(
         expanded: &AkitaExpandedSetup<F>,
-        prefix_slots: &SetupPrefixProverRegistry<F, D>,
+        prefix_slots: &SetupPrefixRegistry<F>,
         lp: &LevelParams,
         next_fold_level_params: &LevelParams,
         relation: &RingRelationInstance<F, D>,
@@ -236,7 +236,7 @@ fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
 #[allow(clippy::too_many_arguments)]
 fn build_setup_product_term<F, E, T, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixRegistry<F>,
     lp: &LevelParams,
     next_fold_level_params: &LevelParams,
     relation: &RingRelationInstance<F, D>,
@@ -253,7 +253,7 @@ where
     let (required, mut bar_omega, alpha_pows) =
         prepare_setup_sumcheck_terms::<F, E, D>(lp, relation, tau1, alpha, x_challenges)?;
 
-    let natural_field_len = required.checked_mul(D).ok_or_else(|| {
+    let natural_field_len = required.checked_mul(SETUP_OFFLOAD_D_SETUP).ok_or_else(|| {
         AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
     })?;
     let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
@@ -262,26 +262,22 @@ where
             "shared matrix is too small for selected setup product".to_string(),
         ));
     }
-    let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
-        let setup_prefix_selection = select_setup_prefix_slot(
-            expanded.seed(),
-            setup_len,
-            |slot_id| {
-                prefix_slots
-                    .get(slot_id)
-                    .map(|slot| (slot, slot.natural_len, slot.padded_len))
-            },
-            next_fold_level_params,
-            natural_field_len,
-            D,
-            "selected setup-prefix slot does not cover setup product",
-        )?;
-        if let Some((slot, setup_eval_len)) = setup_prefix_selection {
-            transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
-            setup_eval_len
-        } else {
-            setup_len
-        }
+    let setup_prefix_selection = select_setup_prefix_slot(
+        expanded.seed(),
+        setup_len,
+        |slot_id| {
+            prefix_slots
+                .get(slot_id)
+                .map(|slot| (slot, slot.natural_len(), slot.padded_len()))
+        },
+        next_fold_level_params,
+        natural_field_len,
+        SETUP_OFFLOAD_D_SETUP,
+        "selected setup-prefix slot does not cover setup product",
+    )?;
+    let setup_eval_len = if let Some((slot, setup_eval_len)) = setup_prefix_selection {
+        transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, slot.id());
+        setup_eval_len
     } else {
         setup_len
     };

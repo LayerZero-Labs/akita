@@ -314,7 +314,7 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
 /// divide `b_input_digits`, or when a matvec fails.
 pub(crate) fn tiered_commit_u_final<F, const D: usize, B>(
     backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    prepared: &B::PreparedSetup,
     params: &LevelParams,
     b_input_digits: &[[i8; D]],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -356,7 +356,7 @@ where
 
 fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
-    ctx: &OperationCtx<'_, F, B, D>,
+    ctx: &OperationCtx<'_, F, B>,
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
@@ -442,7 +442,7 @@ where
 pub fn commit_with_params<F, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
-    ctx: &OperationCtx<'_, F, B, D>,
+    ctx: &OperationCtx<'_, F, B>,
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
@@ -649,7 +649,7 @@ where
 pub fn batched_commit_with_params<F, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
-    ctx: &OperationCtx<'_, F, B, D>,
+    ctx: &OperationCtx<'_, F, B>,
     params: &LevelParams,
 ) -> Result<CommitmentWithHint<F, D>, AkitaError>
 where

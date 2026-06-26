@@ -22,7 +22,7 @@ use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
-    FlatMatrix, SetupPrefixProverRegistry,
+    FlatMatrix, SetupPrefixRegistry,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -299,7 +299,7 @@ pub(crate) fn load_prover_setup<
     let setup =
         deserialize_cached_setup::<F, D, Cfg>(&mut reader, max_num_vars, max_num_batched_polys)
             .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
-    let prefix_slots = SetupPrefixProverRegistry::<F, D>::deserialize_with_mode(
+    let prefix_slots = SetupPrefixRegistry::<F>::deserialize_with_mode(
         &mut reader,
         Compress::Yes,
         Validate::Yes,
@@ -497,7 +497,7 @@ mod tests {
                 use akita_algebra::CyclotomicRing;
                 use akita_types::{
                     setup_seed_digest, AkitaCommitmentHint, FlatDigitBlocks, RingCommitment,
-                    SetupPrefixSlot, SetupPrefixSlotId,
+                    SetupPrefixSlot, SetupPrefixSlotAny, SetupPrefixSlotId,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -519,7 +519,7 @@ mod tests {
                 );
                 setup
                     .prefix_slots
-                    .insert(SetupPrefixSlot {
+                    .insert(SetupPrefixSlotAny::D64(SetupPrefixSlot {
                         id,
                         natural_len: 1,
                         padded_len: TEST_D,
@@ -527,7 +527,7 @@ mod tests {
                             u: vec![CyclotomicRing::zero()],
                         },
                         hint,
-                    })
+                    }))
                     .unwrap();
                 save_prover_setup::<TestF, TEST_D, Cfg>(&setup, MAX_VARS, 1).unwrap();
 
@@ -572,7 +572,7 @@ mod tests {
                 );
                 let corrupt = AkitaProverSetup {
                     expanded: Arc::new(corrupt),
-                    prefix_slots: SetupPrefixProverRegistry::new(),
+                    prefix_slots: SetupPrefixRegistry::new(),
                 };
                 save_prover_setup::<TestF, TEST_D, Cfg>(&corrupt, MAX_VARS, 1).unwrap();
 
@@ -627,7 +627,7 @@ mod tests {
                 );
                 let stale = AkitaProverSetup {
                     expanded: Arc::new(stale),
-                    prefix_slots: SetupPrefixProverRegistry::new(),
+                    prefix_slots: SetupPrefixRegistry::new(),
                 };
                 save_prover_setup::<TestF, TEST_D, Cfg>(&stale, MAX_VARS, MAX_BATCH).unwrap();
 

@@ -12,13 +12,13 @@ use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, padded_setup_prefix_len,
     setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams,
-    OpeningBatchShape, SETUP_OFFLOAD_D_SETUP,
+    OpeningBatchShape, SetupPrefixSlotAny, SETUP_OFFLOAD_D_SETUP,
 };
 
 fn commit_setup_prefix_for_level<F, const D: usize, B>(
     setup: &mut AkitaProverSetup<F, D>,
     backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    prepared: &B::PreparedSetup,
     commitment_params: &LevelParams,
     natural_len: usize,
     n_prefix: usize,
@@ -34,15 +34,23 @@ where
     }
     let seed_digest = setup_seed_digest(setup.expanded.seed())
         .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
-    let Some(prefix_params) = setup_prefix_level_params(commitment_params, n_prefix, D)? else {
+    let Some(prefix_params) =
+        setup_prefix_level_params(commitment_params, n_prefix, SETUP_OFFLOAD_D_SETUP)?
+    else {
         return Ok(());
     };
     let level_params_digest = digest_level_params(std::slice::from_ref(&prefix_params));
-    let id = setup_prefix_slot_id(seed_digest, D, natural_len, n_prefix, level_params_digest);
+    let id = setup_prefix_slot_id(
+        seed_digest,
+        SETUP_OFFLOAD_D_SETUP,
+        natural_len,
+        n_prefix,
+        level_params_digest,
+    );
     if setup.prefix_slots.get(&id).is_some() {
         return Ok(());
     }
-    let slot = commit_setup_prefix::<F, D, B>(
+    let slot = commit_setup_prefix::<F, { SETUP_OFFLOAD_D_SETUP }, B>(
         &setup.expanded,
         backend,
         prepared,
@@ -51,7 +59,7 @@ where
         n_prefix,
         natural_len,
     )?;
-    setup.prefix_slots.insert(slot)?;
+    setup.prefix_slots.insert(SetupPrefixSlotAny::D64(slot))?;
     Ok(())
 }
 
@@ -167,13 +175,13 @@ mod tests {
             "D64 recursive setup should populate setup-prefix slots"
         );
         for (id, slot) in setup.prefix_slots.iter() {
-            assert_eq!(id, &slot.id);
+            assert_eq!(id, slot.id());
             id.check().expect("slot id shape");
             assert_eq!(id.d_setup, SETUP_OFFLOAD_D_SETUP);
-            assert_eq!(slot.natural_len, id.natural_len);
-            assert_eq!(slot.padded_len, id.n_prefix);
-            assert!(slot.natural_len <= slot.padded_len);
-            assert!(slot.padded_len.is_power_of_two());
+            assert_eq!(slot.natural_len(), id.natural_len);
+            assert_eq!(slot.padded_len(), id.n_prefix);
+            assert!(slot.natural_len() <= slot.padded_len());
+            assert!(slot.padded_len().is_power_of_two());
         }
 
         let verifier_setup = setup.verifier_setup().expect("verifier setup");

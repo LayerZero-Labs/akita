@@ -32,7 +32,7 @@ use akita_types::{
 /// Returns an error when:
 /// - the algebra section cannot be derived for the field tower, or
 /// - canonical descriptor serialization fails.
-pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
+pub fn bind_transcript_instance_descriptor<F, T, Cfg>(
     setup: &AkitaExpandedSetup<F>,
     opening_batch: &OpeningBatchShape,
     schedule: &Schedule,
@@ -45,8 +45,9 @@ where
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
 {
+    let gen_ring_dim = setup.shared_matrix().gen_ring_dim();
     let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ExtField, D>()?,
+        AlgebraSection::for_envelope::<F, Cfg::ExtField>(gen_ring_dim)?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),

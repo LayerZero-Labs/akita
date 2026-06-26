@@ -28,7 +28,7 @@ pub struct NextWitnessCommitment<F: FieldCore> {
 pub fn commit_w<F, B, const D: usize>(
     w: &RecursiveWitnessFlat,
     expanded: &AkitaExpandedSetup<F>,
-    commit_ctx: &OperationCtx<'_, F, B, D>,
+    commit_ctx: &OperationCtx<'_, F, B>,
     commit_layout: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
@@ -49,7 +49,7 @@ where
             actual: w.len(),
         });
     }
-    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    backend.validate_prepared_setup(prepared, expanded)?;
     validate_commit_level_params::<F, D>(commit_layout, expanded)?;
 
     let num_ring_elems = w.len() / D;
@@ -185,7 +185,7 @@ where
 pub fn commit_next_w<Cfg, B, const D: usize>(
     commit_params: &LevelParams,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
-    commit_ctx: &OperationCtx<'_, Cfg::Field, B, D>,
+    commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
     logical_w: &RecursiveWitnessFlat,
 ) -> Result<NextWitnessCommitment<Cfg::Field>, AkitaError>
 where

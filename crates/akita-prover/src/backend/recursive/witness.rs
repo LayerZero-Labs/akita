@@ -367,7 +367,7 @@ where
     pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        prepared: &B::PreparedSetup,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
@@ -507,7 +507,7 @@ where
 {
     fn evaluate_and_fold(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -528,7 +528,7 @@ where
 
     fn decompose_fold(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
@@ -547,7 +547,7 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -582,7 +582,7 @@ where
 {
     fn column_partials(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
@@ -594,7 +594,7 @@ where
 
     fn packed_witness(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
@@ -604,7 +604,7 @@ where
 
     fn root_projection(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
@@ -625,7 +625,7 @@ where
 {
     fn column_partials_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -643,7 +643,7 @@ where
 
     fn sparse_linear_combination(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {

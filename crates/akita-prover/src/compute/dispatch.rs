@@ -9,7 +9,7 @@ use akita_types::FpExtEncoding;
 
 pub(crate) fn tensor_root_projection<F, P, E, B, const D: usize>(
     backend: &B,
-    prepared: Option<&B::PreparedSetup<D>>,
+    prepared: Option<&B::PreparedSetup>,
     poly: &P,
 ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
 where

@@ -33,7 +33,7 @@ fn repeated_b_planes_per_claim(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn repeated_b_commitment_rows<F, B, const D: usize>(
     backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    prepared: &B::PreparedSetup,
     n_b: usize,
     t_hat: &FlatDigitBlocks<D>,
     num_polys_per_segment: &[usize],
@@ -163,7 +163,9 @@ mod tests {
             FlatMatrix::from_ring_slice::<D>(&setup_rows),
         );
         let setup = AkitaProverSetup::from_seed_validated_expanded(expanded).expect("valid setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+        let prepared = CpuBackend
+            .prepare_setup::<D>(&setup)
+            .expect("prepared setup");
         let blocks: Vec<Vec<[i8; D]>> = (0..3)
             .map(|block| {
                 (0..block_width)

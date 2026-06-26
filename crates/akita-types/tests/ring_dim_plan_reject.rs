@@ -1,10 +1,11 @@
 //! Rejection paths for `RingDimPlan::from_schedule`.
 
-use akita_types::{
-    segment_typed_witness_shape, CommitmentRingDims, DirectStep, FoldStep, LevelParams, RingDimPlan, Schedule, Step, AkitaSetupSeed,
-};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
+use akita_types::{
+    segment_typed_witness_shape, AkitaSetupSeed, CommitmentRingDims, DirectStep, FoldStep,
+    LevelParams, RingDimPlan, Schedule, Step,
+};
 
 fn sample_seed(gen_ring_dim: usize) -> AkitaSetupSeed {
     AkitaSetupSeed {
@@ -68,8 +69,7 @@ fn rejects_unsupported_ring_dimension() {
 #[test]
 fn rejects_envelope_not_divisible_by_fold_ring() {
     let schedule = one_fold_schedule(sample_lp(128), 512, 256);
-    let err =
-        RingDimPlan::from_schedule(&schedule, &sample_seed(64)).expect_err("bad envelope");
+    let err = RingDimPlan::from_schedule(&schedule, &sample_seed(64)).expect_err("bad envelope");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
 

@@ -28,7 +28,7 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
     const D: usize,
 >(
     backend: &B,
-    prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
+    prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
     polys: &[&P],
     row_coefficients: &[E],
     tail_point: &[E],
@@ -74,7 +74,7 @@ where
 
 fn try_sparse_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
     backend: &B,
-    prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
+    prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
     polys: &[&P],
     row_coefficients: &[E],
     tail_point: &[E],
@@ -150,7 +150,7 @@ where
 
 fn build_dense_extension_opening_reduction_terms<F, E, P, B, const D: usize>(
     backend: &B,
-    prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
+    prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
     polys: &[&P],
     row_coefficients: &[E],
     tail_point: &[E],
@@ -187,7 +187,7 @@ pub(in crate::protocol::core) fn prepare_extension_opening_reduction<
     const D: usize,
 >(
     backend: &B,
-    prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
+    prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
     polys: &[&P],
     opening_batch: &VerifierOpeningBatch<'_, E>,
     pad_base_evals: bool,
@@ -339,7 +339,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B, const D: usize>(
     tensor_backend: &B,
-    tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
+    tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
     polys: &[&P],
     opening_batch: &VerifierOpeningBatch<'_, E>,
     pad_base_evals: bool,
