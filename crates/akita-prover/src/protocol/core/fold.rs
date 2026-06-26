@@ -632,7 +632,7 @@ where
         None
     } else {
         let _span = tracing::info_span!("commit_w_level", level).entered();
-        Some(crate::commit_next_w::<Cfg, C, D>(
+        Some(crate::commit_next_w::<Cfg, C>(
             &scheduled.next_params,
             expanded,
             stack.commit(),
