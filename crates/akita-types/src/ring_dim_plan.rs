@@ -74,12 +74,12 @@ impl RingDimPlan {
             )));
         }
         let mut role_dims = [CommitmentRingDims::uniform(0); MAX_FOLD_LEVELS];
-        for level in 0..num_folds {
+        for (level, slot) in role_dims.iter_mut().take(num_folds).enumerate() {
             let exec = schedule.get_execution_schedule(level)?;
             let lp = &exec.params;
             let dims = CommitmentRingDims::uniform(lp.ring_dimension);
             validate_role_dims(dims)?;
-            if seed.gen_ring_dim % dims.inner != 0 {
+            if !seed.gen_ring_dim.is_multiple_of(dims.inner) {
                 return Err(AkitaError::InvalidSetup(format!(
                     "setup gen_ring_dim={} is not divisible by fold ring d_a={}",
                     seed.gen_ring_dim, dims.inner
@@ -90,7 +90,7 @@ impl RingDimPlan {
                     "schedule ring_dimension disagrees with derived inner role dim".into(),
                 ));
             }
-            if exec.current_w_len % dims.inner != 0 {
+            if !exec.current_w_len.is_multiple_of(dims.inner) {
                 return Err(AkitaError::InvalidSetup(format!(
                     "witness length {} is not divisible by fold ring d_a={}",
                     exec.current_w_len, dims.inner
@@ -98,20 +98,20 @@ impl RingDimPlan {
             }
             if !exec.is_terminal {
                 let next_ring_d = exec.next_params.ring_dimension;
-                if next_ring_d == 0 || exec.next_w_len % next_ring_d != 0 {
+                if next_ring_d == 0 || !exec.next_w_len.is_multiple_of(next_ring_d) {
                     return Err(AkitaError::InvalidSetup(format!(
                         "next witness length {} is not divisible by next ring dimension {next_ring_d}",
                         exec.next_w_len,
                     )));
                 }
             }
-            role_dims[level] = dims;
+            *slot = dims;
         }
         for level in 0..num_folds.saturating_sub(1) {
             let current = role_dims[level];
             let next = role_dims[level + 1];
             let exec = schedule.get_execution_schedule(level)?;
-            if current.inner != next.inner && exec.next_w_len % next.inner != 0 {
+            if current.inner != next.inner && !exec.next_w_len.is_multiple_of(next.inner) {
                 return Err(AkitaError::InvalidSetup(format!(
                     "next witness length {} is not divisible by next-level d_a={}",
                     exec.next_w_len, next.inner
