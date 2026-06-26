@@ -34,5 +34,3 @@ pub use types::{
     uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,
     EqFactoredUniPoly, SumcheckProof, SumcheckProofShape,
 };
-#[cfg(feature = "zk")]
-pub use types::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};

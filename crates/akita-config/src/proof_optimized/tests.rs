@@ -270,7 +270,6 @@ fn setup_matrix_scan_uses_one_shared_opening_point() {
 fn setup_envelope_poly_counts_match_shipped_table_keys() {
     assert_eq!(super::setup_envelope_poly_counts(1), vec![1]);
     assert_eq!(super::setup_envelope_poly_counts(2), vec![1, 2]);
-    assert_eq!(super::setup_envelope_poly_counts(4), vec![1, 2, 3, 4]);
     assert_eq!(super::setup_envelope_poly_counts(4), vec![1, 4]);
 }
 
