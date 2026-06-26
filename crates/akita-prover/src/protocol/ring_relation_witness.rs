@@ -12,6 +12,4 @@ pub struct RingRelationWitness<F: FieldCore, const D: usize> {
     pub e_hat: FlatDigitBlocks<D>,
     pub e_folded: Vec<akita_algebra::CyclotomicRing<F, D>>,
     pub hint: AkitaCommitmentHint<F, D>,
-    #[cfg(feature = "zk")]
-    pub d_blinding_digits: FlatDigitBlocks<D>,
 }

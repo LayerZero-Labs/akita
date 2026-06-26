@@ -6,8 +6,6 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OperationCtx, RootOpeningSource,
 };
-#[cfg(feature = "zk")]
-use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{
     CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningBatch,
@@ -20,8 +18,6 @@ use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
-#[cfg(feature = "zk")]
-use akita_types::terminal_e_hat_bytes_from_blocks;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
 };
@@ -38,22 +34,6 @@ mod repeated_b;
 pub use akita_types::generate_y;
 pub use relation_quotient::compute_relation_quotient;
 
-#[cfg(feature = "zk")]
-fn absorb_terminal_e_hat<F, T, const D: usize>(
-    transcript: &mut T,
-    e_hat: &FlatDigitBlocks<D>,
-    planes_per_block: usize,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    let bytes = terminal_e_hat_bytes_from_blocks(e_hat, planes_per_block)?;
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &bytes);
-    Ok(())
-}
-
-#[cfg(not(feature = "zk"))]
 fn absorb_terminal_e_folded_fields<F, T, const D: usize>(
     transcript: &mut T,
     e_folded: &[CyclotomicRing<F, D>],
@@ -111,8 +91,6 @@ where
 
     let mut decomposed_inner_rows = Vec::new();
     let mut t_rows_by_poly = Vec::new();
-    #[cfg(feature = "zk")]
-    let mut b_blinding_digits = Vec::new();
     for (mut hint, &group_size) in hints.into_iter().zip(group_sizes.iter()) {
         if hint.decomposed_inner_rows.len() != group_size {
             return Err(AkitaError::InvalidInput(
@@ -120,40 +98,18 @@ where
             ));
         }
         hint.ensure_recomposed_inner_rows(num_digits_open, log_basis)?;
-        #[cfg(feature = "zk")]
-        let (digits_by_poly, rows_by_poly, mut blinding_by_group) = hint.into_parts();
-        #[cfg(not(feature = "zk"))]
         let (digits_by_poly, rows_by_poly) = hint.into_parts();
-        #[cfg(feature = "zk")]
-        if blinding_by_group.len() != 1 {
-            return Err(AkitaError::InvalidInput(
-                "prover hint must carry exactly one blinding group per commitment".to_string(),
-            ));
-        }
         decomposed_inner_rows.extend(digits_by_poly);
         let rows_by_poly = rows_by_poly.ok_or_else(|| {
             AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
         })?;
         t_rows_by_poly.extend(rows_by_poly);
-        #[cfg(feature = "zk")]
-        b_blinding_digits.append(&mut blinding_by_group);
     }
 
-    #[cfg(feature = "zk")]
-    {
-        Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
-            decomposed_inner_rows,
-            t_rows_by_poly,
-            b_blinding_digits,
-        ))
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
-            decomposed_inner_rows,
-            t_rows_by_poly,
-        ))
-    }
+    Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
+        decomposed_inner_rows,
+        t_rows_by_poly,
+    ))
 }
 
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
@@ -315,45 +271,22 @@ where
     }
 }
 
-/// Compute the D-side relation rows `v = D · e_hat` (plus ZK blinding when enabled).
 fn compute_v_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     row_len: usize,
     e_hat: &FlatDigitBlocks<D>,
     log_basis: u32,
-    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
-    #[cfg(feature = "zk")]
-    {
-        let mut rows =
-            backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits(), log_basis)?;
-        let blinding_rows = backend.zk_d_digit_rows::<D>(
-            prepared,
-            row_len,
-            d_blinding_digits.flat_digits().len(),
-            d_blinding_digits.flat_digits(),
-        )?;
-        for (row, blinding) in rows.iter_mut().zip(blinding_rows) {
-            *row += blinding;
-        }
-        if rows.len() != row_len {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(rows)
+    let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits(), log_basis)?;
+    if rows.len() != row_len {
+        return Err(AkitaError::InvalidProof);
     }
-    #[cfg(not(feature = "zk"))]
-    {
-        let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits(), log_basis)?;
-        if rows.len() != row_len {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(rows)
-    }
+    Ok(rows)
 }
 
 fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
@@ -362,7 +295,6 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     lp: &LevelParams,
     e_hat: &FlatDigitBlocks<D>,
     m_row_layout: MRowLayout,
-    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -378,15 +310,7 @@ where
                 e_hat_planes = e_hat.flat_digits().len()
             )
             .entered();
-            let v = compute_v_rows(
-                backend,
-                prepared,
-                lp.d_key.row_len(),
-                e_hat,
-                lp.log_basis,
-                #[cfg(feature = "zk")]
-                d_blinding_digits,
-            )?;
+            let v = compute_v_rows(backend, prepared, lp.d_key.row_len(), e_hat, lp.log_basis)?;
             transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
             Ok(v)
         }
@@ -508,15 +432,7 @@ impl RingRelationProver {
         // `v = D · e_hat` never travels on the wire, the verifier never
         // reconstructs it, and downstream prover paths (`ring_switch_build_w`,
         // `relation_claim_from_rows_extension`) consume an empty `v` slice.
-        // Skip both the D-side blinding sample and the D-NTT under Terminal.
-        #[cfg(feature = "zk")]
-        let d_blinding_digits = match m_row_layout {
-            MRowLayout::WithDBlock => {
-                sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?
-            }
-            MRowLayout::WithoutDBlock => FlatDigitBlocks::<D>::empty(),
-        };
-
+        // Skip the D-NTT under Terminal.
         let opening_backend = opening_ctx.backend();
         let v = compute_v_rows_for_layout::<F, T, RB, D>(
             ring_switch_ctx,
@@ -524,21 +440,14 @@ impl RingRelationProver {
             &lp,
             &e_hat,
             m_row_layout,
-            #[cfg(feature = "zk")]
-            &d_blinding_digits,
         )?;
 
         if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
-            #[cfg(not(feature = "zk"))]
-            {
-                let e_folded_flat: Vec<CyclotomicRing<F, D>> = pre_folded_e_by_poly
-                    .iter()
-                    .flat_map(|block| block.iter().cloned())
-                    .collect();
-                absorb_terminal_e_folded_fields::<F, T, D>(transcript, &e_folded_flat)?;
-            }
-            #[cfg(feature = "zk")]
-            absorb_terminal_e_hat::<F, T, D>(transcript, &e_hat, lp.num_digits_open)?;
+            let e_folded_flat: Vec<CyclotomicRing<F, D>> = pre_folded_e_by_poly
+                .iter()
+                .flat_map(|block| block.iter().cloned())
+                .collect();
+            absorb_terminal_e_folded_fields::<F, T, D>(transcript, &e_folded_flat)?;
         }
         let (z_folded_rings, challenges, fold_grind_nonce) =
             fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
@@ -587,8 +496,6 @@ impl RingRelationProver {
             e_hat,
             e_folded,
             hint: flattened_hint,
-            #[cfg(feature = "zk")]
-            d_blinding_digits,
         };
         Ok((instance, witness))
     }

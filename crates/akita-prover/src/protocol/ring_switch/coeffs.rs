@@ -2,11 +2,8 @@ use super::*;
 use crate::compute::{OperationCtx, RingSwitchProveBackend};
 use crate::validation::validate_i8_setup_log_basis;
 use akita_serialization::AkitaSerialize;
-#[cfg(feature = "zk")]
-use std::marker::PhantomData;
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
-#[cfg(not(feature = "zk"))]
 pub struct RingSwitchTerminalArtifacts<F: FieldCore, const D: usize> {
     pub e_folded: Vec<akita_algebra::CyclotomicRing<F, D>>,
     pub recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>>,
@@ -18,10 +15,7 @@ pub struct RingSwitchTerminalArtifacts<F: FieldCore, const D: usize> {
 /// Output of [`ring_switch_build_w`].
 pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
     pub w: RecursiveWitnessFlat,
-    #[cfg(not(feature = "zk"))]
     pub terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
-    #[cfg(feature = "zk")]
-    _marker: PhantomData<F>,
 }
 
 /// Build the witness vector `w` from the ring-relation witness.
@@ -33,14 +27,8 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
 /// # Errors
 ///
 /// Returns an error if the ring-relation witness is missing prover-side data.
-///
-/// # Panics
-///
-/// Panics with `feature = "zk"` enabled if the zero-length `FlatDigitBlocks`
-/// constructor rejects an empty vector (an invariant of the type).
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
-#[cfg_attr(feature = "zk", allow(unused_variables))]
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
     instance: &RingRelationInstance<F, D>,
@@ -65,14 +53,9 @@ where
         e_hat,
         e_folded,
         mut hint,
-        #[cfg(feature = "zk")]
-        d_blinding_digits,
     } = witness;
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
-    #[cfg(feature = "zk")]
-    let (decomposed_inner_rows, recomposed_inner_rows, b_blinding_digits) = hint.into_flat_parts();
-    #[cfg(not(feature = "zk"))]
     let (decomposed_inner_rows, recomposed_inner_rows) = hint.into_flat_parts();
     let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
         AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
@@ -84,11 +67,7 @@ where
         lp,
         &instance.challenges,
         e_hat.flat_digits(),
-        #[cfg(feature = "zk")]
-        &d_blinding_digits,
         &decomposed_inner_rows,
-        #[cfg(feature = "zk")]
-        &b_blinding_digits,
         &recomposed_inner_rows,
         &e_folded,
         instance.ring_multiplier_point(),
@@ -101,27 +80,12 @@ where
         lp.inner_width(),
         instance.m_row_layout(),
     )?;
-    // Terminal layout drops the D-block from M and from the witness; the
-    // d-blinding column segment must also disappear so the prover witness
-    // matches the verifier's column offsets.
-    #[cfg(feature = "zk")]
-    let d_blinding_for_w: FlatDigitBlocks<D> = match instance.m_row_layout() {
-        MRowLayout::WithDBlock => d_blinding_digits,
-        MRowLayout::WithoutDBlock => {
-            FlatDigitBlocks::zeroed(Vec::new()).expect("empty FlatDigitBlocks always valid")
-        }
-    };
-    #[cfg(not(feature = "zk"))]
     let z_centered = z_folded_rings.centered_coeffs.clone();
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
             &e_hat,
-            #[cfg(feature = "zk")]
-            &d_blinding_for_w,
             &decomposed_inner_rows,
-            #[cfg(feature = "zk")]
-            &b_blinding_digits,
             &u_concat_digits,
             &z_folded_rings.centered_coeffs,
             &r,
@@ -129,7 +93,6 @@ where
             num_claims,
         )
     };
-    #[cfg(not(feature = "zk"))]
     let terminal_artifacts = if retain_terminal_artifacts {
         Some(RingSwitchTerminalArtifacts {
             e_folded,
@@ -143,10 +106,7 @@ where
     };
     Ok(RingSwitchBuildOutput {
         w,
-        #[cfg(not(feature = "zk"))]
         terminal_artifacts,
-        #[cfg(feature = "zk")]
-        _marker: PhantomData,
     })
 }
 
@@ -185,18 +145,6 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
 fn emit_flat_planes<const D: usize>(out: &mut Vec<i8>, planes: &[[i8; D]]) {
     for plane in planes {
         out.extend_from_slice(plane);
-    }
-}
-
-#[cfg(feature = "zk")]
-fn emit_blinding_planes<const D: usize>(
-    out: &mut Vec<i8>,
-    blinding_by_group: &[FlatDigitBlocks<D>],
-) {
-    for blinding in blinding_by_group {
-        for plane in blinding.flat_digits() {
-            out.extend_from_slice(plane);
-        }
     }
 }
 
@@ -257,9 +205,7 @@ fn emit_z_folded_block_inner<const D: usize>(
 #[allow(clippy::too_many_arguments)]
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     e_hat: &FlatDigitBlocks<D>,
-    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
-    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     u_concat_digits: &[[i8; D]],
     z_folded_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
@@ -277,16 +223,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let e_hat_planes = e_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
-    #[cfg(feature = "zk")]
-    let d_blinding_planes = d_blinding_digits.flat_digits().len();
-    #[cfg(not(feature = "zk"))]
     let d_blinding_planes = 0usize;
-    #[cfg(feature = "zk")]
-    let b_blinding_planes: usize = b_blinding_digits
-        .iter()
-        .map(|digits| digits.flat_digits().len())
-        .sum();
-    #[cfg(not(feature = "zk"))]
     let b_blinding_planes = 0usize;
     // Tiered: the hidden decomposed concatenated slice images `û_concat` are a
     // flat contiguous segment emitted immediately after `t̂` (at `offset_u`).
@@ -355,10 +292,6 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         t_planes_per_block,
     );
     emit_flat_planes(&mut out, u_concat_digits);
-    #[cfg(feature = "zk")]
-    emit_blinding_planes(&mut out, b_blinding_digits);
-    #[cfg(feature = "zk")]
-    emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
 
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;
