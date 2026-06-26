@@ -60,8 +60,8 @@ pub(crate) unsafe fn sparse_mul_acc_neon(
     }
 }
 
-/// Add rotated digit plane: acc[i+p] += digits[i] for i in [0, split),
-/// acc[i-split] -= digits[i] for i in [split, D) (negacyclic wrap).
+/// Add rotated digit plane: `acc[i+p] += digits[i]` for `i` in `0..split`,
+/// `acc[i-split] -= digits[i]` for `i` in `split..D` (negacyclic wrap).
 #[inline(always)]
 unsafe fn acc_rotated_add(digits: *const i8, acc: *mut i32, d: usize, p: usize, split: usize) {
     // First segment: digits[0..split] -> acc[p..D], ADD
@@ -73,8 +73,8 @@ unsafe fn acc_rotated_add(digits: *const i8, acc: *mut i32, d: usize, p: usize, 
     let _ = d;
 }
 
-/// Sub rotated digit plane: acc[i+p] -= digits[i] for i in [0, split),
-/// acc[i-split] += digits[i] for i in [split, D) (negacyclic wrap).
+/// Sub rotated digit plane: `acc[i+p] -= digits[i]` for `i` in `0..split`,
+/// `acc[i-split] += digits[i]` for `i` in `split..D` (negacyclic wrap).
 #[inline(always)]
 unsafe fn acc_rotated_sub(digits: *const i8, acc: *mut i32, d: usize, p: usize, split: usize) {
     // First segment: digits[0..split] -> acc[p..D], SUB

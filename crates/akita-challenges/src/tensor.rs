@@ -6,8 +6,8 @@
 //! the negacyclic tensor product `left[p] · right[q]`. This shrinks transcript
 //! challenge sampling from `O(num_blocks)` to `O(√num_blocks)` per claim
 //! while leaving the downstream fold semantics unchanged: callers see a
-//! uniform flat view through [`FoldingChallenges::expand_integer`] /
-//! [`FoldingChallenges::evals_at_pows`].
+//! uniform flat view through [`TensorChallenges::expand_integer`] /
+//! [`Challenges::evals_at_pows`].
 //!
 //! Sampling labels are taken as a [`ChallengeLabels`] parameter so callers can
 //! choose stage-specific transcript wiring explicitly.
@@ -15,7 +15,7 @@
 //! The public types are split by protocol role:
 //! [`ChallengeShape`] is only the flat-vs-tensor selector,
 //! [`ChallengeLabels`] is the transcript metadata for one sampling round,
-//! [`FoldingChallenges`] is the sampled runtime container, and
+//! [`Challenges`] is the sampled runtime container, and
 //! [`TensorChallenges`] is the factored tensor state whose left/right lengths
 //! are part of the invariant. Materialized logical challenges use
 //! [`IntegerChallenge`], because tensor products can widen coefficients beyond
