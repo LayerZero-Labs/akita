@@ -22,7 +22,7 @@ use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingF
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// CPU backend using the existing Rust/Rayon kernels.
 #[derive(Debug, Default, Clone, Copy)]
@@ -33,14 +33,14 @@ pub struct CpuBackend;
 /// NTT caches are keyed by [`NttCacheKey`]. [`ComputeBackendSetup::prepare_setup`]
 /// registers the minimum envelope slot on the setup contract; additional slots may
 /// be built lazily via [`ComputeBackendSetup::ensure_ntt_slot`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
-    shared_ntt: NttCacheMap,
-    ntt_i8_capacity_by_ring_d: HashMap<usize, CrtI8CapacityProfile>,
+    shared_ntt: Mutex<NttCacheMap>,
+    ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
     /// Keys promised at [`ComputeBackendSetup::prepare_setup`]; lazy builds outside
     /// this set emit a diagnostic warning.
-    setup_contract_ntt_keys: HashSet<NttCacheKey>,
+    setup_contract_ntt_keys: Mutex<HashSet<NttCacheKey>>,
 }
 
 /// CRT/NTT profile and universal i8 capacity metadata for a prepared setup.
@@ -78,22 +78,29 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         NttCacheKey::from_envelope(&self.expanded, D)
     }
 
-    pub(crate) fn shared_ntt<const D: usize>(&self) -> Result<&NttSlotCache<D>, AkitaError> {
+    pub(crate) fn with_shared_ntt<const D: usize, R>(
+        &self,
+        f: impl FnOnce(&NttSlotCache<D>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
         let key = self.envelope_ntt_key::<D>()?;
-        self.shared_ntt
-            .get(&key)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
-                    key.ring_d, key.num_ring_elements
-                ))
-            })?
-            .as_d::<D>()
+        let cache = self
+            .shared_ntt
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+        let slot = cache.get(&key).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
+                key.ring_d, key.num_ring_elements
+            ))
+        })?;
+        f(slot.as_d::<D>()?)
     }
 
     /// In-memory byte footprint of all shared setup NTT caches.
     pub fn shared_ntt_cache_bytes(&self) -> usize {
         self.shared_ntt
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .map(|slot| slot.cache_bytes())
             .sum()
@@ -102,6 +109,8 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     /// CRT/NTT profile and universal i8 capacity metadata for ring degree `D`.
     pub fn shared_ntt_profile<const D: usize>(&self) -> Result<PreparedCrtNttProfile, AkitaError> {
         self.ntt_i8_capacity_by_ring_d
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("NTT profile lock poisoned".into()))?
             .get(&D)
             .copied()
             .map(Into::into)
@@ -126,44 +135,73 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
 }
 
 fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
-    prepared: &mut CpuPreparedSetup<F>,
+    prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
     let profile = akita_types::dispatch_ring_dim_result!(key.ring_d, |RING_D| {
         selected_crt_i8_capacity_profile::<F, RING_D>()
     })?;
     let slot = build_ntt_slot_for_key(prepared.expanded.as_ref(), key)?;
-    prepared.shared_ntt.insert(key, slot);
+    prepared
+        .shared_ntt
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
+        .insert(key, slot);
     prepared
         .ntt_i8_capacity_by_ring_d
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("NTT profile lock poisoned".into()))?
         .insert(key.ring_d, profile);
     Ok(())
 }
 
 fn register_setup_contract_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
-    prepared: &mut CpuPreparedSetup<F>,
+    prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    if !prepared.shared_ntt.contains_key(&key) {
+    if !prepared
+        .shared_ntt
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
+        .contains_key(&key)
+    {
         insert_ntt_slot_on_prepared(prepared, key)?;
     }
-    prepared.setup_contract_ntt_keys.insert(key);
+    prepared
+        .setup_contract_ntt_keys
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("NTT contract lock poisoned".into()))?
+        .insert(key);
     Ok(())
 }
 
 fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
-    prepared: &mut CpuPreparedSetup<F>,
+    prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    if prepared.shared_ntt.contains_key(&key) {
+    if prepared
+        .shared_ntt
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
+        .contains_key(&key)
+    {
         return Ok(());
     }
-    if !prepared.setup_contract_ntt_keys.contains(&key) {
+    if !prepared
+        .setup_contract_ntt_keys
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("NTT contract lock poisoned".into()))?
+        .contains(&key)
+    {
         tracing::warn!(
             target: "akita_prover::ntt_cache",
             ring_d = key.ring_d,
             num_ring_elements = key.num_ring_elements,
-            setup_contract_keys = prepared.setup_contract_ntt_keys.len(),
+            setup_contract_keys = prepared
+                .setup_contract_ntt_keys
+                .lock()
+                .map_err(|_| AkitaError::InvalidSetup("NTT contract lock poisoned".into()))?
+                .len(),
             "building NTT cache slot outside setup prepare contract; \
              setup envelope or prepare path is likely undersized for this commit/prove path"
         );
@@ -206,15 +244,15 @@ where
     ) -> Result<Self::PreparedSetup, AkitaError> {
         Ok(CpuPreparedSetup {
             expanded,
-            shared_ntt: NttCacheMap::new(),
-            ntt_i8_capacity_by_ring_d: HashMap::new(),
-            setup_contract_ntt_keys: HashSet::new(),
+            shared_ntt: Mutex::new(NttCacheMap::new()),
+            ntt_i8_capacity_by_ring_d: Mutex::new(HashMap::new()),
+            setup_contract_ntt_keys: Mutex::new(HashSet::new()),
         })
     }
 
     fn register_setup_contract_ntt_slot(
         &self,
-        prepared: &mut Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         key: NttCacheKey,
     ) -> Result<(), AkitaError> {
         register_setup_contract_ntt_slot_on_prepared(prepared, key)
@@ -222,23 +260,29 @@ where
 
     fn ensure_ntt_slot(
         &self,
-        prepared: &mut Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         key: NttCacheKey,
     ) -> Result<(), AkitaError> {
         ensure_ntt_slot_on_prepared(prepared, key)
     }
 
-    fn ntt_slot<'a>(
+    fn with_ntt_slot<R>(
         &self,
-        prepared: &'a Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         key: NttCacheKey,
-    ) -> Result<&'a crate::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
-        prepared.shared_ntt.get(&key).ok_or_else(|| {
+        f: impl FnOnce(&crate::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
+        let cache = prepared
+            .shared_ntt
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+        let slot = cache.get(&key).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
                 key.ring_d, key.num_ring_elements
             ))
-        })
+        })?;
+        f(slot)
     }
 
     fn prepared_expanded_setup<'a>(
@@ -264,13 +308,15 @@ where
                 log_basis,
             } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
-                mat_vec_mul_ntt_dense_digits_i8_trusted(
-                    prepared.shared_ntt::<D>()?,
-                    plan.n_a,
-                    row_width,
-                    &digit_block_slices,
-                    log_basis,
-                )
+                prepared.with_shared_ntt::<D, _>(|ntt| {
+                    mat_vec_mul_ntt_dense_digits_i8_trusted(
+                        ntt,
+                        plan.n_a,
+                        row_width,
+                        &digit_block_slices,
+                        log_basis,
+                    )
+                })
             }
             DenseCommitInput::CoeffBlocks {
                 block_slices,
@@ -283,25 +329,29 @@ where
                     })
                 })?;
                 if plan.n_a == 1 {
-                    Ok(mat_vec_mul_ntt_i8_dense_single_row(
-                        prepared.shared_ntt::<D>()?,
-                        row_width,
-                        &block_slices,
-                        num_digits_commit,
-                        log_basis,
-                    )?
-                    .into_iter()
-                    .map(|ring| vec![ring])
-                    .collect())
+                    prepared.with_shared_ntt::<D, _>(|ntt| {
+                        Ok(mat_vec_mul_ntt_i8_dense_single_row(
+                            ntt,
+                            row_width,
+                            &block_slices,
+                            num_digits_commit,
+                            log_basis,
+                        )?
+                        .into_iter()
+                        .map(|ring| vec![ring])
+                        .collect())
+                    })
                 } else {
-                    mat_vec_mul_ntt_i8_dense(
-                        prepared.shared_ntt::<D>()?,
-                        plan.n_a,
-                        row_width,
-                        &block_slices,
-                        num_digits_commit,
-                        log_basis,
-                    )
+                    prepared.with_shared_ntt::<D, _>(|ntt| {
+                        mat_vec_mul_ntt_i8_dense(
+                            ntt,
+                            plan.n_a,
+                            row_width,
+                            &block_slices,
+                            num_digits_commit,
+                            log_basis,
+                        )
+                    })
                 }
             }
         }
@@ -385,14 +435,16 @@ where
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
-            mat_vec_mul_ntt_raw_i8_strided(
-                prepared.shared_ntt::<D>()?,
-                plan.n_rows,
-                row_width,
-                plan.coeffs,
-                plan.num_blocks,
-                plan.block_len,
-            )
+            prepared.with_shared_ntt::<D, _>(|ntt| {
+                mat_vec_mul_ntt_raw_i8_strided(
+                    ntt,
+                    plan.n_rows,
+                    row_width,
+                    plan.coeffs,
+                    plan.num_blocks,
+                    plan.block_len,
+                )
+            })
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = plan
                 .coeffs
@@ -402,16 +454,18 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
-            mat_vec_mul_ntt_i8_strided(
-                prepared.shared_ntt::<D>()?,
-                plan.n_rows,
-                row_width,
-                &ring_elems,
-                plan.num_blocks,
-                plan.block_len,
-                plan.num_digits_commit,
-                plan.log_basis,
-            )
+            prepared.with_shared_ntt::<D, _>(|ntt| {
+                mat_vec_mul_ntt_i8_strided(
+                    ntt,
+                    plan.n_rows,
+                    row_width,
+                    &ring_elems,
+                    plan.num_blocks,
+                    plan.block_len,
+                    plan.num_digits_commit,
+                    plan.log_basis,
+                )
+            })
         }
     }
 }
@@ -435,13 +489,9 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        mat_vec_mul_ntt_single_i8(
-            prepared.shared_ntt::<D>()?,
-            row_len,
-            digits.len(),
-            digits,
-            log_basis,
-        )
+        prepared.with_shared_ntt::<D, _>(|ntt| {
+            mat_vec_mul_ntt_single_i8(ntt, row_len, digits.len(), digits, log_basis)
+        })
     }
 }
 
@@ -464,13 +514,9 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        mat_vec_mul_ntt_single_i8_cyclic(
-            prepared.shared_ntt::<D>()?,
-            row_len,
-            digits.len(),
-            digits,
-            log_basis,
-        )
+        prepared.with_shared_ntt::<D, _>(|ntt| {
+            mat_vec_mul_ntt_single_i8_cyclic(ntt, row_len, digits.len(), digits, log_basis)
+        })
     }
 }
 
@@ -486,21 +532,23 @@ where
     where
         F: HalvingField,
     {
-        let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-            prepared.shared_ntt::<D>()?,
-            plan.n_d,
-            plan.n_b,
-            plan.n_a,
-            plan.e_hat,
-            plan.t_hat,
-            plan.z_segment,
-            plan.z_folded_centered_inf_norm,
-            plan.log_basis,
-        )?;
-        Ok(RingSwitchRelationRows {
-            d_cyclic,
-            b_cyclic,
-            a_quotients,
+        prepared.with_shared_ntt::<D, _>(|ntt| {
+            let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
+                ntt,
+                plan.n_d,
+                plan.n_b,
+                plan.n_a,
+                plan.e_hat,
+                plan.t_hat,
+                plan.z_segment,
+                plan.z_folded_centered_inf_norm,
+                plan.log_basis,
+            )?;
+            Ok(RingSwitchRelationRows {
+                d_cyclic,
+                b_cyclic,
+                a_quotients,
+            })
         })
     }
 
@@ -512,18 +560,20 @@ where
     where
         F: HalvingField,
     {
-        let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-            prepared.shared_ntt::<D>()?,
-            0,
-            0,
-            plan.n_a,
-            &[][..],
-            &[][..],
-            plan.z_segment,
-            plan.z_folded_centered_inf_norm,
-            1,
-        )?;
-        Ok(a_quotients)
+        prepared.with_shared_ntt::<D, _>(|ntt| {
+            let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
+                ntt,
+                0,
+                0,
+                plan.n_a,
+                &[][..],
+                &[][..],
+                plan.z_segment,
+                plan.z_folded_centered_inf_norm,
+                1,
+            )?;
+            Ok(a_quotients)
+        })
     }
 }
 
@@ -613,7 +663,7 @@ mod tests {
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
         CpuBackend
-            .ntt_slot(&prepared, envelope_key)
+            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
             .expect("envelope slot from setup contract");
     }
 
@@ -628,7 +678,7 @@ mod tests {
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
         CpuBackend
-            .ntt_slot(&prepared, envelope_key)
+            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
             .expect("envelope slot available");
     }
 
@@ -636,7 +686,7 @@ mod tests {
     fn cpu_prepared_setup_warms_multiple_ntt_slots() {
         let setup =
             AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
-        let mut prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
         let partial_key = NttCacheKey {
@@ -644,22 +694,22 @@ mod tests {
             num_ring_elements: 1,
         };
         CpuBackend
-            .ensure_ntt_slot(&mut prepared, partial_key)
+            .ensure_ntt_slot(&prepared, partial_key)
             .expect("warm partial slot");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         CpuBackend
-            .ntt_slot(&prepared, envelope_key)
+            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
             .expect("envelope slot still available");
         CpuBackend
-            .ntt_slot(&prepared, partial_key)
+            .with_ntt_slot(&prepared, partial_key, |_| Ok(()))
             .expect("partial slot retrievable");
         let miss = NttCacheKey {
             ring_d: D,
             num_ring_elements: 99_999,
         };
-        CpuBackend
-            .ntt_slot(&prepared, miss)
-            .expect_err("unwarmed key missing");
+        assert!(CpuBackend
+            .with_ntt_slot(&prepared, miss, |_| Ok(()))
+            .is_err());
     }
 
     #[test]
@@ -670,14 +720,11 @@ mod tests {
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(
-            prepared.shared_ntt::<D>().expect("shared ntt"),
-            2,
-            digits.len(),
-            &digits,
-            log_basis,
-        )
-        .expect("direct digit rows");
+        let direct = prepared
+            .with_shared_ntt::<D, _>(|ntt| {
+                mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), &digits, log_basis)
+            })
+            .expect("direct digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -689,14 +736,11 @@ mod tests {
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(
-            prepared.shared_ntt::<D>().expect("shared ntt"),
-            2,
-            digits.len(),
-            &digits,
-            log_basis,
-        )
-        .expect("direct digit rows");
+        let direct = prepared
+            .with_shared_ntt::<D, _>(|ntt| {
+                mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), &digits, log_basis)
+            })
+            .expect("direct digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -708,14 +752,11 @@ mod tests {
         let via_backend = CpuBackend
             .cyclic_digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend cyclic digit rows");
-        let direct = mat_vec_mul_ntt_single_i8_cyclic(
-            prepared.shared_ntt::<D>().expect("shared ntt"),
-            2,
-            digits.len(),
-            &digits,
-            log_basis,
-        )
-        .expect("direct cyclic digit rows");
+        let direct = prepared
+            .with_shared_ntt::<D, _>(|ntt| {
+                mat_vec_mul_ntt_single_i8_cyclic(ntt, 2, digits.len(), &digits, log_basis)
+            })
+            .expect("direct cyclic digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -740,17 +781,11 @@ mod tests {
                 },
             )
             .expect("backend ring-switch relation rows");
-        let direct = fused_split_eq_quotients(
-            prepared.shared_ntt::<D>().expect("shared ntt"),
-            1,
-            1,
-            1,
-            &e_hat,
-            &t_hat,
-            &z_segment,
-            3,
-        )
-        .expect("direct fused split-eq rows");
+        let direct = prepared
+            .with_shared_ntt::<D, _>(|ntt| {
+                fused_split_eq_quotients(ntt, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3)
+            })
+            .expect("direct fused split-eq rows");
         assert_eq!(
             (
                 via_backend.d_cyclic,
