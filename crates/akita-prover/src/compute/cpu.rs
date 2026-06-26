@@ -662,7 +662,8 @@ mod tests {
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
-        CpuBackend.with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
+        CpuBackend
+            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
             .expect("envelope slot from setup contract");
     }
 
@@ -676,7 +677,8 @@ mod tests {
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
-        CpuBackend.with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
+        CpuBackend
+            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
             .expect("envelope slot available");
     }
 
@@ -695,15 +697,19 @@ mod tests {
             .ensure_ntt_slot(&prepared, partial_key)
             .expect("warm partial slot");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
-        CpuBackend.with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
+        CpuBackend
+            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
             .expect("envelope slot still available");
-        CpuBackend.with_ntt_slot(&prepared, partial_key, |_| Ok(()))
+        CpuBackend
+            .with_ntt_slot(&prepared, partial_key, |_| Ok(()))
             .expect("partial slot retrievable");
         let miss = NttCacheKey {
             ring_d: D,
             num_ring_elements: 99_999,
         };
-        assert!(CpuBackend.with_ntt_slot(&prepared, miss, |_| Ok(())).is_err());
+        assert!(CpuBackend
+            .with_ntt_slot(&prepared, miss, |_| Ok(()))
+            .is_err());
     }
 
     #[test]
