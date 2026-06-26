@@ -184,13 +184,14 @@ where
                 let opening_backend = tier_stack.opening().backend();
                 let tensor_backend = tier_stack.tensor().backend();
                 let ring_backend = tier_stack.ring_switch().backend();
-                let commit_prepared =
-                    commit_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let opening_prepared =
-                    opening_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let tensor_prepared =
-                    tensor_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let ring_prepared = ring_backend.prepare_expanded::<D_LEVEL>(expanded_cloned)?;
+                let commit_prepared = commit_backend
+                    .prepare_expanded_with_envelope_ntt::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let opening_prepared = opening_backend
+                    .prepare_expanded_with_envelope_ntt::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let tensor_prepared = tensor_backend
+                    .prepare_expanded_with_envelope_ntt::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
+                let ring_prepared =
+                    ring_backend.prepare_expanded_with_envelope_ntt::<D_LEVEL>(expanded_cloned)?;
                 let level_stack = ProverComputeStack::<Cfg::Field, D_LEVEL, C, O, TS, R>::new(
                     (commit_backend, &commit_prepared),
                     (opening_backend, &opening_prepared),

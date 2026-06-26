@@ -133,7 +133,8 @@ where
 {
     let commit_d = commit_params.ring_dimension;
     dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
-        let prepared_commit = backend.prepare_expanded::<D_COMMIT>(expanded.clone())?;
+        let prepared_commit =
+            backend.prepare_expanded_with_envelope_ntt::<D_COMMIT>(expanded.clone())?;
         let commit_ctx = OperationCtx::new(backend, &prepared_commit, expanded.as_ref())?;
         if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(

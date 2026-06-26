@@ -618,6 +618,21 @@ mod tests {
     }
 
     #[test]
+    fn prepare_expanded_with_envelope_ntt_builds_envelope_slot() {
+        let setup =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+        let prepared = CpuBackend
+            .prepare_expanded_with_envelope_ntt::<D>(setup.expanded.clone())
+            .expect("prepared");
+        assert!(prepared.shared_ntt_cache_bytes() > 0);
+        let envelope_key =
+            NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
+        CpuBackend
+            .ntt_slot(&prepared, envelope_key)
+            .expect("envelope slot available");
+    }
+
+    #[test]
     fn cpu_prepared_setup_warms_multiple_ntt_slots() {
         let setup =
             AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
