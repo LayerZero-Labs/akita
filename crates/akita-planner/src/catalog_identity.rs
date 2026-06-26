@@ -20,7 +20,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     let mut out = [0u8; 32];
     let mut h = Fnv64::new();
     h.write_bytes(identity.family_name.as_bytes());
-    h.write_u64(u64::from(identity.zk_enabled));
     h.write_u64(sis_family_tag(identity.sis_family));
     h.write_u64(identity.ring_dimension as u64);
     write_decomposition(&mut h, identity.decomposition);
@@ -60,7 +59,6 @@ fn sis_family_tag(family: akita_types::SisModulusFamily) -> u64 {
 /// Fields derived from policy, entries, and runtime hooks for identity checks.
 struct CatalogIdentityExpectation {
     family_name: &'static str,
-    zk_enabled: bool,
     sis_family: akita_types::SisModulusFamily,
     ring_dimension: usize,
     decomposition: akita_types::DecompositionParams,
@@ -84,7 +82,6 @@ fn intern_ring_dimensions(dimensions: Vec<usize>) -> &'static [usize] {
 
 fn catalog_identity_expectation(
     family_name: &'static str,
-    zk_enabled: bool,
     policy: &PlannerPolicy,
     entries: &[GeneratedScheduleTableEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -97,7 +94,6 @@ fn catalog_identity_expectation(
     let keys: Vec<GeneratedScheduleKey> = entries.iter().map(|e| e.key).collect();
     Ok(CatalogIdentityExpectation {
         family_name,
-        zk_enabled,
         sis_family: policy.sis_family,
         ring_dimension: policy.ring_dimension,
         decomposition: policy.decomposition,
@@ -120,7 +116,6 @@ fn catalog_identity_expectation(
 /// runtime hooks. Used by tests and the table emitter.
 pub fn expected_catalog_identity(
     family_name: &'static str,
-    zk_enabled: bool,
     policy: &PlannerPolicy,
     entries: &[GeneratedScheduleTableEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -128,7 +123,6 @@ pub fn expected_catalog_identity(
 ) -> Result<GeneratedScheduleCatalogIdentity, AkitaError> {
     let expected = catalog_identity_expectation(
         family_name,
-        zk_enabled,
         policy,
         entries,
         ring_challenge_config,
@@ -136,7 +130,6 @@ pub fn expected_catalog_identity(
     )?;
     Ok(GeneratedScheduleCatalogIdentity {
         family_name: expected.family_name,
-        zk_enabled: expected.zk_enabled,
         sis_family: expected.sis_family,
         ring_dimension: expected.ring_dimension,
         decomposition: expected.decomposition,
@@ -165,7 +158,6 @@ pub fn validate_catalog_identity(
     let embedded = catalog.identity;
     let expected = catalog_identity_expectation(
         embedded.family_name,
-        cfg!(feature = "zk"),
         policy,
         catalog.entries,
         ring_challenge_config,
@@ -183,7 +175,6 @@ pub fn validate_catalog_identity(
     }
 
     check_field!(family_name);
-    check_field!(zk_enabled);
     check_field!(sis_family);
     check_field!(ring_dimension);
     check_field!(decomposition);
@@ -396,7 +387,6 @@ mod tests {
     ) -> GeneratedScheduleCatalogIdentity {
         expected_catalog_identity(
             "fp128_d64_onehot",
-            cfg!(feature = "zk"),
             policy,
             entries,
             sample_ring_challenge_config,
@@ -419,22 +409,6 @@ mod tests {
         let err =
             validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
                 .expect_err("mismatch should error");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn zk_identity_mismatch_returns_error() {
-        let policy = sample_policy();
-        let entries = sample_entries();
-        let mut wrong = expected_identity(&policy, entries);
-        wrong.zk_enabled = !cfg!(feature = "zk");
-        let catalog = GeneratedScheduleTable {
-            entries,
-            identity: wrong,
-        };
-        let err =
-            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
-                .expect_err("ZK identity mismatch should error");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
@@ -486,7 +460,6 @@ mod tests {
 
         let err = expected_catalog_identity(
             "fp128_d64_onehot",
-            cfg!(feature = "zk"),
             &policy,
             entries,
             sample_ring_challenge_config,

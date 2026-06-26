@@ -332,7 +332,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
     }
 
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     pub(super) fn compute_round_compact_dense_polys(
         &self,
         w_compact: &[i8],

@@ -73,11 +73,11 @@ macro_rules! impl_multi_chunk_companion {
                 akita_types::ChunkedWitnessCfg::d64_production()
             }
             fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
-                #[cfg(all(feature = $feat, not(feature = "zk")))]
+                #[cfg(feature = $feat)]
                 {
                     Some(akita_schedules::$table())
                 }
-                #[cfg(not(all(feature = $feat, not(feature = "zk"))))]
+                #[cfg(not(feature = $feat))]
                 {
                     None
                 }
@@ -397,13 +397,7 @@ mod tests {
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope {
-                max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            })
+            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
         }
 
         fn basis_range() -> (u32, u32) {
@@ -539,35 +533,7 @@ mod sis_schedule_width_audit {
     }
 }
 
-#[cfg(all(test, feature = "zk"))]
-mod zk_generated_family_sis_audit {
-    use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
-    use super::*;
-
-    const GENERATED_FAMILY_NV_SAMPLES: &[usize] = &[8, 16, 28, 30];
-
-    fn audit_generated_family_sparse(
-        family: &generated_families::GeneratedFamily,
-        nv_samples: &[usize],
-    ) {
-        for key in generated_families::family_keys(family).expect("family keys") {
-            if !nv_samples.contains(&key.num_vars) {
-                continue;
-            }
-            let schedule = (family.table_backed)(key).expect("runtime schedule");
-            assert_schedule_stays_within_audited_sis_widths(&schedule, key.num_vars);
-        }
-    }
-
-    #[test]
-    fn generated_families_stay_within_audited_sis_widths() {
-        for family in generated_families::ALL_GENERATED_FAMILIES {
-            audit_generated_family_sparse(family, GENERATED_FAMILY_NV_SAMPLES);
-        }
-    }
-}
-
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
@@ -631,7 +597,6 @@ mod fp128_policy_tests {
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_uses_generated_singleton_plans() {
         let key = AkitaScheduleLookupKey::singleton(32);
 
@@ -650,7 +615,6 @@ mod fp128_policy_tests {
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_supports_batched_keys() {
         let key = AkitaScheduleLookupKey::new(30, 4);
 

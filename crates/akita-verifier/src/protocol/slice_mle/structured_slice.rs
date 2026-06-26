@@ -474,12 +474,6 @@ mod tests {
             depth_open,
             depth_commit,
             depth_fold,
-            #[cfg(feature = "zk")]
-            d_blinding_segment_len: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_digit_planes_per_point: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_segment_len: 0,
             block_len,
             inner_width,
             log_basis,

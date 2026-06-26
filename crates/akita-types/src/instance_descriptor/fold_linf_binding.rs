@@ -52,16 +52,7 @@ impl FoldLinfProtocolBinding {
         max_grind_attempts: MAX_FOLD_GRIND_ATTEMPTS,
         grind_nonce_wire_bytes: 4,
         grind_entropy_bits_per_level: 12,
-        grind_probe_order: {
-            #[cfg(feature = "zk")]
-            {
-                FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE
-            }
-            #[cfg(not(feature = "zk"))]
-            {
-                FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN
-            }
-        },
+        grind_probe_order: FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
         tail_z_planner_model_id: TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
         wire_rice_low_bits_rule_id: WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
         wire_rice_low_bits_delta: WIRE_RICE_LOW_BITS_DELTA,

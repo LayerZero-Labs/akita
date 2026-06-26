@@ -230,7 +230,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn pad_compact_witness(
     w_prefix: &[i8],
     live_x_cols: usize,
@@ -247,7 +247,7 @@ pub(crate) fn pad_compact_witness(
     padded
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn advance_stage1_claim<
     F: FieldCore + FromPrimitiveInt + akita_field::CanonicalField + HasUnreducedOps + HasOptimizedFold,
 >(

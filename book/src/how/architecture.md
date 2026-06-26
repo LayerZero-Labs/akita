@@ -25,7 +25,6 @@ orchestration lives in `akita-pcs`.
 | `akita-setup` | Config-backed setup construction and optional setup cache |
 | `akita-verifier` | Verifier replay without prover-only polynomial backends; directly `<Cfg>`-generic |
 | `akita-prover` | Commitment, proving, setup expansion, witnesses, polynomial backends, compute operation traits |
-| `akita-r1cs` | Deferred R1CS relations for the `zk` path only (not on the transparent path) |
 | `akita-pcs` | Umbrella crate: `AkitaCommitmentScheme`, re-exports, examples, benches, integration tests |
 
 **Dependency graph and ownership rules:** [`docs/crate-graph.md`](../../../docs/crate-graph.md).

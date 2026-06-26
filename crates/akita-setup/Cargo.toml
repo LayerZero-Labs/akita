@@ -23,7 +23,6 @@ parallel = [
   "akita-prover/parallel",
 ]
 disk-persistence = []
-zk = ["akita-config/zk", "akita-prover/zk", "akita-types/zk"]
 schedules-default = ["akita-config/schedules-default"]
 
 [dependencies]

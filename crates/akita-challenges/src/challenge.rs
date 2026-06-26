@@ -257,7 +257,7 @@ impl IntegerChallenge {
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
