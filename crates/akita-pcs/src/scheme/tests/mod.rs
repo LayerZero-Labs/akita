@@ -1,4 +1,3 @@
-#![cfg(not(feature = "zk"))]
 
 use super::*;
 use akita_config::proof_optimized::fp128;

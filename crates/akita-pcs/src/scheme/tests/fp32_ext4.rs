@@ -99,31 +99,11 @@ where
         .outer_width()
         .checked_mul(max_num_polynomials)
         .ok_or_else(|| AkitaError::InvalidSetup("B matrix width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    let max_zk_b_len = lp
-        .b_key
-        .row_len()
-        .checked_mul(akita_types::lhl_blinding::blinding_digit_plane_count::<F>(
-            lp.b_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK B setup footprint overflow".to_string()))?;
 
     let d_width = lp
         .d_matrix_width()
         .checked_mul(max_num_polynomials)
         .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    let max_zk_d_len = lp
-        .d_key
-        .row_len()
-        .checked_mul(akita_types::lhl_blinding::blinding_digit_plane_count::<F>(
-            lp.d_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK D setup footprint overflow".to_string()))?;
     let max_setup_len =
         lp.a_key
             .row_len()
@@ -137,10 +117,6 @@ where
             })?);
     Ok(akita_types::SetupMatrixEnvelope {
         max_setup_len,
-        #[cfg(feature = "zk")]
-        max_zk_b_len,
-        #[cfg(feature = "zk")]
-        max_zk_d_len,
     })
 }
 

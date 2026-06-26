@@ -411,12 +411,7 @@ fn extension_opening_reduction_sizes<L: FieldCore + AkitaSerialize>(
             .iter()
             .map(|value| value.serialized_size(Compress::No))
             .sum();
-        #[cfg(not(feature = "zk"))]
         let sumcheck = reduction.sumcheck.serialized_size(Compress::No);
-        #[cfg(feature = "zk")]
-        let sumcheck = reduction
-            .sumcheck_proof_masked
-            .serialized_size(Compress::No);
         (partials, sumcheck)
     })
 }
@@ -575,15 +570,9 @@ where
         .stages
         .iter()
         .map(|stage| {
-            #[cfg(not(feature = "zk"))]
-            {
+
                 stage.sumcheck_proof.serialized_size(Compress::No)
-            }
-            #[cfg(feature = "zk")]
-            {
-                stage.sumcheck_proof_masked.serialized_size(Compress::No)
-            }
-        })
+                    })
         .sum::<usize>();
     let stage1_interstage_claims_size = stage1
         .stages
@@ -592,13 +581,8 @@ where
         .map(|claim| claim.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
-    #[cfg(not(feature = "zk"))]
     let stage2_sumcheck_size = stage2_intermediate
         .sumcheck_proof
-        .serialized_size(Compress::No);
-    #[cfg(feature = "zk")]
-    let stage2_sumcheck_size = stage2_intermediate
-        .sumcheck_proof_masked
         .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof());
     let next_w_commitment_size = stage2_intermediate
@@ -733,18 +717,9 @@ where
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction());
     let stage2_sumcheck_size = {
-        #[cfg(not(feature = "zk"))]
-        {
+
             level.stage2().sumcheck().serialized_size(Compress::No)
-        }
-        #[cfg(feature = "zk")]
-        {
-            level
-                .stage2()
-                .sumcheck_masked()
-                .serialized_size(Compress::No)
-        }
-    };
+            };
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce_value();
@@ -852,15 +827,9 @@ where
         .stages
         .iter()
         .map(|stage| {
-            #[cfg(not(feature = "zk"))]
-            {
+
                 stage.sumcheck_proof.serialized_size(Compress::No)
-            }
-            #[cfg(feature = "zk")]
-            {
-                stage.sumcheck_proof_masked.serialized_size(Compress::No)
-            }
-        })
+                    })
         .sum::<usize>();
     let stage1_interstage_claims_size = stage1
         .stages
@@ -869,13 +838,8 @@ where
         .map(|claim| claim.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
-    #[cfg(not(feature = "zk"))]
     let stage2_sumcheck_size = stage2_intermediate
         .sumcheck_proof
-        .serialized_size(Compress::No);
-    #[cfg(feature = "zk")]
-    let stage2_sumcheck_size = stage2_intermediate
-        .sumcheck_proof_masked
         .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref());
     let next_w_commitment_size = stage2_intermediate

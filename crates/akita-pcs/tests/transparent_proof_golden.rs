@@ -7,7 +7,6 @@
 //! - `fp128::D64OneHot` at nv = 20
 
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 mod common;
 
