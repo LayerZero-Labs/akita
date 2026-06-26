@@ -92,7 +92,6 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
-        D,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -237,7 +236,6 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
-        D,
         Commit = C,
         Opening = O,
         Tensor = TS,
