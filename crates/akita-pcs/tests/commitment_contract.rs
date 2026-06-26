@@ -86,10 +86,26 @@ where
         &self,
         expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        CpuBackend.prepare_expanded(expanded)
+        CpuBackend.prepare_expanded::<RING_D>(expanded)
     }
 
-    fn prepared_expanded_setup<'a, const RING_D: usize>(
+    fn ensure_ntt_slot(
+        &self,
+        prepared: &mut Self::PreparedSetup,
+        key: akita_types::NttCacheKey,
+    ) -> Result<(), AkitaError> {
+        CpuBackend.ensure_ntt_slot(prepared, key)
+    }
+
+    fn ntt_slot<'a>(
+        &self,
+        prepared: &'a Self::PreparedSetup,
+        key: akita_types::NttCacheKey,
+    ) -> Result<&'a akita_prover::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
+        CpuBackend.ntt_slot(prepared, key)
+    }
+
+    fn prepared_expanded_setup<'a>(
         &self,
         prepared: &'a Self::PreparedSetup,
     ) -> &'a akita_types::AkitaExpandedSetup<F> {
