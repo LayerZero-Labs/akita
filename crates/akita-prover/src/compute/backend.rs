@@ -34,8 +34,8 @@ where
         &self,
         setup: &AkitaProverSetup<F, D>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        let mut prepared = self.prepare_expanded::<D>(setup.expanded.clone())?;
-        self.register_setup_contract_envelope_ntt::<D>(&mut prepared, setup.expanded.as_ref())?;
+        let prepared = self.prepare_expanded::<D>(setup.expanded.clone())?;
+        self.register_setup_contract_envelope_ntt::<D>(&prepared, setup.expanded.as_ref())?;
         Ok(prepared)
     }
 
@@ -56,9 +56,9 @@ where
         &self,
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        let mut prepared = self.prepare_expanded::<D>(expanded.clone())?;
+        let prepared = self.prepare_expanded::<D>(expanded.clone())?;
         let key = NttCacheKey::from_envelope(expanded.as_ref(), D)?;
-        self.ensure_ntt_slot(&mut prepared, key)?;
+        self.ensure_ntt_slot(&prepared, key)?;
         Ok(prepared)
     }
 
@@ -66,7 +66,7 @@ where
     /// setup prepare contract.
     fn register_setup_contract_envelope_ntt<const D: usize>(
         &self,
-        prepared: &mut Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<(), AkitaError> {
         let key = NttCacheKey::from_envelope(expanded, D)?;
@@ -76,7 +76,7 @@ where
     /// Build `key` as part of the setup prepare contract (no oversize warning).
     fn register_setup_contract_ntt_slot(
         &self,
-        prepared: &mut Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         key: NttCacheKey,
     ) -> Result<(), AkitaError> {
         self.ensure_ntt_slot(prepared, key)
@@ -88,16 +88,17 @@ where
     /// correctness) but should log a diagnostic warning on the CPU backend.
     fn ensure_ntt_slot(
         &self,
-        prepared: &mut Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         key: NttCacheKey,
     ) -> Result<(), AkitaError>;
 
-    /// Read a previously-warmed NTT cache slot.
-    fn ntt_slot<'a>(
+    /// Run `f` with a warmed NTT slot for `key`.
+    fn with_ntt_slot<R>(
         &self,
-        prepared: &'a Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         key: NttCacheKey,
-    ) -> Result<&'a NttSlotCacheAny, AkitaError>;
+        f: impl FnOnce(&NttSlotCacheAny) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError>;
 
     /// Expanded setup used to prepare this backend context.
     fn prepared_expanded_setup<'a>(
