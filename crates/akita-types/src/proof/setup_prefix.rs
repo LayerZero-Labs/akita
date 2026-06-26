@@ -517,12 +517,8 @@ where
             validate,
             &(),
         )?;
-        let hint = AkitaCommitmentHint::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?;
+        let hint =
+            AkitaCommitmentHint::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             id,
             natural_len,
@@ -1122,10 +1118,8 @@ mod tests {
         let slot = || {
             let decomposed = FlatDigitBlocks::from_blocks::<32>(vec![Vec::new()]);
             let recomposed = vec![Vec::new()];
-            let hint = AkitaCommitmentHint::from_batched_commit::<32>(
-                vec![decomposed],
-                vec![recomposed],
-            );
+            let hint =
+                AkitaCommitmentHint::from_batched_commit::<32>(vec![decomposed], vec![recomposed]);
             SetupPrefixSlot {
                 id,
                 natural_len: id.natural_len,

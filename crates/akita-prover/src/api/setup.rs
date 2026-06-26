@@ -221,10 +221,8 @@ mod tests {
         .expect("generate setup");
         let decomposed = FlatDigitBlocks::from_blocks::<32>(vec![Vec::new()]);
         let recomposed = vec![Vec::new()];
-        let hint = AkitaCommitmentHint::from_batched_commit::<32>(
-            vec![decomposed],
-            vec![recomposed],
-        );
+        let hint =
+            AkitaCommitmentHint::from_batched_commit::<32>(vec![decomposed], vec![recomposed]);
         setup
             .prefix_slots
             .insert(SetupPrefixSlot {

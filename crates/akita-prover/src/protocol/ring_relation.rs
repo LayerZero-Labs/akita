@@ -19,8 +19,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec,
-    MRowLayout, OpeningBatchShape, RingBuf, RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec, MRowLayout,
+    OpeningBatchShape, RingBuf, RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -451,10 +451,8 @@ impl RingRelationProver {
             lp.b_inner_rows_per_group(),
             lp.a_key.row_len(),
         )?;
-        let e_folded: Vec<CyclotomicRing<F, D>> = pre_folded_e_by_poly
-            .into_iter()
-            .flatten()
-            .collect();
+        let e_folded: Vec<CyclotomicRing<F, D>> =
+            pre_folded_e_by_poly.into_iter().flatten().collect();
 
         let instance = RingRelationInstance::new_from_rings::<D>(
             m_row_layout,

@@ -489,6 +489,7 @@ mod tests {
         #[test]
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
+                use akita_algebra::CyclotomicRing;
                 use akita_types::{
                     setup_seed_digest, AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec,
                     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
@@ -506,11 +507,12 @@ mod tests {
                     n_prefix: TEST_D,
                     level_params_digest: [9u8; 32],
                 };
-                let decomposed = FlatDigitBlocks::from_blocks::<TEST_D>(vec![Vec::new()]);
-                let recomposed = vec![Vec::new()];
+                let decomposed = FlatDigitBlocks::from_blocks::<TEST_D>(vec![vec![[1i8; TEST_D]]]);
+                let ring =
+                    CyclotomicRing::<TestF, TEST_D>::from_coefficients([TestF::one(); TEST_D]);
                 let hint = AkitaCommitmentHint::from_batched_commit::<TEST_D>(
                     vec![decomposed],
-                    vec![recomposed],
+                    vec![vec![vec![ring]]],
                 );
                 setup
                     .prefix_slots

@@ -444,10 +444,8 @@ where
         }
         u
     };
-    let hint = AkitaCommitmentHint::from_batched_commit::<D>(
-        decomposed_inner_rows,
-        recomposed_inner_rows,
-    );
+    let hint =
+        AkitaCommitmentHint::from_batched_commit::<D>(decomposed_inner_rows, recomposed_inner_rows);
     Ok((RingCommitment { u }, hint))
 }
 

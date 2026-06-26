@@ -28,30 +28,30 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
         let decomposed_digits = FlatDigitBlocks::from_planes::<D>(flat_digits, block_sizes)
             .expect("batched hint flattening preserves block metadata");
 
-        let (recomposed_inner_row_coeffs, recomposed_inner_row_block_sizes) =
-            if recomposed.is_empty() {
-                (Vec::new(), Vec::new())
-            } else {
-                let recomposed_inner_row_block_sizes: Vec<usize> = recomposed
-                    .iter()
-                    .flat_map(|rows_by_poly| rows_by_poly.iter().map(Vec::len))
-                    .collect();
-                let total_recomposed_inner_rows: usize =
-                    recomposed_inner_row_block_sizes.iter().sum();
-                let mut recomposed_inner_row_coeffs =
-                    Vec::with_capacity(total_recomposed_inner_rows * D);
-                for rows_by_poly in &recomposed {
-                    for block in rows_by_poly {
-                        for ring in block {
-                            recomposed_inner_row_coeffs.extend_from_slice(ring.coefficients());
-                        }
+        let (recomposed_inner_row_coeffs, recomposed_inner_row_block_sizes) = if recomposed
+            .is_empty()
+        {
+            (Vec::new(), Vec::new())
+        } else {
+            let recomposed_inner_row_block_sizes: Vec<usize> = recomposed
+                .iter()
+                .flat_map(|rows_by_poly| rows_by_poly.iter().map(Vec::len))
+                .collect();
+            let total_recomposed_inner_rows: usize = recomposed_inner_row_block_sizes.iter().sum();
+            let mut recomposed_inner_row_coeffs =
+                Vec::with_capacity(total_recomposed_inner_rows * D);
+            for rows_by_poly in &recomposed {
+                for block in rows_by_poly {
+                    for ring in block {
+                        recomposed_inner_row_coeffs.extend_from_slice(ring.coefficients());
                     }
                 }
-                (
-                    recomposed_inner_row_coeffs,
-                    recomposed_inner_row_block_sizes,
-                )
-            };
+            }
+            (
+                recomposed_inner_row_coeffs,
+                recomposed_inner_row_block_sizes,
+            )
+        };
 
         Self {
             decomposed_digits,
@@ -172,16 +172,16 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
                     "commitment hint block metadata mismatch".to_string(),
                 ));
             }
-            let ring_count = self
-                .recomposed_inner_row_block_sizes
-                .iter()
-                .try_fold(0usize, |acc, &block_size| {
+            let ring_count = self.recomposed_inner_row_block_sizes.iter().try_fold(
+                0usize,
+                |acc, &block_size| {
                     acc.checked_add(block_size).ok_or_else(|| {
                         AkitaError::InvalidInput(
                             "commitment hint recomposed block size overflow".to_string(),
                         )
                     })
-                })?;
+                },
+            )?;
             if ring_count.checked_mul(D) != Some(self.recomposed_inner_row_coeffs.len()) {
                 return Err(AkitaError::InvalidInput(
                     "commitment hint recomposed block metadata does not cover coefficients"
@@ -323,16 +323,16 @@ impl<F: FieldCore + Valid> Valid for AkitaCommitmentHint<F> {
                     .to_string(),
             ));
         }
-        let ring_count = self
-            .recomposed_inner_row_block_sizes
-            .iter()
-            .try_fold(0usize, |acc, &block_size| {
-                acc.checked_add(block_size).ok_or_else(|| {
-                    SerializationError::InvalidData(
-                        "commitment hint recomposed block size overflow".to_string(),
-                    )
-                })
-            })?;
+        let ring_count =
+            self.recomposed_inner_row_block_sizes
+                .iter()
+                .try_fold(0usize, |acc, &block_size| {
+                    acc.checked_add(block_size).ok_or_else(|| {
+                        SerializationError::InvalidData(
+                            "commitment hint recomposed block size overflow".to_string(),
+                        )
+                    })
+                })?;
         if ring_count.checked_mul(ring_dim) != Some(self.recomposed_inner_row_coeffs.len()) {
             return Err(SerializationError::InvalidData(
                 "commitment hint recomposed block metadata does not cover coefficients".to_string(),
@@ -348,8 +348,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.ring_dim()
-            .serialize_with_mode(&mut writer, compress)?;
+        self.ring_dim().serialize_with_mode(&mut writer, compress)?;
         self.decomposed_digits
             .serialize_with_mode(&mut writer, compress)?;
         self.recomposed_inner_row_coeffs
@@ -363,7 +362,9 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
         self.ring_dim().serialized_size(compress)
             + self.decomposed_digits.serialized_size(compress)
             + self.recomposed_inner_row_coeffs.serialized_size(compress)
-            + self.recomposed_inner_row_block_sizes.serialized_size(compress)
+            + self
+                .recomposed_inner_row_block_sizes
+                .serialized_size(compress)
     }
 }
 
@@ -424,17 +425,15 @@ mod tests {
     fn sample_hint() -> AkitaCommitmentHint<TestF> {
         let decomposed = FlatDigitBlocks::from_blocks::<D>(vec![vec![[1i8; D], [2i8; D]]]);
         let ring = CyclotomicRing::<TestF, D>::from_coefficients([TestF::one(); D]);
-        AkitaCommitmentHint::from_batched_commit::<D>(
-            vec![decomposed],
-            vec![vec![vec![ring]]],
-        )
+        AkitaCommitmentHint::from_batched_commit::<D>(vec![decomposed], vec![vec![vec![ring]]])
     }
 
     #[test]
     fn commitment_hint_serde_roundtrip() {
         let hint = sample_hint();
         let mut bytes = Vec::new();
-        hint.serialize_compressed(&mut bytes).expect("serialize hint");
+        hint.serialize_compressed(&mut bytes)
+            .expect("serialize hint");
         assert_eq!(bytes.len(), hint.serialized_size(Compress::Yes));
         let decoded = AkitaCommitmentHint::<TestF>::deserialize_compressed(&bytes[..], &())
             .expect("deserialize hint");

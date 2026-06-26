@@ -380,9 +380,7 @@ mod tests {
     use crate::protocol::core::fold::compute_trace_target;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{
-        AkitaCommitmentHint, FlatDigitBlocks, RingOpeningPoint,
-    };
+    use akita_types::{AkitaCommitmentHint, FlatDigitBlocks, RingOpeningPoint};
 
     type TestF = Fp32<251>;
     const D: usize = 4;
