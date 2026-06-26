@@ -142,65 +142,13 @@ where
         } else {
             None
         };
-        let out = if level_d == D {
+        let out = {
             let stack = stacks.prove_stack_at_level(level);
-            let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, D>(
-                stack,
-                transcript,
-                current_state,
-                level,
-                level_params,
-                m_row_layout,
-                tail_t_vectors,
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
-            })?;
-            prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, D>(
-                expanded,
-                prefix_slots,
-                stack,
-                transcript,
-                level,
-                &scheduled,
-                prepared_fold,
-                setup_contribution_mode,
-                is_terminal_level,
-                if is_terminal_level {
-                    Some(terminal_direct_witness_shape)
-                } else {
-                    None
-                },
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("suffix prove_fold level {level} failed: {err:?}"))
-            })
-        } else {
+            stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), level_d)?;
             dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                let tier_stack = stacks.prove_stack_at_level(level);
-                let expanded_cloned = Arc::clone(expanded);
-                let commit_backend = tier_stack.commit().backend();
-                let opening_backend = tier_stack.opening().backend();
-                let tensor_backend = tier_stack.tensor().backend();
-                let ring_backend = tier_stack.ring_switch().backend();
-                let commit_prepared = commit_backend
-                    .prepare_expanded_with_envelope_ntt::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let opening_prepared = opening_backend
-                    .prepare_expanded_with_envelope_ntt::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let tensor_prepared = tensor_backend
-                    .prepare_expanded_with_envelope_ntt::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let ring_prepared =
-                    ring_backend.prepare_expanded_with_envelope_ntt::<D_LEVEL>(expanded_cloned)?;
-                let level_stack = ProverComputeStack::<Cfg::Field, C, O, TS, R>::new(
-                    (commit_backend, &commit_prepared),
-                    (opening_backend, &opening_prepared),
-                    (tensor_backend, &tensor_prepared),
-                    (ring_backend, &ring_prepared),
-                    expanded.as_ref(),
-                )?;
                 let prepared_fold =
                     prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
-                        &level_stack,
+                        stack,
                         transcript,
                         current_state,
                         level,
@@ -216,7 +164,7 @@ where
                 prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
                     expanded,
                     prefix_slots,
-                    &level_stack,
+                    stack,
                     transcript,
                     level,
                     &scheduled,
@@ -234,8 +182,8 @@ where
                         "suffix prove_fold level {level} D{D_LEVEL} failed: {err:?}"
                     ))
                 })
-            })
-        }?;
+            })?
+        };
         if is_terminal_level {
             break out.get_terminal()?;
         }
