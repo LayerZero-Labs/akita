@@ -112,8 +112,8 @@ pub use proof::{
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use ring_dim_plan::{
-    validate_ring_dim_plan_at_entry, CommitmentRingDims, RingDimPlan, RingLevelContext,
-    MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
+    validate_ring_dim_plan_at_entry, validate_schedule_context_at_entry, CommitmentRingDims,
+    RingDimPlan, RingLevelContext, ValidatedScheduleContext, MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
 };
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
