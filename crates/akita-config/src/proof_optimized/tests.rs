@@ -121,11 +121,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope {
-                max_setup_len: 1,
-                max_zk_b_len: 1,
-                max_zk_d_len: 1,
-            })
+            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
         }
         fn basis_range() -> (u32, u32) {
             (3, 3)
@@ -295,11 +291,7 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
                 }
             }
         }
-        SetupMatrixEnvelope {
-            max_setup_len,
-            max_zk_b_len: 1,
-            max_zk_d_len: 1,
-        }
+        SetupMatrixEnvelope { max_setup_len }
     }
 
     for max_nv in [16usize, 24, 30] {

@@ -318,11 +318,7 @@ mod tests {
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope {
-                max_setup_len: 1,
-                max_zk_b_len: 1,
-                max_zk_d_len: 1,
-            })
+            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
         }
 
         fn basis_range() -> (u32, u32) {
