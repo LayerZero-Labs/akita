@@ -16,8 +16,8 @@ use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    FpExtEncoding, LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, Schedule,
-    SetupContributionMode, Step, VerifierOpeningBatch, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    FpExtEncoding, LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment,
+    RingDimPlan, Schedule, SetupContributionMode, Step, VerifierOpeningBatch, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
     GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
@@ -433,6 +433,7 @@ where
     let schedule = effective_batched_schedule::<Cfg, D>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
+    RingDimPlan::from_schedule(&schedule, setup.expanded.seed())?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         &setup.expanded,

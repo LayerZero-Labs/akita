@@ -287,6 +287,8 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
+    let _ring_plan = RingDimPlan::from_schedule(schedule, expanded.seed())?;
+
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
         let commitments = claims.commitments();

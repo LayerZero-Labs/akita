@@ -21,7 +21,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::array::from_fn;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// CPU backend using the existing Rust/Rayon kernels.
@@ -30,13 +30,17 @@ pub struct CpuBackend;
 
 /// CPU-prepared setup keyed by runtime ring dimension.
 ///
-/// NTT caches are keyed by [`NttCacheKey`]; compile-time `D` on kernel entry points
-/// selects the envelope slot warmed at `prepare_expanded::<D>`.
+/// NTT caches are keyed by [`NttCacheKey`]. [`ComputeBackendSetup::prepare_setup`]
+/// registers the minimum envelope slot on the setup contract; additional slots may
+/// be built lazily via [`ComputeBackendSetup::ensure_ntt_slot`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     shared_ntt: NttCacheMap,
     ntt_i8_capacity_by_ring_d: HashMap<usize, CrtI8CapacityProfile>,
+    /// Keys promised at [`ComputeBackendSetup::prepare_setup`]; lazy builds outside
+    /// this set emit a diagnostic warning.
+    setup_contract_ntt_keys: HashSet<NttCacheKey>,
 }
 
 /// CRT/NTT profile and universal i8 capacity metadata for a prepared setup.
@@ -121,13 +125,10 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     })
 }
 
-fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &mut CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    if prepared.shared_ntt.contains_key(&key) {
-        return Ok(());
-    }
     let profile = akita_types::dispatch_ring_dim_result!(key.ring_d, |RING_D| {
         selected_crt_i8_capacity_profile::<F, RING_D>()
     })?;
@@ -137,6 +138,37 @@ fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
         .ntt_i8_capacity_by_ring_d
         .insert(key.ring_d, profile);
     Ok(())
+}
+
+fn register_setup_contract_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+    prepared: &mut CpuPreparedSetup<F>,
+    key: NttCacheKey,
+) -> Result<(), AkitaError> {
+    if !prepared.shared_ntt.contains_key(&key) {
+        insert_ntt_slot_on_prepared(prepared, key)?;
+    }
+    prepared.setup_contract_ntt_keys.insert(key);
+    Ok(())
+}
+
+fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+    prepared: &mut CpuPreparedSetup<F>,
+    key: NttCacheKey,
+) -> Result<(), AkitaError> {
+    if prepared.shared_ntt.contains_key(&key) {
+        return Ok(());
+    }
+    if !prepared.setup_contract_ntt_keys.contains(&key) {
+        tracing::warn!(
+            target: "akita_prover::ntt_cache",
+            ring_d = key.ring_d,
+            num_ring_elements = key.num_ring_elements,
+            setup_contract_keys = prepared.setup_contract_ntt_keys.len(),
+            "building NTT cache slot outside setup prepare contract; \
+             setup envelope or prepare path is likely undersized for this commit/prove path"
+        );
+    }
+    insert_ntt_slot_on_prepared(prepared, key)
 }
 
 fn validate_digit_row_request(
@@ -172,14 +204,20 @@ where
         &self,
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        let mut prepared = CpuPreparedSetup {
+        Ok(CpuPreparedSetup {
             expanded,
             shared_ntt: NttCacheMap::new(),
             ntt_i8_capacity_by_ring_d: HashMap::new(),
-        };
-        let key = prepared.envelope_ntt_key::<D>()?;
-        ensure_ntt_slot_on_prepared(&mut prepared, key)?;
-        Ok(prepared)
+            setup_contract_ntt_keys: HashSet::new(),
+        })
+    }
+
+    fn register_setup_contract_ntt_slot(
+        &self,
+        prepared: &mut Self::PreparedSetup,
+        key: NttCacheKey,
+    ) -> Result<(), AkitaError> {
+        register_setup_contract_ntt_slot_on_prepared(prepared, key)
     }
 
     fn ensure_ntt_slot(
@@ -564,6 +602,19 @@ mod tests {
         assert_eq!(profile.max_i8_log_basis, MAX_I8_LOG_BASIS);
         assert!(profile.balanced_digit_safe_width > 0);
         assert!(profile.raw_i8_safe_width > 0);
+    }
+
+    #[test]
+    fn prepare_setup_registers_envelope_ntt_contract() {
+        let setup =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        assert!(prepared.shared_ntt_cache_bytes() > 0);
+        let envelope_key =
+            NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
+        CpuBackend
+            .ntt_slot(&prepared, envelope_key)
+            .expect("envelope slot from setup contract");
     }
 
     #[test]

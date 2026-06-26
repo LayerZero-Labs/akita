@@ -50,7 +50,8 @@ use akita_types::{
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
     CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
     LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
+    RingMultiplierOpeningPoint, RingRelationSegmentLayout, RingDimPlan, Schedule,
+    SetupContributionMode,
     SetupPrefixRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
     VerifierOpeningBatch,
 };
