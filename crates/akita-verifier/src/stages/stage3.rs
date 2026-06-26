@@ -13,8 +13,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
-    LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    gadget_row_scalars, select_setup_prefix_slot, setup_active_ring_elems_for_fold,
+    setup_required_for_shape, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
+    SetupRelationShape, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -26,6 +27,7 @@ use akita_types::{
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupEvalPlan<E>,
+    relation_shape: SetupRelationShape,
     alpha_pows: Vec<E>,
     ring_bits: usize,
     rounds: usize,
@@ -52,6 +54,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
         let layout = prepared.segment_layout()?;
         let setup_contribution_inputs = prepared.create_setup_contribution_inputs();
+        let relation_shape = SetupRelationShape::from(&setup_contribution_inputs);
         let evaluator = SetupEvaluator::new(
             &setup_contribution_inputs,
             x_challenges,
@@ -67,6 +70,12 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             None,
         );
         let plan = evaluator.prepare()?;
+        let geometry_required = setup_required_for_shape(&relation_shape)?;
+        if plan.required() != geometry_required {
+            return Err(AkitaError::InvalidSetup(
+                "setup contribution plan disagrees with shared setup geometry".into(),
+            ));
+        }
         let lambda_len = plan.required().checked_next_power_of_two().ok_or_else(|| {
             AkitaError::InvalidSetup("setup product lambda length overflow".into())
         })?;
@@ -78,6 +87,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
 
         Ok(Self {
             plan,
+            relation_shape,
             alpha_pows,
             ring_bits,
             rounds,
@@ -169,9 +179,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        let natural_field_len = self
-            .plan
-            .required()
+        let active_ring_elems =
+            setup_active_ring_elems_for_fold(&setup.expanded, &self.relation_shape, D)?;
+        let natural_field_len = active_ring_elems
             .checked_mul(SETUP_OFFLOAD_D_SETUP)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("setup product natural field length overflow".to_string())

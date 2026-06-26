@@ -383,4 +383,40 @@ impl SetupContributionFixture {
             "evaluate_bar_omega_with_eq must equal the eq-weighted materialized bar_omega"
         );
     }
+
+    /// Stage-3 offload footprint must match shared geometry and the weight plan.
+    pub fn assert_geometry_matches_setup_contribution_plan(&self) {
+        use akita_types::{
+            setup_active_ring_elems_for_fold, setup_required_for_shape, SetupRelationShape,
+        };
+
+        let inputs = self.prepared.create_setup_contribution_inputs();
+        let shape = SetupRelationShape::from(&inputs);
+        let geometry_required = setup_required_for_shape(&shape).expect("geometry required");
+        let active_ring_elems =
+            setup_active_ring_elems_for_fold(&self.setup, &shape, TEST_RING_DIM)
+                .expect("active ring elems");
+        assert_eq!(active_ring_elems, geometry_required);
+
+        let evaluator = SetupEvaluator::new(
+            &inputs,
+            &self.full_vec_randomness,
+            Some(&self.eq_low),
+            Some(&self.z_block_low_eq),
+            &self.alpha_pows,
+            &self.fold_gadget,
+            self.offset_e,
+            self.offset_t,
+            self.offset_z,
+            self.prepared.witness_segment_layout.offset_u,
+            None,
+            None,
+        );
+        let plan = evaluator.prepare().expect("setup contribution plan");
+        assert_eq!(
+            plan.required(),
+            geometry_required,
+            "verifier setup plan must match shared geometry for stage-3 offload"
+        );
+    }
 }
