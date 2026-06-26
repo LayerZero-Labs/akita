@@ -15,10 +15,11 @@ use std::sync::Arc;
 ///
 /// ## Runtime ring cutover (phase 1)
 ///
-/// `PreparedSetup` is keyed by [`NttCacheKey`] at runtime. Kernel traits still take
-/// `const D: usize` at the API boundary; `prepare_expanded::<D>` warms the envelope
-/// slot for compile-time `D`. Per-fold ring dimensions become runtime cache keys in
-/// later cutover waves (`ensure_ntt_slot` at prove entry).
+/// `PreparedSetup` is keyed by [`NttCacheKey`] at runtime. [`Self::prepare_setup`]
+/// registers the minimum setup contract: one full-envelope slot at compile-time `D`.
+/// [`Self::prepare_expanded`] leaves the cache empty. Commit/prove may call
+/// [`Self::ensure_ntt_slot`] lazily; building outside the setup contract emits a
+/// diagnostic warning (see warm-cache policy in `specs/runtime-ring-cutover.md`).
 pub trait ComputeBackendSetup<F>: Send + Sync
 where
     F: FieldCore + CanonicalField,
@@ -27,20 +28,49 @@ where
     type PreparedSetup: Send + Sync;
 
     /// Prepare backend state from a prover setup wrapper.
+    ///
+    /// Builds the minimum NTT setup contract: the full-envelope slot at `D`.
     fn prepare_setup<const D: usize>(
         &self,
         setup: &AkitaProverSetup<F, D>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        self.prepare_expanded::<D>(setup.expanded.clone())
+        let mut prepared = self.prepare_expanded::<D>(setup.expanded.clone())?;
+        self.register_setup_contract_envelope_ntt::<D>(&mut prepared, setup.expanded.as_ref())?;
+        Ok(prepared)
     }
 
     /// Prepare backend state from already-expanded setup data.
+    ///
+    /// Returns an empty NTT cache. Prefer [`Self::prepare_setup`] for commit/prove hosts.
     fn prepare_expanded<const D: usize>(
         &self,
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError>;
 
+    /// Register the full-envelope NTT slot at compile-time ring degree `D` on the
+    /// setup prepare contract.
+    fn register_setup_contract_envelope_ntt<const D: usize>(
+        &self,
+        prepared: &mut Self::PreparedSetup,
+        expanded: &AkitaExpandedSetup<F>,
+    ) -> Result<(), AkitaError> {
+        let key = NttCacheKey::from_envelope(expanded, D)?;
+        self.register_setup_contract_ntt_slot(prepared, key)
+    }
+
+    /// Build `key` as part of the setup prepare contract (no oversize warning).
+    fn register_setup_contract_ntt_slot(
+        &self,
+        prepared: &mut Self::PreparedSetup,
+        key: NttCacheKey,
+    ) -> Result<(), AkitaError> {
+        self.ensure_ntt_slot(prepared, key)
+    }
+
     /// Build the cache for `key` if absent.
+    ///
+    /// Keys outside the setup prepare contract may still be built (fail-open for
+    /// correctness) but should log a diagnostic warning on the CPU backend.
     fn ensure_ntt_slot(
         &self,
         prepared: &mut Self::PreparedSetup,

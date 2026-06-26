@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-24 |
-| Revised       | 2026-06-25 (review pass: setup-sizing + NTT-cache grounding, warm-cache redesign, phase-ordering fixes) |
+| Revised       | 2026-06-26 (warm-cache policy: setup-time minimum contract, lazy build diagnostic) |
 | Status        | proposed |
 | PR            | |
 | Supersedes    | partial supersession of `specs/akita-polyops-cutover.md` (storage half); coordinate PR order with `specs/protocol-field-geometry-cutover.md` (shared `PreparedFold` / `prove_suffix` surface) |
@@ -27,11 +27,11 @@ monomorphize at `const D` behind a single backend dispatch boundary. A
 **`RingDimPlan`** is a derived view of validated per-level `ring_dimension` values
 from the schedule; per-level **`RingLevelContext`** (ring dimension plus setup prefix
 geometry) is computed at runtime via `context_at` from the live
-`SetupRelationShape`, not stored inside the plan. **`PreparedSetup`** holds one NTT cache per
-**distinct** ring dimension the proof uses (keyed `(ring_d, num_ring_elements)`),
-warmed once at prove entry from `plan.unique_dims()`. Caches at different `ring_d`
-are physically distinct transforms and are never shared (see NTT cache today); a
-uniform-`D` proof keeps exactly one cache, identical to today.
+`SetupRelationShape`, not stored inside the plan. **`PreparedSetup`** registers the
+**minimum** NTT setup contract at **`prepare_setup`** (envelope `D` today; keyed
+`(ring_d, num_ring_elements)`). Caches at different `ring_d` are physically distinct
+transforms and are never shared (see NTT cache today); a uniform-`D` proof keeps exactly
+one cache, identical to today.
 
 A follow-on planner change (not fully scoped here) can emit **one optimal
 mixed-D schedule per field family** instead of maintaining separate preset and
@@ -288,7 +288,9 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 3. Fold protocol storage (`PreparedFold`, `RingRelationInstance`) does not carry
    `const D` on the struct (Phase 3); in-memory owners use `RingBuf` / `RingSlice`.
 4. NTT prepared caches are one full-envelope cache per **distinct** `ring_d` (keyed
-   `(ring_d, num_ring_elements)`), warmed at prove entry, never shared across `ring_d`.
+   `(ring_d, num_ring_elements)`), with the **minimum envelope slot registered at
+   `prepare_setup`**, never shared across `ring_d`. Additional slots may be built
+   lazily at commit/prove if undersized (diagnostic warning; see Warm-cache policy).
    Prefix-sizing *within* a `ring_d` is a deferred optimization (see NTT cache design).
 5. Infrastructure supports a future planner that optimizes the `(d_a, d_b, d_d)` triple
    per fold step within one field family. Until then, hand schedules pick the triple;
@@ -384,9 +386,9 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 - [ ] `NttCacheKey`, `NttSlotCacheAny` (+ fallible `as_d::<D>()`), `NttCacheMap`
       (`HashMap` keyed store) with lazy `ensure_ntt_slot`.
 - [ ] `CpuPreparedSetup<F>` (trait assoc type `PreparedSetup`) without `const D`;
-      `prepare_expanded` builds an empty map; warm-cache at prove entry via
-      `plan.unique_dims()` (one full-envelope entry per distinct `ring_d`; see
-      Warm-cache policy).
+      `prepare_expanded` builds an empty map; `prepare_setup` registers the minimum
+      envelope contract (see Warm-cache policy). Lazy `ensure_ntt_slot` outside the
+      contract logs a sizing diagnostic.
 - [ ] Single shared setup-geometry function consumed by **both** prover setup
       sumcheck and verifier stage 3 (replaces the two parallel derivations).
 - [ ] D-free `SetupPrefixRegistry` (replaces `SetupPrefixProverRegistry<F, D>`; the
@@ -458,8 +460,9 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
   level shape (single-tier, tiered, with/without prefix offload), pinning
   `(level shape, ring_d, required, offload?) → (active, ntt)`. These must be derivable
   **without** challenges (regression guard against re-coupling to `eq_tau1`).
-- `NttCacheKey` / warm-cache unit tests: uniform-D warms exactly one entry
-  `(Cfg::D, total)`; the mixed-D fixture warms exactly two; `cache_bytes()` scales with
+- `NttCacheKey` / warm-cache unit tests: uniform-D `prepare_setup` registers exactly one
+  contract entry `(Cfg::D, total)`; lazy builds outside the contract are allowed but
+  warned; mixed-D fixture registers every required `ring_d` on the contract at prepare.
   `num_ring_elements` and `D`.
 - `NttSlotCacheAny::as_d::<D>()` returns the correct variant on match and
   `InvalidSetup` on `ring_d` mismatch (no panic).
@@ -494,9 +497,9 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 - **Gate:** `ring_ntt.rs`, `root_kernels.rs` baselines; profile workloads in
   `book/src/usage/profiling.md`.
 - **Expect:** neutral or faster on uniform-D proofs (suffix cold path removed).
-- **Expect:** mixed-D proofs build one full-envelope NTT cache per distinct `ring_d`,
-  warmed at entry from `plan.unique_dims()`; uniform-D builds exactly one (today's work,
-  relocated from `prepare_expanded`). Offload adds no cache builds.
+- **Expect:** mixed-D proofs register one full-envelope NTT cache per distinct `ring_d` on
+  the setup prepare contract; uniform-D registers exactly one (today's work, via
+  `prepare_setup`). Offload adds no cache builds.
 - **Memory:** `NttCacheMap` holds one entry per distinct `ring_d`: 1 for uniform-D, 2
   for the mixed-D fixture, ≤ 4 in principle.
 - **Advisory (not CI):** profile preset `onehot_fp128_d64:32:1` prove time within
@@ -617,8 +620,8 @@ The NTT cache key for a *role* at a level is
 derivable from the dim and the seed alone, with no dependence on the relation shape, the
 registry, or offload. A level therefore touches up to three keys (fold / ring-switch +
 inner matvec at `d_a`, outer matvec at `d_b`, opening matvec at `d_d`); uniform presets
-collapse to one. That is why warm-cache by `plan.unique_dims()` — which spans every role
-across every level — is feasible (see Warm-cache policy). In this PR the interim
+collapse to one. Distinct `ring_d` values across the plan must appear on the setup prepare
+contract (see Warm-cache policy). In this PR the interim
 `d_a == d_b == d_d` guard (Per-block ring dimension) means one key per level for every
 schedule; per-level mixed-D still varies the key across levels.
 
@@ -721,7 +724,7 @@ Throughout the rest of this spec the scalar `ring_d` / `dim_at(ℓ)` denotes the
 `d_a`; the outer / opening dims `d_b, d_d` enter only the `B` / `D` commitment matvecs
 and their NTT keys.
 
-**Prove entry:** build `RingDimPlan::from_schedule(schedule, seed)`; the verifier builds
+**Prove entry:** build `RingDimPlan::from_schedule(schedule, seed)` for validation; the verifier builds
 the same plan from the same schedule + seed. Per-level contexts are computed **inside**
 the loop (memoize per level if the same context is needed twice).
 
@@ -805,55 +808,58 @@ single-ring behavior.
 ### Warm-cache policy
 
 Because the NTT cache key is `(ring_d, total_ring_elements_at::<ring_d>())` — a function
-of `ring_d` and the seed alone, with no dependence on the relation shape, challenges, or
-registry — the full set of keys **is** known before any fold runs: it is exactly
-`plan.unique_dims()`, which spans the **whole** plan, root fold (level 0) included. So
-warm the cache once at prove entry — **before the root fold, not just before the suffix
-loop** — while you still hold `&mut` on the prepared setup, then run everything against
-`&prepared` with **no interior mutability** in the hot path:
+of `ring_d` and the setup seed alone — the **minimum** slot for a uniform preset is known
+at prepare time: `(envelope D, total)` for the setup's `gen_ring_dim`. Do **not** over-build
+at prepare: register only what the setup contract promises (today exactly one envelope slot
+per `prepare_setup`).
+
+**Setup prepare (`prepare_setup`):**
 
 ```rust
-// Prove entry, after building the plan, BEFORE the root fold and the suffix loop:
-for d in plan.unique_dims() {            // spans levels 0..num_folds, root included
-    // total_ring_elements_at_dyn(d) is the runtime sibling of the const-generic
-    // total_ring_elements_at::<D>() — pure arithmetic (total_ring_elements * gen_ring_dim / d
-    // with the gen_ring_dim % d == 0 check); add it in Wave 2.
-    let n = expanded.shared_matrix().total_ring_elements_at_dyn(d)?;
-    prepared.ensure_ntt_slot(NttCacheKey { ring_d: d, num_ring_elements: n })?;  // &mut prepared
-}
-// freeze: hand &prepared to the root fold AND the suffix loop
-root_fold(..., &prepared, plan.context_at(0, ...)?, ...)?;   // level 0, reads ntt_slot via &prepared
-for level in 1..plan.num_folds {
-    let ctx = plan.context_at(level, schedule, expanded, &relation_shape)?;
-    let prepared_fold = prepare_suffix(stack, ..., &ctx, ...)?;   // reads ntt_slot via &prepared
-    prove_fold(..., stack, &ctx, prepared_fold, ...)?;
-}
+// Minimum contract: envelope ring at compile-time D (uniform-D today).
+let key = NttCacheKey::from_envelope(expanded, D)?;
+prepared.register_setup_contract_ntt_slot(key)?;  // &mut prepared, once per prepare_setup
 ```
 
-**Root fold and the standalone commit path are not special-cased — they are covered, but
-only if you warm by `unique_dims()` and place the warm before the root fold.** Two traps
-to avoid (both flagged in review):
+`prepare_expanded` returns an **empty** map. Host code that commits or proves should call
+`prepare_setup`, not `prepare_expanded`, unless it will register the contract itself.
 
-- The suffix loop starts at level **1**; the **root fold at level 0** runs earlier,
-  outside `prove_suffix`, and also reads the prepared-setup NTT cache. Warming by
-  `plan.unique_dims()` (which includes `dim_at(0)`) before the root fold covers it.
-  Warming *inside* a `level >= 1` loop, or lazily on first suffix use, would leave the
-  root fold without a built entry — do not do that.
-- The standalone `commit` entry point (committing the root polynomial, which runs before
-  any `RingDimPlan` exists) must likewise `ensure_ntt_slot` its root-layout entry
-  `(Cfg::D, total)` at its own entry, since `prepare_expanded` no longer builds it
-  eagerly.
+**Commit / prove (lazy extension):**
 
-For a uniform-`D` proof this warms exactly one cache `(Cfg::D, total)` — byte-for-byte
-the work `prepare_expanded` does eagerly today, just relocated and keyed (and the commit
-path warms the same single entry). For the mixed-D fixture it warms exactly two:
-`(128, total_128)` and `(64, total_64)`.
+If a commit or prove path needs an NTT key **outside** the setup prepare contract, the
+backend may still build it via `ensure_ntt_slot` (correctness fail-open), but **must emit a
+diagnostic warning** (`tracing::warn!`, target `akita_prover::ntt_cache`) indicating the
+setup envelope or prepare path was likely undersized. This should not happen on correctly
+sized uniform-`D` workloads. Mixed-D hosts that genuinely need multiple dims must extend
+`prepare_setup` to register every required key on the contract (still no speculative
+over-build beyond the declared contract).
 
-(`ensure_ntt_slot` is still idempotent and safe to call lazily if a future code path
-prefers it; warming up front is chosen because it avoids any interior-mutability or
-`OnceLock` machinery in the single-threaded hot loop and makes the cache contents a
-pure function of the plan. Prefix-sizing a cache below the full envelope is a deferred
-optimization, orthogonal to this policy.)
+**`RingDimPlan` at prove/verify entry** validates schedule/seed geometry; it does **not**
+warm caches. Warming is a prepare concern.
+
+```rust
+// Prove / verify entry (validation only):
+let plan = RingDimPlan::from_schedule(schedule, seed)?;
+// ... root_fold / suffix read ntt_slot via &prepared; no prove-time warm loop ...
+```
+
+**Traps (unchanged intent):**
+
+- The suffix loop starts at level **1**; the **root fold at level 0** also reads the
+  prepared-setup NTT cache. The setup contract must include every `ring_d` those paths
+  read before the first fold (envelope `D` suffices for uniform-D today).
+- Standalone `commit` before prove uses the same `prepare_setup` contract; it must not
+  rely on prove-time warming.
+
+For a uniform-`D` proof, `prepare_setup` registers exactly one cache `(Cfg::D, total)` —
+byte-for-byte the work `prepare_expanded` does eagerly today, relocated behind
+`register_setup_contract_ntt_slot`. A correctly sized mixed-D setup registers every distinct
+`ring_d` on the contract at prepare time (for example `(128, total_128)` and `(64, total_64)`
+for the mixed-D fixture); lazy builds outside the contract are a sizing bug, not the
+steady-state path.
+
+(`ensure_ntt_slot` remains idempotent. Prefix-sizing a cache below the full envelope is a
+deferred optimization, orthogonal to this policy.)
 
 ### D-free `PreparedSetup` and NTT caches
 
@@ -898,18 +904,20 @@ pub struct CpuPreparedSetup<F> {
 pub trait ComputeBackendSetup<F> {
     type PreparedSetup: Send + Sync;  // no const D
     fn prepare_expanded(expanded: Arc<AkitaExpandedSetup<F>>) -> Result<Self::PreparedSetup, ...>;
-    /// Build the cache for `key` if absent. Called at prove entry with `&mut`
-    /// (warm-cache); idempotent.
+    /// Register `key` on the setup prepare contract (minimum envelope at `prepare_setup`).
+    fn register_setup_contract_ntt_slot(prepared: &mut Self::PreparedSetup, key: NttCacheKey) -> Result<(), AkitaError>;
+    /// Build the cache for `key` if absent. Outside the setup contract: allowed, but
+    /// must log a sizing diagnostic (see Warm-cache policy).
     fn ensure_ntt_slot(prepared: &mut Self::PreparedSetup, key: NttCacheKey) -> Result<(), AkitaError>;
-    /// Read a previously-warmed slot. `InvalidSetup` if the key was never warmed.
+    /// Read a previously-built slot. `InvalidSetup` if the key was never built.
     fn ntt_slot<'a>(prepared: &'a Self::PreparedSetup, key: NttCacheKey)
         -> Result<&'a NttSlotCacheAny, AkitaError>;
 }
 ```
 
-`prepare_expanded` builds an **empty** map (no eager NTT). The single warm-cache loop at
-prove entry (see Warm-cache policy) populates one entry per distinct `ring_d`, each at
-the full envelope `num_ring_elements = total_ring_elements_at::<ring_d>()`.
+`prepare_expanded` builds an **empty** map. `prepare_setup` registers the minimum envelope
+contract. Additional keys may be built lazily via `ensure_ntt_slot` (with diagnostic if
+outside the contract).
 
 Cache-build path (inside `ensure_ntt_slot`):
 
@@ -936,11 +944,9 @@ ZK blinding matrices follow the same pattern in their own maps (`zk_b_ntt`, `zk_
 one full-envelope cache per distinct `ring_d`.
 
 **`NttCacheMap`:** `HashMap<NttCacheKey, NttSlotCacheAny>`, populated by
-`ensure_ntt_slot` at prove entry (`&mut`). Cardinality = number of distinct `ring_d` in
-the plan: **1 for uniform-`D`**, ≤ 4 in principle. Offload adds no entries (it never
-touches the cache). A `HashMap` (rather than a fixed 4-slot table) is used only so the
-key type stays forward-compatible with the prefix-sized cache below; today there is
-exactly one entry per `ring_d`.
+`register_setup_contract_ntt_slot` at `prepare_setup` and, if needed,
+`ensure_ntt_slot` (lazy, with diagnostic when outside the contract). Cardinality on the
+contract: **1 for uniform-`D`**, more only when the setup explicitly registers them.
 
 ### Deferred optimization: prefix-sized NTT caches (mixed-D memory) — TRACKED FOLLOW-UP
 
@@ -968,7 +974,7 @@ num_ring_elements(d) = max over levels ℓ with dim_at(ℓ)==d of commit_footpri
 ```
 
 That footprint is a function of the schedule + opening-batch shape — challenge-free and
-known up front — so the warm loop can size each entry precisely. No new key type is
+known up front — so prepare-time contract registration can size each entry precisely. No new key type is
 needed (`NttCacheKey` already carries `num_ring_elements`; only the warmed value changes).
 
 **Correctness requirement (the subtle part).** Every consumer at `ring_d` — root commit,
@@ -1184,7 +1190,7 @@ Custom backend implementors: see updated `docs/compute-backends.md` checklist
 | C. Runtime-D NTT without `const D` | Rejected: SIMD regression |
 | D. 16 fixed `PreparedSetup` slots per proof | Rejected: duplicates caches |
 | E. `enum PreparedSetup { D32(...), D64(...), ... }` per stack | Rejected: multiplies stacks; prefer keyed cache |
-| F. Per-level prefix-keyed NTT cache (key per `(ring_d, level prefix)`) | Rejected: kernels index a prefix of one full slot, so per-level keys would build several overlapping caches and **regress** uniform-D from one cache to many. Adopted instead: one full-envelope cache per distinct `ring_d`, warmed at entry from `plan.unique_dims()` |
+| F. Per-level prefix-keyed NTT cache (key per `(ring_d, level prefix)`) | Rejected: kernels index a prefix of one full slot, so per-level keys would build several overlapping caches and **regress** uniform-D from one cache to many. Adopted instead: one full-envelope cache per distinct `ring_d` on the setup prepare contract |
 | G. Share NTT bytes across `ring_d` via Cooley–Tukey | Rejected: cyclic roots nest (`D`-th ⊂ `2D`-th) but the view splits into *raw halves* whose separate transforms are not sub-blocks of the `2D` transform — that holds `NTT(p_lo±p_hi)` in mixed cyclic/negacyclic domains; negacyclic roots don't nest at all. Recovery costs a domain-crossing butterfly over a usually-empty overlap and saves no memory (see NTT cache today) |
 
 ## Future: unified field-family planner
@@ -1427,11 +1433,10 @@ Three independently-committable sub-steps; keep each green.
 
 Five sub-steps; keep each compiling.
 
-- **5a — Plan plumbing.** Build `RingDimPlan::from_schedule` at prove and verify entry;
-  warm the NTT cache via `plan.unique_dims()` (`&mut prepared`, then freeze) **before the
-  root fold (level 0), not just before the suffix loop**; warm the root-layout entry in
-  the standalone `commit` path too (see Warm-cache policy — both are review-flagged
-  traps). Keep the existing per-level dispatch for now (no behavior change yet).
+- **5a — Plan plumbing.** Build `RingDimPlan::from_schedule` at prove and verify entry
+  (validation only; no prove-time cache warming). `prepare_setup` registers the minimum
+  envelope NTT contract; lazy `ensure_ntt_slot` outside the contract logs a sizing
+  diagnostic. Keep the existing per-level dispatch for now (no behavior change yet).
 - **5b — Demote `OperationCtx` / `ProverComputeStack` off `const D`.** They no longer
   carry `D`. Backend methods take `ring_d` (or `&RingLevelContext`) and dispatch
   internally at the kernel boundary (`dispatch_ring_dim!` + `as_d`). Migrate call sites
@@ -1450,7 +1455,8 @@ Five sub-steps; keep each compiling.
 - **Done when:** all uniform-`D` tests green and byte-identical; the **Wave-0 mixed-D
   fixture re-run on the new path reproduces the recorded oracle byte-for-byte**; grep
   gate clean (`! rg 'dispatch_ring_dim_result!' crates/akita-*/src/protocol/core/suffix.rs`).
-- **Gotchas:** warm-cache stays at entry (`&mut`), not in the loop. Offload stays in the
+- **Gotchas:** NTT contract is registered at `prepare_setup`, not in the prove loop.
+  Offload stays in the
   setup sumcheck (ungated since 3b). The mixed-D fixture is your regression oracle for
   this whole wave — run it after every sub-step that touches the suffix.
 
@@ -1509,12 +1515,12 @@ Add `runtime-ring-cutover` regions to `docs/doc-blast-radius.json`.
 | Prover/verifier geometry divergence | One shared function; prover≡verifier cross-check on mixed-D fixture (not just sampled golden vectors) |
 | `NttSlotCacheAny` variant ≠ dispatched `D` | Fallible `as_d::<D>()` returns `InvalidSetup`; unit-tested both branches |
 | Re-coupling geometry to challenges | Golden vectors assert the count is computable with no `tau1`/`x_challenges` |
-| **Uniform-D cache regression** (per-level prefix keying → many overlapping caches) | One full-envelope cache per distinct `ring_d`; warm at entry from `unique_dims()`; test asserts uniform-D warms **exactly one** entry |
+| **Uniform-D cache regression** (per-level prefix keying → many overlapping caches) | One full-envelope cache per distinct `ring_d` on the setup contract; test asserts uniform-D `prepare_setup` registers **exactly one** entry |
 | Offload mistakenly sizing the NTT cache | Offload affects only the setup sumcheck's *direct* `ring_view`; NTT cache is full-envelope per `ring_d` and independent (W3b) |
 | **Wave-3 GAT→assoc-type ripple** breaks the build broadly | Do the `PreparedSetup<D>` → `PreparedSetup` migration in one sub-step (3a); `OperationCtx` keeps `const D` until Wave 5; kernel sites use `ntt_slot(key).as_d::<D>()` |
 | `NttSlotCacheAny` variant ≠ dispatched `D` | Fallible `as_d::<D>()` returns `InvalidSetup`; unit-tested both branches |
 | Phase-1 D-free slot vs Phase-3 commitment/hint | Key on `SetupPrefixSlotId`; slot commitment/hint stay D-typed until Wave 6 |
-| Cache stampede on parallel prove | N/A today (warm at entry with `&mut`, then immutable loop); if parallel prove ships, use `OnceLock`/`DashMap` per key |
+| Cache stampede on parallel prove | N/A today (setup contract built once at `prepare_setup`); if parallel prove shares prepared state, use `OnceLock`/`DashMap` per key |
 | `AlgebraSection` semantic change | No-op for current presets (`gen_ring_dim == Cfg::D`); a moving digest is a red flag to investigate |
 | Phase 3 + geometry cutover conflict | Sequencing rule above; single `PreparedFold` target |
 | Mixed-D envelope sizing (Phase 4) | Field-element accumulation + `D_max`; SIS audit per `(ring_d, step)` |
