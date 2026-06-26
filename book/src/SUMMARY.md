@@ -25,9 +25,11 @@
     - [Root fold and ring switching](./how/proving/root-fold-ring-switch.md)
     - [Sumcheck stages](./how/proving/sumcheck-stages.md)
     - [Extension-opening reduction](./how/proving/extension-opening-reduction.md)
+    - [The distributed prover](./how/proving/distributed-prover.md)
   - [Recursion and proof shape](./how/recursion.md)
   - [Verification](./how/verification.md)
     - [Matrix evaluation at a point](./how/verifying/matrix_evaluation.md)
+    - [The distributed relation verifier](./how/verifying/distributed-relation-verifier.md)
   - [Security model](./how/security.md)
   - [Optimizations](./how/optimizations.md)
 

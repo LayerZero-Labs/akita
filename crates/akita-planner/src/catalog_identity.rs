@@ -30,6 +30,8 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.basis_range.1));
     h.write_u64(identity.onehot_chunk_size as u64);
     h.write_u64(u64::from(identity.tiered));
+    h.write_u64(identity.witness_chunk.num_chunks as u64);
+    h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(match identity.root_fold_shape {
         TensorChallengeShape::Flat => 0,
         TensorChallengeShape::Tensor => 1,
@@ -66,6 +68,7 @@ struct CatalogIdentityExpectation {
     basis_range: (u32, u32),
     onehot_chunk_size: usize,
     tiered: bool,
+    witness_chunk: akita_types::ChunkedWitnessCfg,
     root_fold_shape: TensorChallengeShape,
     ring_dimensions: Vec<usize>,
     ring_challenge_config_digest: u64,
@@ -100,6 +103,7 @@ fn catalog_identity_expectation(
         basis_range: policy.basis_range,
         onehot_chunk_size: policy.onehot_chunk_size,
         tiered: policy.tiered,
+        witness_chunk: policy.witness_chunk,
         root_fold_shape,
         ring_dimensions,
         ring_challenge_config_digest,
@@ -135,6 +139,7 @@ pub fn expected_catalog_identity(
         basis_range: expected.basis_range,
         onehot_chunk_size: expected.onehot_chunk_size,
         tiered: expected.tiered,
+        witness_chunk: expected.witness_chunk,
         root_fold_shape: expected.root_fold_shape,
         ring_dimensions: intern_ring_dimensions(expected.ring_dimensions),
         ring_challenge_config_digest: expected.ring_challenge_config_digest,
@@ -179,6 +184,7 @@ pub fn validate_catalog_identity(
     check_field!(basis_range);
     check_field!(onehot_chunk_size);
     check_field!(tiered);
+    check_field!(witness_chunk);
     check_field!(root_fold_shape);
     if embedded.ring_dimensions != expected.ring_dimensions.as_slice() {
         return Err(catalog_identity_mismatch_error(
@@ -350,6 +356,7 @@ mod tests {
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             tiered: false,
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         }
     }
 

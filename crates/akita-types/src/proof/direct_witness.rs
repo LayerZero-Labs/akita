@@ -159,14 +159,23 @@ pub fn terminal_direct_witness_shape(
 ) -> Result<CleartextWitnessShape, AkitaError> {
     let _ = (current_w_len, terminal_log_basis);
     // Single public row, single commitment group for the scalar same-point
-    // batch; `e`/`t` segments both scale with `num_polynomials`.
+    // single-chunk batch; `e`/`t` segments both scale with `num_polynomials`.
+    //
+    // Under a chunked terminal (`witness_chunk.num_chunks > 1`) the shipped
+    // witness has `ê`/`t̂` partitioned (totals unchanged), `ẑ` replicated per
+    // chunk, and a shared `r`-tail priced with `num_chunks` commitments. The
+    // existing layout primitive models replicated `ẑ` through `num_public_rows`
+    // and the shared tail through `num_segments`, so passing `num_chunks` for
+    // both yields the exact chunked byte count without changing the layout
+    // struct (verifier-side chunk interpretation is owned by the verifier spec).
+    let num_chunks = terminal_lp.witness_chunk.num_chunks.max(1);
     segment_typed_witness_shape(
         terminal_lp,
         field_bits,
         num_polynomials,
         num_polynomials,
-        1,
-        1,
+        num_chunks,
+        num_chunks,
     )
 }
 

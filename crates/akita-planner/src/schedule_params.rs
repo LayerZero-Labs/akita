@@ -20,12 +20,41 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    terminal_direct_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, ChunkedWitnessCfg, CleartextWitnessShape, DecompositionParams,
     DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
+
+/// Validate the policy's multi-chunk witness settings at a planner entry point.
+///
+/// Layout-only rules live on [`ChunkedWitnessCfg::validate`]; the tiered guard
+/// and the recursion-depth bound (which needs the planner-private
+/// [`MAX_RECURSION_DEPTH`]) are enforced here so `akita-types` stays free of
+/// planner internals.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] for an invalid `ChunkedWitnessCfg`, a
+/// tiered + multi-chunk combination, or `num_activated_levels` beyond the
+/// planner recursion cap. Verifier-reachable: never panics.
+pub(crate) fn validate_policy_witness_chunk(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    let mc = policy.witness_chunk;
+    mc.validate()?;
+    if policy.tiered && mc.uses_multi_chunk() {
+        return Err(AkitaError::InvalidSetup(
+            "multi-chunk witness layout is unsupported with tiered commitments".to_string(),
+        ));
+    }
+    if mc.num_activated_levels > MAX_RECURSION_DEPTH {
+        return Err(AkitaError::InvalidSetup(format!(
+            "num_activated_levels={} exceeds the planner recursion cap {MAX_RECURSION_DEPTH}",
+            mc.num_activated_levels
+        )));
+    }
+    Ok(())
+}
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
@@ -149,7 +178,12 @@ fn derive_candidate_level_params(
     ring_challenge_config: RingChallengeConfigFn<'_>,
     current_witness_len: usize,
     log_basis: u32,
+    fold_level: usize,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
+    // Chunk count of the witness this level commits/produces (sized below as
+    // `next_witness_len`). Equal for the metadata field and the width pricing so
+    // a future verifier recomputing the size from `witness_chunk` agrees.
+    let num_chunks = policy.chunks_at_level(fold_level);
     let Ok(ring_challenge_cfg) = ring_challenge_config(policy.ring_dimension) else {
         return Ok(None);
     };
@@ -171,6 +205,11 @@ fn derive_candidate_level_params(
         let Some(num_blocks) = 1usize.checked_shl(r as u32) else {
             continue;
         };
+        // Multi-chunk levels require an equal block window per chunk; skip splits
+        // that do not divide evenly (not fixed up later).
+        if num_chunks > 1 && !num_blocks.is_multiple_of(num_chunks) {
+            continue;
+        }
         let block_len = num_ring_elems.div_ceil(num_blocks);
 
         // Recursive levels commit a dense balanced-digit witness (`is_root =
@@ -257,27 +296,28 @@ fn derive_candidate_level_params(
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: policy.witness_chunk_for_level(fold_level),
             precommitted_groups: Vec::new(),
         }
         .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
             continue;
         };
 
-        let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
+        let next_witness_len = w_ring_element_count_for_chunks(
             policy.decomposition.field_bits(),
             &candidate_params,
             1,
-            1,
             MRowLayout::WithDBlock,
+            num_chunks,
         )?
         .checked_mul(policy.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
-        let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
+        let next_witness_len_terminal = w_ring_element_count_for_chunks(
             policy.decomposition.field_bits(),
             &candidate_params,
             1,
-            1,
             MRowLayout::WithoutDBlock,
+            num_chunks,
         )?
         .checked_mul(policy.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
@@ -483,6 +523,7 @@ fn derive_optimal_suffix_schedule(
         ring_challenge_config,
         current_witness_len,
         current_lb,
+        level,
     )?
     .is_some()
     {
@@ -509,7 +550,13 @@ fn derive_optimal_suffix_schedule(
             continue;
         }
         let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params(policy, ring_challenge_config, current_witness_len, lb)?
+            derive_candidate_level_params(
+                policy,
+                ring_challenge_config,
+                current_witness_len,
+                lb,
+                level,
+            )?
         else {
             continue;
         };
@@ -792,6 +839,8 @@ fn compute_root_direct_level_params(
         field_bits_hint: 0,
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
+        // Root-direct ships the raw polynomial on the wire (no chunked commitment).
+        witness_chunk: ChunkedWitnessCfg::default(),
         precommitted_groups: Vec::new(),
     }
     .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
@@ -841,6 +890,7 @@ fn find_schedule_inner(
     };
 
     key.validate()?;
+    validate_policy_witness_chunk(policy)?;
 
     let witness_len = 1usize
         .checked_shl(key.num_vars as u32)
@@ -890,6 +940,10 @@ fn find_schedule_inner(
     let min_r_vars: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_r_vars: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
 
+    // Chunk count of the witness committed at the root fold (absolute level 0).
+    let root_num_chunks = policy.chunks_at_level(0);
+    let root_witness_chunk = policy.witness_chunk_for_level(0);
+
     let (min_log_basis, max_log_basis) = policy.basis_range;
     for candidate_log_basis in min_log_basis..=max_log_basis {
         let level_decomp = DecompositionParams {
@@ -903,6 +957,10 @@ fn find_schedule_inner(
             let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
                 continue;
             };
+            // Multi-chunk root candidates require an equal block window per chunk.
+            if root_num_chunks > 1 && !num_blocks.is_multiple_of(root_num_chunks) {
+                continue;
+            }
             let m_vars = reduced_vars - r_vars;
 
             let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
@@ -999,6 +1057,7 @@ fn find_schedule_inner(
                 field_bits_hint: 0,
                 cached_num_digits_fold_claims: 0,
                 cached_num_digits_fold_value: 1,
+                witness_chunk: root_witness_chunk,
                 precommitted_groups: Vec::new(),
             }
             .with_fold_linf_cap_config(field_bits, key.num_polynomials) else {
@@ -1006,12 +1065,12 @@ fn find_schedule_inner(
             };
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
-                let rings = w_ring_element_count_with_counts_for_layout_bits(
+                let rings = w_ring_element_count_for_chunks(
                     field_bits,
                     &candidate_params,
                     key.num_polynomials,
-                    1,
                     layout,
+                    root_num_chunks,
                 )?;
                 rings.checked_mul(policy.ring_dimension).ok_or_else(|| {
                     AkitaError::InvalidSetup("root next witness length overflow".into())

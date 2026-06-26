@@ -56,6 +56,8 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
             tensor_verifier::fp128::D64OneHotTensor::schedule_catalog().is_some()
         }
         "fp128_d64_onehot_tiered" => fp128::D64OneHotTiered::schedule_catalog().is_some(),
+        "fp128_d64_onehot_multi_chunk" => fp128::D64OneHotMultiChunk::schedule_catalog().is_some(),
+        "fp128_d64_full_multi_chunk" => fp128::D64FullMultiChunk::schedule_catalog().is_some(),
         "fp64_d128" => fp64::D128Full::schedule_catalog().is_some(),
         "fp64_d128_onehot" => fp64::D128OneHot::schedule_catalog().is_some(),
         "fp64_d256_onehot" => fp64::D256OneHot::schedule_catalog().is_some(),
@@ -110,6 +112,12 @@ fn assert_family_catalog_enabled(family: &GeneratedFamily, keys: &[AkitaSchedule
         }
         "fp128_d64_onehot_tiered" => {
             check_family_catalog::<fp128::D64OneHotTiered>(family.module_name, keys)
+        }
+        "fp128_d64_onehot_multi_chunk" => {
+            check_family_catalog::<fp128::D64OneHotMultiChunk>(family.module_name, keys)
+        }
+        "fp128_d64_full_multi_chunk" => {
+            check_family_catalog::<fp128::D64FullMultiChunk>(family.module_name, keys)
         }
         "fp64_d128" => check_family_catalog::<fp64::D128Full>(family.module_name, keys),
         "fp64_d128_onehot" => check_family_catalog::<fp64::D128OneHot>(family.module_name, keys),

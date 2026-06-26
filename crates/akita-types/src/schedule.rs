@@ -380,6 +380,119 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
 }
 
+/// Witness ring-element count for a chunked (multi-chunk) or single-chunk layout.
+///
+/// `num_chunks == 1` delegates to
+/// [`w_ring_element_count_with_counts_for_layout_bits`] with `num_public_rows = 1`,
+/// so it is byte-identical to the historical single-chunk pricing.
+///
+/// `num_chunks > 1` prices the multi-chunk witness layout used by the distributed
+/// prover: `num_chunks` chunks each holding a partitioned slice of `ê`/`t̂` plus a
+/// **replicated full-width** `ẑ`, followed by a single shared `r`-tail. The
+/// per-node relations stack *horizontally* (`M = [M_0 | … | M_{num_chunks-1}]`),
+/// sharing the same row blocks (concatenation adds columns, not rows) and summing
+/// the partial commitments `u_j` into one `u`, so the quotient `r = Σ_j r_j` keeps
+/// the **single-machine shape** — its row count is priced with `num_commitments =
+/// 1`, unchanged from the single-chunk layout. The **only** extra cost over the
+/// single-chunk layout is `(num_chunks - 1) · z_chunk` ring elements (the
+/// replicated `ẑ`).
+///
+/// The `ê`/`t̂` block window is partitioned (`blocks_per_chunk = num_blocks /
+/// num_chunks`), so `num_chunks · e_chunk` and `num_chunks · t_chunk` equal the
+/// single-chunk totals; neither those segments nor the shared `r`-tail grow — only
+/// the replicated `ẑ` does.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `num_chunks == 0`, `num_chunks > 1`
+/// is not a power of two, `lp.num_blocks` is not divisible by `num_chunks`, the
+/// level is tiered (multi-chunk + tiered is unsupported), or any width product
+/// overflows. Never panics — verifier-reachable through the runtime DP fallback.
+pub fn w_ring_element_count_for_chunks(
+    field_bits: u32,
+    lp: &LevelParams,
+    num_polynomials: usize,
+    layout: crate::layout::MRowLayout,
+    num_chunks: usize,
+) -> Result<usize, AkitaError> {
+    if num_chunks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "w_ring_element_count_for_chunks: num_chunks must be >= 1".to_string(),
+        ));
+    }
+    if num_chunks == 1 {
+        return w_ring_element_count_with_counts_for_layout_bits(
+            field_bits,
+            lp,
+            num_polynomials,
+            1,
+            layout,
+        );
+    }
+    if !num_chunks.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "w_ring_element_count_for_chunks: num_chunks must be a power of two".to_string(),
+        ));
+    }
+    if !lp.num_blocks.is_multiple_of(num_chunks) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "w_ring_element_count_for_chunks: num_blocks={} not divisible by num_chunks={num_chunks}",
+            lp.num_blocks
+        )));
+    }
+    // Multi-chunk + tiered is unsupported (the chunked closed form assumes a
+    // non-tiered, empty û segment). Reject rather than silently misprice.
+    if lp.f_key.is_some() || lp.tier_split != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "w_ring_element_count_for_chunks: multi-chunk layout does not support tiered commitments"
+                .to_string(),
+        ));
+    }
+
+    let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
+    let blocks_per_chunk = lp.num_blocks / num_chunks;
+    // ê / t̂: partitioned over the per-chunk block window.
+    let e_chunk = num_polynomials
+        .checked_mul(blocks_per_chunk)
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(overflow)?;
+    let t_chunk = num_polynomials
+        .checked_mul(blocks_per_chunk)
+        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(overflow)?;
+    // ẑ: replicated full fold width in every chunk (not divided by num_chunks).
+    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
+    let z_chunk = lp
+        .inner_width()
+        .checked_mul(num_digits_fold)
+        .ok_or_else(overflow)?;
+    let body = e_chunk
+        .checked_add(t_chunk)
+        .and_then(|n| n.checked_add(z_chunk))
+        .ok_or_else(overflow)?;
+    // Shared r-tail: one summed quotient (r = Σ_j r_j) for all chunks. The
+    // per-node relations stack horizontally (M = [M_0 | … | M_{num_chunks-1}]),
+    // sharing the same row blocks — concatenation adds columns, not rows — and
+    // the partial commitments u_j are summed into one u. So the quotient keeps the
+    // single-machine shape (priced with `num_commitments = 1`, UNCHANGED from the
+    // single-chunk layout); only the replicated ẑ grows. Pricing it with
+    // `num_chunks` here would over-count the tail and break the prover's
+    // `emitted == next_w_len` and the verifier's single-machine `r_len`.
+    let r_rows = lp.m_row_count_for(1, 0, layout)?;
+    let r_count = r_rows
+        .checked_mul(crate::sis::compute_num_digits_full_field(
+            field_bits,
+            lp.log_basis,
+        ))
+        .ok_or_else(overflow)?;
+
+    num_chunks
+        .checked_mul(body)
+        .and_then(|n| n.checked_add(r_count))
+        .ok_or_else(overflow)
+}
+
 /// Parameters for one fold level in the computed schedule.
 #[derive(Clone, Debug)]
 pub struct FoldStep {
@@ -691,6 +804,74 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn chunked_witness_count_matches_chunk_layout_arithmetic() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        // num_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
+        let lp = LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, stage1_config)
+            .with_decomp(2, 3, 2, 2, 0)
+            .unwrap();
+        let field_bits = 128u32;
+        let num_poly = 3usize;
+
+        for layout in [MRowLayout::WithDBlock, MRowLayout::WithoutDBlock] {
+            let single = w_ring_element_count_with_counts_for_layout_bits(
+                field_bits, &lp, num_poly, 1, layout,
+            )
+            .unwrap();
+            // num_chunks = 1 must be byte-identical to the single-chunk delegate.
+            assert_eq!(
+                w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, 1).unwrap(),
+                single
+            );
+
+            let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
+            for num_chunks in [2usize, 4, 8] {
+                let chunked =
+                    w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, num_chunks)
+                        .unwrap();
+                // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
+                // a single summed quotient that keeps the single-machine row count
+                // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
+                // (num_chunks - 1) full-width copies.
+                assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
+                assert!(chunked > single, "chunked layout must grow vs single chunk");
+            }
+        }
+    }
+
+    #[test]
+    fn chunked_witness_count_rejects_invalid_chunk_counts() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        // num_blocks = 2^3 = 8.
+        let lp = LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, stage1_config)
+            .with_decomp(2, 3, 2, 2, 0)
+            .unwrap();
+        // Non-power-of-two chunk count.
+        assert!(matches!(
+            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 6),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        // num_chunks does not divide num_blocks (8 % 16 != 0).
+        assert!(matches!(
+            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 16),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        // Zero chunks.
+        assert!(matches!(
+            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 0),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
 
     fn segment_typed_final_witness(
         lp: &LevelParams,

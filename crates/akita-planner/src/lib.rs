@@ -12,7 +12,7 @@
 //! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset
 //! live in `akita-config`, the only crate that can name the presets.
 
-pub use akita_types::{DecompositionParams, SisModulusFamily};
+pub use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusFamily};
 
 pub mod catalog_identity;
 pub mod emit;
@@ -74,4 +74,48 @@ pub struct PlannerPolicy {
     /// tiered schedule catalog so a tiered policy never aliases a
     /// non-tiered table.
     pub tiered: bool,
+    /// Multi-chunk witness layout settings (`Cfg::chunked_witness_cfg()`).
+    ///
+    /// Drives chunked-vs-single-chunk witness pricing in the DP and is embedded
+    /// in the generated-table catalog identity so a chunked policy never aliases
+    /// a single-chunk table. `ChunkedWitnessCfg::default()` (single chunk) leaves
+    /// every schedule byte-identical to the historical layout.
+    pub witness_chunk: ChunkedWitnessCfg,
+}
+
+impl PlannerPolicy {
+    /// Resolved **input** chunk count for the witness consumed at absolute fold
+    /// level `fold_level`.
+    ///
+    /// Returns `num_chunks` for the leading `num_activated_levels` fold levels
+    /// when multi-chunk layout is active, and `1` (single chunk) otherwise. The
+    /// **output** chunk count of the fold at level `L` is
+    /// `chunks_at_level(L + 1)` (the input of the next level), so the cutover to
+    /// single-chunk sizing falls out at the output of level `R - 1`.
+    pub fn chunks_at_level(&self, fold_level: usize) -> usize {
+        let mc = self.witness_chunk;
+        if mc.uses_multi_chunk() && fold_level < mc.num_activated_levels {
+            mc.num_chunks
+        } else {
+            1
+        }
+    }
+
+    /// Per-level [`ChunkedWitnessCfg`] for the witness committed at absolute fold
+    /// level `fold_level` (the **input** shape the relation MLE sees).
+    ///
+    /// Chunked levels carry the resolved chunk count and the policy's activated
+    /// level count; single-chunk and tail levels carry
+    /// [`ChunkedWitnessCfg::default`], keeping them byte-identical to today.
+    pub fn witness_chunk_for_level(&self, fold_level: usize) -> ChunkedWitnessCfg {
+        let num_chunks = self.chunks_at_level(fold_level);
+        if num_chunks > 1 {
+            ChunkedWitnessCfg {
+                num_chunks,
+                num_activated_levels: self.witness_chunk.num_activated_levels,
+            }
+        } else {
+            ChunkedWitnessCfg::default()
+        }
+    }
 }
