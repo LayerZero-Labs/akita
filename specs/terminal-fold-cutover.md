@@ -23,6 +23,18 @@ proof shape into separate `AkitaLevelProof` / `TerminalLevelProof`
 types and refits the planner and generated schedule tables to the new
 terminal-level cost model.
 
+After #190, the transparent non-zk terminal tail is segment-typed:
+Golomb-Rice `z`, raw-field `e`, raw-field `t`, and raw-field `r`.
+This document describes the existing `RingSwitchSumcheck` terminal mode:
+it binds the terminal cleartext witness, drops the D-block rows, still
+ships the terminal `r` segment, and proves the terminal relation with a
+relation-only stage-2 sumcheck.
+PR #141 adds an explicit `DirectRingRelations` terminal proof mode on top
+of that split.
+Direct mode keeps the same terminal witness-binding prefix, then omits
+both the terminal `r` segment and terminal stage 2 and checks the reduced
+terminal ring rows directly.
+
 ## Intent
 
 ### Goal
@@ -30,13 +42,13 @@ terminal-level cost model.
 Replace the soundness-broken transmit-then-commit terminal protocol
 with a transmit-and-bind terminal protocol that:
 
-1. Absorbs the cleartext final witness (`PackedDigits`) into the
+1. Absorbs the cleartext final witness into the
    Fiat-Shamir transcript at the same point that previously held
    `next_w_commitment`, so all ring-switch and stage-2 challenges bind
    to the actual witness the verifier later consumes.
 2. Drops `next_w_commitment`, `next_w_eval`, and the entire stage-1
    sumcheck from the terminal level (no longer needed: the cleartext
-   witness is structurally range-checked by `PackedDigits` packing and
+   witness is structurally validated by its cleartext witness shape and
    the next-witness commitment is the witness itself).
 3. Drops the D-block of the per-row `r` quotients from the terminal
    level under a new `MRowLayout::Terminal` mode, omits `v` from
@@ -72,15 +84,18 @@ the baseline planner.
   terminal), the verifier-recomputed Fiat-Shamir challenges must
   depend on the exact witness the verifier later consumes. For
   intermediate levels this remains the SIS commitment; for the
-  terminal level it is the cleartext `PackedDigits` final witness.
+  terminal level it is the cleartext final witness.
   Protected by `tests/single_poly_e2e.rs`,
   `crates/akita-pcs/tests/akita_e2e.rs::*round_trip`,
   `crates/akita-scheme/src/tests.rs::verify_*`, and the
   `crates/akita-pcs/tests/transcript_trace.rs` audit fixture.
 - **Terminal sumcheck shape.** The terminal relation sumcheck runs in
-  relation-only mode (`batching_coeff = 0`, dummy `r_stage1`,
+  relation-only mode (`batching_coeff = 0`, dummy `stage1_point`,
   `s_claim = 0`) with the D-block omitted from `m_evals_x`, so its
   rounds equal `col_bits + ring_bits` of the terminal-layout `w` only.
+  This invariant applies to the `RingSwitchSumcheck` terminal proof
+  mode. In `DirectRingRelations` mode there is no terminal stage-2
+  sumcheck and no terminal ring-switch aggregation challenge stream.
   Protected by `batched_onehot_roundtrip_matches_public_shape_context`
   and the `single_poly_e2e` round-trip assertion.
 - **Schedule/runtime witness length agreement.** For every fold level,
@@ -206,14 +221,21 @@ Per-level wire change (terminal level only):
   `v_coeffs = d_key.row_len() * D` of `v` payload.
 - Added: `final_witness` is no longer ghost-shipped after the
   challenges; it now occupies the same transcript slot previously
-  held by `next_w_commitment` and is `PackedDigits`-encoded (smaller
-  per-element than the SIS commitment).
+  held by `next_w_commitment`. Current transparent non-zk tails use
+  `CleartextWitnessProof::SegmentTyped`; ZK tails retain the
+  packed-digits representation.
 - Witness size: the terminal fold's `w` is built with
   `MRowLayout::Terminal`, dropping `nd` from the per-row `r`
   quotients (and dropping the corresponding D-blinding digit segment
   under `zk`). Concretely for the failing test's schedule
   (D64Onehot, nv=15, batched 2): root terminal `w` shrinks from
   87,808 to 65,792 field elements (-25.1 %).
+
+Follow-on terminal direct mode shrinks the terminal tail further in
+transparent builds by omitting the remaining raw-field `r` quotient
+segment entirely. That extra saving is mode-gated by `TerminalProofMode`
+and is not implied by `MRowLayout::Terminal`; sumcheck-terminal mode
+still needs `r`.
 
 Schedule-table regeneration produces no diff: the cost model
 improvement is real but too small to flip any planner choices in the
