@@ -13,6 +13,7 @@ pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
 pub mod lhl_blinding;
+pub mod ntt_cache;
 pub mod proof;
 pub mod proof_size;
 pub mod ring_dim_plan;
@@ -62,6 +63,7 @@ pub use layout::{
     sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView,
     RingOpeningPoint,
 };
+pub use ntt_cache::NttCacheKey;
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
