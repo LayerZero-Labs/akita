@@ -466,6 +466,12 @@ pub fn find_group_batch_schedule(
                 .to_string(),
         ));
     }
+    if policy.decomposition.log_commit_bound != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "dense multi-group root batching is not supported; see specs/multi-group-batching.md"
+                .to_string(),
+        ));
+    }
     let current_w_len = grouped_root_direct_witness_len(key)?;
     let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.main.num_vars,
@@ -607,5 +613,20 @@ mod tests {
         };
 
         assert_eq!(params.log_basis, 4);
+    }
+
+    #[test]
+    fn find_group_batch_schedule_rejects_dense_policy() {
+        let mut policy = flat_policy();
+        policy.decomposition.log_commit_bound = 8;
+        let key = GroupBatchAkitaScheduleLookupKey {
+            main: AkitaScheduleLookupKey::new(20, 2),
+            precommitteds: vec![precommitted(1, 20)],
+        };
+
+        let err = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect_err("dense grouped root schedules are phase-1 unsupported");
+
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }
