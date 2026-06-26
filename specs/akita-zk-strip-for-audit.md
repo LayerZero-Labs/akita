@@ -106,7 +106,7 @@ Affected surfaces:
 |---|-----------|--------------|--------------|
 | I1 | Transparent (default-build) proof bytes are unchanged. | The default build never compiled any `#[cfg(feature="zk")]` line; every paired site keeps the existing `not(zk)` arm verbatim. | **New** golden-byte test (Slice 0); existing serde roundtrips `akita_e2e.rs` |
 | I2 | Transparent transcript bytes/labels are unchanged. | The only zk absorb (`ABSORB_ZK_HIDING_COMMITMENT`) is itself zk-gated; the masked next-w-eval feeds the *same* single `append_serde(ABSORB_STAGE2_NEXT_W_EVAL, …)` whose value on the non-zk path is the genuine unmasked `w_eval` ([`fold.rs:873-877`](../crates/akita-prover/src/protocol/core/fold.rs)). Labels never enter the sponge (`labels.rs`, `sponge.rs` ignores the label arg). | `transcript_is_deterministic_for_identical_schedule`; sponge `labels_do_not_enter_production_sponge` |
-| I3 | The masked sumcheck driver's extra absorb (`ABSORB_SUMCHECK_CLAIM` in `prove_zk`/`verify_zk`) must vanish with the whole driver — never be merged into the transparent driver. | The transparent `prove`/`verify` driver does not emit it; merging would corrupt the transparent transcript. | I2 transcript test; code review |
+| I3 | Transparent sumcheck claim absorbs (`ABSORB_SUMCHECK_CLAIM`) stay unchanged; zk-only sumcheck drivers (`prove_zk`/`verify_zk`, masked round polys, zk EOR replay in `fold.rs`) are deleted wholesale and must not be folded into transparent `prove`/`verify` or orchestration. | Transparent paths already emit one claim absorb per sumcheck (standard/eq-factored drivers, batched stage-3, EOR verifier); zk drivers are cfg-swapped siblings using the same label. Slice 4 must drop zk arms verbatim without changing which transparent caller absorbs which claim value. | I2 transcript test; code review |
 | I4 | Setup serialization for the transparent path is unchanged. | `zk_b_matrix`/`zk_d_matrix` are serialized strictly *after* shared fields, only under cfg; no `not(zk)` padding counterpart. | Setup serialize→deserialize roundtrip (`setup.rs` tests) |
 | I5 | The non-zk path is the live production path (no orphaned stubs). | Stub sweep found zero `todo!`/`unimplemented!` in any `not(zk)` branch. | `cargo check` default build |
 | I6 | `--features zk` is allowed to break partway through the strip (it is being removed); only the default build must pass after every slice. | The feature is the deletion target. | Slice gates below |
@@ -244,8 +244,8 @@ Four entanglement classes, in ascending difficulty:
    prover + verifier carry cfg-gated positional params, plus the `+ mask` on
    `next_w_eval`. The drivers are already cleanly swapped via `cfg_if!`
    (`prove` vs `prove_zk`, `verify` vs `verify_zk`), so deletion = remove the zk
-   driver wholesale (taking its extra `ABSORB_SUMCHECK_CLAIM` with it — invariant
-   I3) and strip the gated params from the shared signatures.
+   driver wholesale (zk-only driver arms vanish — invariant I3) and strip the
+   gated params from the shared signatures.
 
 #### What stays vs goes
 
@@ -358,7 +358,7 @@ Ordering invariants (must hold regardless of how PRs are merged/split):
 
 | PR | Title | Crates driven to 0 cfg(zk) | Owns |
 |----|-------|----------------------------|------|
-| 4a | Verifier blinding-recompute leaf | (self-contained; verifier still carries fold cfg) | `ring_switch.rs` B/D blinding + `ring_switch/tests.rs`; delete `slice_mle/zk_blinding.rs`; `slice_mle/{mod.rs,structured_slice.rs,test_fixtures.rs,setup_contribution/fixtures.rs}` blinding parts. **+ add the verify-side golden** (Testing Strategy). Chosen as the *only* verifier zk cluster with zero coupling to the fold signature chain → zero cross-PR dangling refs. |
+| 4a | Verifier blinding-recompute leaf | (self-contained; verifier still carries fold cfg) | `ring_switch.rs` B/D blinding + `ring_switch/tests.rs`; delete `slice_mle/zk_blinding.rs` and orphaned `slice_mle/test_fixtures.rs`; `slice_mle/{mod.rs,structured_slice.rs,setup_contribution/fixtures.rs}` blinding parts. **+ add the verify-side golden** (Testing Strategy). Chosen as the *only* verifier zk cluster with zero coupling to the fold signature chain → zero cross-PR dangling refs. |
 | 4b | Verifier fold replay + hiding verify | **akita-verifier (src) → 0** | `core/zk.rs` (`verify_zk_hiding_commitment`), `verify.rs` zk blocks + `zk_hiding_cursor` threading, `stages/*` verify_zk, `core.rs` `mod zk`/imports, `core/{fold,suffix,root_fold}.rs`; un-gate `extension_opening_reduction`; delete `akita-sumcheck` **`verify_zk`** driver. **I3 review focus.** |
 | 4c | Prover orchestration + witness sizing | **akita-prover, akita-config, akita-planner, akita-setup → 0** | `core.rs` `ZkHidingProverState`/`build_zk_hiding_context`/pads; `prove/fold/root_fold/suffix`; `ring_switch/{commit,evals}` blinding; `masking.rs`; `zk_hiding_commit.rs`; `hints` blinding digits + `AkitaCommitmentHint` arity cleanup; `akita-config` `proof_optimized` `zk_hiding_witness_len`; `akita-planner` `resolve`/`catalog_identity`; `akita-setup` sizing; delete `akita-sumcheck` **`prove_zk`** driver. **I3 review focus.** The planner `zk_hiding_witness_len` and prover `build_zk_hiding_context` are deleted *together* (the harmless drift vanishes here). |
 | 4d | Proof schema unification | **akita-types, akita-sumcheck → 0** | `proof/{wire,levels,containers,shapes,ring_relation,proof_size,hints}.rs`: drop `zk_hiding` field, `ZkHidingProof`, the `sumcheck_proof`↔`_masked` / `next_w_eval`↔`_masked` swaps; delete the masked **type definitions** (OI-2). By now these fields have no producer/consumer → pure mechanical deletion. |
