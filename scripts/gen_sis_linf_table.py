@@ -349,6 +349,20 @@ def estimate_bits(
     except OverflowError:
         # Estimator overflow at extreme (m, beta); treat as above target security.
         return float("inf")
+    except TypeError as exc:
+        # The estimator's internal optimizer can return `None` and then crash
+        # (e.g. `NoneType * int` in util.py `local_minimum.__next__`) at extreme,
+        # heavily over-determined `m`. That regime is the same trivially-easy /
+        # insecure one the "SIS trivially easy" ValueError maps to, so treat it
+        # as below target (-inf) rather than aborting the whole run. Logged so a
+        # genuinely new failure mode stays auditable instead of silent.
+        print(
+            f"        // WARN estimator TypeError (d={d}, rank={rank}, "
+            f"width={width}, m={m}, collision_linf={collision_linf}): {exc}; "
+            f"treating as insecure (-inf)",
+            file=sys.stderr,
+        )
+        return float("-inf")
     rop = out["rop"]
     if rop == oo:
         return float("inf")
@@ -391,15 +405,27 @@ def binary_search_max_width(
     cap = min(search_cap, MAX_ESTIMATOR_M // d)
     if cap == 0:
         return 0
-    if bits(cap) >= target_bits:
-        return cap
+    if cap == 1:
+        # width 1 already shown secure above; nothing larger to probe.
+        return 1
 
-    hi = 1
+    # Exponential bracketing from below. `bits(cap)` is a full max-`m` estimator
+    # solve (m = cap * d ~ MAX_ESTIMATOR_M, ~100s); probing it on every cell
+    # dominated runtime even though the secure boundary is almost always tiny
+    # (single/double-digit widths). We now touch `cap` only if the doubling
+    # search actually reaches it -- i.e. every width below cap is still secure --
+    # so the common case never pays that cost. The `nxt == cap` guard also
+    # prevents an infinite doubling loop once `hi * 2` saturates at the ceiling.
+    hi = 1  # known secure: bits(1) >= target_bits
     while True:
         nxt = min(hi * 2, cap)
         if bits(nxt) >= target_bits:
+            if nxt == cap:
+                # Ceiling reached and still secure: cap is the answer.
+                return cap
             hi = nxt
             continue
+        # nxt is insecure; secure boundary lies in [hi, nxt).
         lo, high = hi, nxt
         while lo < high - 1:
             mid = (lo + high) // 2
@@ -494,24 +520,35 @@ def run_entries(
 
         widths: list[int] = []
         search_cap = args.search_cap if args.search_cap is not None else default_search_cap(d)
+        eff_cap = effective_search_cap(d, search_cap)
+        saturated = False
         for rank in range(1, args.max_rank + 1):
-            t0 = time.time()
-            w = binary_search_max_width(
-                SIS,
-                RC,
-                log,
-                oo,
-                q,
-                d,
-                rank,
-                collision,
-                args.target_bits,
-                search_cap,
-                args.red_cost_model,
-                args.red_shape_model,
-                zeta_candidates,
-            )
-            elapsed = time.time() - t0
+            if saturated:
+                # Max secure width is non-decreasing in rank (larger rank -> larger
+                # n -> harder SIS). Once a rank saturates the estimator ceiling, every
+                # higher rank does too, so skip the ~17s/rank ceiling probe entirely.
+                w = eff_cap
+                elapsed = 0.0
+            else:
+                t0 = time.time()
+                w = binary_search_max_width(
+                    SIS,
+                    RC,
+                    log,
+                    oo,
+                    q,
+                    d,
+                    rank,
+                    collision,
+                    args.target_bits,
+                    search_cap,
+                    args.red_cost_model,
+                    args.red_shape_model,
+                    zeta_candidates,
+                )
+                elapsed = time.time() - t0
+                if w >= eff_cap:
+                    saturated = True
             print(
                 f"        // (d={d}, collision_linf={collision}, rank={rank}): "
                 f"max_width={w:_}, cap={search_cap:_} ({elapsed:.1f}s)",

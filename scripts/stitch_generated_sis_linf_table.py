@@ -204,13 +204,13 @@ def stitch_mod() -> str:
 def write_table(family_arm_lines: dict[str, list[str]], *, dry_run: bool) -> None:
     if dry_run:
         print(stitch_mod())
-        for family in FAMILIES:
+        for family in sorted(family_arm_lines):
             print(stitch_family_file(family, family_arm_lines[family]))
         return
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "mod.rs").write_text(stitch_mod())
-    for family in FAMILIES:
+    for family in sorted(family_arm_lines):
         path = OUT_DIR / f"{family}.rs"
         path.write_text(stitch_family_file(family, family_arm_lines[family]))
         print(f"wrote {path} ({path.stat().st_size:,} bytes)", file=sys.stderr)
