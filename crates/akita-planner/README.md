@@ -154,7 +154,7 @@ cargo run --release -p akita-config --bin gen_schedule_tables -- crates/akita-sc
 To regenerate the `zk` tables:
 
 ```bash
-cargo run --release -p akita-config --features zk --bin gen_schedule_tables -- crates/akita-schedules/src/generated
+cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- crates/akita-schedules/src/generated
 ```
 
 The family list is in `akita-config::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the emitter and drift-guard tests so shipped entries and regeneration hooks stay aligned.
