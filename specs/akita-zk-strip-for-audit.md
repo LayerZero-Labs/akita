@@ -50,7 +50,7 @@ milestone; transparent path only):
 | PR | Scope | Status |
 |----|-------|--------|
 | 4a | Verifier blinding-recompute leaf + verify-side golden | In review |
-| 4b | Verifier fold replay + hiding verify (→ `akita-verifier` = 0) | Not started |
+| 4b | Verifier fold replay + hiding verify (→ `akita-verifier` = 0) | In review |
 | 4c | Prover orchestration + witness sizing (→ prover/config/planner/setup = 0) | Not started |
 | 4d | Proof schema unification (→ `akita-types`/`akita-sumcheck` = 0) | Not started |
 | 4e | Residual sweep + delete `zk` Cargo features + `akita-r1cs/` dir (→ global grep = 0) | Not started |
