@@ -34,8 +34,7 @@
 use akita_field::AkitaError;
 
 use super::norm_bound::{
-    fold_witness_beta, fold_witness_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
-    FoldWitnessNorms,
+    folded_witness_public_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use crate::DecompositionParams;
 
@@ -185,21 +184,7 @@ pub fn num_digits_fold(
     witness: FoldWitnessNorms,
     cap_config: FoldWitnessLinfCapConfig,
 ) -> Result<usize, AkitaError> {
-    let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
-    if beta == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "num_digits_fold: folded-witness bound β = 0".to_string(),
-        ));
-    }
-    let num_fold_blocks = (num_claims as u128)
-        .checked_mul(1u128 << r_vars)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("num_digits_fold: num_fold_blocks overflows u128".to_string())
-        })?;
-    let witness_linf_sq = witness
-        .infinity_norm()
-        .saturating_mul(witness.infinity_norm());
-    let cap = fold_witness_linf_cap(beta, num_fold_blocks, witness_linf_sq, &cap_config)?;
+    let cap = folded_witness_public_linf_cap(challenge, witness, r_vars, num_claims, &cap_config)?;
     if cap == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_digits_fold: fold witness L∞ cap is zero".to_string(),
