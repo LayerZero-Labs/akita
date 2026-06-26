@@ -24,7 +24,7 @@ suffix code re-prepares all four backend clusters and rebuilds stacks via
 This spec **demotes `D` from a storage and orchestration type parameter to a
 runtime schedule value**. Bulk data lives in flat field buffers; hot kernels still
 monomorphize at `const D` behind a single backend dispatch boundary. A
-**`FoldRingPlan`** is a derived view of validated per-level `ring_dimension` values
+**`RingDimPlan`** is a derived view of validated per-level `ring_dimension` values
 from the schedule; per-level **`RingLevelContext`** (ring dimension plus setup prefix
 geometry) is computed at runtime via `context_at` from the live
 `SetupRelationShape`, not stored inside the plan. **`PreparedSetup`** holds one NTT cache per
@@ -280,15 +280,19 @@ cutover (see Normative contracts) and is soundness-load-bearing, not just cleanu
 
 Make ring dimension a **schedule-driven runtime parameter** end to end:
 
-1. Different `D` per fold is first-class in prove, verify, and prepared state.
+1. Different `(d_a, d_b, d_d)` per fold is first-class in prove, verify, and prepared
+   state. `d_a` is the fold / ring-switch / inner-commitment ring (the legacy per-level
+   `ring_d`); `d_b, d_d` are the outer- (`B`) and opening- (`D`) commitment rings.
+   Uniform presets set `d_a == d_b == d_d` (byte-identical to today).
 2. Suffix orchestration does not special-case cross-D folds (no stack rebuild).
 3. Fold protocol storage (`PreparedFold`, `RingRelationInstance`) does not carry
    `const D` on the struct (Phase 3); in-memory owners use `RingBuf` / `RingSlice`.
 4. NTT prepared caches are one full-envelope cache per **distinct** `ring_d` (keyed
    `(ring_d, num_ring_elements)`), warmed at prove entry, never shared across `ring_d`.
    Prefix-sizing *within* a `ring_d` is a deferred optimization (see NTT cache design).
-5. Infrastructure supports a future planner that optimizes `ring_d` per fold step
-   within one field family.
+5. Infrastructure supports a future planner that optimizes the `(d_a, d_b, d_d)` triple
+   per fold step within one field family. Until then, hand schedules pick the triple;
+   the infrastructure must not assume `d_a == d_b == d_d`.
 
 ### Invariants
 
@@ -296,8 +300,11 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 
 - Fold math, ring switch, stage 1/2/3 unchanged unless listed under Wire Changes.
 - Verifier no-panic contract preserved (`docs/verifier-contract.md`).
-- `FoldRingPlan::dim_at(ℓ) == schedule[ℓ].params.ring_dimension` for every fold level.
-- Flat buffer chunking at level `ℓ` uses `dim_at(ℓ)`; malformed lengths return
+- `RingDimPlan::dim_at(ℓ) == schedule[ℓ].params.ring_dimension` for every fold level;
+  `dim_at(ℓ)` is the fold ring `d_a` (= `dims_at(ℓ).inner`).
+- Per-role dims satisfy `d_d | d_b | d_a` at every level (validated in `from_schedule`).
+- Flat buffer chunking of the committed witness at level `ℓ` uses `d_a`; the outer /
+  opening commitment matvecs chunk at `d_b` / `d_d`. Malformed lengths return
   `InvalidProof` / `InvalidSetup`, never panic.
 
 **Performance**
@@ -348,8 +355,9 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 - Runtime-D-generic NTT butterflies (no dynamic `D` inside SIMD loops).
 - Changing the `gen_ring_dim` / `max_setup_len` envelope **sizing policy** in Phases
   1–3 (the field-element accumulation described in "Setup sizing today" is Phase 4).
-- **Full planner mixed-D DP search** in the first PR (infrastructure only; see
-  Future: unified field-family planner).
+- **Planner search** over per-fold dims, including the `(d_a, d_b, d_d)` triple, in the
+  first PR (infrastructure + hand-picked triples only; see Future: unified field-family
+  planner). Per-block ring *geometry* is in scope; per-block *search* is not.
 - Replacing `CyclotomicRing<F, D>` as stack/value type inside kernels.
 - GPU / Metal backend design (`specs/akita-compute-backend-metal.md`).
 - Merging `fp128_d64` and `fp128_d128` preset families in the same PR as runtime
@@ -363,8 +371,8 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 
 - [ ] `setup_geometry_at` (shape-only, challenge-free; see Normative contracts) and
       `setup_active_ring_elems_at` in `akita-types`, with golden vectors.
-- [ ] `FoldRingPlan`, `RingLevelContext` in `akita-types`.
-- [ ] `FoldRingPlan::from_schedule` with validation catalog (see Normative contracts);
+- [ ] `RingDimPlan`, `RingLevelContext` in `akita-types`.
+- [ ] `RingDimPlan::from_schedule` with validation catalog (see Normative contracts);
       takes `&AkitaSetupSeed` (carries `gen_ring_dim` + identity), not a new envelope
       type.
 - [ ] `NttCacheKey`, `NttSlotCacheAny` (+ fallible `as_d::<D>()`), `NttCacheMap`
@@ -439,7 +447,7 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 
 **CI-hard**
 
-- `FoldRingPlan::from_schedule` on all shipped generated tables (uniform D today).
+- `RingDimPlan::from_schedule` on all shipped generated tables (uniform D today).
 - `setup_geometry_at` / `setup_active_ring_elems_at` golden vectors per representative
   level shape (single-tier, tiered, with/without prefix offload), pinning
   `(level shape, ring_d, required, offload?) → (active, ntt)`. These must be derivable
@@ -495,7 +503,7 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  Schedule / wire (runtime)                                        │
-│  FoldRingPlan, LevelParams.ring_dimension, RingBuf, Schedule     │
+│  RingDimPlan, LevelParams.ring_dimension, RingBuf, Schedule     │
 └────────────────────────────┬─────────────────────────────────────┘
                              │ RingLevelContext per level
 ┌────────────────────────────▼─────────────────────────────────────┐
@@ -586,18 +594,25 @@ pub const SUPPORTED_RING_DIMS: [usize; 4] = [32, 64, 128, 256];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RingLevelContext {
+    /// Per-role ring dims for this level (`d_d | d_b | d_a`).
+    pub role_dims: CommitmentRingDims,
+    /// The fold / ring-switch / inner-commitment ring. Invariant: `== role_dims.inner`.
+    /// Retained as a field so existing `ctx.ring_d` reads stay valid (the legacy scalar).
     pub ring_d: usize,
-    /// Shape-only count of setup ring rows the level's setup product touches
-    /// (`SetupContributionPlan::required`). Drives the offload decision and the setup
-    /// sumcheck's direct `ring_view`. Identical on prover and verifier.
+    /// Shape-only count of setup (inner-side, `d_a`) ring rows the level's setup product
+    /// touches (`SetupContributionPlan::required`). Drives the offload decision and the
+    /// setup sumcheck's direct `ring_view`. Identical on prover and verifier.
     pub setup_active_ring_elems: usize,
 }
 ```
 
-The NTT cache key for a level is just `(ctx.ring_d, total_ring_elements_at::<ring_d>())`
-— derivable from `ring_d` and the seed alone, with no dependence on the relation shape,
-the registry, or offload. That is why warm-cache by `plan.unique_dims()` is feasible
-(see Warm-cache policy).
+The NTT cache key for a *role* at a level is
+`(role_d, total_ring_elements_at::<role_d>())` for `role_d ∈ {d_a, d_b, d_d}` —
+derivable from the dim and the seed alone, with no dependence on the relation shape, the
+registry, or offload. A level therefore touches up to three keys (fold / ring-switch +
+inner matvec at `d_a`, outer matvec at `d_b`, opening matvec at `d_d`); uniform presets
+collapse to one. That is why warm-cache by `plan.unique_dims()` — which spans every role
+across every level — is feasible (see Warm-cache policy).
 
 **Offload decision at level ℓ** (normative; stays inside the setup sumcheck / stage 3,
 exactly where it is today, now ungated):
@@ -633,26 +648,41 @@ registry/slot off `const D` (see Phase-ordering note). Retain
 `SETUP_OFFLOAD_D_SETUP` (`d_setup = 64`) for setup-prefix slot construction in
 `akita-setup` / `setup_prefix.rs`.
 
-### `FoldRingPlan` and `RingLevelContext`
+### `RingDimPlan` and `RingLevelContext`
 
 Central runtime authority for per-fold ring geometry, derived once from the effective
-`Schedule` at prove/verify entry. **`FoldRingPlan` is a derived view**; it is not
+`Schedule` at prove/verify entry. **`RingDimPlan` is a derived view**; it is not
 separately digested (per-level `ring_dimension` is already bound in
 `PlanSection::from_schedule` via `LevelParams::append_descriptor_bytes`).
 
 ```rust
-pub struct FoldRingPlan {
-    ring_dims: [usize; MAX_FOLD_LEVELS],   // validated per-level ring dims
+/// Per-fold ring dimensions by role. Invariant: `opening | outer | inner`
+/// (i.e. `d_d | d_b | d_a`), all ∈ `SUPPORTED_RING_DIMS`.
+///   inner   = d_a — fold / ring-switch / inner-commitment ring (needs the challenge
+///                   family; == legacy per-level `ring_d`)
+///   outer   = d_b — outer-commitment (B) ring
+///   opening = d_d — opening-commitment (D) ring
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommitmentRingDims { pub inner: usize, pub outer: usize, pub opening: usize }
+impl CommitmentRingDims {
+    pub fn uniform(d: usize) -> Self { Self { inner: d, outer: d, opening: d } }
+}
+
+pub struct RingDimPlan {
+    role_dims: [CommitmentRingDims; MAX_FOLD_LEVELS],   // validated per-level, per-role dims
     pub num_folds: usize,
 }
 
-impl FoldRingPlan {
+impl RingDimPlan {
     pub fn from_schedule(
         schedule: &Schedule,
         seed: &AkitaSetupSeed,             // gen_ring_dim + identity already live here
     ) -> Result<Self, AkitaError>;
 
+    pub fn dims_at(&self, level: usize) -> Result<CommitmentRingDims, AkitaError>;
+    /// The fold ring `d_a` (= `dims_at(level).inner`); the legacy scalar accessor.
     pub fn dim_at(&self, level: usize) -> Result<usize, AkitaError>;
+    /// Spans every distinct dim over ALL roles and ALL levels (drives warm-cache).
     pub fn unique_dims(&self) -> impl Iterator<Item = usize> + '_;
 
     /// Per-level geometry. A per-level RUNTIME call (needs the live relation shape).
@@ -670,30 +700,37 @@ impl FoldRingPlan {
 }
 ```
 
-`dim_at` returns `ring_dims[level]` after bounds / support checks. `context_at`
-replaces today's `validate_level_dispatch`: it checks `SUPPORTED_RING_DIMS`,
-`schedule[level].params.ring_dimension == ring_dims[level]`, then derives
-`setup_active_ring_elems` via the shared `setup_active_ring_elems_at`. The NTT cache
-key for the level is `(ctx.ring_d, total_ring_elements_at::<ring_d>())`, formed
-separately at the kernel boundary — `context_at` does not compute it.
+`dim_at` returns `role_dims[level].inner` (= `d_a`) after bounds / support checks;
+`dims_at` returns the full triple. `context_at` replaces today's
+`validate_level_dispatch`: it checks `SUPPORTED_RING_DIMS`, the `d_d | d_b | d_a`
+nesting, `schedule[level].params.ring_dimension == d_a`, then derives
+`setup_active_ring_elems` (the inner / `d_a` setup-product count) via the shared
+`setup_active_ring_elems_at`. The NTT cache keys for the level are
+`(role_d, total_ring_elements_at::<role_d>())` per role, formed separately at the kernel
+boundary — `context_at` does not compute them.
 
-**Prove entry:** build `FoldRingPlan::from_schedule(schedule, seed)`; the verifier
-builds the same plan from the same schedule + seed. Per-level contexts are computed
-**inside** the loop (memoize per level if the same context is needed twice).
+Throughout the rest of this spec the scalar `ring_d` / `dim_at(ℓ)` denotes the fold ring
+`d_a`; the outer / opening dims `d_b, d_d` enter only the `B` / `D` commitment matvecs
+and their NTT keys.
 
-#### `FoldRingPlan::from_schedule` validation
+**Prove entry:** build `RingDimPlan::from_schedule(schedule, seed)`; the verifier builds
+the same plan from the same schedule + seed. Per-level contexts are computed **inside**
+the loop (memoize per level if the same context is needed twice).
+
+#### `RingDimPlan::from_schedule` validation
 
 `from_schedule` returns `InvalidSetup` (never panic) on:
 
 | Check | Rule |
 |-------|------|
 | Fold count | `schedule_num_fold_levels(schedule) ≤ MAX_FOLD_LEVELS` |
-| Supported D | every `params.ring_dimension ∈ SUPPORTED_RING_DIMS` |
-| Envelope divisibility | `seed.gen_ring_dim % ring_d == 0` at every level |
-| Schedule consistency | `ring_dims[ℓ] == schedule[ℓ].params.ring_dimension` |
-| Witness chain | `current_w_len % ring_d == 0` at each level; terminal shape valid |
-| Cross-level lengths | `next_w_len` consistent with digit layout at `ring_d` and the next level's `ring_d` when they differ |
-| Root layout | `ring_dims[0]` matches committed polynomial ring layout (validated at PCS commit entry) |
+| Supported dims | every role dim `d_a, d_b, d_d ∈ SUPPORTED_RING_DIMS` |
+| Role nesting | `d_d \| d_b \| d_a` at every level |
+| Envelope divisibility | `seed.gen_ring_dim % d_a == 0` at every level (implies `% d_b`, `% d_d` by nesting) |
+| Schedule consistency | `dims_at(ℓ).inner == schedule[ℓ].params.ring_dimension` (= `d_a`) |
+| Per-role witness chain | each committed object's length divisible by its role dim: witness / `d_a`, `t̂` / `d_b`, `ê` / `d_d`; terminal shape valid |
+| Cross-level lengths | `next_w_len` consistent with digit layout at `d_a` and the next level's `d_a` when they differ |
+| Root layout | `dims_at(0).inner` matches committed polynomial ring layout (validated at PCS commit entry) |
 
 Active-prefix feasibility is a **runtime** check (it depends on the live relation
 shape), not a `from_schedule` check: `setup_active_ring_elems_at` itself **fails closed**
@@ -703,6 +740,50 @@ this as `min(required, setup_len)`: capping silently truncates an under-provisio
 and makes the comparison vacuous.) Offload-slot coverage is checked where offload is
 decided (setup sumcheck / stage 3). Mixed-D schedules that bypass generated expansion (hand-built
 fixtures, the mixed-D fixture) must still satisfy this catalog.
+
+### Per-block ring dimension (A/B/D): correctness and soundness
+
+Why a single fold may run three ring dimensions at once. The justification is the
+ring-switch lift (Akita paper, `sec:prelim-ring-switch` and `rem:per-relation-ring-dim`),
+summarized here so this spec is self-contained.
+
+**Model.** The root relation has four row families: outer-commitment `B_g t̂_g = u_g`,
+opening-commitment `D ê = v`, folded-evaluation, and folded-commitment `… = A z`. Ring
+switching lifts each family to `Z_q[X]` with its own modulus `X^{d_b}+1` and evaluates at
+one shared challenge `α ∈ F_{q^k}`; the family contributes `w̃(x,y) · α̃^{(d_b)}(y) · m(x)`
+to the combined sum-check, where `α̃^{(d_b)}` is the length-`d_b` prefix of the one power
+ladder `{α^{2^j}}`. The committed witness MLE is flat over `Z_q`; the dimension enters
+only as that public weight, so the commitment is agnostic to per-role dims.
+
+**Which rows may diverge.** Only the folded rows multiply the witness by a fold challenge
+`c ∈ C`, so only they require the challenge family and its operator-norm certification —
+pinning `d_a` (and the inner matrix `A`, whose `A z` lives in `d_a`). `B_g t̂_g = u_g`
+and `D ê = v` carry no challenge, so `d_b, d_d` are free of the `≥ 2^128` sparse-family
+floor and chosen for Module-SIS, packing, and tail size; Akita nests them `d_d | d_b | d_a`.
+
+**Completeness.** Each family's quotient `r^{(b)}` exists (Euclidean division by
+`X^{d_b}+1`); the heterogeneous-arity sum-check (different `log d_b` degree-axes batched by
+random coefficients) accepts the honest prover.
+
+**Soundness** — three pieces:
+
+1. *Per-block ring-switch error.* A false family identity survives random `α` with
+   probability `≤ (2·d_b − 1)/q^k`; over the families the union bound gives
+   `Σ_b (2·d_b − 1)/q^k`, negligible.
+2. *Non-adaptive dimensions.* The per-level, per-role triple `(d_a, d_b, d_d)` is bound in
+   the transcript (schedule digest via `LevelParams::append_descriptor_bytes`) **before**
+   `α` and the fold challenges are drawn, so the union above is over a fixed family set,
+   not one the prover chooses after seeing `α`.
+3. *Binding transfers across views.* The shared digit objects `t̂` (folded in `A`-rows at
+   `d_a`, committed by `B` at `d_b`) and `ê` (folded at `d_a`, committed by `D` at `d_d`)
+   are read under two ring views of the *same* flat `Z_q` coefficients. The fold extractor
+   (coordinate-wise special soundness in `α` and the fold challenges) recovers each witness
+   sub-block as flat coefficients; the balanced-digit `ℓ_∞` bound is a function of those
+   coefficients, hence view-independent, so the Module-SIS binding of `B` at `d_b` and `D`
+   at `d_d` applies to the extracted object directly.
+
+**Byte-compat.** Uniform presets set `d_a == d_b == d_d`, recovering exactly today's
+single-ring behavior.
 
 ### Warm-cache policy
 
@@ -742,7 +823,7 @@ to avoid (both flagged in review):
   Warming *inside* a `level >= 1` loop, or lazily on first suffix use, would leave the
   root fold without a built entry — do not do that.
 - The standalone `commit` entry point (committing the root polynomial, which runs before
-  any `FoldRingPlan` exists) must likewise `ensure_ntt_slot` its root-layout entry
+  any `RingDimPlan` exists) must likewise `ensure_ntt_slot` its root-layout entry
   `(Cfg::D, total)` at its own entry, since `prepare_expanded` no longer builds it
   eagerly.
 
@@ -963,14 +1044,14 @@ per-call `ring_d` selects cache key and kernel monomorphization.
 
 Verifier has no `PreparedSetup` / NTT cache. Changes:
 
-- Build `FoldRingPlan` from schedule + seed (same as prover).
+- Build `RingDimPlan` from schedule + seed (same as prover).
 - `verify_fold(..., ctx: &RingLevelContext, ...)` without the suffix-level dispatch
   macro. `RingLevelContext` is identical to the prover's (no NTT field).
 - `context_at` is the same call as the prover's; the verifier simply never warms an NTT
   cache. The offload active/inactive decision (for transcript absorption) happens in
   stage 3 via the shared `select_setup_prefix_slot`, exactly as on the prover.
 - Flat proof decode: `proof.v().as_ring_slice::<D>()` where `D = ctx.ring_d`.
-- `validate_level_dispatch` replaced by `FoldRingPlan::context_at`.
+- `validate_level_dispatch` replaced by `RingDimPlan::context_at`.
 
 ### Descriptor binding (single authority)
 
@@ -1000,7 +1081,7 @@ Document the forward-looking relabeling in `specs/transcript-hardening.md`.
 | `CommitmentConfig::D` | **Setup envelope default** (`gen_ring_dim`) and root-commit layout; not suffix authority |
 | `AkitaCommitmentScheme<const D, Cfg>` | `AkitaCommitmentScheme<Cfg>` (Phase 2) |
 | `AkitaProverSetup<F, const D>` | `AkitaProverSetup<F>` (envelope degree read from `seed.gen_ring_dim`; relax the setup `gen_ring_dim != D` checks to compare against the seed itself) |
-| `batched_prove` (D from scheme struct) | `batched_prove` builds `FoldRingPlan` from resolved schedule + seed |
+| `batched_prove` (D from scheme struct) | `batched_prove` builds `RingDimPlan` from resolved schedule + seed |
 | `ring_challenge_config(d)` | called with `plan.dim_at(ℓ)` per fold |
 | `bind_transcript_instance_descriptor<const D>` | envelope `gen_ring_dim`; no type-param `D` |
 
@@ -1041,7 +1122,7 @@ Retain (already D-free / already shared — do not rewrite):
   (already take `d_setup`), `SetupPrefixVerifierRegistry<F>` (already D-free)
 - `SETUP_OFFLOAD_D_SETUP` (`d_setup = 64` naming constant in `setup_prefix.rs`)
 - `NttSlotCache<const D>`, `CyclotomicRing<F, D>`, all SIMD kernels
-- `validate_level_dispatch` semantics (subsumed by `FoldRingPlan::context_at`)
+- `validate_level_dispatch` semantics (subsumed by `RingDimPlan::context_at`)
 
 ### Wire changes
 
@@ -1050,7 +1131,7 @@ Retain (already D-free / already shared — do not rewrite):
 
 **Descriptor:** `AlgebraSection.ring_dimension_d` semantics become envelope
 `gen_ring_dim` (no byte change today; see Descriptor binding). No new `PlanSection`
-field for `FoldRingPlan`. Document the relabeling in `specs/transcript-hardening.md`.
+field for `RingDimPlan`. Document the relabeling in `specs/transcript-hardening.md`.
 
 ### Public API cutover
 
@@ -1059,8 +1140,8 @@ Phased migration for PCS and compute surfaces (full cutover, no shims):
 | Phase | `AkitaCommitmentScheme` | `CommitmentProver` / `Verifier` | `RingCommitment` / hints | `PreparedSetup` | Caller-visible `D` |
 |-------|-------------------------|----------------------------------|--------------------------|-----------------|-------------------|
 | 1 | `<const D, Cfg>` unchanged | `<F, D>` unchanged | `<F, D>` | D-free internal on `CpuBackend` | type param + schedule |
-| 2 | `<Cfg>` | `<F>` | `<F, D>` root only | D-free | root: `Cfg::D`; prove: `FoldRingPlan` |
-| 3 | `<Cfg>` | `<F>` | `RingBuf` / D-free where applicable | D-free | `FoldRingPlan` only at PCS boundary |
+| 2 | `<Cfg>` | `<F>` | `<F, D>` root only | D-free | root: `Cfg::D`; prove: `RingDimPlan` |
+| 3 | `<Cfg>` | `<F>` | `RingBuf` / D-free where applicable | D-free | `RingDimPlan` only at PCS boundary |
 
 **End-state integrator snippet (Phase 2+):**
 
@@ -1135,7 +1216,7 @@ GeneratedFoldStep {
 |-------|--------|
 | `fp128_d64_full`, `fp128_d128_full`, … separate tables | One `fp128_full` table with mixed `ring_d` per step |
 | User selects preset by embedded D | User selects field family + witness mode; planner picks D ladder |
-| `CommitmentConfig::D` names the preset | `CommitmentConfig` names field + decomposition; `FoldRingPlan` names D ladder |
+| `CommitmentConfig::D` names the preset | `CommitmentConfig` names field + decomposition; `RingDimPlan` names D ladder |
 
 **Open questions for planner PR (not resolved here):**
 
@@ -1151,7 +1232,7 @@ uniform `D`; Phase 4 planner work consumes the infrastructure.
 
 ## Documentation
 
-- `book/src/how/architecture.md`: `FoldRingPlan`, `RingBuf`, runtime `D` vs
+- `book/src/how/architecture.md`: `RingDimPlan`, `RingBuf`, runtime `D` vs
   `gen_ring_dim`, setup-sizing model, NTT-cache-per-`(D, prefix)`, diagram of three
   layers.
 - `book/src/how/proving/fold-path.md` (stub): schedule-driven ring dimension.
@@ -1164,7 +1245,7 @@ uniform `D`; Phase 4 planner work consumes the infrastructure.
 
 Both specs touch `protocol/core/{fold,suffix,prove}.rs` and `compute/poly.rs`.
 
-**Rule:** Land runtime ring **Phase 1** (`FoldRingPlan`, keyed NTT, shared setup
+**Rule:** Land runtime ring **Phase 1** (`RingDimPlan`, keyed NTT, shared setup
 geometry function, D-free prefix registry) before either spec rewrites fold
 preparation.
 
@@ -1232,7 +1313,7 @@ oracle the cutover must reproduce.
   check passes); `D=64` appears only as a runtime *view* of the 128 envelope
   (`128 % 64 == 0`). No sizing change is needed or allowed.
 
-### Wave 1 — Shared setup geometry + `FoldRingPlan` (`akita-types`, additions only)
+### Wave 1 — Shared setup geometry + `RingDimPlan` (`akita-types`, additions only)
 
 - `SetupRelationShape` (small projection: `num_claims`, `num_polynomials`,
   `m_row_layout`, tier dims — **no** `eq_tau1`, **no** `RingCommitment`).
@@ -1243,7 +1324,7 @@ oracle the cutover must reproduce.
   setup-sumcheck guard; do **not** silently `min`.
 - Refactor `SetupContributionPlan::prepare` to obtain `required`/endpoints from
   `setup_geometry_at` (weights layer on top, unchanged).
-- `FoldRingPlan`, `RingLevelContext`, `FoldRingPlan::from_schedule(schedule, &AkitaSetupSeed)`
+- `RingDimPlan`, `RingLevelContext`, `RingDimPlan::from_schedule(schedule, &AkitaSetupSeed)`
   with the validation catalog; `dim_at`, `unique_dims`, `context_at`.
 - **Done when:** new code compiles (unused is fine — wire one usage into a test);
   existing setup tests still pass.
@@ -1311,7 +1392,7 @@ Three independently-committable sub-steps; keep each green.
 
 Five sub-steps; keep each compiling.
 
-- **5a — Plan plumbing.** Build `FoldRingPlan::from_schedule` at prove and verify entry;
+- **5a — Plan plumbing.** Build `RingDimPlan::from_schedule` at prove and verify entry;
   warm the NTT cache via `plan.unique_dims()` (`&mut prepared`, then freeze) **before the
   root fold (level 0), not just before the suffix loop**; warm the root-layout entry in
   the standalone `commit` path too (see Warm-cache policy — both are review-flagged
