@@ -17,8 +17,8 @@ Recent fixed-width planner snapshots for the fp32 one-hot families show the term
 Those byte numbers are calibration, not a security premise, and they should be re-measured after the active tail-encoding work lands.
 
 This spec defines a minimal, self-contained prototype of an alternative tail-level shortness mechanism: an unstructured (dense, field-granular) Johnson-Lindenstrauss random projection.
-The verifier samples a dense ternary projection matrix from the Fiat-Shamir transcript; the prover projects the witness to an integer image `p`, reveals `p`, and the verifier checks a Euclidean norm bound on `p` over the integers.
-A sumcheck checks projection consistency against the witness multilinear extension: JL rows are batched with `eq` weights on `row_bits = log2(n_rows)` challenges (not Vandermonde `rho^j`), the public weight is the joint sparse-ternary MLE `J_tilde(r_J, r_w)` partially evaluated in `r_J`, and the standalone prototype exercises that degree-2 product relation before fusion.
+The verifier samples a dense binary-sign projection matrix from the Fiat-Shamir transcript; the prover projects the witness to an integer image `p`, reveals `p`, and the verifier checks a Euclidean norm bound on `p` over the integers.
+A sumcheck checks projection consistency against the witness multilinear extension: JL rows are batched with `eq` weights on `row_bits = log2(n_rows)` challenges (not Vandermonde `rho^j`), the public weight is the joint binary-sign MLE `J_tilde(r_J, r_w)` partially evaluated in `r_J`, and the standalone prototype exercises that degree-2 product relation before fusion.
 The wired protocol would replace the stage-1 infinity-norm range sumcheck at selected JL levels with an image-norm check plus a projection-consistency row.
 This prototype does not make that replacement in the recursive flow.
 
@@ -40,6 +40,18 @@ The goal is to land reusable JL primitives, exercise the consistency-sumcheck me
 | Fusion D1–D8 | — | not started |
 
 Tests (local): 28 in `akita-challenges` (`jl` filter), 4 in `akita-types` (`jl`), 2 in `akita-prover` (`jl`), 6 in `akita-verifier` (`jl`). Shared consistency harness helpers live in `akita-types::jl::fixtures` (`jl-test-fixtures` feature, dev-deps only). Nothing in `prove_batched` / `verify_batched` calls the new modules.
+
+### Revision target: binary signs instead of ternary entries
+
+The landed PR #191 mechanics use the LaBRADOR-style ternary alphabet `{-1,0,+1}` and two-bit packing. The next cutover target is to replace that alphabet everywhere with independent Rademacher signs `{-1,+1}`.
+
+The reason is both theoretical and practical:
+
+- **Theory precedent.** Achlioptas 2003, "Database-friendly random projections: Johnson-Lindenstrauss with binary coins", Theorem 1.1 explicitly proves Johnson-Lindenstrauss embeddings for independent `+1/-1` entries, scaled by `1/sqrt(k)`. So binary signs are a standard JL distribution, not a heuristic variant of ternary JL.
+- **Crypto implementation precedent.** Greyhound §6 states that its implementation deviates from LaBRADOR by sampling JL matrices with coefficients `±1` rather than `-1,0,1`, and §6.2 describes the resulting fast Four-Russians projection using the 16 signed sums of four coefficients.
+- **Akita implementation win.** A binary-sign row needs one bit per coordinate instead of two. Projection expansion and matrix memory traffic halve; the MLE four-column alphabet drops from `3^4 = 81` canonical patterns to `2^4 = 16`; and the projection hot loop becomes signed add/sub without a zero branch or zero-lane table.
+
+This revision is a **full cutover**, not a compatibility mode. Once implemented, `JlProjectionMatrix` means binary-sign JL. There should be no ternary/binary enum, no old packing decoder, and no proof/wire format that accepts both alphabets. PR #191 remains the mechanical prototype; the security writeup and implementation follow-up should target binary signs only.
 
 ## Motivation: why JL projection (and what it does *not* do)
 
@@ -120,9 +132,9 @@ That motivates replacing the envelope, but calibration alone is not a soundness 
 ### The Johnson-Lindenstrauss alternative
 
 A random projection can certify Euclidean shortness directly once its lower-tail failure probability and transcript-grinding budget are accounted for.
-Fix a vector `s` before sampling a random matrix `J` with entries in `{-1, 0, +1}` and `n_rows` rows.
+Fix a vector `s` before sampling a random matrix `J` with entries in `{-1,+1}` and `n_rows` rows.
 With high probability over `J`, a vector fixed before `J` is sampled cannot have a large Euclidean norm while its image has a small Euclidean norm.
-The relevant lower-tail constant comes from the LaBRADOR modular-JL analysis, but the exact `c(n_rows)` and slack used by Akita must be re-derived rather than copied from the 256-row backup.
+The real-valued concentration is standard binary JL (Achlioptas 2003). The modular statement needed by Akita must be re-derived from the LaBRADOR/GHL proof strategy with binary signs, because the published LaBRADOR Lemma 4.2 is stated for ternary entries with `Pr[0]=1/2`.
 The intended wired verifier therefore samples `J` from the transcript (so it is independent of the pinned object), receives the image `p = J s`, and checks `||p||_2` over the integers.
 
 The integer image check avoids proving an exact squared-sum identity modulo `q`, which is the small-field obstacle for exact `l2` certificates.
@@ -138,9 +150,62 @@ This forces a structured, ring-granular `J = J_0 (x) I_D` (entries that are cons
 At a **tail reveal** level the image itself is not committed as a recursive witness segment and then folded through a later level.
 The consistency is checked directly against the projected witness, and the image leaves the recursion as revealed data.
 For that reveal variant the commutation constraint does not force a structured matrix.
-The matrix can be a plain dense field-granular `{-1, 0, +1}` matrix, provided the protocol is only using it in this direct-consistency form.
+The matrix can be a plain dense field-granular `{-1,+1}` matrix, provided the protocol is only using it in this direct-consistency form.
 This is the "unstructured" projection this spec prototypes, and it is the simplest variant: dense matrix, reveal the image, check the norm over `Z`, prove consistency with one sumcheck.
 (The structured ring-granular committed-image variant for mid levels is explicitly out of scope.)
+
+### Binary modular-JL lemma target
+
+The statement Akita should prove and cite internally is the following binary analogue of LaBRADOR Lemma 4.2.
+
+**Target lemma (single-shot binary modular JL, Akita form).** Let `q` be an odd modulus, `J ∈ {-1,+1}^{m×d}` have independent Rademacher entries, and let `w ∈ [-q/2,q/2]^d` be fixed before `J` is sampled. For concrete constants `a_m`, `B_m`, and `Q_m`, if `||w||_2 >= b` and `b <= q / Q_m`, then
+
+```text
+Pr_J[ ||Jw mod q||_2 < sqrt(a_m) * b ] <= 2^-lambda.
+```
+
+For the PR #191 default, the intended row count is `m = 256` and `lambda = 128`. The proof task is to choose the largest usable `a_256` (for tight slack) and the smallest safe `Q_256` (for small-field headroom), while keeping the upper-tail completeness threshold `B_256` explicit:
+
+```text
+Pr_J[ ||Jw mod q||_2 > sqrt(B_256) * ||w||_2 ] <= eps_hi
+```
+
+The verifier then checks `||p||_2 <= T_p`. If the accepted image is consistent and `T_p = sqrt(a_m) * T_w`, soundness gives `||w||_2 <= T_w` except with the above failure probability. Completeness uses a larger honest threshold, or nonce regrind, sized from `B_m`.
+
+**Do not reuse LaBRADOR constants blindly.** Ternary LaBRADOR uses `E[C^2]=1/2`, so one projection row has variance `||w||_2^2/2` and `E||Jw||_2^2 = 128||w||_2^2` at `m=256`. Binary signs have variance `||w||_2^2` per row and `E||Jw||_2^2 = 256||w||_2^2`. A binary version can be normalized either by:
+
+```text
+J_bin_raw ∈ {-1,+1}^{m×d};        E||J_bin_raw w||_2^2 = m ||w||_2^2
+```
+
+or by comparing against the ternary scale with `J_bin_scaled = J_bin_raw / sqrt(2)`. Implementation should keep raw integer signs and adjust thresholds/constants, not introduce irrational scaling into the protocol.
+
+### Binary proof strategy
+
+The proof should adapt LaBRADOR Appendix A, with the real binary tail from Achlioptas/GHL as the concentration input. The structure is:
+
+1. **Real lower tail, no modulus.** Prove for fixed nonzero `w` that `Pr[||Jw||_2 < sqrt(a) ||w||_2]` is at most `2^-lambda` for binary `J`. The fastest conservative proof is Paley-Zygmund/small-ball per row plus Chernoff over `m` rows; the tight proof should use Achlioptas-style moment comparison or a numerical dynamic program over the extremal Rademacher sum to maximize `Pr[|<pi,w>| < t||w||]`. This replaces LaBRADOR Lemma 4.1.
+2. **Case 1: small norm, wrap is rare.** If `||w||_2 < q/10`, then a small modular image implies either the real image is small or some row wrapped close to a nonzero multiple of `q`. Bound the first event by step 1. Bound the wrap event by the binary upper tail `Pr[|<pi,w>| > c q]`, unioned over `m` rows. Binary signs are subgaussian with parameter `||w||_2`, so this part is at least as clean as the ternary proof.
+3. **Case 2: one huge coordinate.** If `||w||_∞ >= q/C_inf`, fix all row signs except the largest coordinate. For binary signs, toggling that one sign gives two values separated by `2|w_i|`; at most one can lie in a window of radius below `|w_i|`. Thus a single row has constant probability of escaping the small window, and Chernoff over `m` rows gives the `2^-lambda` lower-tail bound. This is the ternary proof's "large coordinate" case without the zero-sign complication.
+4. **Case 3: spread-out large norm.** If `||w||_2 >= q/10` but `||w||_∞` is small, truncate to a subvector `v` with norm in a fixed interval below `q/10` and disjoint residual `w-v`. Apply Berry-Esseen to `<pi,v> = sum_i epsilon_i v_i`, where each summand has variance `v_i^2` and third moment `|v_i|^3`. The Berry-Esseen error is proportional to `||v||_∞ / ||v||_2`, and is smaller than the ternary case after matching thresholds because binary signs have twice the row variance. Condition on the residual `<pi,w-v> mod q`; the bad set is an interval of length `2 sqrt(a) b`, and anti-concentration of the approximating normal bounds one-row failure away from one. Raise to `m`.
+
+The constants should be produced by a small checked script, committed under `scripts/` or `crates/akita-challenges/benches/` only if it is part of the reproducible security accounting. Inputs:
+
+- `m` row count, initially 256.
+- target `lambda`, initially 128.
+- candidate lower threshold `a`.
+- modular precondition constant `Q`.
+- large-coordinate cutoff `C_inf`.
+- Berry-Esseen constant, using the explicit `0.56` or better published constant chosen by the writeup.
+
+Outputs:
+
+- `a_m`: lower-tail threshold used for soundness.
+- `B_m`: upper-tail threshold / honest acceptance bucket used for completeness and regrind.
+- `Q_m`: modulus precondition `b <= q/Q_m`.
+- individual failure terms for the three cases, so the final lemma is auditable rather than a black-box simulation.
+
+The first pass may be conservative; the final pass should optimize `a_m` and `Q_m` jointly. Greyhound's binary `±1` implementation is precedent for the distribution, not a proof of these constants; Grand Danois inherits the ternary LaBRADOR constants and should not be cited for binary constants.
 
 ### The three corrections that frame the value
 
@@ -153,19 +218,19 @@ Prior internal analysis flagged three things that constrain how this prototype i
 ### Reusable prior code
 
 The retired `labrador-backup` branch contains a working dense reveal projection at `labrador-backup:src/protocol/labrador/johnson_lindenstrauss.rs`: a 256-row ternary matrix packed 2 bits per entry, deterministic per-row expansion from a 32-byte transcript seed via SHAKE, an integer projection path that centers base-field coefficients and rejects overflow, a nonce-regrind (retry-until-the-image-is-short) completeness loop, and a `collapse` (dot with a coefficient vector) helper.
-The implementation techniques are reusable.
+Only the transcript hosting, centering, overflow discipline, nonce-regrind shape, and image/norm API ideas are reusable. The matrix alphabet, packing, decode tables, MLE LUTs, and constants should be replaced by the binary-sign design.
 The transcript hosting, row count, coordinate encoding, overflow policy, and security constants must be reworked for current Akita rather than ported as-is.
 
 ## Intent
 
 ### Goal
 
-Land a standalone, field-generic and ring-dimension-generic JL projection prototype that samples a dense ternary projection matrix from a transcript seed, projects a witness to an integer image, checks the image Euclidean norm over the integers, and exercises projection-consistency with one degree-2 sumcheck in the intended fused-row oracle form, without wiring it into the recursive prove/verify flow.
+Land a standalone, field-generic and ring-dimension-generic JL projection prototype that samples a dense binary-sign projection matrix from a transcript seed, projects a witness to an integer image, checks the image Euclidean norm over the integers, and exercises projection-consistency with one degree-2 sumcheck in the intended fused-row oracle form, without wiring it into the recursive prove/verify flow.
 
 Concretely the prototype introduces:
 
 - `akita-challenges::jl` (new module): the dense projection matrix `JlProjectionMatrix`, deterministic transcript-seeded expansion (`sample`), integer projection (`project`) over centered witness coefficients, signed-coordinate encoding checks, and Euclidean-norm helpers. The projection acts on the flat integer coefficient vector of base-field elements, so the public API takes a flat `&[F]` coefficient slice (`F: FieldCore + CanonicalField`) and the caller flattens any ring layout. Ring structure (`const D`) is irrelevant to the projection and reappears only in the consistency sumcheck (the `akita-prover` module below), so it is not a parameter of this crate; this keeps `akita-challenges` at its field + transcript dependency layer.
-- `akita-challenges::jl::mle` (new submodule, PR1b): optimized joint-matrix MLE evaluation `eval_jl_mle_at` and the prover-side row-weight builder `build_jl_row_weights`. This is the verifier-critical bottleneck and reuses the packed-ternary row format plus Dao–Thaler split-eq contraction (see **Joint MLE evaluation** below). Adds a dependency on `akita-algebra` for `SplitEqEvals` only in this submodule.
+- `akita-challenges::jl::mle` (new submodule, PR1b): optimized joint-matrix MLE evaluation `eval_jl_mle_at` and the prover-side row-weight builder `build_jl_row_weights`. This is the verifier-critical bottleneck and reuses the packed binary-sign row format plus Dao-Thaler split-eq contraction (see **Joint MLE evaluation** below). Adds a dependency on `akita-algebra` for `SplitEqEvals` only in this submodule.
 - `akita-types::jl` (new module, PR2): shared consistency shapes — `JlWitnessLayout`, verifier-wire image embedding/norm checks, transcript absorb/sample helpers, and the batched image input claim. Optional `jl::fixtures` (`jl-test-fixtures` feature) holds dev-only sumcheck harness helpers shared by prover/verifier tests. Mirrors the `trace_weight` split: layout and wire contracts live in `akita-types`, not in `akita-challenges`.
 - `akita-prover::protocol::jl` (new module, PR2 prove side, not called by the flow): degree-2 product sumcheck prover (`prove_jl_consistency`, `JlConsistencyProver`). Builds padded witness/row-weight tables from `build_jl_row_weights`.
 - `akita-verifier::protocol::jl` (new module, PR2 verify side, not called by the flow): degree-2 product sumcheck verifier (`verify_jl_consistency`, `JlConsistencyVerifier`). Standalone tests use a `w_eval_hook` instead of a commitment opening; full cryptographic binding is deferred to fusion.
@@ -178,7 +243,7 @@ Concretely the prototype introduces:
 - **Coordinate injectivity.** Any coordinate that is later embedded into the field for consistency must be checked to lie in the chosen signed encoding window, for example `|p_j| < q/2`. This prevents modulo-`q` aliases from passing the field consistency check with a different integer norm. Protected by boundary tests around the signed encoding limit.
 - **No overflow on the integer path.** Centering uses balanced representatives in `[-(q-1)/2, (q-1)/2]`. The production fast path centers to `i32` digits and enforces the balanced-digit bound `|d| <= MAX_JL_DIGIT` (`= 32`, i.e. `lb <= 6`) at the boundary (`validate_digit_witness`), so every row sum `sum_i +-d_i` fits `i32` for any supported column count (`cols <= i32::MAX / MAX_JL_DIGIT`); accumulation is then unchecked `i32` on the hot path (including in the SIMD kernels, whose per-lane partials are bounded by the same argument). A non-digit input whose centered magnitude exceeds the digit bound (e.g. a full-magnitude fp128 element) is rejected at the boundary rather than wrapped or saturated, which is correct: it is not a JL witness. The checked-`i64` reference projection (`project_digits_reference`, test/bench only) is the correctness oracle and is the one place wider accumulation guards against overflow. The squared-norm reduction accumulates in `u128` (`l2_norm_sq_checked`); it is `O(n_rows)` and off the hot projection path. Protected by small-digit, oversized-rejection, digit-bound, fast-vs-`i64`-reference differential, and norm-bound tests.
 - **Norm check is over the integers.** Shortness is accepted from `||p||_2^2 <= T_p^2` over the integers, never from a squared-sum identity modulo `q`. This avoids the exact-`l2` no-wrap gate, but it still relies on the coordinate-injectivity check above. Protected by a completeness test (honest witness passes under a generous prototype bound) and a soundness-direction test (an over-norm image is rejected).
-- **Consistency claim has the intended fused-row form.** Rows are batched with `eq` weights on `row_bits = log2(n_rows)` variables (default `n_rows = 256`, `row_bits = 8`), matching the relation-sumcheck batching idiom rather than a Vandermonde `rho^j` fold. The public witness weight is `g(i) = sum_j eq(r_J, j) J[j, i]` on coefficient corners; equivalently `g_tilde(r_w) = J_tilde(r_J, r_w)` for the joint MLE `J_tilde` of the sparse-ternary matrix on the product hypercube `{0,1}^{row_bits} x {0,1}^{k_w}`. The proved identity is `sum_j eq(r_J, j) p[j] = sum_{x,y} g(x,y) w(x,y)`, a degree-2 product sumcheck `w_tilde * g_tilde` with input claim `sum_j eq(r_J, j) embed(p[j])`. This is the intended stage-2 fusion shape, but final drop-in compatibility still has to be checked against the current `w(x, y)` layout and stage-2 verifier API. Protected by a prove/verify round-trip test and a Schwartz-Zippel soundness-direction test (a wrong image fails except with the usual `r_J` / sumcheck collision probability).
+- **Consistency claim has the intended fused-row form.** Rows are batched with `eq` weights on `row_bits = log2(n_rows)` variables (default `n_rows = 256`, `row_bits = 8`), matching the relation-sumcheck batching idiom rather than a Vandermonde `rho^j` fold. The public witness weight is `g(i) = sum_j eq(r_J, j) J[j, i]` on coefficient corners; equivalently `g_tilde(r_w) = J_tilde(r_J, r_w)` for the joint MLE `J_tilde` of the binary-sign matrix on the product hypercube `{0,1}^{row_bits} x {0,1}^{k_w}`. The proved identity is `sum_j eq(r_J, j) p[j] = sum_{x,y} g(x,y) w(x,y)`, a degree-2 product sumcheck `w_tilde * g_tilde` with input claim `sum_j eq(r_J, j) embed(p[j])`. This is the intended stage-2 fusion shape, but final drop-in compatibility still has to be checked against the current `w(x, y)` layout and stage-2 verifier API. Protected by a prove/verify round-trip test and a Schwartz-Zippel soundness-direction test (a wrong image fails except with the usual `r_J` / sumcheck collision probability).
 - **No-panic on verifier-reachable paths.** Every shape mismatch (matrix dimensions, image length, point dimension, coefficient overflow) returns `AkitaError`, never panics, matching the verifier no-panic contract because the consistency check is intended to become verifier-reachable. Protected by malformed-input tests.
 - **No protocol-flow regression.** Nothing in `prove_batched` / `verify_batched` calls the new modules, so all existing prover/verifier/integration tests pass unchanged and no serialized proof type changes. Protected by the full existing test suite.
 - **Joint MLE evaluation correctness.** `eval_jl_mle_at(J, r_J, r_w)` equals the naive double sum `sum_{j,i} eq(r_J,j) eq(r_w,i) J[j,i]` for every packed matrix and challenge point; `build_jl_row_weights(J, r_J)[i]` equals `sum_j eq(r_J,j) J[j,i]`. The `#[doc(hidden)]` bench hooks `eval_jl_mle_at_from_eq_tables` / `eval_jl_mle_at_scalar_from_eq_tables` validate `e_j` / `e_w` lengths against the padded hypercube before slicing (verifier-reachable once fused). Protected by differential tests against a reference implementation, cross-checks that `eval_jl_mle_at` matches `eval_mle_from_weights(build_jl_row_weights(...), r_w)`, and an image-claim vs row-weight-dot-witness identity test in `jl::mle`.
@@ -191,7 +256,7 @@ These are the deferred items; each is investigated in the "Deferred work" sectio
 - **No structured / ring-granular committed-image (mid-level) projection.** Only the dense reveal projection is built.
 - **No weak-binding repricing write-up and no SIS repricing.** The realized-norm A-role price (operator factor retained, D4) is a security-accounting task, not needed to prototype mechanics.
 - **No ZK masking of the revealed image.** The revealed image leaks `n_rows` linear functionals; the prototype targets non-ZK builds.
-- **No exact `n_J` / `c(n_rows)` derivation.** `n_rows` (default 256) and the norm bound are configurable parameters.
+- **No finalized binary modular-JL constants.** `n_rows` (default 256) and the norm bound are configurable parameters until D4/D6 produce `a_m`, `B_m`, and `Q_m`.
 - **No removal of the terminal cleartext base case.**
 
 ## Evaluation
@@ -215,7 +280,7 @@ These are the deferred items; each is investigated in the "Deferred work" sectio
 
 New tests live alongside the new modules.
 
-- `akita-challenges`: unit tests for `sample` determinism, packed-matrix round-trip (`00 -> -1`, `01/10 -> 0`, `11 -> +1`), `project` correctness vs reference, signed-coordinate injectivity, checked integer norm computation, fp128 small-digit projection, and oversized non-digit rejection. Port the analogous implementation tests from `labrador-backup:src/protocol/labrador/johnson_lindenstrauss.rs`, but do not inherit its fixed row count or its dual `i64`/`i128` width split.
+- `akita-challenges`: unit tests for `sample` determinism, one-bit packed-matrix round-trip (`0 -> -1`, `1 -> +1`), `project` correctness vs reference, signed-coordinate injectivity, checked integer norm computation, fp128 small-digit projection, and oversized non-digit rejection. Port the analogous API tests from `labrador-backup:src/protocol/labrador/johnson_lindenstrauss.rs`, but do not inherit its ternary packing, fixed row count, or dual `i64`/`i128` width split.
 - `akita-challenges::jl::mle`: differential tests of `eval_jl_mle_at` and `build_jl_row_weights` against a naive `Θ(n_rows · cols)` reference; identity `eval_jl_mle_at(J,r_J,r_w) == eval_mle_from_weights(build_jl_row_weights(J,r_J), r_w)`; image-claim vs row-weight-dot-witness identity; short `eq` table rejection; SIMD vs scalar kernel parity; malformed shape errors return `AkitaError`.
 - `akita-types::jl`: layout pinning (`JlWitnessLayout`), wire validation (`embed_jl_image_coords`), layout/MLE geometry checks (`validate_layout_for_matrix_mle`). `jl::fixtures` (feature `jl-test-fixtures`) supplies shared witness-table helpers for downstream consistency tests.
 - `akita-prover`: prove-side rejection tests (image norm bound, malformed layout).
@@ -240,7 +305,7 @@ Cost shape (updated after optimization investigation):
 | Point eval `J̃(r_J,r_w)` | Verifier (fusion final check) | PR1b `eval_jl_mle_at` | `Θ(n_rows · cols)`; **LUT-amortized** one-shot eval over byte quads |
 | Consistency sumcheck | Prover + verifier | PR2 | `k_w` witness rounds; verifier JL work is dominated by `eval_jl_mle_at` |
 
-There is no closed-form shortcut for a dense random `J` (unlike `TraceWeight`). Constant-factor wins come from split-eq nesting, byte-wide ternary decode, deferred extension-field reduction, column-panel / outer-tile parallelism, and SIMD. Ternary sparsity (`P(J=0) = 1/2`) reduces ALU in the inner loop but **not** memory traffic. At tail scale (`n_rows = 256`, `cols ~ 2^{17}`) the verifier eval is intentionally `Θ(n_rows · cols)` but must be engineered to the same standard as PR1 projection kernels.
+There is no closed-form shortcut for a dense random `J` (unlike `TraceWeight`). Constant-factor wins come from split-eq nesting, byte/nibble-wide binary-sign decode, deferred extension-field reduction, column-panel / outer-tile parallelism, and SIMD. Binary signs remove ternary zeros, but they halve matrix bytes and collapse the 4-column MLE alphabet from 81 to 16 patterns. At tail scale (`n_rows = 256`, `cols ~ 2^{17}`) the verifier eval is intentionally `Θ(n_rows · cols)` but must be engineered to the same standard as PR1 projection kernels.
 
 ## Design
 
@@ -252,13 +317,13 @@ The prototype splits along the existing crate dependency graph.
 This crate owns Fiat-Shamir challenge sampling and depends only on `akita-field` and `akita-transcript`, the right layer for the projection primitives (field-level math, transcript-seeded, no sumcheck).
 It already exposes a SHAKE256-backed streaming `XofCursor` (with bias-free draws and a `next_sign` helper) and the transcript seed-derivation pattern used by the sparse-challenge sampler, which the JL module reuses.
 
-- `JlProjectionMatrix { n_rows, cols, row_bytes, packed_rows: Vec<u8> }`: a dense ternary matrix with entries `{-1, 0, +1}` packed 2 bits per entry (`00 -> -1`, `01/10 -> 0`, `11 -> +1`) in a single contiguous row-major buffer, drawn from the transcript-derived XOF stream.
+- `JlProjectionMatrix { n_rows, cols, row_bytes, packed_rows: Vec<u8> }`: a dense binary-sign matrix with entries `{-1,+1}` packed 1 bit per entry (`0 -> -1`, `1 -> +1`) in a single contiguous row-major buffer, drawn from the transcript-derived XOF stream.
 - `sample<F, T>(transcript, n_rows, cols) -> Result<Self, AkitaError>`: absorbs a context buffer (label, `n_rows`, `cols`, and a version/domain tag), draws a 32-byte seed, and expands rows deterministically. Per-row derivation, as in the backup, keeps generation parallel-safe; a single streaming `XofCursor` is also acceptable if tests lock the exact transcript behavior and no parallel row generation is required. `n_rows` and `cols` are parameters (default test `n_rows = 256`), not hardcoded.
 - `project<F>(&self, coeffs: &[F]) -> Result<JlImage, AkitaError>` (`F: FieldCore + CanonicalField`): centers each coefficient to its balanced `i32` representative (`center_coefficients`) and projects through the fast kernel to `i32` image coordinates. JL is only ever applied to small balanced digits (`|d| <= MAX_JL_DIGIT = 32`), so `i32` holds both the centered digits and every row sum with room to spare; there is no `i64`/`i128` on the hot path. The modulus is recovered for `CanonicalField` as `(-F::one()).to_canonical_u128() + 1`; if a clearer modulus helper is added later, use it instead. A non-digit input whose centered magnitude exceeds the digit bound (e.g. a full-magnitude fp128 element) is rejected at the boundary rather than wrapped or saturated. Returns an error on a digit-bound violation or a `coeffs.len() != cols` shape mismatch. `project_digits(&[i32])` is the pre-centered entry point; `project_digits_reference` is a checked-`i64` oracle for tests/benches.
 - `JlImage` (or an equivalent explicit type) stores signed integer coordinates, exposes checked embedding into `F` only when the configured signed window is injective, and exposes checked norm helpers such as `l2_norm_sq_checked` / `check_l2`.
 
 **`akita-challenges::jl::mle` (joint matrix MLE, PR1b).**
-Depends on `akita-algebra` for `SplitEqEvals`. Shares packed-row decode (`SIGNS_FOR_BYTE`) and SIMD dispatch conventions with `project`.
+Depends on `akita-algebra` for `SplitEqEvals`. Shares packed-row decode (`BINARY_SIGNS_FOR_BYTE` or direct bit masks) and SIMD dispatch conventions with `project`.
 
 - `eval_jl_mle_at<L>(matrix, r_J, r_w) -> Result<L, AkitaError>`: fused verifier contraction (see **Joint MLE evaluation**).
 - `build_jl_row_weights<L>(matrix, r_J) -> Result<Vec<L>, AkitaError>`: prover row-weight table `g`.
@@ -300,18 +365,18 @@ This subsection is the canonical design for PR2 (`akita-types::jl`, `akita-prove
 
 #### Objects and indexing
 
-- `J ∈ {-1,0,+1}^{n_rows × cols}`: dense ternary matrix from `JlProjectionMatrix::sample` (packed two bits per entry).
+- `J ∈ {-1,+1}^{n_rows × cols}`: dense binary-sign matrix from `JlProjectionMatrix::sample` (packed one bit per entry).
 - `n_rows` is a power of two in production (`256` default, `row_bits = 8`). If not, pad with zero rows and zero image coordinates.
 - Witness coefficients `c_i` (centered digits) index corners of `{0,1}^{k_w}` with `k_w = col_bits + ring_bits`, matching stage-2 table `w(x, y)` under the same flatten map `i = index(x, y)` used by the prover layout.
 - Row index `j ∈ {0,1}^{row_bits}` (little-endian, same convention as `EqPolynomial` elsewhere).
 - Integer image `p_j = sum_i J_{j,i} c_i` (exact `ℤ`; revealed for the tail prototype).
 
-#### Joint sparse-ternary MLE of `J`
+#### Joint binary-sign MLE of `J`
 
 Define the truth function on the product hypercube:
 
 ```text
-J_hat(j, i) = J[j, i]  in {-1, 0, +1}
+J_hat(j, i) = J[j, i]  in {-1, +1}
 ```
 
 Its multilinear extension over challenge points `(r_J, r_w)` with `r_J ∈ L^{row_bits}` and `r_w ∈ L^{k_w}` is:
@@ -321,7 +386,7 @@ J_tilde(r_J, r_w)
   = sum_{j, i} eq(r_J, j) * eq(r_w, i) * J[j, i]
 ```
 
-`J_hat` is **dense** on the hypercube (random `J`), but **ternary** at every corner: values lie in `{-1,0,+1}`, and the implementation uses the same packed-row format as integer projection.
+`J_hat` is **dense** on the hypercube (random `J`) and binary at every corner: values lie in `{-1,+1}`, and the implementation uses the same one-bit packed-row format as integer projection.
 
 Partial evaluation in `r_J` yields the public witness weight table:
 
@@ -376,7 +441,7 @@ w_tilde(r_w) * g_tilde(r_w)  =  claim_JL
 
 The verifier cannot close this from `g` and `p` alone: it needs `w_tilde(r_w)` at the sumcheck final point (from the shared sumcheck output in fusion; from public witness data or an explicit evaluation hook in the standalone prototype).
 
-The prover builds `JlWeight` once from `J` and `r_J` via `build_jl_row_weights` (`Θ(n_rows · cols)` ternary work, shared kernels with projection and MLE). The witness scan reuses the stage-2 pattern (public weight table times witness MLE).
+The prover builds `JlWeight` once from `J` and `r_J` via `build_jl_row_weights` (`Θ(n_rows · cols)` binary-sign work, shared kernels with projection and MLE). The witness scan reuses the stage-2 pattern (public weight table times witness MLE).
 
 #### Fusion with stage-2
 
@@ -426,18 +491,18 @@ Standalone slice between PR1 (projection) and PR2 (consistency sumcheck). Implem
 
 Both have the same asymptotic cost (`Θ(n_rows · cols)` matrix touches) but different memory behavior. The verifier path is the performance-critical one and must not allocate the weight hypercube.
 
-#### Production algorithm: LUT-amortized byte-quad eval (landed)
+#### Production algorithm: LUT-amortized byte/nibble eval (binary target)
 
-The shipped `eval_jl_mle_at` path (PR #191) does **not** use split-eq nesting; it matches the projection kernels' byte geometry:
+The shipped PR #191 `eval_jl_mle_at` path does **not** use split-eq nesting; it matches the projection kernels' byte geometry. Under the binary-sign cutover the same idea remains, but the table is 16-pattern rather than 81-pattern:
 
 1. Precompute `eq(r_J, ·)` and `eq(r_w, ·)` once (`EqPolynomial::evals`).
 2. Validate table lengths against the padded row/column hypercube (`validate_eq_tables`); bench hooks return `AkitaError` on short buffers instead of silent truncation.
-3. Partition witness columns into byte-aligned 4-column quad windows (same panel convention as PR1).
-4. For each quad: build a 256-entry sign-weight LUT from the four `eq(r_w, ·)` weights (81 canonical ternary patterns via axis extension, remapped through `BYTE_TO_TERNARY4` so `01`/`10` zero pairs collapse).
-5. Scan every matrix row: one LUT lookup + one field add per packed byte into per-row accumulators `row_acc[j]`.
+3. Partition witness columns into byte-aligned 8-column windows, or nibble-aligned 4-column windows when that gives cleaner SIMD scheduling.
+4. For each 4-column nibble: build a 16-entry sign-weight LUT from the four `eq(r_w, ·)` weights. For an 8-column byte, use two 16-entry LUT lookups or one 256-entry byte LUT built as the sum of two nibbles.
+5. Scan every matrix row: one or two LUT lookups plus field adds per packed byte into per-row accumulators `row_acc[j]`.
 6. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
 
-On aarch64 fp128 at tail-scale column counts this LUT path is ~3× faster than a row-major scalar baseline and beats deferred-reduction wide variants tried during PR1b (`benches/jl_mle.rs`, `scalar` vs `lut`).
+On aarch64 fp128 at tail-scale column counts the existing ternary LUT path is ~3× faster than a row-major scalar baseline and beats deferred-reduction wide variants tried during PR1b (`benches/jl_mle.rs`, `scalar` vs `lut`). Binary should improve the same path through half the matrix bytes and much smaller LUT construction.
 
 `build_jl_row_weights` uses direct row-eq accumulation over packed matrix bytes (`mle/common.rs`), not the LUT (prover materializes the full `g` vector once).
 
@@ -451,15 +516,15 @@ J̃(r_J, r_w) = Σ_{j_o,j_i,i_o,i_i} e_J_out[j_o] · e_J_in[j_i] · e_w_out[i_o]
 
 with `W[j_i, i_i] = e_J_in[j_i] · e_w_in[i_i]` precomputed and outer tiles parallel over `(j_o, i_o)`.
 
-#### Inner hot loop: ternary × eq weight
+#### Inner hot loop: binary sign × eq weight
 
-Matrix entries are uniform random 2-bit pairs (`00 → -1`, `01/10 → 0`, `11 → +1`), so `P(J=0) = 1/2` and `P(J=±1) = 1/4` each.
+Matrix entries are uniform random bits (`0 -> -1`, `1 -> +1`), so every entry contributes exactly one signed add/sub.
 
-Per matrix entry the update is `acc ± W` (add, subtract, or skip), not a general field multiply by `J`.
+Per matrix entry the update is `acc ± W`, not a general field multiply by `J`.
 
-**Byte-wide processing (primary micro-kernel):** reuse PR1's `SIGNS_FOR_BYTE` LUT (`256 × 4` `i8`, 1 KiB, L1-resident). For each packed row byte covering four consecutive columns, load four eq weights `W[j_i, i_i..i_i+3]` and four signs from the LUT; accumulate into a deferred extension-field accumulator (`MulBaseUnreduced` / `ProductAccum`, same contract as `partials_out_contribution`).
+**Byte-wide processing (primary micro-kernel):** replace PR1's ternary `SIGNS_FOR_BYTE` table with a binary sign table (`256 × 8` `i8`, 2 KiB, L1-resident) or with direct bit masks. For each packed row byte covering eight consecutive columns, load eight eq weights and eight signs; accumulate into a deferred extension-field accumulator (`MulBaseUnreduced` / `ProductAccum`, same contract as `partials_out_contribution`). For the MLE path, prefer 4-column nibble LUTs when they cut table build from 256 entries to 16 without harming scan locality.
 
-**SIMD:** mirror PR1 layout (NEON `vmlal_s16` over sign×weight products; x86 `madd_epi16` / AVX-512 widening). Here the "digits" are extension-field eq weights (or their lifted `i16` limb patterns for base fields), not witness `i8` digits. Runtime arch dispatch like PR1.
+**SIMD:** mirror PR1 layout (NEON `vmlal_s16` over sign×weight products; x86 `madd_epi16` / AVX-512 widening). Here the "digits" are extension-field eq weights (or their lifted `i16` limb patterns for base fields), not witness `i8` digits. Runtime arch dispatch like PR1. Binary signs also enable XOR/sign-mask variants for integer projection; benchmark against widened multiply-add before replacing the simple sign-table path.
 
 **Deferred reduction:** inner face sums many `±W` into `ProductAccum`; reduce once per inner face; multiply by the outer `e_J_out · e_w_out` and add to the global accumulator.
 
@@ -468,19 +533,19 @@ Per matrix entry the update is `acc ± W` (add, subtract, or skip), not a genera
 **Helps (spec adopts):**
 
 1. **Fused verifier eval** — saves a `2^{k_w}` field-element write and a second pass; largest win for verifier memory bandwidth.
-2. **LUT-amortized byte-quad scan** (landed) — per 4-column window, one 256-entry sign-weight LUT reused across all rows; matches PR1 byte geometry.
-3. **`SIGNS_FOR_BYTE` / `BYTE_TO_TERNARY4` + byte-wide scan** — amortizes ternary decode over four columns.
+2. **LUT-amortized nibble/byte scan** — per 4-column nibble, one 16-entry sign-weight LUT reused across all rows; an 8-column byte can use two nibble lookups or a 256-entry composed byte LUT.
+3. **Binary `SIGNS_FOR_BYTE` or direct bit masks + byte-wide scan** — amortizes sign decode over eight columns.
 4. **Column panels / outer-tile parallelism** — witness read once in projection; MLE parallel path fans over quad windows when `parallel` is enabled.
-5. **Branchless ternary via sign LUT** — `sign · W` with `sign ∈ {-1,0,+1}`.
+5. **Branchless binary sign LUT** — `sign · W` with `sign ∈ {-1,+1}`.
 
 **Does not help enough (spec rejects as primary strategies):**
 
-1. **Skipping zero entries with branches.** Zeros are pseudorandom (`P=1/2`); unpredictable branches hurt more than they save. Must still **read** every packed 2-bit pair to discover the sign. Sparsity is an **ALU** (~2×) win via LUT, not a memory-traffic win.
-2. **Four-Russians / large pattern tables over `k` ternary columns.** Classic 4R amortizes `3^k` (or `4^k` packed-byte) partial-sum tables across many queries on the same block. The verifier runs **one** `eval_jl_mle_at` per proof; table build would dominate. Stage-1/stage-2 prefix LUTs (`STAGE1_B4_PREFIX_LOOKUP_TABLE`, etc.) work because the **digit alphabet is tiny and fixed** and the table is reused across millions of sumcheck rounds, not because ternary JL entries resemble binary digits. Do not build per-proof `3^k` tables over eq-weighted column blocks.
+1. **Zero-skip optimizations inherited from ternary JL.** Binary JL has no zero entries, so there is nothing to skip. The hot loop should focus on compact one-bit decode and signed add/sub.
+2. **Four-Russians / large pattern tables over `k` binary columns.** Classic 4R amortizes `2^k` partial-sum tables across many queries on the same block. The verifier runs **one** `eval_jl_mle_at` per proof; table build dominates once `k` grows past a byte. Stage-1/stage-2 prefix LUTs (`STAGE1_B4_PREFIX_LOOKUP_TABLE`, etc.) work because the table is reused across millions of sumcheck rounds. Keep the per-proof JL table at nibble/byte size.
 3. **Sparse / run-length `J` storage.** Would sacrifice the uniform dense XOF expansion and complicate matrix generation for uncertain gain on random data.
 4. **Materializing full `g` on the verifier** then `Σ_i eq(r_w,i) g[i]` — correct but strictly worse than `eval_jl_mle_at` for memory.
 
-**Benchmark later (optional, not spec blockers):** AVX-512 `vpcompress`-style masked accumulation for nonzero lanes; `vdotq_s32` on AArch64 when toolchain stabilizes; tuning split bit-widths (`4+4` vs `3+5` on rows) for cache.
+**Benchmark later (optional, not spec blockers):** sign-mask add/sub kernels on AVX2/AVX-512; `vdotq_s32` on AArch64 when toolchain stabilizes; tuning split bit-widths (`4+4` vs `3+5` on rows) for cache.
 
 #### Crate placement and dependencies
 
@@ -503,8 +568,8 @@ Tests sweep representative fp32/fp64/fp128 and supported `D` values, excluding d
 
 - **Vandermonde `rho^j` row batching.** A single challenge `rho` with weights `rho^j` is equivalent in intent but mismatched to the relation-sumcheck `eq` batching idiom and to the joint `(r_J, r_w)` MLE view. Rejected in favor of `row_bits` challenges and `eq(r_J, j)` weights.
 - **Verifier builds full `g` table then evaluates `eq(r_w, ·)`.** Algebraically identical to `eval_jl_mle_at` but allocates and writes `2^{k_w}` field elements on the verifier. Rejected in favor of fused split-eq point evaluation.
-- **Four-Russians tables over `k` ternary column blocks.** No cross-query amortization on the verifier's one-shot eval; per-block setup with eq-dependent weights dominates. Rejected; `SIGNS_FOR_BYTE` is the right static LUT size (256 bytes worth of signs per packed byte).
-- **Branching on `J=0` to skip half the updates.** Pseudorandom zeros; mispredictions likely outweigh savings. Rejected; use branchless sign LUT like PR1.
+- **Four-Russians tables over large `k` column blocks.** No cross-query amortization on the verifier's one-shot eval; per-block setup with eq-dependent weights dominates. Rejected beyond nibble/byte LUTs; binary `SIGNS_FOR_BYTE` or direct bit masks are the right static decode size.
+- **Branching on sign value.** Binary signs are dense, so branches only add misprediction risk. Rejected; use a branchless sign LUT or bit-mask add/sub.
 - **Sparse / compressed `J` on disk.** Breaks uniform XOF expansion; marginal on random data. Rejected for prototype.
 - **Standalone separate sumcheck (not fused-row).** Simpler to write but throwaway; it would not match the fusion target and would be rewritten. Rejected in favor of building the fused-row weight now.
 - **Hand-rolled textbook sumcheck instead of the `akita-sumcheck` driver.** Duplicates the engine and is less drop-in for fusion. Rejected; reuse the existing driver via a small instance type.
@@ -569,20 +634,21 @@ eta_A = 2 * Gamma_bar * beta_bar_2
 w_next = (e_hat, t_hat, z_hat, r_hat)   // flat digits; z_hat is a segment, not a separate object
 ```
 
-So `||z_hat||_2 <= ||w_next||_2` (Euclidean norm on the concatenated digit vector). Modular-JL (LaBRADOR Lemma 4.2) relates the accepted image threshold to a witness bound, e.g. `||w_next||_2 <= T_w` with `T_w = f(T_p)` for a schedule-fixed slack `f` (LaBRADOR uses `sqrt(30)` in the lower-tail regime; median+regrind policies add factors like `sqrt(128/30)` at sizing time). For weak binding, `beta_resp` bounds the response difference `||z^{(i)} - z^{(0)}||_2 <= 2 * ||z_hat||_2 <= 2 * T_w`. Plug that realized `beta_bar_2` into `eta_A` instead of the `sqrt(d) * beta_inf` pipeline.
+So `||z_hat||_2 <= ||w_next||_2` (Euclidean norm on the concatenated digit vector). The binary modular-JL lemma above relates the accepted image threshold to a witness bound: if `T_p = sqrt(a_m) * T_w`, then accepted consistency plus `||p||_2 <= T_p` implies `||w_next||_2 <= T_w` except with the selected statistical failure probability. The honest threshold/regrind policy uses the separate upper-tail constant `B_m`. For weak binding, `beta_resp` bounds the response difference `||z^{(i)} - z^{(0)}||_2 <= 2 * ||z_hat||_2 <= 2 * T_w`. Plug that realized `beta_bar_2` into `eta_A` instead of the `sqrt(d) * beta_inf` pipeline.
 
 **What D4 work actually is.** Not a protocol fork and not an "extraction re-architecture" item:
 
-1. Pick and document the slack map `T_p -> T_w -> beta_bar_2` (honest buckets, regrind policy D5, signed-coordinate window).
-2. Size `n_rows` so the JL statistical term matches the per-level `2^{-128}` budget (D6).
-3. One short writeup lemma: accepted `(p, J, w_next)` implies the `beta_bar_2` used in `norm_bound.rs`.
-4. D3: swap the `beta_inf` input for the JL-derived `beta_bar_2` and regen SIS tables.
+1. Prove and document the binary constants `(a_m, B_m, Q_m)` for the selected `m` and `lambda` (D6).
+2. Pick and document the slack map `T_p -> T_w -> beta_bar_2`, with `T_p = sqrt(a_m) * T_w`, honest buckets from `B_m`, regrind policy D5, and signed-coordinate window.
+3. Size `n_rows` so the JL statistical term matches the per-level `2^{-128}` budget (D6).
+4. One short writeup lemma: accepted `(p, J, w_next)` implies the `beta_bar_2` used in `norm_bound.rs`.
+5. D3: swap the `beta_inf` input for the JL-derived `beta_bar_2` and regen SIS tables.
 
 **Global projection.** One dense `J`, one image `p`, one norm check on the concatenated `w_next` coefficients (prototype default `n_rows = 256`). No per-block projection union.
 
 **Why deferred.** Constants and writeup only; prototype mechanics already match the bound path.
 
-**Open questions.** Exact `f(T_p)` under akita's modulus and threshold policy; coordinate injectivity `|p_j| < q/2` in the JL-to-field consistency step; whether any `norm_bound.rs` consumer still assumes stage-1 digit-range pricing after JL levels delete stage 1 (D3 audit).
+**Open questions.** Tight binary constants `(a_m, B_m, Q_m)` under Akita's modulus and threshold policy; coordinate injectivity `|p_j| < q/2` in the JL-to-field consistency step; whether any `norm_bound.rs` consumer still assumes stage-1 digit-range pricing after JL levels delete stage 1 (D3 audit).
 
 ### D5. Completeness: nonce regrind and the norm-threshold policy
 
@@ -595,13 +661,28 @@ Fusion needs: a bounded regrind nonce in the proof/transcript, a schedule-fixed 
 
 **Open questions.** Nonce search budget; how the regrind nonce binds in the descriptor/transcript; interaction with the per-draw 128-bit entropy floor.
 
-### D6. Sizing `n_rows` for the single global projection (no union)
+### D6. Proving binary constants and sizing `n_rows` for the single global projection
 
-**What.** With a single global projection (D4), the JL failure probability is the **single-shot** lower tail of the modular-JL lemma, not a union over blocks. LaBRADOR's Lemma 4.2 gives `Pr_J[||J s mod q||_2 < sqrt(30) * b] <= 2^{-128}` at `n_rows = 256` for one vector `s in [+-q/2]^N` with `||s||_2 >= b <= q/125`. The `q/125` precondition is engineered for `q ~ 2^32` (fp32), so it transplants directly. Because the whole concatenated object is projected once and a single global Euclidean norm is certified, there is **no** `#objects` union and no `n_rows ~ 256 + 2*log2(#objects)` inflation -- that earlier framing was an artifact of a per-block design the spec no longer pursues.
+**What.** With a single global projection (D4), the JL failure probability is the **single-shot** lower tail of the modular-JL lemma, not a union over blocks. For binary signs the required deliverable is the target lemma above:
 
-**Why deferred.** The prototype uses a configurable `n_rows` (default 256) and a generous bound; the exact slack and constant feed D3/D4 pricing.
+```text
+J ∈ {-1,+1}^{m×N},  w ∈ [+-q/2]^N,  ||w||_2 >= b,  b <= q/Q_m
+    => Pr[||Jw mod q||_2 < sqrt(a_m) b] <= 2^-lambda.
+```
 
-**Open questions.** Whether akita keeps `n_rows = 256` with LaBRADOR's `2^{-128}` constant or re-derives the lower-tail exponent at a different `n_rows` (LaBRADOR states the bound only for 256 rows -- the binding lower tail is GHL21 Cor 3.2, not proven for general `n_rows` there); the `sqrt(128/30) ~ 2.07` slack vs a tighter threshold with nonce regrind (D5); whether root-level JL is used at all (the algebraic range check has no JL statistical failure mode and the live dense-verifier cost is largest at the root).
+Because the whole concatenated object is projected once and a single global Euclidean norm is certified, there is **no** `#objects` union and no `n_rows ~ 256 + 2*log2(#objects)` inflation. That earlier framing was an artifact of a per-block design the spec no longer pursues.
+
+The proof work is:
+
+1. Reproduce the LaBRADOR three-case modular proof in a standalone note or script comments.
+2. Replace the ternary row distribution with binary Rademacher signs.
+3. Compute explicit constants for all three cases, including the real lower tail, the wrap upper tail, the large-coordinate cutoff, and the Berry-Esseen spread case.
+4. Emit a machine-checkable constants table for `(lambda, m) = (128, 256)` and any other row counts the planner considers.
+5. Add a small Monte Carlo sanity bench only as a regression signal; the lemma constants must come from analytic bounds, not simulation.
+
+**Why deferred.** The prototype uses a configurable `n_rows` (default 256) and a generous bound; the exact binary constants feed D3/D4 pricing and D5 completeness.
+
+**Open questions.** Whether Akita keeps `m = 256` or uses a smaller/larger binary row count after constants are known; how aggressive `a_m` can be while keeping `Q_m` friendly to fp32; whether the upper-tail threshold `B_m` gives acceptable nonce-regrind rates; whether root-level JL is used at all (the algebraic range check has no JL statistical failure mode and the live dense-verifier cost is largest at the root).
 
 ### D7. ZK masking of the revealed image
 
@@ -728,9 +809,85 @@ The planner may run exploratory `lb > 6` simulations, but it must not emit produ
 The likely first-order win is the `n_a` drop from realized `beta_bar_2`, not a large basis or tail contraction.
 Stage-1 deletion at tail levels is a smaller local trade: it removes a linear-in-`lb` range tree and adds roughly `n_rows` signed image coordinates.
 
+### Full implementation cutover map
+
+This is the concrete code cutover from the landed ternary prototype to the binary-sign design. It is intentionally one-way: remove ternary packing and update every caller/test/spec surface in the same branch.
+
+**0. Security constants artifact.**
+
+- Add a reproducible constants script before wiring binary JL into production schedules. Suggested path: `scripts/derive_binary_jl_constants.py` or a Rust `xtask` if the repo gets one.
+- Inputs: `m`, `lambda`, `a`, `B`, `Q`, Berry-Esseen constant, large-coordinate cutoff.
+- Outputs: a checked table for `(m, lambda)`, initially `(256, 128)`, with `(a_m, B_m, Q_m)` and a per-case failure ledger.
+- Add the proof note to this spec or a companion `specs/binary-jl-modular-lemma.md`; cite Achlioptas for real binary JL, Greyhound for implementation precedent, and LaBRADOR only as the modular proof template.
+
+**1. Matrix representation in `akita-challenges::jl`.**
+
+- Change `row_bytes_for(cols)` from `ceil(2*cols/8)` to `ceil(cols/8)`.
+- Replace the pair decoder with `bit_to_sign(bit) = if bit { +1 } else { -1 }`.
+- Bump `JL_SAMPLE_DOMAIN_VERSION`; every sampled matrix changes and old proofs must not replay.
+- Keep `JlProjectionMatrix` as the only type. Do not add an alphabet enum or a ternary compatibility constructor.
+- Update `from_sign_rows` test helper to pack one bit per sign and reject zero signs.
+
+**2. Projection kernels.**
+
+- Replace `SIGN_LUT = [-1,0,0,1]` and `SIGNS_FOR_BYTE: [[i8;4];256]` with either direct bit decode or `BINARY_SIGNS_FOR_BYTE: [[i8;8];256]`.
+- Update scalar, NEON, AVX2, and AVX-512 kernels to process eight coefficients per row byte.
+- Keep the checked `i64` reference path and differential tests.
+- Re-benchmark sign-table multiply-add versus bitmask add/sub. Prefer the simpler sign-table path unless the bitmask variant wins clearly across Apple Silicon and x86.
+
+**3. MLE kernels.**
+
+- Delete `BYTE_TO_TERNARY4`, `pair_to_ternary_digit`, and the 81-pattern DP.
+- Add a 16-entry nibble LUT builder:
+
+```text
+lut16[bits] = sum_{lane=0..3} sign(bit_l) * weight_l
+```
+
+- For each packed byte, either use two nibble lookups or expand to a 256-entry byte LUT as `lut16[lo] + lut16[hi]`.
+- Update `accumulate_row_weight_range` and `scatter_row_weight_range` to decode binary signs.
+- Keep verifier final eval fused; do not materialize `g` on the verifier.
+
+**4. Wire/layout/protocol tests.**
+
+- Update all test sign matrices to use only `±1`.
+- Replace packed round-trip tests with one-bit packing tests.
+- Keep all malformed-shape and no-panic tests.
+- Add distribution sanity tests: sampled matrix bytes should be deterministic for fixed transcript, and sign counts should be close enough to 50/50 under a fixed large sample for a non-cryptographic smoke test.
+
+**5. Spec/docs and public API names.**
+
+- Rename comments/docs from "ternary", "sparse-ternary", and "zero pairs" to "binary sign" / "Rademacher".
+- Keep API names generic (`JlProjectionMatrix`, `eval_jl_mle_at`) so the cutover does not leak representation names into downstream crates.
+- Update benches labels from `ternary` to `binary` only where labels encode the distribution.
+
+**6. Fusion integration after binary mechanics are green.**
+
+- D1: bind binary JL geometry and `JL_SAMPLE_DOMAIN_VERSION` in the instance descriptor.
+- D2: add the JL proof payload and fused stage-2 row against the binary `eval_jl_mle_at`.
+- D3/D4: switch A-role pricing to binary `beta_bar_2` using `(a_m, B_m, Q_m)`.
+- D5: add bounded nonce regrind with the accepted nonce absorbed before `CHALLENGE_JL_ROW`.
+- D9: enable planner experiments only after the binary constants table exists.
+
+**Verification gate.**
+
+Run at minimum:
+
+```bash
+cargo fmt -q
+cargo clippy --all --message-format=short -q -- -D warnings
+cargo test -p akita-challenges -- jl
+cargo test -p akita-types -- jl
+cargo test -p akita-prover -- jl
+cargo test -p akita-verifier -- jl
+cargo test
+```
+
+For a spec-only patch, no Rust tests are required. For the binary code cutover, the targeted JL tests should fail before updating tests if any ternary decoder remains reachable; that is the desired tripwire.
+
 ### Suggested ordering for fusion
 
-D6 and D4 (security: size `n_rows` for the single projection, settle the `T_p -> T_w -> beta_bar_2` map with the operator factor retained, and settle coordinate injectivity) settle pricing inputs; D9 gives the planner experiment; D3 (delete stage 1, reprice, regen tables) and D1 (descriptor) are the type/accounting changes; D2 (Step, payload, stage-2 fusion) is the protocol cutover; D5 (regrind) and D7 (ZK) are completeness/ZK work; D8 is a separate mid-level project.
+D6 and D4 (security: prove binary constants, size `n_rows` for the single projection, settle the `T_p -> T_w -> beta_bar_2` map with the operator factor retained, and settle coordinate injectivity) settle pricing inputs; the binary mechanics cutover above makes PR #191's standalone code match the intended distribution; D9 gives the planner experiment; D3 (delete stage 1, reprice, regen tables) and D1 (descriptor) are the type/accounting changes; D2 (Step, payload, stage-2 fusion) is the protocol cutover; D5 (regrind) and D7 (ZK) are completeness/ZK work; D8 is a separate mid-level project.
 
 ## Documentation
 
@@ -742,7 +899,7 @@ D6 and D4 (security: size `n_rows` for the single projection, settle the `T_p ->
 
 Prototype phases (all complete on PR #191):
 
-1. [x] `akita-challenges::jl`: packed-ternary matrix, transcript-seeded expansion, `project`, norm helpers, signed-coordinate embedding.
+1. [x] `akita-challenges::jl`: packed ternary matrix in PR #191, transcript-seeded expansion, `project`, norm helpers, signed-coordinate embedding. The binary cutover above replaces only the matrix alphabet/packing and its dependent kernels.
 2. [x] Signed-coordinate encoding and checked norm helpers (before consistency work).
 3. [x] `akita-challenges::jl::mle` (PR1b): `eval_jl_mle_at` + `build_jl_row_weights`; LUT production path; differential tests; `benches/jl_mle.rs`.
 4. [x] `akita-types::jl` + `akita-prover::protocol::jl` + `akita-verifier::protocol::jl` (PR2): degree-2 product sumcheck via `akita-sumcheck`; `JlWitnessLayout` pins flat order `w[x * 2^ring_bits + y]`; prove on prover, verify on verifier with `w_eval_hook`; round-trip, tampered-image, norm-bound, and layout tests.
@@ -758,7 +915,10 @@ Open before fusion (D2):
 - `labrador-backup:src/protocol/labrador/johnson_lindenstrauss.rs`: reusable dense reveal projection implementation ideas (packed ternary, SHAKE seed expansion, centering, projection, nonce regrind). Port contracts, not constants or overflow return types, without re-auditing them.
 - `akita-algebra/src/eq_poly.rs` (`SplitEqEvals`), `akita-types/src/extension_opening_reduction.rs` (`tensor_column_partials_split_fold`): split-eq contraction template for PR1b MLE eval.
 - Dao & Thaler, ePrint 2024/1210 (`DaoThaler_SplitEq_SumCheck_2024_1210.pdf` in paper index): nested eq tables and iterated sums; cited in `akita-algebra/src/split_eq.rs`.
-- LaBRADOR (eprint 2023/1729): modular-JL lemma (Lemma 4.1/4.2), the 256-row single-projection setting, the weak-binding A-price (Thm 5.1, where the JL term is `4*T*sqrt(128/30)*beta` -- operator norm retained), and the check-and-retry threshold policy. The weak-binding argument is the template (D4): JL certifies the realized output norm; the operator factor in the A-binding is structural and does not drop. Akita's relation being linear in the blocks does **not** remove it.
+- Achlioptas, "Database-friendly random projections: Johnson-Lindenstrauss with binary coins" (JCSS 2003, https://doi.org/10.1016/S0022-0000(03)00025-4): real-valued JL concentration for independent binary `±1` entries, scaled by `1/sqrt(k)`.
+- Gentry-Halevi-Lyubashevsky, "Practical Non-Interactive Publicly Verifiable Secret Sharing with Thousands of Parties" (EUROCRYPT 2022 / ePrint 2021/1397, https://eprint.iacr.org/2021/1397): upstream modular-JL predecessor cited by LaBRADOR.
+- LaBRADOR (CRYPTO 2023, DOI https://doi.org/10.1007/978-3-031-38554-4_17): modular-JL lemma (Lemma 4.1/4.2), the 256-row single-projection setting, the weak-binding A-price (Thm 5.1, where the JL term is `4*T*sqrt(128/30)*beta` -- operator norm retained), and the check-and-retry threshold policy. The weak-binding argument is the template (D4): JL certifies the realized output norm; the operator factor in the A-binding is structural and does not drop. Akita's relation being linear in the blocks does **not** remove it.
+- Greyhound, ePrint 2024/1293 (https://eprint.iacr.org/2024/1293): implementation precedent for switching LaBRADOR-style JL matrices to binary `±1` entries and using 16 signed sums of four coefficients in the projection kernel. Use as an implementation/data-point citation, not as the proof of binary constants.
 - Grand Danois (eprint 2026/1196): structured-projection-in-relation and the nested lever (for the deferred mid-level variant); constants must be re-derived.
 - `akita-types/src/sis/norm_bound.rs`: A/B/D-role collision pricing the realized-norm repricing (D3, D4) targets.
 - `akita-types/src/instance_descriptor.rs`: the transcript preamble that must bind JL geometry (D1).
