@@ -234,6 +234,7 @@ where
 #[inline(never)]
 pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
+    prefix_slots: &SetupPrefixRegistry<F>,
     stacks: &'stack impl LevelProveStacks<
         'stack,
         F,
@@ -313,10 +314,9 @@ where
         terminal_tail_t_vectors,
         basis,
     )?;
-    let prefix_slots = SetupPrefixRegistry::new();
     let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
         expanded,
-        &prefix_slots,
+        prefix_slots,
         stack,
         transcript,
         0,

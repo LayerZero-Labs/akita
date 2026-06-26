@@ -292,7 +292,13 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    let _ring_plan = &schedule_ctx.ring_plan;
+    let ring_plan = &schedule_ctx.ring_plan;
+    let root_ring_d = ring_plan.dim_at(0)?;
+    if root_ring_d != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
+        )));
+    }
 
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
@@ -326,6 +332,7 @@ where
             D,
         >(
             expanded,
+            prefix_slots,
             stacks,
             transcript,
             claims,

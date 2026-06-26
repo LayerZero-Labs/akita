@@ -490,7 +490,13 @@ where
         + AkitaSerialize,
     T: Transcript<Cfg::Field>,
 {
-    let _ring_plan = &schedule_ctx.ring_plan;
+    let ring_plan = &schedule_ctx.ring_plan;
+    let root_ring_d = ring_plan.dim_at(0)?;
+    if root_ring_d != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
+        )));
+    }
 
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
