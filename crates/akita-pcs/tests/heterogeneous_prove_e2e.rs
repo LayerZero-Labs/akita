@@ -19,7 +19,7 @@ use std::any::TypeId;
 type Cfg = fp128::D64Full;
 type F = fp128::Field;
 const D: usize = Cfg::D;
-type Scheme = AkitaCommitmentScheme<D, Cfg>;
+type Scheme = AkitaCommitmentScheme<Cfg>;
 
 fn assert_distinct_cluster_types() {
     let types = [

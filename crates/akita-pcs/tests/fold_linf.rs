@@ -13,7 +13,7 @@ use akita_types::{
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
-type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
+type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
 fn bump_flat_ring_vec(flat: &mut akita_types::FlatRingVec<F>) {
     let mut coeffs = flat.coeffs().to_vec();

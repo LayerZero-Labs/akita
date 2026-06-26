@@ -317,10 +317,10 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let prover_setup = match setup_contribution_mode {
         SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1)
+            <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1)
         }
         SetupContributionMode::Recursive => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover_recursion(
+            <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::setup_prover_recursion(
                 nv, 1,
             )
         }
@@ -341,7 +341,7 @@ fn run() -> Result<(), String> {
     );
 
     let t0 = Instant::now();
-    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+    let (commitment, hint) = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::commit(
         &prover_setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
@@ -363,7 +363,7 @@ fn run() -> Result<(), String> {
             commitment: (commitment.clone(), hint),
         }],
     };
-    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,
         prove_input,
         &stack,
@@ -375,7 +375,7 @@ fn run() -> Result<(), String> {
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
     let verifier_setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&prover_setup);
+        <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::setup_verifier(&prover_setup);
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();

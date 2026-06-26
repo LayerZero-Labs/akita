@@ -47,6 +47,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
             witness_shape: CleartextWitnessShape::FieldElements(16),
             direct_bytes: 0,
             params: None,
+            tail_grind_level_params: None,
         }),
     ];
 
@@ -76,6 +77,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
             witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
             direct_bytes: 0,
             params: None,
+            tail_grind_level_params: None,
         })],
         total_bytes: 0,
     };
@@ -135,6 +137,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
                     witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
                     direct_bytes: 0,
                     params: None,
+                    tail_grind_level_params: None,
                 })],
                 total_bytes: 0,
             })
@@ -202,6 +205,7 @@ fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
                     witness_shape: CleartextWitnessShape::FieldElements(1 << 8),
                     direct_bytes: 0,
                     params: None,
+                    tail_grind_level_params: None,
                 })],
                 total_bytes: 0,
             })
@@ -402,6 +406,100 @@ fn presets_select_expected_sis_modulus_family() {
 }
 
 // ----- migrated from former `schedule_policy::tests` -------------------
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mixed_d_suffix_params_recursive_vars_match_runtime_witness_domain() {
+    use crate::test_support::mixed_d_per_level_schedule;
+    use akita_types::suffix_witness_hypercube_num_vars;
+
+    let switch = 2usize;
+    let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, switch)
+        .expect("mixed schedule");
+
+    for (level, fold) in mixed.fold_steps().enumerate().skip(switch) {
+        let witness_domain_bits =
+            suffix_witness_hypercube_num_vars(fold.current_w_len, fold.params.ring_dimension)
+                .expect("witness hypercube");
+        let recursive = fold.params.recursive_opening_num_vars().unwrap();
+        assert_eq!(
+            recursive, witness_domain_bits,
+            "recursive opening vars must match witness hypercube at level {level}"
+        );
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mixed_d_schedule_w_len_chain_matches_runtime_layout() {
+    use crate::test_support::mixed_d_per_level_schedule;
+    use akita_types::{w_ring_element_count_with_counts_for_layout_bits, MRowLayout};
+
+    let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, 2)
+        .expect("mixed schedule");
+    let field_bits = fp128::D64Full::decomposition().field_bits();
+    let num_fold_levels = mixed.num_fold_levels();
+
+    for (level, fold) in mixed.fold_steps().enumerate() {
+        if level + 1 < num_fold_levels {
+            let next_fold = mixed.fold_steps().nth(level + 1).expect("next fold");
+            assert_eq!(
+                fold.next_w_len, next_fold.current_w_len,
+                "fold chain mismatch at level {level}"
+            );
+        }
+        let is_terminal = level + 1 == num_fold_levels;
+        let layout = if is_terminal {
+            MRowLayout::WithoutDBlock
+        } else {
+            MRowLayout::WithDBlock
+        };
+        let ring = w_ring_element_count_with_counts_for_layout_bits(
+            field_bits,
+            &fold.params,
+            1,
+            1,
+            layout,
+        )
+        .expect("ring count");
+        let runtime_next = ring * fold.params.ring_dimension;
+        assert_eq!(
+            runtime_next, fold.next_w_len,
+            "runtime next_w_len mismatch at level {level}"
+        );
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mixed_d_schedule_rejects_switch_at_fold_zero() {
+    use crate::test_support::mixed_d_per_level_schedule;
+
+    let err = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, 0)
+        .expect_err("switch_at_fold=0 must be rejected");
+    assert!(
+        err.to_string().contains("switch_at_fold=0"),
+        "unexpected error: {err}"
+    );
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mixed_d_schedule_degenerates_to_envelope_when_switch_covers_all_folds() {
+    use crate::test_support::mixed_d_per_level_schedule;
+    use akita_types::digest_effective_schedule;
+
+    let key = AkitaScheduleLookupKey::singleton(16);
+    let envelope = fp128::D128Full::runtime_schedule(key).expect("envelope");
+    let switch = envelope.num_fold_levels();
+    let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, switch)
+        .expect("uniform hand-built schedule");
+    assert_eq!(
+        digest_effective_schedule(&mixed),
+        digest_effective_schedule(&envelope),
+        "switch past all folds must match envelope schedule digest"
+    );
+}
 
 fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
     assert_plan_matches_runtime_w_sizes_for_key::<Cfg>(AkitaScheduleLookupKey::singleton(num_vars));

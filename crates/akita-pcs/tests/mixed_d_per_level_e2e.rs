@@ -1,8 +1,10 @@
-//! Wave 0 mixed-D per-level fixture on the legacy suffix dispatch path.
+//! Wave 0 mixed-D per-level fixture and cutover regression oracle.
 //!
 //! Uses `fp128::D128Full` setup (`gen_ring_dim = 128`) with a hand-built schedule:
 //! fold levels 0–1 at `D = 128`, level 2+ at `D = 64`. Pins proof wire bytes and
-//! the effective schedule digest as the cutover regression oracle.
+//! the effective schedule digest. Regenerate the oracle fixture with
+//! `AKITA_CAPTURE_MIXED_ORACLE=1 cargo test -p akita-pcs --test mixed_d_per_level_e2e
+//! mixed_d_per_level_prove -- --nocapture`.
 
 mod common;
 
@@ -25,7 +27,7 @@ use common::*;
 type Cfg = fp128::D128Full;
 type SuffixCfg = fp128::D64Full;
 type F = fp128::Field;
-type Scheme = AkitaCommitmentScheme<D, Cfg>;
+type Scheme = AkitaCommitmentScheme<Cfg>;
 const D: usize = Cfg::D;
 
 /// Fold levels `[0, MIXED_D_SWITCH_FOLD)` use D128; `[MIXED_D_SWITCH_FOLD, …)` use D64.
@@ -33,19 +35,18 @@ const MIXED_D_SWITCH_FOLD: usize = 2;
 const NUM_VARS: usize = 16;
 
 const ORACLE_EFFECTIVE_SCHEDULE_DIGEST: [u8; 32] = [
-    0x02, 0xaa, 0x80, 0x00, 0x14, 0xed, 0xa8, 0xd7, 0x06, 0x56, 0xe7, 0xc2, 0xb2, 0x3b, 0xc0, 0x5b,
-    0xa7, 0x95, 0x5c, 0x58, 0xfd, 0xf7, 0x7e, 0x4c, 0x06, 0x8e, 0x73, 0xd2, 0xba, 0x9b, 0x0a, 0xeb,
+    0x71, 0x98, 0xb5, 0x11, 0x4a, 0x6c, 0x21, 0x18, 0x94, 0x6c, 0x69, 0x15, 0x61, 0xe9, 0xdc, 0xb1,
+    0x56, 0xe1, 0xe1, 0xef, 0xcb, 0xd2, 0x36, 0xa5, 0x81, 0x4b, 0xba, 0x9f, 0xbd, 0x61, 0xea, 0x4b,
 ];
 const ORACLE_PROOF_BYTES: &[u8] =
     include_bytes!("fixtures/wave0_uniform_handbuilt_d128_nv16.proof.bin");
 
 // Populated once the mixed-D fixture proves on the legacy suffix path.
-const MIXED_ORACLE_EFFECTIVE_SCHEDULE_DIGEST: [u8; 32] = [0; 32];
-const MIXED_ORACLE_PROOF_BYTES: Option<&'static [u8]> = None;
-
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
+const MIXED_ORACLE_EFFECTIVE_SCHEDULE_DIGEST: [u8; 32] = [
+    0x52, 0xfd, 0x22, 0xb4, 0x4e, 0xa0, 0x04, 0xdc, 0xf3, 0x86, 0x92, 0xed, 0x14, 0x08, 0xb0, 0xab,
+    0x2b, 0xbd, 0xe4, 0x27, 0xbb, 0xb9, 0xe1, 0x44, 0x75, 0x1e, 0x38, 0x09, 0xd6, 0x8c, 0xa7, 0x22,
+];
+const MIXED_ORACLE_PROOF_BYTES: &[u8] = include_bytes!("fixtures/wave0_mixed_d_nv16.proof.bin");
 
 fn assert_mixed_d_fixture_schedule(schedule: &akita_types::Schedule) {
     let folds: Vec<_> = schedule.fold_steps().collect();
@@ -123,6 +124,19 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
             .serialize_compressed(&mut serialized)
             .expect("serialize proof");
         let schedule_digest = digest_effective_schedule(&schedule);
+        if std::env::var_os("AKITA_CAPTURE_UNIFORM_ORACLE").is_some() {
+            std::fs::write(
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/wave0_uniform_handbuilt_d128_nv16.proof.bin"
+                ),
+                &serialized,
+            )
+            .expect("write uniform oracle fixture");
+            eprintln!("UNIFORM_ORACLE_EFFECTIVE_SCHEDULE_DIGEST={schedule_digest:?}");
+            eprintln!("UNIFORM_ORACLE_PROOF_BYTES_LEN={}", serialized.len());
+            return;
+        }
         assert_eq!(schedule_digest, ORACLE_EFFECTIVE_SCHEDULE_DIGEST);
         assert_eq!(serialized.as_slice(), ORACLE_PROOF_BYTES);
 
@@ -148,7 +162,6 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
 }
 
 #[test]
-#[ignore = "legacy suffix commit_next_w uses next fold LevelParams before that fold runs; D128→D64 per-level fixture needs hand-tuned params (tracked in PR body)"]
 fn mixed_d_per_level_prove_verify_and_transcript_replay() {
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -211,7 +224,7 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
             SetupContributionMode::Direct,
         )
         .map(|(proof, _levels)| proof)
-        .expect("prove");
+        .expect("mixed-D prove");
 
         assert!(
             !proof.is_root_direct(),
@@ -226,26 +239,15 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
             .expect("serialize proof");
 
         let schedule_digest = digest_effective_schedule(&schedule);
-        match MIXED_ORACLE_PROOF_BYTES {
-            None => {
-                eprintln!("MIXED_ORACLE_PROOF_BYTES_LEN={}", serialized.len());
-                eprintln!(
-                    "MIXED_ORACLE_EFFECTIVE_SCHEDULE_DIGEST={}",
-                    bytes_to_hex(&schedule_digest)
-                );
-            }
-            Some(expected) => {
-                assert_eq!(
-                    schedule_digest, MIXED_ORACLE_EFFECTIVE_SCHEDULE_DIGEST,
-                    "effective schedule digest oracle (Wave 0 mixed-D fixture)"
-                );
-                assert_eq!(
-                    serialized.as_slice(),
-                    expected,
-                    "proof wire bytes oracle (Wave 0 mixed-D fixture)"
-                );
-            }
-        }
+        assert_eq!(
+            schedule_digest, MIXED_ORACLE_EFFECTIVE_SCHEDULE_DIGEST,
+            "effective schedule digest oracle (Wave 0 mixed-D fixture)"
+        );
+        assert_eq!(
+            serialized.as_slice(),
+            MIXED_ORACLE_PROOF_BYTES,
+            "proof wire bytes oracle (Wave 0 mixed-D fixture)"
+        );
 
         let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(&serialized),

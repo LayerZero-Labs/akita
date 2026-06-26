@@ -40,6 +40,7 @@ fn terminal_direct_step(lp: &LevelParams, current_w_len: usize) -> DirectStep {
         witness_shape: segment_typed_witness_shape(lp, 128, 1, 1, 1, 1).expect("terminal shape"),
         direct_bytes: 0,
         params: None,
+        tail_grind_level_params: None,
     }
 }
 

@@ -396,6 +396,7 @@ fn make_terminal_direct_step(
         witness_shape,
         direct_bytes,
         params: None,
+        tail_grind_level_params: None,
     })
 }
 
@@ -873,6 +874,7 @@ fn find_schedule_inner(
         witness_shape: root_witness_shape,
         direct_bytes: best_cost,
         params: root_direct_commit_params,
+        tail_grind_level_params: None,
     })];
     let mut memo = ScheduleMemo::new();
 

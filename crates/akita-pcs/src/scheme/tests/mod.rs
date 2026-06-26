@@ -1,8 +1,8 @@
-use super::*;
+use super::AkitaCommitmentScheme;
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
-use akita_field::LiftBase;
+use akita_field::{AkitaError, FieldCore, LiftBase};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::{
     CommitmentProver, DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch,
@@ -17,24 +17,23 @@ use akita_types::ExtensionOpeningReductionProof;
 use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field,
+    ring_opening_point_from_field, BasisMode,
 };
 use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
-    AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
-    TerminalLevelProofShape,
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitmentHint, AkitaProofStepShape,
+    AkitaVerifierSetup, FlatRingVec, LevelProofShape, RingCommitment, TerminalLevelProofShape,
 };
 use akita_types::{
     CommitmentGroup, OpeningBatchShape, PointVariableSelection, VerifierOpeningBatch,
 };
-use akita_verifier::cleartext_witness_opening_matches;
-use akita_verifier::CommitmentVerifier;
+use akita_verifier::{cleartext_witness_opening_matches, CommitmentVerifier};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::D64Full;
 type F = fp128::Field;
 const D: usize = Cfg::D;
-type Scheme = AkitaCommitmentScheme<D, Cfg>;
+type Scheme = AkitaCommitmentScheme<Cfg>;
 
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
@@ -42,7 +41,7 @@ const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::D64OneHot` requires K=256 one-hot schedules (must match
 // `OneHotCfg::onehot_chunk_size()`); chunks span `K/D = 4` ring elements.
 const BENCH_ONEHOT_K: usize = 256;
-type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
+type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
 /// sends `w` directly instead of recursing.
@@ -335,7 +334,7 @@ fn dense_opening(evals: &[F], point: &[F]) -> F {
 fn debug_random_point(nv: usize) -> Vec<OneHotF> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| OneHotF::from_canonical_u128_reduced(rng.r#gen::<u128>()))
+        .map(|_| OneHotF::from_canonical_u128(rng.r#gen::<u128>()))
         .collect()
 }
 
@@ -392,3 +391,16 @@ where
             .expect("inner opening point should match ring dimension");
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
+
+impl_akita_commitment_scheme!(
+    fp32_ext4::Fp32RingSubfieldRootFoldCfg,
+    akita_field::Prime32Offset99,
+    akita_field::FpExt4<akita_field::Prime32Offset99>,
+    32
+);
+impl_akita_commitment_scheme!(
+    fp32_ext4::Fp32RingSubfieldOuterFallbackCfg,
+    akita_field::Prime32Offset99,
+    akita_field::FpExt4<akita_field::Prime32Offset99>,
+    32
+);

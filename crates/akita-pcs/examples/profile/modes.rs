@@ -35,7 +35,25 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     label: &str,
     title: &str,
     nv: usize,
-) {
+) where
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+            F,
+            D,
+            ProverSetup = AkitaProverSetup<F>,
+            ExtField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F, F>,
+            CommitHint = AkitaCommitmentHint<F>,
+        > + CommitmentVerifier<
+            F,
+            D,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            ExtField = F,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F, F>,
+        >,
+{
     let layout = resolve_layout::<F, Cfg>(nv);
     let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
     tracing::info!("{}", title);
@@ -57,7 +75,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -69,8 +87,8 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         > + CommitmentVerifier<
             FF,
             D,
-            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
+            ExtField = Cfg::ExtField,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
@@ -102,7 +120,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -114,8 +132,8 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         > + CommitmentVerifier<
             FF,
             D,
-            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
+            ExtField = Cfg::ExtField,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
@@ -169,7 +187,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F
     nv: usize,
     num_polys: usize,
 ) where
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F>,
@@ -181,8 +199,8 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F
         > + CommitmentVerifier<
             F,
             D,
-            ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
+            ExtField = F,
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,
         >,

@@ -320,6 +320,7 @@ pub fn schedule_from_entry(
                     witness_shape,
                     direct_bytes,
                     params,
+                    tail_grind_level_params: None,
                 }));
             }
         }

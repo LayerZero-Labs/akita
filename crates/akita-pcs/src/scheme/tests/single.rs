@@ -300,7 +300,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     type DirectCfg = fp128::D32Full;
     type DirectF = fp128::Field;
     const DIRECT_D: usize = DirectCfg::D;
-    type DirectScheme = AkitaCommitmentScheme<DIRECT_D, DirectCfg>;
+    type DirectScheme = AkitaCommitmentScheme<DirectCfg>;
 
     let num_vars = 4usize;
     let evals: Vec<DirectF> = (0..(1usize << num_vars))

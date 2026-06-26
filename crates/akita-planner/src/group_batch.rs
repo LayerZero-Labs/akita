@@ -488,6 +488,7 @@ pub fn find_group_batch_schedule(
             witness_shape,
             direct_bytes,
             params: Some(params),
+            tail_grind_level_params: None,
         })],
         total_bytes: direct_bytes,
     })

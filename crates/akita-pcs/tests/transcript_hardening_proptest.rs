@@ -12,7 +12,7 @@ use akita_verifier::CommitmentVerifier;
 use common::*;
 use proptest::prelude::*;
 
-type Scheme = AkitaCommitmentScheme<DENSE_D, DenseCfg>;
+type Scheme = AkitaCommitmentScheme<DenseCfg>;
 
 fn batch_shape(index: usize) -> usize {
     match index {
@@ -66,7 +66,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let mut verifier_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    <Scheme as CommitmentVerifier<F, DENSE_D>>::batched_verify(
+    <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,

@@ -385,14 +385,14 @@ fn run_prove<
     P: RootCommitPoly<FF, D> + RootProvePoly<FF, D>,
 >(
     label: &str,
-    setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
+    setup: &<AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::ProverSetup,
     stack: &akita_prover::UniformProverStack<'_, FF, CpuBackend>,
     poly: &P,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
     plan: Option<&Schedule>,
 ) where
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -404,8 +404,8 @@ fn run_prove<
         > + CommitmentVerifier<
             FF,
             D,
-            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
+            ExtField = Cfg::ExtField,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
@@ -423,7 +423,7 @@ fn run_prove<
         + RootProveFlowBackend<FF, P, Cfg::ExtField, D>
         + RecursiveWitnessProveFlowBackend<FF, Cfg::ExtField>,
 {
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
+    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<Cfg>;
 
     let t0 = Instant::now();
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
@@ -547,7 +547,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -559,8 +559,8 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         > + CommitmentVerifier<
             FF,
             D,
-            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
+            ExtField = Cfg::ExtField,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
@@ -595,12 +595,14 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         };
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
-        SetupContributionMode::Direct => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            FF,
-            D,
-        >>::setup_prover(RootPolyShape::num_vars(&poly), 1),
+        SetupContributionMode::Direct => {
+            <AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::setup_prover(
+                RootPolyShape::num_vars(&poly),
+                1,
+            )
+        }
         SetupContributionMode::Recursive => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(
+            <AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(
                 RootPolyShape::num_vars(&poly),
                 1,
             )
@@ -654,7 +656,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -666,8 +668,8 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         > + CommitmentVerifier<
             FF,
             D,
-            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
+            ExtField = Cfg::ExtField,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
@@ -704,12 +706,11 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1)
+            <AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1)
         }
-        SetupContributionMode::Recursive => <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            FF,
-            D,
-        >>::setup_prover_recursion(nv, 1),
+        SetupContributionMode::Recursive => {
+            <AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(nv, 1)
+        }
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -760,7 +761,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -772,15 +773,15 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         > + CommitmentVerifier<
             FF,
             D,
-            ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
+            ExtField = Cfg::ExtField,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
     Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
 {
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
+    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<Cfg>;
 
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)

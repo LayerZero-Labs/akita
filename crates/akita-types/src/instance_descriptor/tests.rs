@@ -38,6 +38,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 witness_shape: CleartextWitnessShape::FieldElements(64),
                 direct_bytes: 32,
                 params: None,
+                tail_grind_level_params: None,
             }),
         ],
         total_bytes: 155,
@@ -102,9 +103,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             221,
             [
-                0xc4, 0xc8, 0xa7, 0x1a, 0x85, 0x0d, 0x03, 0x9d, 0xb9, 0xf5, 0x1e, 0xc5, 0x89, 0x95,
-                0x03, 0xba, 0xd3, 0x23, 0xae, 0x10, 0xbb, 0x12, 0x91, 0x10, 0x9c, 0x1c, 0xfc, 0xf2,
-                0xe5, 0xeb, 0x02, 0x47,
+                0x5b, 0xa0, 0x3c, 0xf6, 0xc8, 0x4a, 0xbf, 0x69, 0x53, 0x26, 0x49, 0x9f, 0x8e, 0x75,
+                0x5f, 0x85, 0x50, 0xdb, 0x33, 0x6e, 0x37, 0xfa, 0x94, 0xee, 0x11, 0x4a, 0x4b, 0x8a,
+                0x82, 0xa6, 0x9c, 0x8c,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
@@ -385,6 +386,7 @@ fn effective_schedule_digest_binds_direct_shape() {
             witness_shape: CleartextWitnessShape::FieldElements(8),
             direct_bytes: 8,
             params: None,
+            tail_grind_level_params: None,
         })],
         total_bytes: 8,
     };
@@ -394,6 +396,7 @@ fn effective_schedule_digest_binds_direct_shape() {
             witness_shape: CleartextWitnessShape::FieldElements(9),
             direct_bytes: 9,
             params: None,
+            tail_grind_level_params: None,
         })],
         total_bytes: 9,
     };
@@ -419,6 +422,7 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
             witness_shape: CleartextWitnessShape::FieldElements(8),
             direct_bytes: 0,
             params: Some(sample_level_params()),
+            tail_grind_level_params: None,
         })],
         total_bytes: 0,
     };
@@ -428,6 +432,7 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
             witness_shape: CleartextWitnessShape::FieldElements(8),
             direct_bytes: 0,
             params: Some(other_params),
+            tail_grind_level_params: None,
         })],
         total_bytes: 0,
     };

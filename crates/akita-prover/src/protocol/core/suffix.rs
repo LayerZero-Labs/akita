@@ -10,8 +10,9 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::{
-    padded_scalar_batch_num_vars, schedule_terminal_direct_witness_shape,
-    terminal_golomb_grind_tail_t_vectors, validate_scalar_point_matches_poly_arity,
+    align_recursive_opening_point, padded_scalar_batch_num_vars,
+    schedule_terminal_direct_witness_shape, terminal_golomb_grind_tail_t_vectors,
+    terminal_tail_grind_level_params, validate_scalar_point_matches_poly_arity,
     AkitaCommitmentHint, OpeningGroupShape, OpeningPoints, PointVariableSelection,
 };
 
@@ -82,8 +83,7 @@ impl<'a, PointF: Clone, P, F: FieldCore, const D: usize> SuffixFoldClaims<'a, Po
             })?
             .point_vars
             .clone();
-        let mut padded_point = opening_point.to_vec();
-        padded_point.resize(recursive_num_vars, PointF::zero());
+        let padded_point = align_recursive_opening_point(opening_point, recursive_num_vars);
         Ok(Self {
             point: padded_point.into(),
             point_vars,
@@ -200,15 +200,12 @@ where
     let mut level = 1usize;
 
     let terminal_direct_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
-    let terminal_tail_t_vectors = {
-        let terminal_level = planned_num_levels - 1;
-        let terminal_scheduled = schedule.get_execution_schedule(terminal_level)?;
-        terminal_golomb_grind_tail_t_vectors(
-            &terminal_scheduled.params,
-            MRowLayout::WithoutDBlock,
-            Some(terminal_direct_witness_shape),
-        )?
-    };
+    let terminal_tail_lp = terminal_tail_grind_level_params(schedule)?;
+    let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
+        &terminal_tail_lp,
+        MRowLayout::WithoutDBlock,
+        Some(terminal_direct_witness_shape),
+    )?;
     let terminal_result = loop {
         let scheduled = schedule.get_execution_schedule(level)?;
         scheduled.validate_current_w_len(current_state.w.len())?;

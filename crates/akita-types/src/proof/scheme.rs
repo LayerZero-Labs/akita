@@ -10,7 +10,8 @@ pub type OpeningPoints<'a, F> = Cow<'a, [F]>;
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///
-/// Generic over base field `F` and cyclotomic ring degree `D`.
+/// Generic over base field `F` and root cyclotomic degree `D` (`Cfg::D` on the
+/// PCS scheme type). Suffix levels dispatch via the resolved schedule.
 ///
 /// This surface is intentionally proof/claim/setup oriented. It does not name
 /// prover polynomial backends or prover-side hints, so verifier-only crates can

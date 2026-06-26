@@ -4,12 +4,74 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-24 |
-| Revised       | 2026-06-26 (warm-cache policy: setup-time minimum contract, lazy build diagnostic) |
-| Status        | proposed |
-| PR            | |
+| Revised       | 2026-06-27 (stack status, PR map, honest acceptance criteria) |
+| Status        | in progress (Phases 1–3 partial; Phase 4 deferred) |
+| PR            | stacked on `#227`–`#241` (see Stack status) |
 | Supersedes    | partial supersession of `specs/akita-polyops-cutover.md` (storage half); coordinate PR order with `specs/protocol-field-geometry-cutover.md` (shared `PreparedFold` / `prove_suffix` surface) |
 | Superseded-by | |
 | Book-chapter  | book/src/how/architecture.md |
+
+## Stack status (2026-06-27)
+
+**Not complete.** Generated mixed-D planner tables do not exist yet. The hand-built
+mixed-D fixture (`mixed_d_per_level_e2e`, `mixed_d_geometry_crosscheck`) is a
+**regression gate**, not the finish line. Do not call cutover done until generated
+mixed-D schedules prove and verify through the intended D-free public/control-plane
+APIs.
+
+### Immediate target (current stack)
+
+- One active `ring_d` per fold; different folds may use different `D`s.
+- Setup envelope may be larger than active fold `D` (fixture uses `D128Full` envelope,
+  `D64` suffix views).
+- Proof verifies from schedule-bound runtime `D`.
+- `AkitaCommitmentScheme<Cfg>` is D-free on the scheme struct; per-preset macro impls
+  still implement `CommitmentProver<F, D>` / `CommitmentVerifier<F, D>`.
+
+### Later target (explicitly deferred)
+
+- Generated mixed-D planner/catalogs, `D_max` envelope sizing, relaxing
+  `gen_ring_dim == Cfg::D` at setup build.
+- Full public trait D-erasure (`CommitmentProver` / `CommitmentVerifier` without `D`).
+- Distinct per-block `d_a` / `d_b` / `d_d` inside one fold.
+- Prefix-sized NTT cache optimization; proof/perf benchmark CI gates.
+
+### PR map
+
+| PR | Branch | Base | Waves / slice | Purpose | Status | Deferrals |
+|----|--------|------|---------------|---------|--------|-----------|
+| [#227](https://github.com/LayerZero-Labs/akita/pull/227) | `quang/runtime-ring-cutover` | `main` | 1–3 infra | `RingDimPlan`, shared setup geometry, NTT cache map, D-free prepared setup | Rebasing clean onto `main`; CI pending | Phase 4 planner; envelope `D_max` |
+| [#228](https://github.com/LayerZero-Labs/akita/pull/228) | `quang/setup-footprint-stage3-unification` | `#227` | 3b | Stage-3 footprint unification with shared geometry | Restacked | — |
+| [#230](https://github.com/LayerZero-Labs/akita/pull/230) | `quang/runtime-ring-prove-orchestration` | `#228` | 4–5 entry | Prove-time ring plan validation, NTT setup contract, suffix prefix fix | Restacked | — |
+| [#231](https://github.com/LayerZero-Labs/akita/pull/231) | `quang/runtime-ring-stack-demote` | `#230` | 5 | Demote `ProverComputeStack` / `LevelProveStacks` off `const D` | Restacked | — |
+| [#232](https://github.com/LayerZero-Labs/akita/pull/232) | `quang/runtime-ring-mixed-d-fixture` | (merged) | 0 | Wave 0 mixed-D fixture harness + oracle | Merged | — |
+| [#233](https://github.com/LayerZero-Labs/akita/pull/233) | `quang/runtime-ring-backend-ring-d` | `#232` | 5b | Shared NTT cache via `Mutex` / `with_ntt_slot` | Restacked | — |
+| [#234](https://github.com/LayerZero-Labs/akita/pull/234) | `quang/runtime-ring-uniform-suffix` | `#233` | 5c | Uniform suffix loop, prove-entry NTT warming | Restacked | — |
+| [#235](https://github.com/LayerZero-Labs/akita/pull/235) | `quang/runtime-ring-delete-trait-lattice` | `#234` | 5d | Delete suffix trait lattice | Restacked | — |
+| [#236](https://github.com/LayerZero-Labs/akita/pull/236) | `quang/runtime-ring-public-api` | `#235` | 5e | D-free `AkitaProverSetup`, `RingBuf` fold storage | Restacked | — |
+| [#239](https://github.com/LayerZero-Labs/akita/pull/239) | `quang/runtime-ring-wave6-bulk` | `#236` | 6 | Fold storage demotion (bulk) | Restacked | — |
+| [#240](https://github.com/LayerZero-Labs/akita/pull/240) | `quang/runtime-ring-wave7` | `#239` | 7 | Hint demotion | Restacked | — |
+| [#241](https://github.com/LayerZero-Labs/akita/pull/241) | `quang/runtime-ring-wave7-mixed-d` | `#240` | 7 gate | PCS scheme demotion, mixed-D geometry gate, oracle refresh | Restacked; slow geometry test fixed | `CommitmentProver<F,D>` traits remain |
+
+### Completed in code (current stack tip)
+
+- `RingDimPlan`, `RingLevelContext`, shared `setup_geometry` / `setup_active_ring_elems_at`
+- D-free prepared setup, NTT cache map, setup-prefix registry demotion
+- Prove-time ring plan validation; uniform suffix loop (no stack-rebuild branch)
+- Fold/hint storage demotion to `RingBuf` / flat storage
+- Hand-built D128→D64 mixed-D fixture proves and verifies
+- `AkitaCommitmentScheme<Cfg>` struct demotion (trait impls still `const D`)
+
+### Incomplete or deferred
+
+- Generated planner mixed-D search; `expand_to_level_params` still rejects
+  `ring_d != policy.ring_dimension`
+- `D_max` field-element envelope sizing; relaxing `gen_ring_dim == Cfg::D` at setup
+- Generated schedule catalogs with multiple `D`s per family
+- Full public trait/API D-erasure (`CommitmentProver<F, D>`, `CommitmentVerifier<F, D>`)
+- Per-role / per-block `d_a`, `d_b`, `d_d` execution inside one fold
+- Prefix-sized NTT caches; full verifier no-panic audit on D-erased proof storage APIs
+- Proof-byte golden pins and bench regression gates beyond smoke/profile
 
 ## Summary
 
@@ -375,42 +437,44 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 
 ### Acceptance Criteria
 
-**Phase 1 — infrastructure (CI-hard)**
+**Phase 1 — infrastructure (CI-hard)** — **landed in stack (#227–#228); criteria below are satisfied at tip unless noted.**
 
-- [ ] `setup_geometry_at` (shape-only, challenge-free; see Normative contracts) and
+- [x] `setup_geometry_at` (shape-only, challenge-free; see Normative contracts) and
       `setup_active_ring_elems_at` in `akita-types`, with golden vectors.
-- [ ] `RingDimPlan`, `RingLevelContext` in `akita-types`.
-- [ ] `RingDimPlan::from_schedule` with validation catalog (see Normative contracts);
+- [x] `RingDimPlan`, `RingLevelContext` in `akita-types`.
+- [x] `RingDimPlan::from_schedule` with validation catalog (see Normative contracts);
       takes `&AkitaSetupSeed` (carries `gen_ring_dim` + identity), not a new envelope
       type.
-- [ ] `NttCacheKey`, `NttSlotCacheAny` (+ fallible `as_d::<D>()`), `NttCacheMap`
+- [x] `NttCacheKey`, `NttSlotCacheAny` (+ fallible `as_d::<D>()`), `NttCacheMap`
       (`HashMap` keyed store) with lazy `ensure_ntt_slot`.
-- [ ] `CpuPreparedSetup<F>` (trait assoc type `PreparedSetup`) without `const D`;
+- [x] `CpuPreparedSetup<F>` (trait assoc type `PreparedSetup`) without `const D`;
       `prepare_expanded` builds an empty map; `prepare_setup` registers the minimum
       envelope contract (see Warm-cache policy). Lazy `ensure_ntt_slot` outside the
       contract logs a sizing diagnostic.
-- [ ] Single shared setup-geometry function consumed by **both** prover setup
+- [x] Single shared setup-geometry function consumed by **both** prover setup
       sumcheck and verifier stage 3 (replaces the two parallel derivations).
-- [ ] D-free `SetupPrefixRegistry` (replaces `SetupPrefixProverRegistry<F, D>`; the
+- [x] D-free `SetupPrefixRegistry` (replaces `SetupPrefixProverRegistry<F, D>`; the
       verifier registry is already D-free); delete the `if D == SETUP_OFFLOAD_D_SETUP`
       eligibility gates at both call sites (retain `SETUP_OFFLOAD_D_SETUP` as the
       `d_setup = 64` naming constant in `setup_prefix.rs`). See Phase-ordering note for the slot's
       commitment/hint.
-- [ ] `bind_transcript_instance_descriptor` without `const D`;
+- [x] `bind_transcript_instance_descriptor` without `const D`;
       `AlgebraSection::for_envelope` uses `gen_ring_dim`.
 
-**Phase 2 — orchestration cutover (CI-hard)**
+**Phase 2 — orchestration cutover (CI-hard)** — **mostly landed (#230–#236, #241 partial); trait-level `D` remains.**
 
-- [ ] `ProverComputeStack<F, B>`, `OperationCtx<F, B>` without `const D`.
-- [ ] Backend traits take `RingLevelContext` (or `NttCacheKey` where NTT-only);
+- [x] `ProverComputeStack<F, B>`, `OperationCtx<F, B>` without `const D`.
+- [x] Backend traits take `RingLevelContext` (or `NttCacheKey` where NTT-only);
       internal `dispatch_ring_dim!` only.
-- [ ] `prove_suffix` / `verify_suffix` / `commit_next_w`: uniform loop over
+- [x] `prove_suffix` / `verify_suffix` / `commit_next_w`: uniform loop over
       `plan.context_at(level)`; **no** stack-rebuild branch.
-- [ ] `prove_fold` / `verify_fold` API takes `ring_d: usize` at boundary.
-- [ ] Delete `Suffix*ProveBackendFor`, `RECURSIVE_SUFFIX_RING_DIMENSIONS`,
+- [x] `prove_fold` / `verify_fold` API takes `ring_d: usize` at boundary.
+- [x] Delete `Suffix*ProveBackendFor`, `RECURSIVE_SUFFIX_RING_DIMENSIONS`,
       six-bound `RecursiveProveBackend` supertrait lattice.
-- [ ] `AkitaCommitmentScheme<Cfg>`, `CommitmentProver<F>`, `batched_prove` without
-      `const D` on scheme / trait (see Public API cutover).
+- [x] `AkitaCommitmentScheme<Cfg>` without `const D` on the scheme struct (per-preset
+      macro impls in `akita-pcs/src/scheme/impls.rs`). `CommitmentProver<F, D>` /
+      `CommitmentVerifier<F, D>` traits still carry `D` at call sites: rustc cannot use
+      `Cfg::D` in const-generic trait bounds on a single blanket impl.
 - [x] Grep gate: no `dispatch_ring_dim_result!` in `protocol/core/suffix.rs` or
       verifier `protocol/core/suffix.rs`.
 
@@ -422,27 +486,30 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 - Suffix cold path removed; perf neutral or better on profile preset
   `onehot_fp128_d64:32:1` (advisory, not CI gate).
 
-**Phase 3 — fold storage cutover (CI-hard)**
+**Phase 3 — fold storage cutover (CI-hard)** — **storage demotion landed (#236, #239–#240); wire-byte pins and bench gates deferred.**
 
-- [ ] `PreparedFold`, `RingRelationInstance`, verifier `PreparedFoldReplay` without
+- [x] `PreparedFold`, `RingRelationInstance`, verifier `PreparedFoldReplay` without
       `const D` on struct (use `RingBuf` / `RingSlice` internally).
-- [ ] `RingBuf<F>` in-memory alias over compact storage; `as_ring_slice::<D>()` API
+- [x] `RingBuf<F>` in-memory alias over compact storage; `as_ring_slice::<D>()` API
       (same semantics as today's `FlatRingVec`); wire `FlatRingVec` encoding unchanged.
 - [ ] No `to_vec::<D>()` / `from_vec::<D>()` on fold hot boundaries (grep audit).
-- [ ] Hand-built mixed-D `Schedule` fixture proves and verifies (e.g. levels 0–1 at
+      **Deferred follow-up:** `as_ring_slice_trusted::<D>()` remains on prover/verifier
+      hot paths behind schedule validation; full no-panic audit not closed.
+- [x] Hand-built mixed-D `Schedule` fixture proves and verifies (e.g. levels 0–1 at
       D=128, level 2+ at D=64) with transcript replay **before** deleting the legacy
-      suffix cold-path reference implementation.
+      suffix cold-path reference implementation (`mixed_d_per_level_e2e`).
 
 **Correctness / perf (CI-hard where noted)**
 
 - [ ] Proof wire bytes unchanged (pinned roundtrip on representative proofs).
-- [ ] Prover≡verifier setup-geometry cross-check on the mixed-D fixture (both call the
-      shared function and agree level-by-level).
+      **Deferred:** uniform-D byte identity not re-pinned across full stack merge.
+- [x] Prover≡verifier setup-geometry cross-check on the mixed-D fixture (shape-level
+      CI test + minimal-envelope integration; large envelope sweep is `#[ignore]`).
 - [ ] `cargo bench -p akita-pcs --bench ring_ntt` and `--bench root_kernels`: no
       regression on `dense_root_matvec_full_nv25_d32` and CRT matvec baselines
       (manual / release bench; not CI today).
 
-**Planner (Phase 4, separate PR)**
+**Planner (Phase 4, separate PR)** — **not started; out of scope for current stack.**
 
 - [ ] DP searches `ring_d` per fold step; `expand_to_level_params` accepts
       `ring_d != policy.ring_dimension` when policy allows.
@@ -1102,7 +1169,7 @@ Document the forward-looking relabeling in `specs/transcript-hardening.md`.
 | Today | After |
 |-------|-------|
 | `CommitmentConfig::D` | **Setup envelope default** (`gen_ring_dim`) and root-commit layout; not suffix authority |
-| `AkitaCommitmentScheme<const D, Cfg>` | `AkitaCommitmentScheme<Cfg>` (Phase 2) |
+| `AkitaCommitmentScheme<const D, Cfg>` | `AkitaCommitmentScheme<Cfg>` (**done**; traits still `CommitmentProver<F, D>`) |
 | `AkitaProverSetup<F, const D>` | `AkitaProverSetup<F>` (envelope degree read from `seed.gen_ring_dim`; relax the setup `gen_ring_dim != D` checks to compare against the seed itself) |
 | `batched_prove` (D from scheme struct) | `batched_prove` builds `RingDimPlan` from resolved schedule + seed |
 | `ring_challenge_config(d)` | called with `plan.dim_at(ℓ)` per fold |
@@ -1163,7 +1230,7 @@ Phased migration for PCS and compute surfaces (full cutover, no shims):
 | Phase | `AkitaCommitmentScheme` | `CommitmentProver` / `Verifier` | `RingCommitment` / hints | `PreparedSetup` | Caller-visible `D` |
 |-------|-------------------------|----------------------------------|--------------------------|-----------------|-------------------|
 | 1 | `<const D, Cfg>` unchanged | `<F, D>` unchanged | `<F, D>` | D-free internal on `CpuBackend` | type param + schedule |
-| 2 | `<Cfg>` | `<F>` | `<F, D>` root only | D-free | root: `Cfg::D`; prove: `RingDimPlan` |
+| 2 | `<Cfg>` (**shipped**) | `<F, D>` (rustc: no blanket `Cfg::D` bound) | `<F, D>` root only | D-free | root: `Cfg::D`; prove: `RingDimPlan` |
 | 3 | `<Cfg>` | `<F>` | `RingBuf` / D-free where applicable | D-free | `RingDimPlan` only at PCS boundary |
 
 **End-state integrator snippet (Phase 2+):**
@@ -1478,11 +1545,19 @@ Five sub-steps; keep each compiling.
 
 ### Wave 7 — Final gate + cleanup
 
-- Re-run the mixed-D fixture end to end on the final tree (prove + verify + replay);
-  confirm byte-identical to the Wave-0 oracle.
-- Confirm the prover≡verifier geometry cross-check passes.
-- Grep inventory for all deleted symbols (see Inventory).
-- `docs/doc-blast-radius.json` regions; optional book stubs; `docs/compute-backends.md`.
+- [x] Re-run the mixed-D fixture end to end on the final tree (prove + verify + replay);
+      byte-identical to the Wave-0 oracle (`mixed_d_per_level_e2e`).
+- [x] Prover≡verifier setup-geometry cross-check (`mixed_d_geometry_crosscheck`).
+- [x] PCS public API: `AkitaCommitmentScheme<Cfg>` without redundant struct `const D`
+      (`akita-pcs/src/scheme/impls.rs` per-preset macro impls; `ensure_root_ring_dim` on
+      `batched_verify`). Traits remain `CommitmentProver<F, D>` / `CommitmentVerifier<F, D>`
+      until rustc can express `Cfg::D` in trait bounds without per-preset duplication.
+- [x] `switch_at_fold == 0` rejected in `mixed_d_per_level_schedule` (Bugbot); unit test
+      `mixed_d_schedule_rejects_switch_at_fold_zero`.
+- [ ] Phase 4 planner mixed-D tables (DP `ring_d` search, `D_max` envelope, catalog regen;
+      separate follow-on PR per §Phase 4 below).
+- [ ] Grep inventory for all deleted symbols (see Inventory).
+- [ ] `docs/doc-blast-radius.json` regions; optional book stubs; `docs/compute-backends.md`.
 
 ### Phase 4 — Planner (separate, follow-on PR; out of scope here)
 

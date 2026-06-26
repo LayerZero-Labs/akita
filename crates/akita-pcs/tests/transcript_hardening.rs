@@ -20,7 +20,7 @@ use akita_types::{
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
-type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
+type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
 /// Singleton onehot `num_vars` large enough that `batched_prove` keeps a root
 /// fold and segment-typed terminal direct witness. Smaller values (e.g. 10)

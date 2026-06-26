@@ -29,10 +29,11 @@ mod tests;
 mod wire;
 
 pub use batch::{
-    append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    checked_total_claims, folded_root_supports_opening_shape, padded_scalar_batch_num_vars,
-    prepare_opening_point, ring_subfield_packed_extension_opening_point,
-    root_tensor_projection_enabled, validate_batched_inputs,
+    align_recursive_opening_point, append_batched_commitments_to_transcript,
+    append_claim_values_to_transcript, checked_total_claims, folded_root_supports_opening_shape,
+    padded_scalar_batch_num_vars, prepare_opening_point,
+    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
+    suffix_witness_hypercube_num_vars, validate_batched_inputs,
     validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, ProverCommitmentRows, RingCommitment};

@@ -18,7 +18,8 @@ use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
-/// Generic over base field `F` and cyclotomic ring degree `D`.
+/// Generic over base field `F` and root cyclotomic degree `D` (`Cfg::D` on
+/// `AkitaCommitmentScheme<Cfg>` in `akita-pcs`). Suffix levels dispatch via the resolved schedule.
 /// Caller-provided root polynomials are source-typed and must satisfy the
 /// prover-facing root polynomial traits (`RootProvePoly` and related capability
 /// traits).
@@ -83,6 +84,7 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         Self::ExtField: FpExtEncoding<F>,
+        B: ComputeBackendSetup<F>,
         P: RootCommitPoly<F, D>,
         B: RootCommitBackend<F, P, Self::ExtField, D>;
 
@@ -104,6 +106,7 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         Self::ExtField: FpExtEncoding<F>,
+        B: ComputeBackendSetup<F>,
         P: RootCommitPoly<F, D>,
         B: RootCommitBackend<F, P, Self::ExtField, D>;
 
@@ -151,10 +154,10 @@ where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+        B: ComputeBackendSetup<F>,
         P: RootProvePoly<F, D>,
         B: RootProveFlowBackend<F, P, Self::ExtField, D>
             + RecursiveWitnessProveFlowBackend<F, Self::ExtField>
-            + ComputeBackendSetup<F>
             + 'a,
         <B as ComputeBackendSetup<F>>::PreparedSetup: 'a;
 }
