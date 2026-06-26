@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn align_recursive_opening_point_shrink_grow_and_identity() {
         type P = F;
-        let point: Vec<P> = (0..5).map(|i| P::from_u64(i)).collect();
+        let point: Vec<P> = (0..5).map(P::from_u64).collect();
         assert_eq!(
             align_recursive_opening_point(&point, 3),
             vec![P::from_u64(2), P::from_u64(3), P::from_u64(4)]
