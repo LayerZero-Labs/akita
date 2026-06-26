@@ -27,6 +27,9 @@ mod proof;
 mod protocol;
 mod stages;
 
+#[cfg(feature = "test-support")]
+pub mod test_support;
+
 pub use akita_types::CommitmentVerifier;
 pub use proof::cleartext_witness_opening_matches;
 pub use protocol::{

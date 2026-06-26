@@ -56,6 +56,8 @@ mod suffix;
 use root_fold::verify_root;
 
 pub use verify::batched_verify;
+#[cfg(feature = "test-support")]
+pub use verify::batched_verify_with_schedule;
 
 pub(in crate::protocol::core) use fold::{
     verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldReplay,

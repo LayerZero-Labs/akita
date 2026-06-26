@@ -456,6 +456,73 @@ where
     )
 }
 
+/// Verify a batched proof against a caller-supplied effective schedule.
+///
+/// Test-only entry point for hand-built schedules (runtime ring cutover Wave 0).
+/// Production callers should use [`batched_verify`], which resolves the schedule
+/// from config policy.
+///
+/// # Errors
+///
+/// Same as [`batched_verify`], except schedule selection errors are replaced by
+/// caller responsibility for supplying a valid effective schedule.
+#[cfg(feature = "test-support")]
+pub fn batched_verify_with_schedule<Cfg, T, const D: usize>(
+    proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+    setup: &AkitaVerifierSetup<Cfg::Field>,
+    transcript: &mut T,
+    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    schedule: &Schedule,
+    basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field>,
+{
+    check_batched_proof_step_shape(proof)?;
+
+    let group_sizes = claims
+        .groups()
+        .iter()
+        .map(|group| group.claims.len())
+        .collect::<Vec<_>>();
+    validate_batched_inputs(&setup.expanded, claims.point(), &group_sizes, false)?;
+    let opening_batch = claims
+        .validate(OpeningBatchLimits {
+            max_num_vars: setup.expanded.seed().max_num_vars,
+            max_num_polynomials: setup.expanded.seed().max_num_batched_polys,
+        })
+        .map_err(|_| AkitaError::InvalidProof)?;
+    reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
+    validate_schedule_onehot_chunk_size::<Cfg>(schedule)?;
+    validate_ring_dim_plan_at_entry(schedule, setup.expanded.seed())?;
+
+    bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+        &setup.expanded,
+        &opening_batch,
+        schedule,
+        basis,
+        transcript,
+    )?;
+
+    verify::<Cfg, T, D>(
+        proof,
+        setup,
+        transcript,
+        claims,
+        schedule,
+        basis,
+        setup_contribution_mode,
+    )
+}
+
 /// Verify a prepared batched proof once the schedule and transcript descriptor
 /// are fixed.
 ///
