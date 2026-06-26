@@ -37,9 +37,9 @@ Paper reference: §3.5 (`sec:akita-one-step`, transcript binding).
 development. Field additions inside the setup section (for example
 `FoldLinfProtocolBinding` extensions) do **not** bump this constant. There is
 no backward-compatibility guarantee across arbitrary crate revisions: pin an
-exact Akita git revision and re-run prove/verify e2e checks when upgrading.
+exact Akita git revision and re-run prove/verify integration tests when upgrading.
 
 After the zk-strip cutover, `SetupSection.protocol_features.zk` is always
-`false` on the wire. Transparent proof bytes for the pinned regression cases
-(`transparent_proof_golden` in `akita-pcs`) are the authoritative wire-format
-tripwire for recursion integrators.
+`false` on the wire. Ongoing wire regression is covered by serde roundtrips and
+end-to-end prove→serialize→deserialize→verify tests in `akita-pcs` (for example
+`akita_e2e.rs`, `fold_linf.rs`), not by pinned proof-byte digests.
