@@ -33,7 +33,8 @@ pub use batch::{
     checked_total_claims, folded_root_supports_opening_shape, padded_scalar_batch_num_vars,
     prepare_opening_point, ring_subfield_packed_extension_opening_point,
     root_tensor_projection_enabled, validate_batched_inputs,
-    align_recursive_opening_point, validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    align_recursive_opening_point, suffix_witness_hypercube_num_vars,
+    validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, ProverCommitmentRows, RingCommitment};
 pub use containers::{

@@ -428,9 +428,11 @@ pub struct DirectStep {
     pub params: Option<LevelParams>,
     /// Optional override for terminal Golomb tail grind layout.
     ///
-    /// Mixed-D hand schedules keep the envelope terminal witness shape while
-    /// later folds run at a smaller `ring_dimension`. When set, prover tail
-    /// grind uses these params instead of the terminal fold's active params.
+    /// When unset, tail grind uses the terminal fold's active [`LevelParams`].
+    /// Set only when the terminal [`Self::witness_shape`] is pinned to a
+    /// different geometry than the terminal fold (e.g. envelope terminal bytes
+    /// with suffix folds at smaller `ring_dimension`). Wave 0 mixed-D rebuilds
+    /// suffix-coherent terminal shape instead and leaves this `None`.
     pub tail_grind_level_params: Option<LevelParams>,
 }
 
@@ -546,7 +548,7 @@ impl Schedule {
                             bytes.push(1);
                             params.append_descriptor_bytes(bytes);
                         }
-                        None => {}
+                        None => bytes.push(0),
                     }
                 }
             }

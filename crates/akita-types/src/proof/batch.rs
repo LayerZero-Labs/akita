@@ -336,6 +336,26 @@ pub fn padded_scalar_batch_num_vars(
     })
 }
 
+/// Witness MLE variable count for a suffix commitment at `ring_d`.
+///
+/// Ring slots are zero-padded to the next power of two, then multiplied by
+/// `ring_d`, matching recursive suffix witness hypercube sizing.
+pub fn suffix_witness_hypercube_num_vars(w_len: usize, ring_d: usize) -> Result<usize, AkitaError> {
+    if ring_d == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "suffix witness hypercube requires nonzero ring dimension".into(),
+        ));
+    }
+    if w_len % ring_d != 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "witness length {w_len} is not divisible by ring dimension {ring_d}"
+        )));
+    }
+    let ring_slots = w_len / ring_d;
+    let padded = ring_slots.next_power_of_two().max(1);
+    Ok((padded * ring_d).trailing_zeros() as usize)
+}
+
 /// Pad or project a recursive opening point to a target variable count.
 ///
 /// Coordinates are ordered `[ring_bits | outer block vars]`. When the target
@@ -461,7 +481,7 @@ pub fn prepare_opening_point<F, L, const D: usize>(
 ) -> Result<PreparedOpeningPoint<F, L>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    L: FpExtEncoding<F>,
+    L: FpExtEncoding<F> + FieldCore,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
     let target_num_vars = lp
@@ -469,14 +489,7 @@ where
         .checked_add(lp.r_vars)
         .and_then(|n| n.checked_add(alpha_bits))
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
-    if opening_point.len() > target_num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: target_num_vars,
-            actual: opening_point.len(),
-        });
-    }
-    let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, L::zero());
+    let padded_point = align_recursive_opening_point(opening_point, target_num_vars);
 
     if L::EXT_DEGREE == 1 {
         let base_point = padded_point
@@ -696,6 +709,22 @@ mod tests {
             },
             FlatMatrix::from_flat_data(vec![F::zero()], 1),
         )
+    }
+
+    #[test]
+    fn align_recursive_opening_point_shrink_grow_and_identity() {
+        type P = F;
+        let point: Vec<P> = (0..5).map(|i| P::from_u64(i)).collect();
+        assert_eq!(
+            align_recursive_opening_point(&point, 3),
+            vec![P::from_u64(2), P::from_u64(3), P::from_u64(4)]
+        );
+        let short = vec![P::from_u64(7)];
+        assert_eq!(
+            align_recursive_opening_point(&short, 3),
+            vec![P::from_u64(7), P::zero(), P::zero()]
+        );
+        assert_eq!(align_recursive_opening_point(&point, 5), point);
     }
 
     #[test]

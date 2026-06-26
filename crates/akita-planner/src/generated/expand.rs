@@ -268,6 +268,9 @@ impl GeneratedFoldStep {
     /// `extra_block_vars` is the additional `r_vars` added when the previous
     /// fold executed at a larger ring dimension (typically `1` on the first
     /// mixed-D suffix level after `128 → 64`, `0` thereafter).
+    /// Mixed-D ring transition expansion. Shares geometry with
+    /// [`Self::expand_to_level_params`] but recomputes ranks at `target_ring_d`;
+    /// Phase 4 should fold both into one parameterized expansion core.
     pub fn expand_envelope_witness_at_ring_d(
         &self,
         policy: &PlannerPolicy,

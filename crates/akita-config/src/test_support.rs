@@ -8,17 +8,27 @@
 //! absent from every shipped artifact. Production callers size their
 //! per-poly inputs through [`CommitmentConfig::get_params_for_batched_commitment`]
 //! directly and never need this module.
+//!
+//! Mixed-D schedule stitching lives here for Wave 0 only; Phase 4 should move
+//! this builder into `akita-planner` next to expansion.
 
 use akita_field::AkitaError;
 use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
 use akita_planner::generated_schedule_lookup_key;
 use akita_types::{
-    direct_witness_bytes, terminal_direct_witness_shape_for_key,
+    direct_witness_bytes, level_proof_bytes, terminal_direct_witness_shape_for_key,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
     DirectStep, FoldStep, LevelParams, MRowLayout, OpeningBatchShape, Schedule, Step,
 };
 
 use crate::{policy_of, CommitmentConfig};
+
+struct MixedSuffixFoldPlan {
+    params: LevelParams,
+    current_w_len: usize,
+    next_w_len: usize,
+    is_terminal: bool,
+}
 
 fn generated_fold_step<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
@@ -75,6 +85,7 @@ fn mixed_level_params<EnvelopeCfg, SuffixCfg>(
     key: AkitaScheduleLookupKey,
     level: usize,
     envelope_current_w_len: usize,
+    envelope_params: &LevelParams,
     suffix_ring_d: usize,
     prev_ring_d: usize,
 ) -> Result<LevelParams, AkitaError>
@@ -85,13 +96,7 @@ where
     let envelope_gen = generated_fold_step::<EnvelopeCfg>(key, level)?;
     let extra_block_vars = extra_block_vars_for_drop(prev_ring_d, suffix_ring_d);
     if envelope_gen.ring_d as usize == suffix_ring_d && extra_block_vars == 0 {
-        return EnvelopeCfg::runtime_schedule(key).and_then(|schedule| {
-            schedule
-                .fold_steps()
-                .nth(level)
-                .map(|step| step.params.clone())
-                .ok_or_else(|| AkitaError::InvalidSetup(format!("missing fold level {level}")))
-        });
+        return Ok(envelope_params.clone());
     }
     let suffix_policy = policy_of::<SuffixCfg>();
     let num_claims = if level == 0 {
@@ -116,7 +121,8 @@ where
     )
 }
 
-fn extra_block_vars_for_drop(prev_ring_d: usize, suffix_ring_d: usize) -> usize {
+/// Extra block-select variables when dropping ring dimension by a power-of-two factor.
+pub fn extra_block_vars_for_drop(prev_ring_d: usize, suffix_ring_d: usize) -> usize {
     if prev_ring_d > suffix_ring_d && prev_ring_d.is_multiple_of(suffix_ring_d) {
         let downscale = prev_ring_d / suffix_ring_d;
         if downscale.is_power_of_two() {
@@ -134,6 +140,8 @@ fn extra_block_vars_for_drop(prev_ring_d: usize, suffix_ring_d: usize) -> usize 
 /// Ajtai keys are scaled from the suffix table so `commit_next_w` dispatch at
 /// `D=64` matches the envelope field-length ladder.
 ///
+/// Wave 0 fixtures use `num_polynomials == 1` only.
+///
 /// # Errors
 ///
 /// Returns an error when either preset schedule cannot be resolved, fold counts
@@ -147,6 +155,11 @@ where
     EnvelopeCfg: CommitmentConfig,
     SuffixCfg: CommitmentConfig,
 {
+    if num_polynomials != 1 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "mixed-D Wave 0 fixture supports singleton batches only (got {num_polynomials})"
+        )));
+    }
     let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_polynomials);
     let envelope = EnvelopeCfg::runtime_schedule(lookup_key)?;
     let suffix = SuffixCfg::runtime_schedule(lookup_key)?;
@@ -171,6 +184,11 @@ where
             envelope_folds.len()
         )));
     }
+    if switch_at_fold == 0 && switch_at_fold < envelope_folds.len() {
+        return Err(AkitaError::InvalidSetup(
+            "switch_at_fold=0 is unsupported; use switch_at_fold >= 1 for mixed-D fixtures".into(),
+        ));
+    }
 
     let mut mixed_folds: Vec<FoldStep> = envelope_folds
         .iter()
@@ -179,11 +197,14 @@ where
         .collect();
 
     if switch_at_fold < envelope_folds.len() {
-        let field_bits = SuffixCfg::decomposition().field_bits();
+        let suffix_policy = policy_of::<SuffixCfg>();
+        let field_bits = suffix_policy.decomposition.field_bits();
+        let challenge_field_bits = field_bits * suffix_policy.chal_ext_degree as u32;
         let suffix_ring_d = suffix_folds[switch_at_fold].params.ring_dimension;
         let num_fold_levels = envelope_folds.len();
         let mut w_len = envelope_folds[switch_at_fold - 1].next_w_len;
         let mut prev_ring_d = envelope_folds[switch_at_fold - 1].params.ring_dimension;
+        let mut suffix_plan: Vec<MixedSuffixFoldPlan> = Vec::new();
 
         for level in switch_at_fold..num_fold_levels {
             let envelope_step = &envelope_folds[level];
@@ -192,6 +213,7 @@ where
                     lookup_key,
                     level,
                     w_len,
+                    &envelope_step.params,
                     suffix_ring_d,
                     prev_ring_d,
                 )?
@@ -210,14 +232,42 @@ where
             let next_w_len = ring
                 .checked_mul(params.ring_dimension)
                 .ok_or_else(|| AkitaError::InvalidSetup("mixed-D witness length overflow".into()))?;
-            mixed_folds.push(FoldStep {
+            suffix_plan.push(MixedSuffixFoldPlan {
                 params,
                 current_w_len: w_len,
                 next_w_len,
-                level_bytes: envelope_step.level_bytes,
+                is_terminal: is_terminal_fold,
             });
             w_len = next_w_len;
             prev_ring_d = suffix_ring_d;
+        }
+
+        for (idx, plan) in suffix_plan.iter().enumerate() {
+            let layout = if plan.is_terminal {
+                MRowLayout::WithoutDBlock
+            } else {
+                MRowLayout::WithDBlock
+            };
+            let next_lp = if plan.is_terminal {
+                None
+            } else {
+                Some(&suffix_plan[idx + 1].params)
+            };
+            let level_bytes = level_proof_bytes(
+                field_bits,
+                challenge_field_bits,
+                &plan.params,
+                next_lp,
+                plan.next_w_len,
+                1,
+                layout,
+            );
+            mixed_folds.push(FoldStep {
+                params: plan.params.clone(),
+                current_w_len: plan.current_w_len,
+                next_w_len: plan.next_w_len,
+                level_bytes,
+            });
         }
     }
 

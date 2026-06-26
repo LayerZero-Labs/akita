@@ -208,6 +208,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                     // Stub fixture: terminal-direct level params equal the
                     // fold's `lp`.
                     params: Some(lp.clone()),
+                    tail_grind_level_params: None,
                 }),
             ],
             total_bytes: 0,
@@ -303,6 +304,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     // Stub fixture: terminal-direct level params equal the
                     // fold's `lp`.
                     params: Some(lp.clone()),
+                    tail_grind_level_params: None,
                 }),
             ],
             total_bytes: 0,

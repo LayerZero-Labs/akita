@@ -386,6 +386,7 @@ fn effective_schedule_digest_binds_direct_shape() {
             witness_shape: CleartextWitnessShape::FieldElements(8),
             direct_bytes: 8,
             params: None,
+            tail_grind_level_params: None,
         })],
         total_bytes: 8,
     };
@@ -395,6 +396,7 @@ fn effective_schedule_digest_binds_direct_shape() {
             witness_shape: CleartextWitnessShape::FieldElements(9),
             direct_bytes: 9,
             params: None,
+            tail_grind_level_params: None,
         })],
         total_bytes: 9,
     };

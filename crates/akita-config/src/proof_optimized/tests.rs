@@ -410,28 +410,96 @@ fn presets_select_expected_sis_modulus_family() {
 #[test]
 fn mixed_d_suffix_params_recursive_vars_match_runtime_witness_domain() {
     use crate::test_support::mixed_d_per_level_schedule;
+    use akita_types::suffix_witness_hypercube_num_vars;
 
     let key = AkitaScheduleLookupKey::singleton(16);
     let switch = 2usize;
     let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, switch)
         .expect("mixed schedule");
 
-    fn suffix_witness_num_vars(w_len: usize, ring_d: usize) -> usize {
-        assert_eq!(w_len % ring_d, 0, "w_len={w_len} ring_d={ring_d}");
-        let ring_slots = w_len / ring_d;
-        let padded = ring_slots.next_power_of_two().max(1);
-        (padded * ring_d).trailing_zeros() as usize
-    }
-
     for (level, fold) in mixed.fold_steps().enumerate().skip(switch) {
         let witness_domain_bits =
-            suffix_witness_num_vars(fold.current_w_len, fold.params.ring_dimension);
+            suffix_witness_hypercube_num_vars(fold.current_w_len, fold.params.ring_dimension)
+                .expect("witness hypercube");
         let recursive = fold.params.recursive_opening_num_vars().unwrap();
         assert_eq!(
             recursive, witness_domain_bits,
             "recursive opening vars must match witness hypercube at level {level}"
         );
     }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mixed_d_schedule_w_len_chain_matches_runtime_layout() {
+    use crate::test_support::mixed_d_per_level_schedule;
+    use akita_types::{MRowLayout, w_ring_element_count_with_counts_for_layout_bits};
+
+    let key = AkitaScheduleLookupKey::singleton(16);
+    let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, 2)
+        .expect("mixed schedule");
+    let field_bits = fp128::D64Full::decomposition().field_bits();
+    let num_fold_levels = mixed.num_fold_levels();
+
+    for (level, fold) in mixed.fold_steps().enumerate() {
+        if level + 1 < num_fold_levels {
+            let next_fold = mixed.fold_steps().nth(level + 1).expect("next fold");
+            assert_eq!(
+                fold.next_w_len, next_fold.current_w_len,
+                "fold chain mismatch at level {level}"
+            );
+        }
+        let is_terminal = level + 1 == num_fold_levels;
+        let layout = if is_terminal {
+            MRowLayout::WithoutDBlock
+        } else {
+            MRowLayout::WithDBlock
+        };
+        let ring = w_ring_element_count_with_counts_for_layout_bits(
+            field_bits,
+            &fold.params,
+            1,
+            1,
+            layout,
+        )
+        .expect("ring count");
+        let runtime_next = ring * fold.params.ring_dimension;
+        assert_eq!(
+            runtime_next, fold.next_w_len,
+            "runtime next_w_len mismatch at level {level}"
+        );
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mixed_d_schedule_rejects_switch_at_fold_zero() {
+    use crate::test_support::mixed_d_per_level_schedule;
+
+    let err = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, 0)
+        .expect_err("switch_at_fold=0 must be rejected");
+    assert!(
+        err.to_string().contains("switch_at_fold=0"),
+        "unexpected error: {err}"
+    );
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mixed_d_schedule_degenerates_to_envelope_when_switch_covers_all_folds() {
+    use crate::test_support::mixed_d_per_level_schedule;
+    use akita_types::digest_effective_schedule;
+
+    let key = AkitaScheduleLookupKey::singleton(16);
+    let envelope = fp128::D128Full::runtime_schedule(key).expect("envelope");
+    let switch = envelope.num_fold_levels();
+    let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, switch)
+        .expect("uniform hand-built schedule");
+    assert_eq!(
+        digest_effective_schedule(&mixed),
+        digest_effective_schedule(&envelope),
+        "switch past all folds must match envelope schedule digest"
+    );
 }
 
 fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
