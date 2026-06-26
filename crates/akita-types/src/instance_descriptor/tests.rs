@@ -69,6 +69,30 @@ fn rejects_removed_q16_sis_family_tag() {
 }
 
 #[test]
+fn setup_section_rejects_mismatched_zk_protocol_feature() {
+    let mut descriptor = sample_descriptor();
+    descriptor.setup.protocol_features.zk = true;
+    let err = descriptor
+        .check()
+        .expect_err("zk=true must be rejected on transparent build");
+    assert!(matches!(err, SerializationError::InvalidData(_)));
+    assert!(
+        err.to_string().contains("protocol features"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn descriptor_deserialize_rejects_zk_protocol_feature() {
+    let mut descriptor = sample_descriptor();
+    descriptor.setup.protocol_features.zk = true;
+    let bytes = descriptor.canonical_bytes().expect("serialize");
+    let err = AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &())
+        .expect_err("zk=true wire must be rejected on transparent build");
+    assert!(matches!(err, SerializationError::InvalidData(_)));
+}
+
+#[test]
 fn fold_linf_descriptor_canonical_digest_pinned() {
     let bytes = sample_descriptor()
         .canonical_bytes()
@@ -78,9 +102,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             221,
             [
-                0x9a, 0x63, 0xf2, 0x57, 0x50, 0xdb, 0x4e, 0x0c, 0x6f, 0xc0, 0x99, 0xb7, 0xef, 0xa6,
-                0x6e, 0xa5, 0xda, 0x6e, 0x77, 0x54, 0x52, 0x69, 0xe4, 0x97, 0xd0, 0x8c, 0xdf, 0x9b,
-                0x47, 0x16, 0xec, 0x9b,
+                0xc4, 0xc8, 0xa7, 0x1a, 0x85, 0x0d, 0x03, 0x9d, 0xb9, 0xf5, 0x1e, 0xc5, 0x89,
+                0x95, 0x03, 0xba, 0xd3, 0x23, 0xae, 0x10, 0xbb, 0x12, 0x91, 0x10, 0x9c, 0x1c,
+                0xfc, 0xf2, 0xe5, 0xeb, 0x02, 0x47,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"

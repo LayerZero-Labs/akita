@@ -419,11 +419,11 @@ fn append_direct_witness_shape_descriptor_bytes(
 ) {
     match shape {
         CleartextWitnessShape::FieldElements(coeff_len) => {
-            bytes.push(0);
+            bytes.push(1);
             push_usize(bytes, *coeff_len);
         }
         CleartextWitnessShape::SegmentTyped(shape) => {
-            bytes.push(1);
+            bytes.push(2);
             shape.append_descriptor_bytes(bytes);
         }
     }

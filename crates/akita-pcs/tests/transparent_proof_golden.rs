@@ -32,9 +32,9 @@ use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 
 const GOLDEN_D64_FULL_NV15_SHA256: &str =
-    "ffdca1f6124325ed10a50a03fd1485932671a10d9fed3b89f9687c019babd87f";
+    "f96dd98684d77329971ad0c4b3020439f7e5d8c35b7225dca9c1282bfae83517";
 const GOLDEN_D64_ONEHOT_NV20_SHA256: &str =
-    "0abde930f4a2151c75b95f346123d996aca92d6d2fb7b8cb45e7b336ba3ec7ef";
+    "480a6bc99a4f7408015c89dfd91fe33097201e7f838298b38db8d9edb569ed2e";
 
 struct TransparentGoldenFixture<const D: usize> {
     bytes: Vec<u8>,

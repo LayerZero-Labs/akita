@@ -17,7 +17,7 @@ zero-knowledge today** — enabling it produces sound, verifying proofs, not ZK
 proofs (the `sec:zk-joint-sigma` seam and suffix modulus switching are
 unimplemented; the tail is discharged by a plain opening). See
 [`book/src/roadmap/zero-knowledge.md`](../book/src/roadmap/zero-knowledge.md) and
-[`specs/akita-zk-sumcheck-hiding-plain.md`](akita-zk-sumcheck-hiding-plain.md).
+[`specs/archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md`](archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md).
 
 For the upcoming audit we want the transparent protocol to be the product under
 review, with **zero ZK in the auditor's reading path** — the ~1,200
@@ -133,20 +133,20 @@ Affected surfaces:
 ### Acceptance Criteria
 
 - [ ] `rg -n 'feature *= *"zk"' crates/ -g '*.rs'` returns **0** matches on `main`.
+      Historical specs under `specs/archive/` may retain pre-strip `zk` references.
 - [ ] No crate's `Cargo.toml` defines a `zk` feature; `akita-r1cs` is removed from
       `[workspace] members` and from all `optional`/`dep:` references.
 - [x] `cargo check --workspace --no-default-features --features parallel,disk-persistence`
       succeeds (transparent merge gate; #218).
 - [ ] `cargo clippy --all --all-targets -- -D warnings` and the `--no-default-features` variant both pass without any `zk` feature in existence.
-- [x] The Slice-0 golden-byte digests (transparent folded proofs for fixed
-      instances + fixed seeds) are **byte-identical** across all slices. The
-      **source of truth is the test constants in
-      `crates/akita-pcs/tests/transparent_proof_golden.rs`** (currently
-      `fp128::D64Full` nv=15 → `c99fcc18…b767072`; `fp128::D64OneHot` nv=20 →
-      `4849bef9…cd0daf1b`). **These constants must NOT be edited during slices
-      4–5** — a changed digest means a slice altered transparent bytes (an I1
-      violation), not a re-pin. Re-pinning is allowed *only* for a deliberate,
-      reviewed wire-format change, which the strip is not.
+- [x] The Slice-0 golden-byte digests are **byte-identical across slices 0–4d**
+      (`fp128::D64Full` nv=15 → `c99fcc18…b767072`; `fp128::D64OneHot` nv=20 →
+      `4849bef9…cd0daf1b`). **PR 4e** keeps `AKITA_INSTANCE_DESCRIPTOR_VERSION`
+      at **`1`** (no bump) and restores schedule witness-shape descriptor tags
+      (reserved `PackedDigits` tag `0`, `FieldElements` tag `1`, `SegmentTyped`
+      tag `2`) so the only transcript change is the intentional v1 descriptor
+      preamble, not accidental tag renumbering. Golden re-pins once at the 4e
+      head (`f96dd986…` / `480a6bc9…`). **PR 4f** retires the tripwire.
 - [x] `lhl_blinding` compiles in the default build, its unit tests pass, and it is
       no longer behind any `cfg`.
 - [x] A `zk-wip` branch and an annotated tag (`zk-prefix-snapshot-2026-06`)
@@ -449,9 +449,9 @@ production type after the prover fold-replay PR (4d, which removes the
 - Update [`book/src/usage/feature-flags.md`](../book/src/usage/feature-flags.md):
   remove the `zk` feature row.
 - Set `Status: superseded` (or add a banner) on the prefix-ZK design specs
-  [`akita-zk-sumcheck-hiding-plain.md`](akita-zk-sumcheck-hiding-plain.md),
-  [`akita-zk-commitment-hiding.md`](akita-zk-commitment-hiding.md),
-  [`akita-zk-v-hiding.md`](akita-zk-v-hiding.md): mark them out of audit scope,
+  [`archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md`](archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md),
+  [`archive/2026-Q2/akita-zk-commitment-hiding.md`](archive/2026-Q2/akita-zk-commitment-hiding.md),
+  [`archive/2026-Q2/akita-zk-v-hiding.md`](archive/2026-Q2/akita-zk-v-hiding.md): mark them out of audit scope,
   retained as the design record for the `zk-wip` work.
 - Add an audit-contract note: the transparent path is the product under review;
   `zk` is not built, `akita-r1cs` is absent, and `ProtocolFeatureSet.zk == false`.
@@ -463,9 +463,9 @@ production type after the prover fold-replay PR (4d, which removes the
   (lhl_blinding, kept), Phase 2 (`akita-zk-prefix` crate, rejected here).
 - Roadmap: [`book/src/roadmap/zero-knowledge.md`](../book/src/roadmap/zero-knowledge.md)
   — seam + suffix modulus switching are the remaining real-ZK steps.
-- Design record: [`specs/akita-zk-sumcheck-hiding-plain.md`](akita-zk-sumcheck-hiding-plain.md),
-  [`specs/akita-zk-commitment-hiding.md`](akita-zk-commitment-hiding.md),
-  [`specs/akita-zk-v-hiding.md`](akita-zk-v-hiding.md).
+- Design record: [`archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md`](archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md),
+  [`archive/2026-Q2/akita-zk-commitment-hiding.md`](archive/2026-Q2/akita-zk-commitment-hiding.md),
+  [`archive/2026-Q2/akita-zk-v-hiding.md`](archive/2026-Q2/akita-zk-v-hiding.md).
 - Key anchors: `crates/akita-types/src/proof/{levels.rs:1117,wire.rs,setup.rs}`,
   `crates/akita-prover/src/protocol/core/{fold.rs:99,fold.rs:830,fold.rs:873,prove.rs:337}`,
   `crates/akita-verifier/src/protocol/core/{verify.rs:632,fold.rs,zk.rs}`,

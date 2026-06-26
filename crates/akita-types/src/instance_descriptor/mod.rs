@@ -7,12 +7,10 @@
 //!
 //! ## Descriptor version policy
 //!
-//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` stays at `1` while the protocol is in
-//! active development. Setup-section field changes (for example
+//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` stays at **`1`** during active protocol
+//! development. Setup-section field changes (for example
 //! `FoldLinfProtocolBinding` extensions) land without bumping this constant;
-//! integrators must pin exact crate revisions, not rely on cross-release
-//! descriptor compatibility. The `protocol_features.zk` wire field remains for
-//! transcript layout stability and is always `false` after the zk-strip cutover.
+//! integrators must pin exact crate revisions.
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -452,9 +450,9 @@ impl AkitaDeserialize for AlgebraSection {
 
 impl Valid for ProtocolFeatureSet {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.zk {
+        if *self != Self::current() {
             return Err(SerializationError::InvalidData(
-                "descriptor protocol_features.zk must be false after zk-strip cutover".to_string(),
+                "descriptor protocol features do not match active build".to_string(),
             ));
         }
         Ok(())
@@ -507,6 +505,7 @@ impl Valid for SetupSection {
             ));
         }
         self.fold_linf.check()?;
+        self.protocol_features.check()?;
         Ok(())
     }
 }

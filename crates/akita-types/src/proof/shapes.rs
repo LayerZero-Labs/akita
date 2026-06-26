@@ -410,11 +410,11 @@ impl AkitaSerialize for CleartextWitnessShape {
     ) -> Result<(), SerializationError> {
         match self {
             Self::FieldElements(coeff_len) => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
+                1u8.serialize_with_mode(&mut writer, compress)?;
                 coeff_len.serialize_with_mode(&mut writer, compress)?;
             }
             Self::SegmentTyped(shape) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
+                2u8.serialize_with_mode(&mut writer, compress)?;
                 shape.serialize_with_mode(&mut writer, compress)?;
             }
         }
@@ -441,10 +441,15 @@ impl AkitaDeserialize for CleartextWitnessShape {
         let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = match tag {
             0 => {
+                return Err(SerializationError::InvalidData(
+                    "legacy PackedDigits witness shape tag is retired".to_string(),
+                ));
+            }
+            1 => {
                 let coeff_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 Self::FieldElements(coeff_len)
             }
-            1 => Self::SegmentTyped(
+            2 => Self::SegmentTyped(
                 crate::proof::SegmentTypedWitnessShape::deserialize_with_mode(
                     &mut reader,
                     compress,
