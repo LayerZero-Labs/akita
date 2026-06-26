@@ -614,32 +614,13 @@ where
 {
 }
 
-/// Backend capability for ZK hiding witness commitment (`DensePoly` inner commit).
-///
-/// Without `zk`, this is a vacuous marker implemented for every [`ComputeBackendSetup`].
-pub trait ZkHidingCommitBackend<F, const D: usize>: ComputeBackendSetup<F>
-where
-    F: FieldCore + CanonicalField,
-{
-}
-
-impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
-where
-    F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F>,
-{
-}
-
 /// Ring dimensions the recursive suffix may dispatch besides the config ring `D`.
 pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256];
 
 /// Full prove-flow capability at a single ring dimension `RING_D`: opening/tensor
-/// prove kernels plus ring-switch, commitment rows, and ZK hiding commit.
+/// prove kernels plus ring-switch and commitment rows.
 pub trait ProveFlowBackendFor<F, P, E, const RING_D: usize>:
-    RootProveBackend<F, P, E, RING_D>
-    + RingSwitchProveBackend<F, RING_D>
-    + CommitmentComputeBackend<F>
-    + ZkHidingCommitBackend<F, RING_D>
+    RootProveBackend<F, P, E, RING_D> + RingSwitchProveBackend<F, RING_D> + CommitmentComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -656,8 +637,7 @@ where
     P: RootProvePoly<F, RING_D>,
     B: RootProveBackend<F, P, E, RING_D>
         + RingSwitchProveBackend<F, RING_D>
-        + CommitmentComputeBackend<F>
-        + ZkHidingCommitBackend<F, RING_D>,
+        + CommitmentComputeBackend<F>,
 {
 }
 

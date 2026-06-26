@@ -8,7 +8,6 @@ use crate::compute::{
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-#[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
     GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
@@ -66,33 +65,11 @@ where
         .iter()
         .map(|poly| poly.direct_root_witness())
         .collect::<Result<Vec<_>, _>>()?;
-    #[cfg(feature = "zk")]
-    {
-        let b_blinding_digits = hints
-            .iter()
-            .flat_map(|hint| hint.b_blinding_digits())
-            .map(|digits| {
-                let mut flat_digits = Vec::with_capacity(digits.flat_digits().len() * D);
-                for plane in digits.flat_digits() {
-                    flat_digits.extend_from_slice(plane);
-                }
-                flat_digits
-            })
-            .collect();
-        Ok(AkitaBatchedProof {
-            zk_hiding: ZkHidingProof::default(),
-            root: AkitaBatchedRootProof::new_zero_fold(witnesses, b_blinding_digits),
-            steps: Vec::new(),
-        })
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        let _ = hints;
-        Ok(AkitaBatchedProof {
-            root: AkitaBatchedRootProof::new_zero_fold(witnesses),
-            steps: Vec::new(),
-        })
-    }
+    let _ = hints;
+    Ok(AkitaBatchedProof {
+        root: AkitaBatchedRootProof::new_zero_fold(witnesses),
+        steps: Vec::new(),
+    })
 }
 
 /// Drive batched proving end-to-end under config `Cfg`.
@@ -146,10 +123,7 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: RootProvePoly<Cfg::Field, D>,
-    C: ComputeBackendSetup<Cfg::Field>
-        + CommitmentComputeBackend<Cfg::Field>
-        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>
-        + 'a,
+    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
         + SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
@@ -292,10 +266,7 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: RootProvePoly<Cfg::Field, D>,
-    C: ComputeBackendSetup<Cfg::Field>
-        + CommitmentComputeBackend<Cfg::Field>
-        + crate::compute::ZkHidingCommitBackend<Cfg::Field, D>
-        + 'a,
+    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
         + SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
@@ -317,8 +288,6 @@ where
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
-    #[cfg(feature = "zk")]
-    let opening_batch = claims.to_opening_shape::<Cfg::Field>()?;
     {
         let commitments = claims.commitments();
         if commitments
@@ -334,24 +303,8 @@ where
     let root_packed_w_len = root_current_w_len(&root_scheduled.params);
     root_scheduled.validate_current_w_len(root_packed_w_len)?;
 
-    #[cfg(feature = "zk")]
-    let root_stack = stacks.prove_stack_at_level(0);
-    #[cfg(feature = "zk")]
-    let (zk_hiding_commitment, mut zk_hiding_state) =
-        build_zk_hiding_context::<Cfg::Field, Cfg::ExtField, C, D>(
-            root_stack.commit(),
-            schedule,
-            &root_scheduled.params,
-            opening_batch.num_vars(),
-            opening_batch.num_polynomials(),
-            1,
-        )?;
-    #[cfg(feature = "zk")]
-    transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_commitment.u_blind);
-
     if root_scheduled.is_terminal {
         // Root is itself the terminal fold: no recursive suffix.
-        #[cfg(not(feature = "zk"))]
         let terminal_shape = schedule_terminal_direct_witness_shape(schedule)?;
         let terminal = prove_terminal_root_fold_with_params::<
             Cfg,
@@ -370,19 +323,12 @@ where
             transcript,
             claims,
             &root_scheduled,
-            #[cfg(not(feature = "zk"))]
             terminal_shape,
             basis,
             setup_contribution_mode,
-            #[cfg(feature = "zk")]
-            &mut zk_hiding_state,
         )?;
-        #[cfg(feature = "zk")]
-        let zk_hiding_proof = zk_hiding_state.into_proof(zk_hiding_commitment)?;
         return Ok((
             AkitaBatchedProof {
-                #[cfg(feature = "zk")]
-                zk_hiding: zk_hiding_proof,
                 root: AkitaBatchedRootProof::new_terminal(terminal),
                 steps: Vec::new(),
             },
@@ -397,8 +343,6 @@ where
         transcript,
         claims,
         &root_scheduled,
-        #[cfg(feature = "zk")]
-        zk_hiding_state,
         basis,
         setup_contribution_mode,
     )?;
@@ -414,12 +358,8 @@ where
         schedule,
         setup_contribution_mode,
     )?;
-    #[cfg(feature = "zk")]
-    let zk_hiding = suffix.zk_hiding.into_proof(zk_hiding_commitment)?;
     Ok((
         AkitaBatchedProof {
-            #[cfg(feature = "zk")]
-            zk_hiding,
             root,
             steps: suffix.steps,
         },

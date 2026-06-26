@@ -53,7 +53,7 @@ pub use plans::{
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
-pub use poly::ZkHidingCommitBackend;
+
 pub use poly::{
     CommitBackendFor, DirectRootWitnessSource, OpeningProveBackendFor, ProjectBackendFor,
     ProveBackendFor, ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend,

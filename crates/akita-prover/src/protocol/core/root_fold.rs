@@ -7,9 +7,7 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-#[cfg(not(feature = "zk"))]
 use akita_types::terminal_golomb_grind_tail_t_vectors;
-#[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
 fn validate_non_eor_root_opening_shape<F, E, const D: usize>(
@@ -47,7 +45,6 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-    #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
@@ -103,14 +100,8 @@ where
         claims,
         &flat_polys,
         &eor_opening_batch,
-        #[cfg(feature = "zk")]
-        None,
-        #[cfg(feature = "zk")]
-        None,
         false,
         transcript,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         non_eor_protocol_point,
         || validate_non_eor_root_opening_shape::<F, E, D>(alpha_bits),
         root_params,
@@ -150,7 +141,6 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
     transcript: &mut T,
     claims: ProverOpeningBatch<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
-    #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
@@ -210,8 +200,6 @@ where
         root_params,
         MRowLayout::WithDBlock,
         None,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         basis,
     )?;
 
@@ -225,7 +213,6 @@ where
         prepared_fold,
         setup_contribution_mode,
         false,
-        #[cfg(not(feature = "zk"))]
         None,
     )?
     .get_intermediate()
@@ -259,10 +246,9 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
     transcript: &mut T,
     claims: ProverOpeningBatch<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
-    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: &CleartextWitnessShape,
+    terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
     F: FieldCore
@@ -313,9 +299,6 @@ where
 
     claims.append_to_transcript::<T>(transcript)?;
 
-    #[cfg(feature = "zk")]
-    let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    #[cfg(not(feature = "zk"))]
     let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
         root_params,
         MRowLayout::WithoutDBlock,
@@ -327,12 +310,7 @@ where
         claims,
         root_params,
         MRowLayout::WithoutDBlock,
-        #[cfg(not(feature = "zk"))]
         terminal_tail_t_vectors,
-        #[cfg(feature = "zk")]
-        None,
-        #[cfg(feature = "zk")]
-        owned_zk_hiding,
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
@@ -346,19 +324,9 @@ where
         prepared_fold,
         setup_contribution_mode,
         true,
-        #[cfg(not(feature = "zk"))]
         Some(terminal_direct_witness_shape),
     )?
     .get_terminal()?;
 
-    #[cfg(not(feature = "zk"))]
-    {
-        Ok(terminal_result)
-    }
-    #[cfg(feature = "zk")]
-    {
-        let (terminal, returned_zk_hiding) = terminal_result;
-        *zk_hiding = returned_zk_hiding;
-        Ok(terminal)
-    }
+    Ok(terminal_result)
 }
