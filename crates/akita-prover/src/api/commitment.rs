@@ -23,7 +23,7 @@ pub type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCom
 
 /// Commitment group handle specialized to Akita's native commitment and hint types.
 pub type CommittedGroupWithHint<F, const D: usize> =
-    CommittedGroupHandle<RingCommitment<F, D>, AkitaCommitmentHint<F, D>>;
+    CommittedGroupHandle<RingCommitment<F, D>, AkitaCommitmentHint<F>>;
 
 /// Schedule metadata returned by a standalone commitment-group precommit.
 #[derive(Debug, Clone, PartialEq, Eq)]
