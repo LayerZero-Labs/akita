@@ -76,6 +76,7 @@ pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, cons
             polynomials,
             commitment: (commitment.clone(), hint),
         }],
+        carried_flat_commitment: None,
     }
 }
 

@@ -39,7 +39,8 @@ uniform-`D` workloads. `const D` stays on kernel and backend monomorphization si
 6. **No extra allocation on the fold path.** `RingBuf` replaces `Vec<CyclotomicRing<F, D>>`
    with the same flat coefficient layout. Trusted borrows are pointer casts over existing
    storage; no `to_vec`, `clone`, or fresh `Vec` in fold, ring-switch, or trace weight
-   materialization hot paths.
+   materialization hot paths. Suffix levels use `ProverOpeningBatch::carried_flat_commitment`
+   so `FlatRingVec` is not rebuilt into `RingCommitment` and back per fold level.
 
 7. **Profile gate for uniform-D.** Before merging a Wave 6+ storage demotion PR, run the
    profile preset called out in [`book/src/usage/profiling.md`](../book/src/usage/profiling.md)
@@ -59,4 +60,3 @@ uniform-`D` workloads. `const D` stays on kernel and backend monomorphization si
 
 - Planner mixed-`D` DP search (Phase 4).
 - `CommitmentProver<F, D>` / `AkitaCommitmentHint<F, D>` demotion (Wave 7).
-- Suffix dispatch removal cosmetic refactors without perf evidence.

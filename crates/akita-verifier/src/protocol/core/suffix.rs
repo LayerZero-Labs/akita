@@ -1,9 +1,8 @@
 use super::*;
-use akita_types::dispatch_ring_dim_result;
 use akita_types::{terminal_witness_segment_layout, OpeningBatchShape};
 
 /// Verifier state carried between suffix fold levels.
-pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
+pub(in crate::protocol::core) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
     /// Current opening point for the committed suffix witness.
     pub opening_point: Vec<L>,
     /// Claimed opening value for the current commitment.
@@ -28,7 +27,7 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "prepare_fold_data")]
-fn prepare_fold_data<'a, F, L, T, const D: usize>(
+pub(in crate::protocol::core) fn prepare_fold_data<'a, F, L, T, const D: usize>(
     proof: &'a AkitaLevelProof<F, L>,
     transcript: &mut T,
     current_state: &'a SuffixVerifierState<'a, F, L>,
@@ -46,7 +45,7 @@ where
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let m_row_layout = proof.m_row_layout();
     proof.v_as_ring_slice::<D>()?;
-    let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
+    let commitment_u = current_state.commitment.as_ring_slice_trusted::<D>();
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
@@ -200,17 +199,16 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
 
-                let challenges = dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
-                        level_proof,
-                        transcript,
-                        &current_state,
-                        &scheduled,
-                        BlockOrder::ColumnMajor,
-                        setup_contribution_mode,
-                    )?;
-                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
-                })?;
+                let challenges = super::fold::verify_suffix_fold_at_ring_d::<F, L, T>(
+                    level_d,
+                    setup,
+                    transcript,
+                    level_proof,
+                    &current_state,
+                    &scheduled,
+                    BlockOrder::ColumnMajor,
+                    setup_contribution_mode,
+                )?;
 
                 let next_level_d = next_params.ring_dimension;
                 if next_level_d == 0
@@ -246,17 +244,16 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
-                        terminal_proof,
-                        transcript,
-                        &current_state,
-                        &scheduled,
-                        BlockOrder::ColumnMajor,
-                        setup_contribution_mode,
-                    )?;
-                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
-                })?;
+                super::fold::verify_suffix_fold_at_ring_d::<F, L, T>(
+                    level_d,
+                    setup,
+                    transcript,
+                    terminal_proof,
+                    &current_state,
+                    &scheduled,
+                    BlockOrder::ColumnMajor,
+                    setup_contribution_mode,
+                )?;
                 // The trailing-Direct witness shape is already validated in
                 // `verify_folded_batched_proof` before this loop.
                 if !scheduled.is_terminal {

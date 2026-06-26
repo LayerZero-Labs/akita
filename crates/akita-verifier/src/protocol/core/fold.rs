@@ -1,5 +1,6 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
+use super::suffix::SuffixVerifierState;
 use super::*;
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
@@ -579,4 +580,36 @@ where
         prepared.stage3,
     )?;
     Ok(stage3_challenges.unwrap_or(sumcheck_challenges))
+}
+
+/// Runtime ring-dispatch wrapper for one suffix fold level (prepare + verify).
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn verify_suffix_fold_at_ring_d<'a, F, L, T>(
+    level_d: usize,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    proof: &'a AkitaLevelProof<F, L>,
+    current_state: &'a SuffixVerifierState<'a, F, L>,
+    scheduled: &ExecutionSchedule,
+    block_order: BlockOrder,
+    setup_contribution_mode: SetupContributionMode,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    use akita_types::dispatch_ring_dim_result;
+
+    dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+        let prepared = super::suffix::prepare_fold_data::<F, L, T, D_LEVEL>(
+            proof,
+            transcript,
+            current_state,
+            scheduled,
+            block_order,
+            setup_contribution_mode,
+        )?;
+        verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
+    })
 }

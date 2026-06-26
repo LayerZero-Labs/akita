@@ -79,6 +79,8 @@ pub struct ProverOpeningBatch<'a, PointF: Clone, P, CommitF: FieldCore, const D:
     pub point: OpeningPoints<'a, PointF>,
     /// Commitment groups in transcript order.
     pub groups: Vec<ProverCommitmentGroup<'a, P, CommitF, D>>,
+    /// Flat commitment storage for suffix levels; avoids `RingCommitment` round-trips.
+    pub(crate) carried_flat_commitment: Option<FlatRingVec<CommitF>>,
 }
 
 impl<'a, P, F: FieldCore, const D: usize> ProverCommitmentGroup<'a, P, F, D> {
@@ -190,6 +192,9 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
 
     /// Borrow the current single-group fold batch's commitment rows as flat proof storage.
     pub(crate) fn single_fold_commitment(&self) -> Result<FlatRingVec<CommitF>, AkitaError> {
+        if let Some(flat) = &self.carried_flat_commitment {
+            return Ok(flat.clone());
+        }
         let group = self.single_group().ok_or_else(|| {
             AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
         })?;
@@ -204,7 +209,11 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     where
         'a: 'b,
     {
-        let ProverOpeningBatch { point, groups } = self;
+        let ProverOpeningBatch {
+            point,
+            groups,
+            carried_flat_commitment,
+        } = self;
         let mut input_offset = 0usize;
         let mut regrouped = Vec::with_capacity(groups.len());
         for group in groups {
@@ -231,6 +240,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         Ok(ProverOpeningBatch {
             point,
             groups: regrouped,
+            carried_flat_commitment,
         })
     }
 
@@ -239,11 +249,13 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         opening_point: &[PointF],
         recursive_num_vars: usize,
         polynomials: &'a [&'a P],
-        commitment: CommitmentWithHint<CommitF, D>,
+        commitment: FlatRingVec<CommitF>,
+        hint: RecursiveCommitmentHintCache<CommitF>,
     ) -> Result<Self, AkitaError>
     where
         PointF: FieldCore,
     {
+        let typed_hint = hint.to_typed::<D>()?;
         let opening_batch = OpeningBatchShape::new(recursive_num_vars, 1)?;
         let point_vars = opening_batch
             .groups()
@@ -260,8 +272,9 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
             groups: vec![ProverCommitmentGroup {
                 point_vars,
                 polynomials,
-                commitment,
+                commitment: (RingCommitment { u: Vec::new() }, typed_hint),
             }],
+            carried_flat_commitment: Some(commitment),
         })
     }
 }

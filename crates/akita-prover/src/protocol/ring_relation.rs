@@ -19,7 +19,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec, MRowLayout,
+    RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -33,6 +34,12 @@ mod repeated_b;
 
 pub use akita_types::generate_y;
 pub use relation_quotient::compute_relation_quotient;
+
+type RingRelationProveOutput<F, const D: usize> = (
+    RingRelationInstance<F>,
+    RingRelationWitness<F, D>,
+    FlatRingVec<F>,
+);
 
 fn absorb_terminal_e_folded_fields<F, T, const D: usize>(
     transcript: &mut T,
@@ -357,7 +364,7 @@ impl RingRelationProver {
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
-    ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F, D>), AkitaError>
+    ) -> Result<RingRelationProveOutput<F, D>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         PointF: Clone,
@@ -372,17 +379,16 @@ impl RingRelationProver {
         let opening_batch = fold_claims.to_opening_shape::<F>()?;
         let polys = fold_claims.flat_polys();
         let group_sizes = opening_batch.num_polys_per_commitment_group();
+        let commitment_flat = fold_claims.single_fold_commitment()?;
+        let commitment_rows = commitment_flat.as_ring_slice_trusted::<D>();
+        if commitment_rows.len() != lp.effective_commit_rows() {
+            return Err(AkitaError::InvalidInput(
+                "batched prover received a commitment with the wrong length".to_string(),
+            ));
+        }
         let mut hints = Vec::with_capacity(fold_claims.groups.len());
-        let mut commitment_rows = Vec::new();
-        for group in fold_claims.groups {
-            let (group_commitment, group_hint) = group.commitment;
-            if group_commitment.u.len() != lp.effective_commit_rows() {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover received a commitment with the wrong length".to_string(),
-                ));
-            }
-            commitment_rows.extend_from_slice(&group_commitment.u);
-            hints.push(group_hint.clone());
+        for group in &fold_claims.groups {
+            hints.push(group.commitment.1.clone());
         }
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
@@ -470,7 +476,7 @@ impl RingRelationProver {
         };
         let y = generate_y::<F, D>(
             y_v_slice,
-            &commitment_rows,
+            commitment_rows,
             n_d_active,
             lp.effective_commit_rows(),
             lp.b_inner_rows_per_group(),
@@ -497,6 +503,6 @@ impl RingRelationProver {
             e_folded,
             hint: flattened_hint,
         };
-        Ok((instance, witness))
+        Ok((instance, witness, commitment_flat))
     }
 }

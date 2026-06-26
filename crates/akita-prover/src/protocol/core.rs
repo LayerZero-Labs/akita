@@ -31,7 +31,6 @@ use akita_transcript::labels::{
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::dispatch_ring_dim_result;
 use akita_types::FpExtEncoding;
 use akita_types::{
     append_claim_values_to_transcript, basis_weights, batched_eval_target_from_opening_batch,
@@ -49,7 +48,7 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
     CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingBuf, RingCommitment,
+    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingBuf,
     RingMultiplierOpeningPoint, RingRelationSegmentLayout, Schedule, SetupContributionMode,
     SetupPrefixRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
     VerifierOpeningBatch,

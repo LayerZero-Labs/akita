@@ -2,7 +2,9 @@ use super::*;
 use crate::compute::{
     tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, OpeningProveBackendFor,
-    ProverComputeStack, RingSwitchProveBackend, RootOpeningSource, RootProvePoly, TensorBackendFor,
+    ProverComputeStack, RingSwitchProveBackend, RootOpeningSource, RootProvePoly,
+    SuffixOpeningProveBackend, SuffixRingSwitchProveBackend, SuffixTensorProveBackend,
+    TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -496,8 +498,7 @@ where
         transcript,
     )?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-    let commitment = fold_claims.single_fold_commitment()?;
-    let (instance, witness) = RingRelationProver::new(
+    let (instance, witness, commitment) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
         prepared_point.ring_opening_point.clone(),
@@ -619,7 +620,7 @@ where
 {
     let lp = &scheduled.params;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
-    let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
+    let commitment_u = prepared_fold.commitment.as_ring_slice_trusted::<D>();
     let build_output = ring_switch_build_w::<F, R, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
@@ -1031,4 +1032,103 @@ where
         }
         SetupContributionMode::Direct => Ok(None),
     }
+}
+
+/// Runtime ring-dispatch wrapper for one suffix fold level (prepare + prove).
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prove_suffix_fold_at_ring_d<
+    'stack,
+    Cfg,
+    T,
+    C,
+    O,
+    TS,
+    R,
+>(
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixRegistry<Cfg::Field>,
+    stack: &'stack ProverComputeStack<'stack, Cfg::Field, C, O, TS, R>,
+    transcript: &mut T,
+    level: usize,
+    level_d: usize,
+    current_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
+    level_params: &LevelParams,
+    scheduled: &ExecutionSchedule,
+    m_row_layout: MRowLayout,
+    tail_t_vectors: Option<usize>,
+    setup_contribution_mode: SetupContributionMode,
+    is_terminal_level: bool,
+    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+) -> Result<FoldProveOutput<Cfg::Field, Cfg::ExtField>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField
+        + FromPrimitiveInt
+        + 'static,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + FrobeniusExtField<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<Cfg::Field>,
+    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    C: CommitmentComputeBackend<Cfg::Field> + ComputeBackendSetup<Cfg::Field> + 'stack,
+    O: SuffixOpeningProveBackend<Cfg::Field>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    TS: SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    R: SuffixRingSwitchProveBackend<Cfg::Field>
+        + DigitRowsComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+{
+    use akita_types::dispatch_ring_dim_result;
+
+    dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+        let prepared_fold = super::suffix::prepare_suffix::<
+            Cfg::Field,
+            Cfg::ExtField,
+            T,
+            C,
+            O,
+            TS,
+            R,
+            { D_LEVEL },
+        >(
+            stack,
+            transcript,
+            current_state,
+            level,
+            level_params,
+            m_row_layout,
+            tail_t_vectors,
+        )?;
+        prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
+            expanded,
+            prefix_slots,
+            stack,
+            transcript,
+            level,
+            scheduled,
+            prepared_fold,
+            setup_contribution_mode,
+            is_terminal_level,
+            terminal_direct_witness_shape,
+        )
+    })
 }

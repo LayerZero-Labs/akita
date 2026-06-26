@@ -235,6 +235,7 @@ fn prover_claims<'a, E: Clone, P, CommitF: FieldCore, const D: usize>(
             polynomials,
             commitment: (commitment.clone(), hint),
         }],
+        carried_flat_commitment: None,
     }
 }
 

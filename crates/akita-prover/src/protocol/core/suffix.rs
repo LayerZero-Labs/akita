@@ -144,43 +144,28 @@ where
         let out = {
             let stack = stacks.prove_stack_at_level(level);
             stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), level_d)?;
-            dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                let prepared_fold =
-                    prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
-                        stack,
-                        transcript,
-                        current_state,
-                        level,
-                        level_params,
-                        m_row_layout,
-                        tail_t_vectors,
-                    )
-                    .map_err(|err| {
-                        AkitaError::InvalidInput(format!(
-                            "suffix prepare level {level} D{D_LEVEL} failed: {err:?}"
-                        ))
-                    })?;
-                prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
-                    expanded,
-                    prefix_slots,
-                    stack,
-                    transcript,
-                    level,
-                    &scheduled,
-                    prepared_fold,
-                    setup_contribution_mode,
-                    is_terminal_level,
-                    if is_terminal_level {
-                        Some(terminal_direct_witness_shape)
-                    } else {
-                        None
-                    },
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!(
-                        "suffix prove_fold level {level} D{D_LEVEL} failed: {err:?}"
-                    ))
-                })
+            super::fold::prove_suffix_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
+                expanded,
+                prefix_slots,
+                stack,
+                transcript,
+                level,
+                level_d,
+                current_state,
+                level_params,
+                &scheduled,
+                m_row_layout,
+                tail_t_vectors,
+                setup_contribution_mode,
+                is_terminal_level,
+                if is_terminal_level {
+                    Some(terminal_direct_witness_shape)
+                } else {
+                    None
+                },
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!("suffix fold level {level} D{level_d} failed: {err:?}"))
             })?
         };
         if is_terminal_level {
@@ -223,7 +208,7 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
+pub(in crate::protocol::core) fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     current_state: SuffixProverState<F, L>,
@@ -267,7 +252,6 @@ where
         ..
     } = current_state;
     let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
-    let typed_hint = hint.to_typed::<D>()?;
     let opening_point = &sumcheck_challenges;
 
     commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
@@ -279,18 +263,12 @@ where
     let eor_opening_batch =
         VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let commitment_u = commitment.as_ring_slice::<D>()?;
-    let suffix_commitment = (
-        RingCommitment {
-            u: commitment_u.to_vec(),
-        },
-        typed_hint,
-    );
     let fold_claims = ProverOpeningBatch::new_suffix(
         opening_point,
         recursive_num_vars,
         &fold_polys,
-        suffix_commitment,
+        commitment,
+        hint,
     )?;
     prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
         stack,

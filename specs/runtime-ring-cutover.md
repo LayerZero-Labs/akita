@@ -411,7 +411,7 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
       six-bound `RecursiveProveBackend` supertrait lattice.
 - [ ] `AkitaCommitmentScheme<Cfg>`, `CommitmentProver<F>`, `batched_prove` without
       `const D` on scheme / trait (see Public API cutover).
-- [ ] Grep gate: no `dispatch_ring_dim_result!` in `protocol/core/suffix.rs` or
+- [x] Grep gate: no `dispatch_ring_dim_result!` in `protocol/core/suffix.rs` or
       verifier `protocol/core/suffix.rs`.
 
 **Phase 2 exit (manual review)**
