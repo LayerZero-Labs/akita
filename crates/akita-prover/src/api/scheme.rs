@@ -120,7 +120,7 @@ where
     fn commit_group<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
+        stack: &UniformProverStack<'_, F, B>,
     ) -> Result<CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,

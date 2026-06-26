@@ -652,7 +652,7 @@ where
 pub fn commit_group<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
-    stack: &UniformProverStack<'_, Cfg::Field, B, D>,
+    stack: &UniformProverStack<'_, Cfg::Field, B>,
 ) -> Result<CommittedGroupWithHint<Cfg::Field, D>, AkitaError>
 where
     Cfg: CommitmentConfig,
