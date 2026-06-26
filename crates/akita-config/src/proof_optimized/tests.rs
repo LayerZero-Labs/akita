@@ -188,9 +188,7 @@ fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope {
-                max_setup_len: 1,
-            })
+            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
         }
 
         fn basis_range() -> (u32, u32) {
