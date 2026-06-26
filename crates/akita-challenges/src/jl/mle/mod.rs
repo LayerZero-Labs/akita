@@ -51,6 +51,32 @@ pub use reference::{
     build_jl_row_weights_reference, eval_jl_mle_at_reference, eval_mle_from_weights,
 };
 
+const fn bit_lanes_for_byte(byte: u8) -> ([u8; 8], usize) {
+    let mut lanes = [0u8; 8];
+    let mut count = 0usize;
+    let mut lane = 0u8;
+    while lane < 8 {
+        if ((byte >> lane) & 1) != 0 {
+            lanes[count] = lane;
+            count += 1;
+        }
+        lane += 1;
+    }
+    (lanes, count)
+}
+
+const fn build_bit_lanes_for_byte() -> [([u8; 8], usize); 256] {
+    let mut out = [([0u8; 8], 0usize); 256];
+    let mut byte = 0u16;
+    while byte < 256 {
+        out[byte as usize] = bit_lanes_for_byte(byte as u8);
+        byte += 1;
+    }
+    out
+}
+
+static BIT_LANES_FOR_BYTE: [([u8; 8], usize); 256] = build_bit_lanes_for_byte();
+
 /// Prover row-weight table `g` after batching JL rows with `eq(r_J, ·)`.
 ///
 /// The returned vector has length `2^{col_bits}` (padded hypercube); entries
@@ -386,9 +412,11 @@ fn scatter_panel_byte_sums<L: FieldCore>(
 
         for (j, &w) in e_j.iter().take(n_rows).enumerate() {
             let byte = matrix.row_slice(j)[matrix_byte];
-            for (lane, acc) in ones.iter_mut().take(lanes).enumerate() {
-                if ((byte >> lane) & 1) != 0 {
-                    *acc += w;
+            let (set_lanes, set_count) = &BIT_LANES_FOR_BYTE[byte as usize];
+            for &lane in set_lanes.iter().take(*set_count) {
+                let lane = lane as usize;
+                if lane < lanes {
+                    ones[lane] += w;
                 }
             }
         }
