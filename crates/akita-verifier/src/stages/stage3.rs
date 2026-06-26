@@ -169,30 +169,30 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        if D == SETUP_OFFLOAD_D_SETUP {
-            let natural_field_len = self.plan.required().checked_mul(D).ok_or_else(|| {
+        let natural_field_len = self
+            .plan
+            .required()
+            .checked_mul(SETUP_OFFLOAD_D_SETUP)
+            .ok_or_else(|| {
                 AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
             })?;
-            let setup_prefix_selection = select_setup_prefix_slot(
-                setup.expanded.seed(),
-                setup_len,
-                |id| {
-                    setup
-                        .prefix_slots
-                        .get(id)
-                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
-                },
-                next_fold_level_params,
-                natural_field_len,
-                D,
-                "verifier setup-prefix slot does not cover setup product",
-            )?;
-            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
-                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
-                Ok(setup_eval_len)
-            } else {
-                Ok(setup_len)
-            }
+        let setup_prefix_selection = select_setup_prefix_slot(
+            setup.expanded.seed(),
+            setup_len,
+            |id| {
+                setup
+                    .prefix_slots
+                    .get(id)
+                    .map(|slot| (slot, slot.natural_len, slot.padded_len))
+            },
+            next_fold_level_params,
+            natural_field_len,
+            SETUP_OFFLOAD_D_SETUP,
+            "verifier setup-prefix slot does not cover setup product",
+        )?;
+        if let Some((slot, setup_eval_len)) = setup_prefix_selection {
+            transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
+            Ok(setup_eval_len)
         } else {
             Ok(setup_len)
         }

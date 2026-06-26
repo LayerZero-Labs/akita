@@ -489,13 +489,167 @@ impl<F: FieldCore, const D: usize> SetupPrefixSlot<F, D> {
     }
 }
 
-/// In-memory registry of prover-ready setup-prefix slots.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SetupPrefixProverRegistry<F: FieldCore, const D: usize> {
-    slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlot<F, D>>,
+/// Erased setup-prefix slot: commitment/hint stay D-typed; keying uses `id.d_setup`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetupPrefixSlotAny<F: FieldCore> {
+    D32(SetupPrefixSlot<F, 32>),
+    D64(SetupPrefixSlot<F, 64>),
+    D128(SetupPrefixSlot<F, 128>),
+    D256(SetupPrefixSlot<F, 256>),
 }
 
-impl<F: FieldCore, const D: usize> SetupPrefixProverRegistry<F, D> {
+impl<F: FieldCore> SetupPrefixSlotAny<F> {
+    #[must_use]
+    pub fn id(&self) -> &SetupPrefixSlotId {
+        match self {
+            Self::D32(slot) => &slot.id,
+            Self::D64(slot) => &slot.id,
+            Self::D128(slot) => &slot.id,
+            Self::D256(slot) => &slot.id,
+        }
+    }
+
+    #[must_use]
+    pub fn natural_len(&self) -> usize {
+        match self {
+            Self::D32(slot) => slot.natural_len,
+            Self::D64(slot) => slot.natural_len,
+            Self::D128(slot) => slot.natural_len,
+            Self::D256(slot) => slot.natural_len,
+        }
+    }
+
+    #[must_use]
+    pub fn padded_len(&self) -> usize {
+        match self {
+            Self::D32(slot) => slot.padded_len,
+            Self::D64(slot) => slot.padded_len,
+            Self::D128(slot) => slot.padded_len,
+            Self::D256(slot) => slot.padded_len,
+        }
+    }
+
+    #[must_use]
+    pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
+        match self {
+            Self::D32(slot) => slot.verifier_slot(),
+            Self::D64(slot) => slot.verifier_slot(),
+            Self::D128(slot) => slot.verifier_slot(),
+            Self::D256(slot) => slot.verifier_slot(),
+        }
+    }
+}
+
+impl<F: FieldCore> From<SetupPrefixSlot<F, 32>> for SetupPrefixSlotAny<F> {
+    fn from(slot: SetupPrefixSlot<F, 32>) -> Self {
+        Self::D32(slot)
+    }
+}
+
+impl<F: FieldCore> From<SetupPrefixSlot<F, 64>> for SetupPrefixSlotAny<F> {
+    fn from(slot: SetupPrefixSlot<F, 64>) -> Self {
+        Self::D64(slot)
+    }
+}
+
+impl<F: FieldCore> From<SetupPrefixSlot<F, 128>> for SetupPrefixSlotAny<F> {
+    fn from(slot: SetupPrefixSlot<F, 128>) -> Self {
+        Self::D128(slot)
+    }
+}
+
+impl<F: FieldCore> From<SetupPrefixSlot<F, 256>> for SetupPrefixSlotAny<F> {
+    fn from(slot: SetupPrefixSlot<F, 256>) -> Self {
+        Self::D256(slot)
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for SetupPrefixSlotAny<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::D32(slot) => slot.check(),
+            Self::D64(slot) => slot.check(),
+            Self::D128(slot) => slot.check(),
+            Self::D256(slot) => slot.check(),
+        }
+    }
+}
+
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlotAny<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::D32(slot) => slot.serialize_with_mode(writer, compress),
+            Self::D64(slot) => slot.serialize_with_mode(writer, compress),
+            Self::D128(slot) => slot.serialize_with_mode(writer, compress),
+            Self::D256(slot) => slot.serialize_with_mode(writer, compress),
+        }
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            Self::D32(slot) => slot.serialized_size(compress),
+            Self::D64(slot) => slot.serialized_size(compress),
+            Self::D128(slot) => slot.serialized_size(compress),
+            Self::D256(slot) => slot.serialized_size(compress),
+        }
+    }
+}
+
+impl<F> AkitaDeserialize for SetupPrefixSlotAny<F>
+where
+    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+{
+    type Context = ();
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let id = SetupPrefixSlotId::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let padded_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        crate::dispatch_ring_dim_result!(id.d_setup, |D| {
+            let commitment = RingCommitment::<F, D>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?;
+            let hint = AkitaCommitmentHint::<F, D>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?;
+            let slot = SetupPrefixSlot {
+                id,
+                natural_len,
+                padded_len,
+                commitment,
+                hint,
+            };
+            if validate == Validate::Yes {
+                slot.check()?;
+            }
+            Ok(slot.into())
+        })
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))
+    }
+}
+
+/// In-memory registry of prover-ready setup-prefix slots (keyed on `SetupPrefixSlotId`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SetupPrefixRegistry<F: FieldCore> {
+    slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlotAny<F>>,
+}
+
+impl<F: FieldCore> SetupPrefixRegistry<F> {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -512,21 +666,21 @@ impl<F: FieldCore, const D: usize> SetupPrefixProverRegistry<F, D> {
     }
 
     #[must_use]
-    pub fn get(&self, id: &SetupPrefixSlotId) -> Option<&SetupPrefixSlot<F, D>> {
+    pub fn get(&self, id: &SetupPrefixSlotId) -> Option<&SetupPrefixSlotAny<F>> {
         self.slots.get(id)
     }
 
-    pub fn insert(&mut self, slot: SetupPrefixSlot<F, D>) -> Result<(), AkitaError> {
-        if self.slots.contains_key(&slot.id) {
+    pub fn insert(&mut self, slot: SetupPrefixSlotAny<F>) -> Result<(), AkitaError> {
+        if self.slots.contains_key(slot.id()) {
             return Err(AkitaError::InvalidSetup(
                 "duplicate setup prefix slot id".to_string(),
             ));
         }
-        self.slots.insert(slot.id, slot);
+        self.slots.insert(*slot.id(), slot);
         Ok(())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlot<F, D>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlotAny<F>)> {
         self.slots.iter()
     }
 
@@ -534,12 +688,12 @@ impl<F: FieldCore, const D: usize> SetupPrefixProverRegistry<F, D> {
     pub fn verifier_slots(&self) -> Vec<SetupPrefixVerifierSlot<F>> {
         self.slots
             .values()
-            .map(SetupPrefixSlot::verifier_slot)
+            .map(SetupPrefixSlotAny::verifier_slot)
             .collect()
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for SetupPrefixProverRegistry<F, D> {
+impl<F: FieldCore + Valid> Valid for SetupPrefixRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
@@ -548,7 +702,7 @@ impl<F: FieldCore + Valid, const D: usize> Valid for SetupPrefixProverRegistry<F
             });
         }
         for (id, slot) in &self.slots {
-            if id != &slot.id {
+            if id != slot.id() {
                 return Err(SerializationError::InvalidData(
                     "setup prefix prover registry key does not match slot id".to_string(),
                 ));
@@ -559,9 +713,7 @@ impl<F: FieldCore + Valid, const D: usize> Valid for SetupPrefixProverRegistry<F
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize
-    for SetupPrefixProverRegistry<F, D>
-{
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixRegistry<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -586,7 +738,7 @@ impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize
     }
 }
 
-impl<F, const D: usize> AkitaDeserialize for SetupPrefixProverRegistry<F, D>
+impl<F> AkitaDeserialize for SetupPrefixRegistry<F>
 where
     F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
 {
@@ -603,7 +755,7 @@ where
         let mut out = Self::new();
         for _ in 0..slot_count {
             let slot =
-                SetupPrefixSlot::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                SetupPrefixSlotAny::deserialize_with_mode(&mut reader, compress, validate, &())?;
             out.insert(slot)
                 .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         }
@@ -651,9 +803,9 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
         Ok(())
     }
 
-    pub fn replace_from_prover_registry<const D: usize>(
+    pub fn replace_from_prover_registry(
         &mut self,
-        prover_registry: &SetupPrefixProverRegistry<F, D>,
+        prover_registry: &SetupPrefixRegistry<F>,
     ) -> Result<(), AkitaError> {
         self.slots.clear();
         for slot in prover_registry.verifier_slots() {
@@ -1088,10 +1240,12 @@ mod tests {
             }
         };
 
-        let mut registry = SetupPrefixProverRegistry::<F, 32>::new();
-        registry.insert(slot()).expect("first insert");
+        let mut registry = SetupPrefixRegistry::<F>::new();
         registry
-            .insert(slot())
+            .insert(SetupPrefixSlotAny::D32(slot()))
+            .expect("first insert");
+        registry
+            .insert(SetupPrefixSlotAny::D32(slot()))
             .expect_err("duplicate insert must fail");
 
         assert_eq!(registry.len(), 1);

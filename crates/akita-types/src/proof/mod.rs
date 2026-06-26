@@ -67,9 +67,9 @@ pub use setup::{
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
-    setup_prefix_level_params, setup_prefix_slot_id, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
+    setup_prefix_level_params, setup_prefix_slot_id, SetupPrefixPublicCommitment,
+    SetupPrefixRegistry, SetupPrefixSlot, SetupPrefixSlotAny, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,

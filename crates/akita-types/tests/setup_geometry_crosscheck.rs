@@ -1,9 +1,7 @@
 //! Cross-check `setup_geometry_at` against `compute_setup_layout` on generated schedules.
 
 use akita_config::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
-use akita_types::{
-    compute_setup_layout, setup_geometry_at, SetupRelationShape, MRowLayout,
-};
+use akita_types::{compute_setup_layout, setup_geometry_at, MRowLayout, SetupRelationShape};
 
 fn field_bits_for_sis(sis: akita_types::SisModulusFamily) -> u32 {
     match sis {
@@ -48,8 +46,7 @@ fn setup_geometry_matches_layout_on_generated_schedules() {
                 let geometry = setup_geometry_at(level, &schedule, &shape).expect("geometry");
                 let layout = compute_setup_layout(&shape).expect("layout");
                 assert_eq!(
-                    geometry.required,
-                    layout.required,
+                    geometry.required, layout.required,
                     "family={} key={key:?} level={level}",
                     family.module_name,
                 );

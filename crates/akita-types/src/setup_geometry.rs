@@ -159,7 +159,9 @@ impl<E: FieldCore> From<&SetupContributionPlanInputs<E>> for SetupRelationShape 
 ///
 /// Returns an error when layout parameters are inconsistent with the canonical
 /// M-row packing used by setup sumcheck.
-pub fn compute_setup_layout(shape: &SetupRelationShape) -> Result<SetupLayoutFootprint, AkitaError> {
+pub fn compute_setup_layout(
+    shape: &SetupRelationShape,
+) -> Result<SetupLayoutFootprint, AkitaError> {
     if shape.num_blocks == 0 || !shape.num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "num_blocks must be a non-zero power of two".into(),
@@ -182,8 +184,7 @@ pub fn compute_setup_layout(shape: &SetupRelationShape) -> Result<SetupLayoutFoo
     }
 
     let z_range = shape.inner_width;
-    let expected_z_range =
-        checked_mul(shape.block_len, shape.depth_commit, "Z width")?;
+    let expected_z_range = checked_mul(shape.block_len, shape.depth_commit, "Z width")?;
     if z_range != expected_z_range {
         return Err(AkitaError::InvalidSize {
             expected: expected_z_range,
@@ -211,8 +212,7 @@ pub fn compute_setup_layout(shape: &SetupRelationShape) -> Result<SetupLayoutFoo
     };
     let commit_rows = checked_mul(commit_rows_pg, shape.num_segments, "COMMIT row count")?;
     let b_inner_start = checked_add(f_start, commit_rows, "B_inner row start")?;
-    let b_inner_rows_total =
-        checked_mul(b_inner_rows_pg, shape.num_segments, "B_inner row count")?;
+    let b_inner_rows_total = checked_mul(b_inner_rows_pg, shape.num_segments, "B_inner row count")?;
     let a_start = checked_add(b_inner_start, b_inner_rows_total, "A row start")?;
     let a_end = checked_add(a_start, shape.n_a, "A row end")?;
     let b_start = f_start;
@@ -355,7 +355,9 @@ fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, Akit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{gadget_row_scalars, segment_typed_witness_shape, SetupContributionPlan, MRowLayout};
+    use crate::{
+        gadget_row_scalars, segment_typed_witness_shape, MRowLayout, SetupContributionPlan,
+    };
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_field::Prime128OffsetA7F7;
 
@@ -433,13 +435,8 @@ mod tests {
         )
         .with_decomp(2, 1, 3, 2, 64)
         .expect("level params");
-        let shape = SetupRelationShape::from_level_params(
-            &lp,
-            1,
-            MRowLayout::WithDBlock,
-            2,
-        )
-        .expect("shape");
+        let shape = SetupRelationShape::from_level_params(&lp, 1, MRowLayout::WithDBlock, 2)
+            .expect("shape");
         let schedule = Schedule {
             steps: vec![
                 crate::Step::Fold(crate::FoldStep {

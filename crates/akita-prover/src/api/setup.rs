@@ -4,8 +4,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_flat, sample_public_matrix_seed, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixVerifierRegistry,
+    AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixRegistry, SetupPrefixVerifierRegistry,
 };
 use std::sync::Arc;
 
@@ -18,7 +17,7 @@ pub struct AkitaProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
-    pub prefix_slots: SetupPrefixProverRegistry<F, D>,
+    pub prefix_slots: SetupPrefixRegistry<F>,
 }
 
 impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
@@ -61,7 +60,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
 
         Ok(Self {
             expanded,
-            prefix_slots: SetupPrefixProverRegistry::new(),
+            prefix_slots: SetupPrefixRegistry::new(),
         })
     }
 
@@ -140,7 +139,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         expanded.shared_matrix().total_ring_elements_at::<D>()?;
         Ok(Self {
             expanded,
-            prefix_slots: SetupPrefixProverRegistry::new(),
+            prefix_slots: SetupPrefixRegistry::new(),
         })
     }
 
@@ -203,7 +202,7 @@ mod tests {
         use akita_algebra::CyclotomicRing;
         use akita_types::{
             AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, SetupPrefixSlot,
-            SetupPrefixSlotId,
+            SetupPrefixSlotAny, SetupPrefixSlotId,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
@@ -218,7 +217,7 @@ mod tests {
             AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
         setup
             .prefix_slots
-            .insert(SetupPrefixSlot {
+            .insert(SetupPrefixSlotAny::D32(SetupPrefixSlot {
                 id: SetupPrefixSlotId {
                     setup_seed_digest: [1u8; 32],
                     d_setup: 32,
@@ -232,7 +231,7 @@ mod tests {
                     u: vec![CyclotomicRing::zero()],
                 },
                 hint,
-            })
+            }))
             .expect("insert malformed slot");
 
         let err = setup

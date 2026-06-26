@@ -28,7 +28,7 @@ use akita_types::{
 pub fn commit_setup_prefix<F, const D: usize, B>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    prepared: &B::PreparedSetup,
     level_params: &LevelParams,
     setup_seed_digest: [u8; 32],
     n_prefix: usize,
@@ -230,7 +230,7 @@ mod tests {
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
         active_setup_field_len, setup_seed_digest, OpeningBatchShape, SetupMatrixEnvelope,
-        SisModulusFamily,
+        SetupPrefixSlotAny, SisModulusFamily,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
@@ -306,7 +306,8 @@ mod tests {
         );
     }
 
-    fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
+    fn assert_commit_setup_prefix_populates_d32_singleton_slot() {
+        const D: usize = 32;
         let level_params = prefix_level_params(D);
         let opening_batch = OpeningBatchShape::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
@@ -333,17 +334,55 @@ mod tests {
         .expect("commit prefix");
         assert_eq!(slot.natural_len, natural_len);
         assert_eq!(slot.padded_len, n_prefix);
-        setup.prefix_slots.insert(slot).expect("insert");
+        setup
+            .prefix_slots
+            .insert(SetupPrefixSlotAny::D32(slot))
+            .expect("insert");
+        assert_eq!(setup.prefix_slots.len(), 1);
+    }
+
+    fn assert_commit_setup_prefix_populates_d64_singleton_slot() {
+        const D: usize = 64;
+        let level_params = prefix_level_params(D);
+        let opening_batch = OpeningBatchShape::new(4, 1).expect("opening_batch");
+        let witness_ring_slots = level_params
+            .num_blocks
+            .checked_mul(level_params.block_len)
+            .expect("witness shape");
+        let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
+        let natural_len = active_setup_field_len(&level_params, &opening_batch, D)
+            .expect("natural len")
+            .min(n_prefix);
+        let mut setup = test_setup::<D>(&level_params, n_prefix);
+        let backend = CpuBackend;
+        let prepared = backend.prepare_setup::<D>(&setup).expect("prepared setup");
+        let seed_digest = setup_seed_digest(setup.expanded.seed()).expect("digest");
+        let slot = commit_setup_prefix::<F, D, _>(
+            &setup.expanded,
+            &backend,
+            &prepared,
+            &level_params,
+            seed_digest,
+            n_prefix,
+            natural_len,
+        )
+        .expect("commit prefix");
+        assert_eq!(slot.natural_len, natural_len);
+        assert_eq!(slot.padded_len, n_prefix);
+        setup
+            .prefix_slots
+            .insert(SetupPrefixSlotAny::D64(slot))
+            .expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }
 
     #[test]
     fn commit_setup_prefix_populates_d32_singleton_slot() {
-        assert_commit_setup_prefix_populates_singleton_slot::<32>();
+        assert_commit_setup_prefix_populates_d32_singleton_slot();
     }
 
     #[test]
     fn commit_setup_prefix_populates_d64_singleton_slot() {
-        assert_commit_setup_prefix_populates_singleton_slot::<64>();
+        assert_commit_setup_prefix_populates_d64_singleton_slot();
     }
 }

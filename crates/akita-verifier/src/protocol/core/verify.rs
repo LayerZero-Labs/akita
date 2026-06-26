@@ -434,7 +434,7 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
-    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+    bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         &setup.expanded,
         &opening_batch,
         &schedule,

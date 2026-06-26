@@ -112,7 +112,7 @@ fn multiplier_ring_weights<F: FieldCore, const D: usize>(
 
 fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     backend: &B,
-    prepared: Option<&B::PreparedSetup<D>>,
+    prepared: Option<&B::PreparedSetup>,
     poly: &Q,
     point: &RingMultiplierOpeningPoint<F, D>,
     block_len: usize,
@@ -143,7 +143,7 @@ where
 
 pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, Q, B, const D: usize>(
     backend: &B,
-    prepared: Option<&B::PreparedSetup<D>>,
+    prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
     prepared_point: &PreparedOpeningPoint<F, C, D>,
     block_len: usize,
@@ -582,7 +582,7 @@ type BoundNextWitness<F> = (
 #[inline(never)]
 pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixRegistry<F>,
     stack: &'stack ProverComputeStack<'stack, F, D, C, O, TS, R>,
     transcript: &mut T,
     level: usize,
@@ -612,8 +612,8 @@ where
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
     R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
-    <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = L>,
 {
     let lp = &scheduled.params;
@@ -975,7 +975,7 @@ where
 pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixRegistry<F>,
     lp: &LevelParams,
     next_level_params: &LevelParams,
     instance: &RingRelationInstance<F, D>,

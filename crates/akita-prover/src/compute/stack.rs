@@ -27,17 +27,17 @@ use std::marker::PhantomData;
 /// metadata, so a kernel may assume its context was validated. The fields are
 /// private to keep that invariant: an `OperationCtx` cannot exist without going
 /// through a validating constructor.
-pub struct OperationCtx<'a, F, B, const D: usize>
+pub struct OperationCtx<'a, F, B>
 where
     F: FieldCore + CanonicalField,
     B: ComputeBackendSetup<F>,
 {
     backend: &'a B,
-    prepared: &'a B::PreparedSetup<D>,
+    prepared: &'a B::PreparedSetup,
     _field: PhantomData<fn() -> F>,
 }
 
-impl<'a, F, B, const D: usize> OperationCtx<'a, F, B, D>
+impl<'a, F, B> OperationCtx<'a, F, B>
 where
     F: FieldCore + CanonicalField,
     B: ComputeBackendSetup<F>,
@@ -51,10 +51,10 @@ where
     /// built from `expanded`.
     pub fn new(
         backend: &'a B,
-        prepared: &'a B::PreparedSetup<D>,
+        prepared: &'a B::PreparedSetup,
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<Self, AkitaError> {
-        backend.validate_prepared_setup::<D>(prepared, expanded)?;
+        backend.validate_prepared_setup(prepared, expanded)?;
         Ok(Self {
             backend,
             prepared,
@@ -68,7 +68,7 @@ where
     }
 
     /// Borrowed prepared setup for this operation cluster.
-    pub fn prepared(&self) -> &'a B::PreparedSetup<D> {
+    pub fn prepared(&self) -> &'a B::PreparedSetup {
         self.prepared
     }
 }
@@ -88,10 +88,10 @@ where
     T: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
 {
-    commit: OperationCtx<'a, F, C, D>,
-    opening: OperationCtx<'a, F, O, D>,
-    tensor: OperationCtx<'a, F, T, D>,
-    ring_switch: OperationCtx<'a, F, R, D>,
+    commit: OperationCtx<'a, F, C>,
+    opening: OperationCtx<'a, F, O>,
+    tensor: OperationCtx<'a, F, T>,
+    ring_switch: OperationCtx<'a, F, R>,
 }
 
 impl<'a, F, const D: usize, C, O, T, R> ProverComputeStack<'a, F, D, C, O, T, R>
@@ -109,10 +109,10 @@ where
     ///
     /// Returns an error if any cluster's prepared setup fails validation.
     pub fn new(
-        commit: (&'a C, &'a C::PreparedSetup<D>),
-        opening: (&'a O, &'a O::PreparedSetup<D>),
-        tensor: (&'a T, &'a T::PreparedSetup<D>),
-        ring_switch: (&'a R, &'a R::PreparedSetup<D>),
+        commit: (&'a C, &'a C::PreparedSetup),
+        opening: (&'a O, &'a O::PreparedSetup),
+        tensor: (&'a T, &'a T::PreparedSetup),
+        ring_switch: (&'a R, &'a R::PreparedSetup),
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
@@ -124,22 +124,22 @@ where
     }
 
     /// Commit operation context.
-    pub fn commit(&self) -> &OperationCtx<'a, F, C, D> {
+    pub fn commit(&self) -> &OperationCtx<'a, F, C> {
         &self.commit
     }
 
     /// Opening / decompose-fold operation context.
-    pub fn opening(&self) -> &OperationCtx<'a, F, O, D> {
+    pub fn opening(&self) -> &OperationCtx<'a, F, O> {
         &self.opening
     }
 
     /// Tensor projection operation context.
-    pub fn tensor(&self) -> &OperationCtx<'a, F, T, D> {
+    pub fn tensor(&self) -> &OperationCtx<'a, F, T> {
         &self.tensor
     }
 
     /// Ring-switch operation context.
-    pub fn ring_switch(&self) -> &OperationCtx<'a, F, R, D> {
+    pub fn ring_switch(&self) -> &OperationCtx<'a, F, R> {
         &self.ring_switch
     }
 }
@@ -333,7 +333,7 @@ where
     /// Returns an error if the prepared setup fails validation.
     pub fn uniform(
         backend: &'a B,
-        prepared: &'a B::PreparedSetup<D>,
+        prepared: &'a B::PreparedSetup,
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<Self, AkitaError> {
         Self::new(
@@ -386,47 +386,7 @@ mod tests {
             .expect("matching expanded metadata should validate");
     }
 
-    #[derive(Debug, Default, Clone, Copy)]
-    struct CommitClusterBackend;
-
-    #[derive(Debug, Default, Clone, Copy)]
-    struct RingSwitchClusterBackend;
-
-    impl ComputeBackendSetup<F> for CommitClusterBackend {
-        type PreparedSetup<const RING_D: usize> = CpuPreparedSetup<F, RING_D>;
-
-        fn prepare_expanded<const RING_D: usize>(
-            &self,
-            expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
-        ) -> Result<Self::PreparedSetup<RING_D>, AkitaError> {
-            CpuBackend.prepare_expanded(expanded)
-        }
-
-        fn prepared_expanded_setup<'a, const RING_D: usize>(
-            &self,
-            prepared: &'a Self::PreparedSetup<RING_D>,
-        ) -> &'a akita_types::AkitaExpandedSetup<F> {
-            CpuBackend.prepared_expanded_setup(prepared)
-        }
-    }
-
-    impl ComputeBackendSetup<F> for RingSwitchClusterBackend {
-        type PreparedSetup<const RING_D: usize> = CpuPreparedSetup<F, RING_D>;
-
-        fn prepare_expanded<const RING_D: usize>(
-            &self,
-            expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
-        ) -> Result<Self::PreparedSetup<RING_D>, AkitaError> {
-            CpuBackend.prepare_expanded(expanded)
-        }
-
-        fn prepared_expanded_setup<'a, const RING_D: usize>(
-            &self,
-            prepared: &'a Self::PreparedSetup<RING_D>,
-        ) -> &'a akita_types::AkitaExpandedSetup<F> {
-            CpuBackend.prepared_expanded_setup(prepared)
-        }
-    }
+    use crate::compute::{CommitCluster, RingSwitchCluster};
 
     fn assert_distinct_backend_types<C: 'static, R: 'static>() {
         fn type_id<T: 'static>() -> std::any::TypeId {
@@ -435,14 +395,18 @@ mod tests {
         assert_ne!(type_id::<C>(), type_id::<R>());
     }
 
+    type TestUniformStack<'a> = UniformProverStack<'a, F, CpuBackend, D>;
+    type TestHeterogeneousStack<'a> =
+        ProverComputeStack<'a, F, D, CommitCluster, CpuBackend, CpuBackend, RingSwitchCluster>;
+
     #[test]
     fn heterogeneous_stack_accepts_distinct_operation_clusters() {
         let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let commit_backend = CommitClusterBackend;
-        let ring_backend = RingSwitchClusterBackend;
-        let stack = ProverComputeStack::new(
+        let commit_backend = CommitCluster;
+        let ring_backend = RingSwitchCluster;
+        let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
             (&commit_backend, &prepared),
             (&CpuBackend, &prepared),
             (&CpuBackend, &prepared),
@@ -450,7 +414,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("heterogeneous stack");
-        assert_distinct_backend_types::<CommitClusterBackend, RingSwitchClusterBackend>();
+        assert_distinct_backend_types::<CommitCluster, RingSwitchCluster>();
         assert_eq!(
             stack.commit().backend() as *const _,
             &commit_backend as *const _
@@ -466,9 +430,9 @@ mod tests {
         let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let commit_backend = CommitClusterBackend;
-        let ring_backend = RingSwitchClusterBackend;
-        let stack = ProverComputeStack::new(
+        let commit_backend = CommitCluster;
+        let ring_backend = RingSwitchCluster;
+        let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
             (&commit_backend, &prepared),
             (&CpuBackend, &prepared),
             (&CpuBackend, &prepared),
@@ -476,15 +440,8 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("heterogeneous stack");
-        let selected: &ProverComputeStack<
-            '_,
-            F,
-            D,
-            CommitClusterBackend,
-            CpuBackend,
-            CpuBackend,
-            RingSwitchClusterBackend,
-        > = LevelProveStacks::prove_stack_at_level(&stack, 0);
+        let selected: &TestHeterogeneousStack<'_> =
+            LevelProveStacks::prove_stack_at_level(&stack, 0);
         assert_eq!(
             selected.commit().backend() as *const _,
             stack.commit().backend() as *const _
@@ -505,7 +462,7 @@ mod tests {
         let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+        let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
         let stacks = [stack];
         let result = TieredProveStacks::new(&stacks, &[1, 2]);
@@ -521,10 +478,10 @@ mod tests {
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
         let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
         let stack_a =
-            UniformProverStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
+            TestUniformStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
                 .expect("stack a");
         let stack_b =
-            UniformProverStack::uniform(&CpuBackend, &prepared_b, setup_b.expanded.as_ref())
+            TestUniformStack::uniform(&CpuBackend, &prepared_b, setup_b.expanded.as_ref())
                 .expect("stack b");
         let stacks = [stack_a, stack_b];
         let result = TieredProveStacks::new(&stacks, &[2, 1]);
@@ -540,10 +497,10 @@ mod tests {
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
         let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
         let stack_a =
-            UniformProverStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
+            TestUniformStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
                 .expect("stack a");
         let stack_b =
-            UniformProverStack::uniform(&CpuBackend, &prepared_b, setup_b.expanded.as_ref())
+            TestUniformStack::uniform(&CpuBackend, &prepared_b, setup_b.expanded.as_ref())
                 .expect("stack b");
         let stacks = [stack_a, stack_b];
         let tiered = TieredProveStacks::new(&stacks, &[1, usize::MAX]).expect("tiered");

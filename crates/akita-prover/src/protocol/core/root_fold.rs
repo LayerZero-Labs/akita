@@ -128,7 +128,7 @@ where
 #[inline(never)]
 pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixRegistry<F>,
     stacks: &'stack impl LevelProveStacks<
         'stack,
         F,
@@ -175,10 +175,10 @@ where
         + 'stack,
     R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <O as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <TS as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.to_opening_shape::<F>()?;
@@ -281,10 +281,10 @@ where
         + 'stack,
     R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <O as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <TS as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.to_opening_shape::<F>()?;
@@ -313,7 +313,7 @@ where
         terminal_tail_t_vectors,
         basis,
     )?;
-    let prefix_slots = SetupPrefixProverRegistry::new();
+    let prefix_slots = SetupPrefixRegistry::new();
     let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
         expanded,
         &prefix_slots,

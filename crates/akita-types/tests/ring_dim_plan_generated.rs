@@ -16,12 +16,7 @@ fn from_schedule_accepts_all_generated_tables() {
             let schedule = (family.regen)(key).expect("schedule");
             let seed = AkitaSetupSeed {
                 max_num_vars: family.max_num_vars,
-                max_num_batched_polys: family
-                    .num_polys
-                    .iter()
-                    .copied()
-                    .max()
-                    .unwrap_or(1),
+                max_num_batched_polys: family.num_polys.iter().copied().max().unwrap_or(1),
                 gen_ring_dim: policy.ring_dimension,
                 max_setup_len: 4096,
                 public_matrix_seed: [0u8; 32],
