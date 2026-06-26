@@ -24,7 +24,12 @@ fn group_root_params_from_layout(
     fold_challenge_shape: TensorChallengeShape,
     conservative_b_rank: bool,
 ) -> Result<GroupRootParams, AkitaError> {
-    layout.validate()?;
+    if conservative_b_rank {
+        layout.validate_frozen_precommit(policy.ring_dimension, policy.basis_range.0)?;
+    } else {
+        layout.validate()?;
+        layout.validate_root_geometry(policy.ring_dimension)?;
+    }
     if policy.tiered {
         return Err(AkitaError::InvalidSetup(
             "tiered grouped roots are not supported; see specs/multi-group-batching.md".to_string(),
@@ -84,11 +89,18 @@ fn group_root_params_from_layout(
         layout.key.num_polynomials,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("grouped B width overflow".to_string()))?;
+    let min_n_b = min_secure_rank(family, d as u32, norm_t, width_t as u64)
+        .ok_or_else(|| AkitaError::InvalidSetup("no grouped B-role rank".to_string()))?;
     let n_b = if conservative_b_rank {
+        if layout.conservative_n_b < min_n_b {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted group conservative B rank is below grouped root requirement"
+                    .to_string(),
+            ));
+        }
         layout.conservative_n_b
     } else {
-        min_secure_rank(family, d as u32, norm_t, width_t as u64)
-            .ok_or_else(|| AkitaError::InvalidSetup("no grouped final B-role rank".to_string()))?
+        min_n_b
     };
     let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
 
@@ -291,6 +303,7 @@ fn grouped_root_direct_main_candidate(
     };
     let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
 
+    // Grouped D uses one `w_hat_g` segment per commitment group, not per polynomial.
     let Some(main_d_width) = decomposed_w_ring_count(num_digits_open, num_blocks, 1) else {
         return Ok(None);
     };
@@ -502,10 +515,14 @@ mod tests {
     }
 
     fn precommitted(num_polys: usize, num_vars: usize) -> CommitmentGroupLayout {
+        let alpha = flat_policy().ring_dimension.trailing_zeros() as usize;
+        let outer = num_vars - alpha;
+        let r_vars = outer / 2;
+        let m_vars = outer - r_vars;
         CommitmentGroupLayout {
             key: AkitaScheduleLookupKey::new(num_vars, num_polys),
-            m_vars: 4,
-            r_vars: 2,
+            m_vars,
+            r_vars,
             log_basis: 3,
             n_a: 1,
             conservative_n_b: 1,
@@ -513,17 +530,29 @@ mod tests {
     }
 
     #[test]
-    fn grouped_root_direct_witness_len_sums_mixed_arities() {
+    fn grouped_root_direct_witness_len_sums_mixed_polynomial_counts() {
         let key = GroupBatchAkitaScheduleLookupKey {
             main: AkitaScheduleLookupKey::new(20, 3),
-            precommitteds: vec![precommitted(1, 12), precommitted(2, 8)],
+            precommitteds: vec![precommitted(1, 20), precommitted(2, 20)],
         };
 
-        let expected_len = 3 * (1usize << 20) + (1usize << 12) + 2 * (1usize << 8);
+        let expected_len = 3 * (1usize << 20) + (1usize << 20) + 2 * (1usize << 20);
         assert_eq!(
             grouped_root_direct_witness_len(&key).expect("witness length"),
             expected_len
         );
+    }
+
+    #[test]
+    fn grouped_main_d_width_uses_per_group_w_segment_not_polynomial_count() {
+        let main_polys = 4usize;
+        let num_blocks = 8usize;
+        let num_digits_open = 3usize;
+        let per_group_w = decomposed_w_ring_count(num_digits_open, num_blocks, 1).expect("w width");
+        let scalar_w =
+            decomposed_w_ring_count(num_digits_open, num_blocks, main_polys).expect("scalar w");
+        assert_ne!(per_group_w, scalar_w);
+        assert_eq!(per_group_w * main_polys, scalar_w);
     }
 
     #[test]

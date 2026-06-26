@@ -176,11 +176,7 @@ impl CommitmentGroupLayout {
 
     /// Validate that this layout is a well-formed standalone commitment group.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        if self.key.num_polynomials == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "commitment group layout must use at least one polynomial".to_string(),
-            ));
-        }
+        self.key.validate()?;
         if self.n_a == 0 || self.conservative_n_b == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout requires nonzero A rows and conservative B rows"
@@ -191,6 +187,45 @@ impl CommitmentGroupLayout {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout requires nonzero log_basis".to_string(),
             ));
+        }
+        Ok(())
+    }
+
+    /// Validate that frozen `(m_vars, r_vars)` geometry matches `key.num_vars`.
+    pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError> {
+        let alpha = ring_dimension.trailing_zeros() as usize;
+        let Some(outer) = self
+            .m_vars
+            .checked_add(self.r_vars)
+            .and_then(|sum| sum.checked_add(alpha))
+        else {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout geometry overflow".to_string(),
+            ));
+        };
+        if outer != self.key.num_vars {
+            return Err(AkitaError::InvalidSetup(format!(
+                "commitment group layout geometry does not match key.num_vars: \
+                 m_vars={} r_vars={} alpha={} key.num_vars={}",
+                self.m_vars, self.r_vars, alpha, self.key.num_vars
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate metadata frozen by standalone `commit_group` at precommit time.
+    pub fn validate_frozen_precommit(
+        &self,
+        ring_dimension: usize,
+        min_log_basis: u32,
+    ) -> Result<(), AkitaError> {
+        self.validate()?;
+        self.validate_root_geometry(ring_dimension)?;
+        if self.log_basis != min_log_basis {
+            return Err(AkitaError::InvalidSetup(format!(
+                "precommitted group log_basis must equal min_basis({min_log_basis}), got {}",
+                self.log_basis
+            )));
         }
         Ok(())
     }
@@ -216,6 +251,12 @@ impl GroupBatchAkitaScheduleLookupKey {
         self.main.validate()?;
         for layout in &self.precommitteds {
             layout.validate()?;
+            if layout.key.num_vars != self.main.num_vars {
+                return Err(AkitaError::InvalidInput(
+                    "grouped root requires all commitment groups to share the same num_vars"
+                        .to_string(),
+                ));
+            }
         }
         Ok(())
     }
@@ -1081,7 +1122,7 @@ mod tests {
     }
 
     #[test]
-    fn group_batch_key_allows_mixed_group_arities() {
+    fn group_batch_key_rejects_mixed_num_vars() {
         let pre = CommitmentGroupLayout {
             key: AkitaScheduleLookupKey::new(12, 1),
             m_vars: 4,
@@ -1095,9 +1136,46 @@ mod tests {
             precommitteds: vec![pre],
         };
 
+        let err = grouped
+            .validate()
+            .expect_err("heterogeneous num_vars must be rejected");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn group_batch_key_allows_mixed_polynomial_counts() {
+        let pre = CommitmentGroupLayout {
+            key: AkitaScheduleLookupKey::new(20, 1),
+            m_vars: 12,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let grouped = GroupBatchAkitaScheduleLookupKey {
+            main: AkitaScheduleLookupKey::new(20, 3),
+            precommitteds: vec![pre],
+        };
+
         grouped
             .validate()
-            .expect("mixed arities are grouped metadata");
+            .expect("unequal K_g at a shared num_vars is allowed");
         assert_eq!(grouped.num_commitment_groups(), 2);
+    }
+
+    #[test]
+    fn validate_frozen_precommit_rejects_geometry_mismatch() {
+        let layout = CommitmentGroupLayout {
+            key: AkitaScheduleLookupKey::new(20, 1),
+            m_vars: 4,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let err = layout
+            .validate_frozen_precommit(64, 2)
+            .expect_err("geometry must match num_vars");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

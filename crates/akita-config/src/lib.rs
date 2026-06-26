@@ -315,7 +315,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Resolve the final grouped root schedule key without scalar-key aliasing.
     ///
     /// Phase 1 only exposes planning. Proving a grouped root remains guarded by
-    /// the prover/verifier entry points until the opening phase lands.
+    /// the prover/verifier entry points until the opening phase lands. Setup
+    /// envelope scans do not yet size grouped final schedules; callers must not
+    /// treat setup capacity as covering `get_group_batch_schedule` output until
+    /// Phase 2 extends `proof_optimized` envelope construction.
     fn get_group_batch_schedule(
         key: &GroupBatchAkitaScheduleLookupKey,
     ) -> Result<Schedule, AkitaError> {

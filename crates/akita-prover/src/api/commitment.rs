@@ -677,12 +677,32 @@ where
     P: RootCommitPoly<Cfg::Field, D>,
     B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
+    let commit_ctx = stack.commit();
+    let tensor_ctx = stack.tensor();
     let key = validate_group_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
+    let opening_batch = OpeningBatchShape::new(key.num_vars, key.num_polynomials)?;
     let params = Cfg::get_params_for_group_commit(&key)?;
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
-    let (commitment, hint) =
-        commit_with_validated_params::<Cfg::Field, D, P, B>(polys, stack.commit(), &params)?;
+    let (commitment, hint) = if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
+        let transformed = polys
+            .iter()
+            .map(|poly| {
+                tensor_root_projection::<Cfg::Field, P, Cfg::ExtField, B, D>(
+                    tensor_ctx.backend(),
+                    Some(tensor_ctx.prepared()),
+                    poly,
+                )
+            })
+            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
+        commit_with_validated_params::<Cfg::Field, D, RootTensorProjectionPoly<Cfg::Field, D>, B>(
+            &transformed,
+            commit_ctx,
+            &params,
+        )?
+    } else {
+        commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)?
+    };
     Ok(CommittedGroupHandle {
         schedule: CommittedGroupScheduleMeta {
             layout: CommitmentGroupLayout::from_params(key, &params),
