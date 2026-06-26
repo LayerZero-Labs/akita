@@ -420,7 +420,7 @@ mod tests {
         let policy = sample_policy();
         let entries = sample_entries();
         let mut wrong = expected_identity(&policy, entries);
-        wrong.zk_enabled = !false;
+        wrong.zk_enabled = true;
         let catalog = GeneratedScheduleTable {
             entries,
             identity: wrong,
