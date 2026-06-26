@@ -112,6 +112,28 @@ macro_rules! impl_akita_commitment_scheme {
                 )
             }
 
+            #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_group")]
+            fn commit_group<P, B>(
+                setup: &Self::ProverSetup,
+                polys: &[P],
+                stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
+            ) -> Result<
+                akita_prover::CommittedGroupHandle<Self::Commitment, Self::CommitHint>,
+                akita_field::AkitaError,
+            >
+            where
+                $field: akita_field::FromPrimitiveInt
+                    + akita_field::unreduced::HasWide
+                    + akita_field::RandomSampling
+                    + 'static,
+                <$field as akita_field::unreduced::HasWide>::Wide:
+                    From<$field> + akita_field::unreduced::ReduceTo<$field>,
+                P: akita_prover::compute::RootCommitPoly<$field, $d>,
+                B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
+            {
+                akita_prover::commit_group::<$cfg, $d, P, B>(polys, setup.expanded.as_ref(), stack)
+            }
+
             #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
             fn batched_prove<'a, T, P, B>(
                 setup: &Self::ProverSetup,

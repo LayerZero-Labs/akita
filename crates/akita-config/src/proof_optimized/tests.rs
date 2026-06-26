@@ -205,6 +205,7 @@ fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
                     witness_shape: CleartextWitnessShape::FieldElements(1 << 8),
                     direct_bytes: 0,
                     params: None,
+                    tail_grind_level_params: None,
                 })],
                 total_bytes: 0,
             })
