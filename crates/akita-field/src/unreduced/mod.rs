@@ -20,6 +20,7 @@ mod native_algebra;
 pub use accum::*;
 
 /// Wide unreduced accumulator for `Fp32`: 2 × i32 limbs (16-bit data each).
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct Fp32x2i32(pub [i32; 2]);
@@ -112,6 +113,7 @@ impl Neg for Fp32x2i32 {
 }
 
 /// Wide unreduced accumulator for `Fp64`: 4 × i32 limbs (16-bit data each).
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct Fp64x4i32(pub [i32; 4]);
@@ -294,6 +296,7 @@ impl Neg for Fp64x4i32 {
 /// On AVX2, one element fits a single 256-bit YMM register.  On NEON, it
 /// spans two 128-bit Q registers.  All arithmetic is carry-free element-wise
 /// i32 operations.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct Fp128x8i32(pub [i32; 8]);

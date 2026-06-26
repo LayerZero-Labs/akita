@@ -203,12 +203,38 @@ impl<A: crate::AdditiveGroup> jf::AdditiveGroup for AccumPair<A> {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanonicalField, Fp32, Fp64, Prime128Offset275};
+    use crate::{
+        CanonicalField, Fp32, Fp64, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99,
+        Prime64Offset59, TwoNr,
+    };
     use jolt_field::{
         AdditiveAccumulator, CanonicalBitLength, CanonicalU64, MulPow2, MulPrimitiveInt,
         ReducingBytes, RingAccumulator, TranscriptChallenge, WithAccumulator,
     };
     use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+
+    fn assert_jolt_allocative_prime_surface<F, const N: usize>()
+    where
+        F: jf::FieldCore
+            + jf::FromPrimitiveInt
+            + jf::CanonicalBytes
+            + jf::ReducingBytes
+            + jf::TranscriptChallenge
+            + jf::FixedBytes<N>
+            + jf::FixedByteSize
+            + jf::CanonicalBitLength
+            + jf::CanonicalU64
+            + jf::RandomSampling
+            + jf::WithAccumulator
+            + jf::MulPow2
+            + jf::MulPrimitiveInt
+            + allocative::Allocative,
+    {
+    }
+
+    fn assert_jolt_allocative_field_core<F: jf::FieldCore + allocative::Allocative>() {}
+
+    fn assert_jolt_allocative_additive_group<F: jf::AdditiveGroup + allocative::Allocative>() {}
 
     fn assert_byte_traits<F, const N: usize>(value: F, expected: [u8; N])
     where
@@ -232,6 +258,32 @@ mod tests {
             value.num_bits(),
             u128::BITS - value.to_canonical_u128().leading_zeros()
         );
+    }
+
+    #[test]
+    fn prime_fields_satisfy_jolt_allocative_surface() {
+        assert_jolt_allocative_prime_surface::<Prime32Offset99, 4>();
+        assert_jolt_allocative_prime_surface::<Prime64Offset59, 8>();
+        assert_jolt_allocative_prime_surface::<Prime128Offset275, 16>();
+        assert_jolt_allocative_prime_surface::<Prime128OffsetA7F7, 16>();
+    }
+
+    #[test]
+    fn extension_fields_and_accumulators_satisfy_allocative_surface() {
+        assert_jolt_allocative_field_core::<FpExt2<Prime64Offset59, TwoNr>>();
+        assert_jolt_allocative_field_core::<FpExt4<Prime32Offset99>>();
+        assert_jolt_allocative_field_core::<FpExt8<Prime128Offset275>>();
+
+        assert_jolt_allocative_additive_group::<Fp32x2i32>();
+        assert_jolt_allocative_additive_group::<Fp64x4i32>();
+        assert_jolt_allocative_additive_group::<Fp128x8i32>();
+        assert_jolt_allocative_additive_group::<Fp32ProductAccum>();
+        assert_jolt_allocative_additive_group::<Fp64ProductAccum>();
+        assert_jolt_allocative_additive_group::<Fp128MulU64Accum>();
+        assert_jolt_allocative_additive_group::<Fp128ProductAccum>();
+        assert_jolt_allocative_additive_group::<FpExt4Fp32ProductAccum>();
+        assert_jolt_allocative_additive_group::<FpExt2Fp64ProductAccum>();
+        assert_jolt_allocative_additive_group::<AccumPair<Fp64ProductAccum>>();
     }
 
     #[test]
