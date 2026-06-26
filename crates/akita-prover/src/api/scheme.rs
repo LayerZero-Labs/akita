@@ -19,7 +19,7 @@ use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
 /// Generic over base field `F` and root cyclotomic degree `D` (`Cfg::D` on
-/// [`AkitaCommitmentScheme`]). Suffix levels dispatch via the resolved schedule.
+/// `AkitaCommitmentScheme<Cfg>` in `akita-pcs`). Suffix levels dispatch via the resolved schedule.
 /// Caller-provided root polynomials are source-typed and must satisfy the
 /// prover-facing root polynomial traits (`RootProvePoly` and related capability
 /// traits).
