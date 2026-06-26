@@ -358,6 +358,12 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 - **Planner search** over per-fold dims, including the `(d_a, d_b, d_d)` triple, in the
   first PR (infrastructure + hand-picked triples only; see Future: unified field-family
   planner). Per-block ring *geometry* is in scope; per-block *search* is not.
+- **Per-block kernel execution.** The `B`/`D` commitment matvecs and the ring-switch
+  weights honoring distinct `d_b, d_d`, and the non-uniform per-block fixture, are a
+  tracked follow-up (PR-perblock-exec; see PR decomposition). This work lands the
+  per-block *geometry* (the `CommitmentRingDims` triple, `d_d | d_b | d_a` validation,
+  transcript binding) with an **interim construction guard `d_a == d_b == d_d`**, so the
+  executed behavior is exactly per-level mixed-D — kernels still see one dim per level.
 - Replacing `CyclotomicRing<F, D>` as stack/value type inside kernels.
 - GPU / Metal backend design (`specs/akita-compute-backend-metal.md`).
 - Merging `fp128_d64` and `fp128_d128` preset families in the same PR as runtime
@@ -612,7 +618,9 @@ derivable from the dim and the seed alone, with no dependence on the relation sh
 registry, or offload. A level therefore touches up to three keys (fold / ring-switch +
 inner matvec at `d_a`, outer matvec at `d_b`, opening matvec at `d_d`); uniform presets
 collapse to one. That is why warm-cache by `plan.unique_dims()` — which spans every role
-across every level — is feasible (see Warm-cache policy).
+across every level — is feasible (see Warm-cache policy). In this PR the interim
+`d_a == d_b == d_d` guard (Per-block ring dimension) means one key per level for every
+schedule; per-level mixed-D still varies the key across levels.
 
 **Offload decision at level ℓ** (normative; stays inside the setup sumcheck / stage 3,
 exactly where it is today, now ungated):
@@ -726,6 +734,7 @@ the loop (memoize per level if the same context is needed twice).
 | Fold count | `schedule_num_fold_levels(schedule) ≤ MAX_FOLD_LEVELS` |
 | Supported dims | every role dim `d_a, d_b, d_d ∈ SUPPORTED_RING_DIMS` |
 | Role nesting | `d_d \| d_b \| d_a` at every level |
+| Interim uniform guard (temporary) | `d_a == d_b == d_d` at every level — enforced until per-block kernel execution lands (PR-perblock-exec); relaxes to the `d_d \| d_b \| d_a` rule above |
 | Envelope divisibility | `seed.gen_ring_dim % d_a == 0` at every level (implies `% d_b`, `% d_d` by nesting) |
 | Schedule consistency | `dims_at(ℓ).inner == schedule[ℓ].params.ring_dimension` (= `d_a`) |
 | Per-role witness chain | each committed object's length divisible by its role dim: witness / `d_a`, `t̂` / `d_b`, `ê` / `d_d`; terminal shape valid |
@@ -746,6 +755,14 @@ fixtures, the mixed-D fixture) must still satisfy this catalog.
 Why a single fold may run three ring dimensions at once. The justification is the
 ring-switch lift (Akita paper, `sec:prelim-ring-switch` and `rem:per-relation-ring-dim`),
 summarized here so this spec is self-contained.
+
+**Status in this PR.** The geometry below — the `CommitmentRingDims` triple,
+`d_d | d_b | d_a` validation, and transcript binding — lands now; the kernels do **not**
+yet consume distinct role dims. A construction-time guard enforces `d_a == d_b == d_d`
+(uniform), so executed behavior is byte-identical to per-level mixed-D. Removing that
+guard — wiring `B`/`D` matvecs and the ring-switch weights at distinct `d_b, d_d`, plus a
+non-uniform fixture — is the per-block execution follow-up (PR-perblock-exec). The
+correctness/soundness argument is recorded now so the follow-up inherits its contract.
 
 **Model.** The root relation has four row families: outer-commitment `B_g t̂_g = u_g`,
 opening-commitment `D ê = v`, folded-evaluation, and folded-commitment `… = A z`. Ring
@@ -1282,6 +1299,24 @@ Phase 4 (planner DP, field-element envelope sizing) is a **separate** PR, out of
   never means a kernel loses it.
 - When in doubt about a count or a length, prefer the **shared function**
   (`setup_geometry_at` / `setup_active_ring_elems_at`) over re-deriving inline.
+
+### PR decomposition (review scoping)
+
+The waves below split into reviewable PRs stacked on `quang/zk-strip-4f-retire-golden`,
+so no single diff carries both the additive infrastructure and the orchestration churn:
+
+| PR | Waves | Character | Diff |
+|----|-------|-----------|------|
+| **PR-spec** (#215) | — | this design record | docs only |
+| **PR-infra** | 1–3 | **additions only**: `RingDimPlan` / `CommitmentRingDims` / `RingLevelContext`, `setup_geometry_at`, NTT cache types, D-free `PreparedSetup` + prefix registry, descriptor binding, **per-block geometry + validation + interim `d_a==d_b==d_d` guard**. No behavior change; old `const D` paths untouched and still in use; CI-hard | medium, isolable |
+| **PR-cutover** | 4–7 | the cutover: uniform suffix loop, delete the six-bound trait lattice and `const D` stacks, demote storage (`RingBuf`), mixed-D-**per-level** fixture gate | large, mostly mechanical deletion + signature change; resists further splitting — the `const D` lattice cannot be half-removed |
+| **PR-perblock-exec** | follow-up | kernels honor distinct `d_b, d_d`; non-uniform per-block fixture; remove the uniform guard | small–medium |
+
+Rationale: **all per-block work that ships in this effort lands in PR-infra** as types +
+validation + a guard, reviewable in isolation; the risky churn is confined to PR-cutover,
+which changes no math (behavior-preserving through Wave 5). PR-infra can merge and bake
+before PR-cutover opens. This refines the "Phases 1–3 in one PR" note in the Summary:
+prefer the split unless PR-infra turns out trivially small.
 
 ### Do NOT do in this PR
 
