@@ -101,8 +101,9 @@ pub fn build_jl_row_weights_from_row_eq<L: FieldCore>(
     let cols = matrix.cols();
     let n_rows = matrix.n_rows();
     let panel_cols = byte_aligned_panel_cols(cols);
+    let row_eq_total = sum_row_eq(e_j, n_rows);
 
-    fill_row_weights(&mut g, panel_cols, cols, n_rows, matrix, e_j);
+    fill_row_weights(&mut g, panel_cols, cols, n_rows, matrix, e_j, row_eq_total);
     Ok(g)
 }
 
@@ -299,6 +300,11 @@ fn dot_row_eq_weights<L: FieldCore>(e_j: &[L], n_rows: usize, row_acc: &[L]) -> 
     total
 }
 
+#[inline]
+fn sum_row_eq<L: FieldCore>(e_j: &[L], n_rows: usize) -> L {
+    e_j.iter().take(n_rows).copied().sum()
+}
+
 fn fill_row_weights<L: FieldCore>(
     g: &mut [L],
     panel_cols: usize,
@@ -306,18 +312,35 @@ fn fill_row_weights<L: FieldCore>(
     n_rows: usize,
     matrix: &JlProjectionMatrix,
     e_j: &[L],
+    row_eq_total: L,
 ) {
     #[cfg(feature = "parallel")]
     if parallel_jl_enabled(n_rows, cols) {
         g.par_chunks_mut(panel_cols)
             .enumerate()
             .for_each(|(p, g_panel)| {
-                scatter_panel(g_panel, p * panel_cols, cols, n_rows, matrix, e_j);
+                scatter_panel(
+                    g_panel,
+                    p * panel_cols,
+                    cols,
+                    n_rows,
+                    matrix,
+                    e_j,
+                    row_eq_total,
+                );
             });
         return;
     }
     for (p, g_panel) in g.chunks_mut(panel_cols).enumerate() {
-        scatter_panel(g_panel, p * panel_cols, cols, n_rows, matrix, e_j);
+        scatter_panel(
+            g_panel,
+            p * panel_cols,
+            cols,
+            n_rows,
+            matrix,
+            e_j,
+            row_eq_total,
+        );
     }
 }
 
@@ -328,13 +351,50 @@ fn scatter_panel<L: FieldCore>(
     n_rows: usize,
     matrix: &JlProjectionMatrix,
     e_j: &[L],
+    row_eq_total: L,
 ) {
     if col0 >= cols {
         return;
     }
     let n = g_panel.len().min(cols - col0);
     let g_active = &mut g_panel[..n];
+
+    if (col0 & 0b111) == 0 {
+        scatter_panel_byte_sums(g_active, col0, n_rows, matrix, e_j, row_eq_total);
+        return;
+    }
+
     for (j, &w) in e_j.iter().take(n_rows).enumerate() {
         scatter_row_weight_range(g_active, matrix.row_slice(j), col0, w);
+    }
+}
+
+fn scatter_panel_byte_sums<L: FieldCore>(
+    g_active: &mut [L],
+    col0: usize,
+    n_rows: usize,
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+    row_eq_total: L,
+) {
+    debug_assert_eq!(col0 & 0b111, 0);
+
+    for byte_col in (0..g_active.len()).step_by(8) {
+        let lanes = (g_active.len() - byte_col).min(8);
+        let matrix_byte = (col0 + byte_col) >> 3;
+        let mut ones = [L::zero(); 8];
+
+        for (j, &w) in e_j.iter().take(n_rows).enumerate() {
+            let byte = matrix.row_slice(j)[matrix_byte];
+            for (lane, acc) in ones.iter_mut().take(lanes).enumerate() {
+                if ((byte >> lane) & 1) != 0 {
+                    *acc += w;
+                }
+            }
+        }
+
+        for (lane, &sum_ones) in ones.iter().take(lanes).enumerate() {
+            g_active[byte_col + lane] = sum_ones + sum_ones - row_eq_total;
+        }
     }
 }

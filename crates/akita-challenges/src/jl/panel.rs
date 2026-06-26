@@ -32,5 +32,5 @@ pub(crate) fn panel_span(total_units: usize, max_per_panel: usize) -> usize {
 #[inline]
 pub(crate) fn byte_aligned_panel_cols(cols: usize) -> usize {
     let span = panel_span(cols, JL_PANEL_UNIT_MAX);
-    span.div_ceil(4) * 4
+    span.div_ceil(8) * 8
 }

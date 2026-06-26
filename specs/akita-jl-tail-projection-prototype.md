@@ -301,7 +301,7 @@ Cost shape (updated after optimization investigation):
 | Workload | Who | Target | Asymptotic |
 |----------|-----|--------|------------|
 | Integer projection `p = J c` | Prover | PR1 (landed) | `Θ(n_rows · cols)` i32 add/sub |
-| Row weights `g[i] = Σ_j eq(r_J,j) J[j,i]` | Prover (sumcheck oracle table) | PR1b `build_jl_row_weights` | `Θ(n_rows · cols)`; must touch every matrix entry |
+| Row weights `g[i] = Σ_j eq(r_J,j) J[j,i]` | Prover (sumcheck oracle table) | PR1b `build_jl_row_weights` | `Θ(n_rows · cols)`; byte-column bit sums reuse `Σ_j eq(r_J,j)` |
 | Point eval `J̃(r_J,r_w)` | Verifier (fusion final check) | PR1b `eval_jl_mle_at` | `Θ(n_rows · cols)`; **LUT-amortized** one-shot eval over byte quads |
 | Consistency sumcheck | Prover + verifier | PR2 | `k_w` witness rounds; verifier JL work is dominated by `eval_jl_mle_at` |
 
@@ -328,6 +328,15 @@ Depends on `akita-algebra` for `SplitEqEvals`. Shares packed-row decode (`BINARY
 - `eval_jl_mle_at<L>(matrix, r_J, r_w) -> Result<L, AkitaError>`: fused verifier contraction (see **Joint MLE evaluation**).
 - `build_jl_row_weights<L>(matrix, r_J) -> Result<Vec<L>, AkitaError>`: prover row-weight table `g`.
 - Scalar reference + LUT production path (`mle/lut.rs`); row-weight builder uses row-eq accumulation in `mle/common.rs`. Runtime SIMD dispatch on projection kernels only (MLE is LUT + scalar/parallel panels).
+- For binary row weights, process byte-aligned column panels by bit sums rather than row scatter:
+
+```text
+total = Σ_j eq(r_J,j)
+ones_l = Σ_{j : bit_l(J[j, byte]) = 1} eq(r_J,j)
+g[byte*8 + l] = 2 * ones_l - total
+```
+
+This is algebraically the same as `Σ_j eq(r_J,j) sign(bit_l)` with `0 -> -1`, `1 -> +1`, but reduces field additions and memory writes for the materialized prover table.
 
 The matrix sampling and projection geometry (`n_rows`, seed domain) are intended to be bound into the instance descriptor when fusion lands; the prototype binds them through the transcript context buffer only and records descriptor binding as a fusion task.
 
