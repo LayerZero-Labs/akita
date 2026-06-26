@@ -23,6 +23,9 @@ use std::marker::PhantomData;
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
+///
+/// Root ring degree `D` must match `Cfg::D`. Suffix levels dispatch via the
+/// schedule plan at prove time.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
@@ -49,7 +52,7 @@ where
         + HasOptimizedFold
         + AkitaSerialize,
 {
-    type ProverSetup = AkitaProverSetup<F, D>;
+    type ProverSetup = AkitaProverSetup<F>;
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type ExtField = Cfg::ExtField;
@@ -61,7 +64,7 @@ where
         max_num_polys_per_commitment_group: usize,
     ) -> Result<Self::ProverSetup, AkitaError> {
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
-        akita_setup::new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_polys_per_commitment_group)
+        akita_setup::new_prover_setup::<F, Cfg>(max_num_vars, max_num_polys_per_commitment_group)
     }
 
     fn setup_prover_recursion(
@@ -69,7 +72,7 @@ where
         max_num_polys_per_commitment_group: usize,
     ) -> Result<Self::ProverSetup, AkitaError> {
         validate_ring_subfield_role::<F, Cfg::ExtField, D>("extension field")?;
-        akita_setup::new_prover_setup_recursion::<F, D, Cfg>(
+        akita_setup::new_prover_setup_recursion::<F, Cfg>(
             max_num_vars,
             max_num_polys_per_commitment_group,
         )

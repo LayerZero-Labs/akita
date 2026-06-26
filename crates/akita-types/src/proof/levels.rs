@@ -375,6 +375,14 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         }
     }
 
+    /// Owned compact `v` payload for fold replay (empty for terminal levels).
+    pub fn fold_v_buf(&self) -> RingBuf<F> {
+        match self {
+            Self::Intermediate { v, .. } => v.clone(),
+            Self::Terminal { .. } => RingBuf::from_coeffs(Vec::new()),
+        }
+    }
+
     /// Mutably borrow the intermediate `v` payload.
     ///
     /// # Panics
@@ -864,6 +872,15 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         match self {
             Self::Fold(fold) => fold.v.as_ring_slice::<D>(),
             Self::Terminal(_) => Ok(&[]),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
+        }
+    }
+
+    /// Owned compact root `v` payload for fold replay (empty for terminal roots).
+    pub fn fold_v_buf(&self) -> Result<RingBuf<F>, AkitaError> {
+        match self {
+            Self::Fold(fold) => Ok(fold.v.clone()),
+            Self::Terminal(_) => Ok(RingBuf::from_coeffs(Vec::new())),
             Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         }
     }

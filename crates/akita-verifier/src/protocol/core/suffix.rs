@@ -45,7 +45,7 @@ where
     let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let m_row_layout = proof.m_row_layout();
-    let v_typed = proof.v_as_ring_slice::<D>()?;
+    proof.v_as_ring_slice::<D>()?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
@@ -133,7 +133,7 @@ where
         lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed.to_vec(),
+        v: proof.fold_v_buf(),
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

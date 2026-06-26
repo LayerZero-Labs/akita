@@ -34,7 +34,7 @@ where
     validate_level_dispatch::<D>(root_lp)?;
     let m_row_layout = proof.fold_m_row_layout().ok_or(AkitaError::InvalidProof)?;
     let extension_opening_reduction = proof.fold_extension_opening_reduction();
-    let v_typed = proof.fold_v::<D>()?;
+    proof.fold_v::<D>()?;
     let next_fold_level_params = match proof {
         AkitaBatchedRootProof::Fold(_) => next_fold_level_params.ok_or(AkitaError::InvalidProof)?,
         AkitaBatchedRootProof::Terminal(_) => root_lp,
@@ -168,7 +168,7 @@ where
         lp: root_lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed.to_vec(),
+        v: proof.fold_v_buf()?,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
