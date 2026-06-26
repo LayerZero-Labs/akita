@@ -119,7 +119,7 @@ mod tests {
         point: &'a [F],
         polynomials: &'a [&'a P],
         commitment: &'a RingCommitment<F, D>,
-        hint: AkitaCommitmentHint<F, D>,
+        hint: AkitaCommitmentHint<F>,
     ) -> ProverOpeningBatch<'a, F, P, F, D> {
         ProverOpeningBatch {
             point: point.into(),

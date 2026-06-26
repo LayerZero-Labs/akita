@@ -31,7 +31,7 @@ pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 
-type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F, D>);
+type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F>);
 
 impl<F, const D: usize, Cfg> CommitmentProver<F, D> for AkitaCommitmentScheme<D, Cfg>
 where
@@ -56,7 +56,7 @@ where
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type ExtField = Cfg::ExtField;
-    type CommitHint = AkitaCommitmentHint<F, D>;
+    type CommitHint = AkitaCommitmentHint<F>;
     type BatchedProof = AkitaBatchedProof<F, Cfg::ExtField>;
 
     fn setup_prover(

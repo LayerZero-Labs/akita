@@ -198,8 +198,8 @@ fn custom_commit_source_runs_commit_with_params() {
 
     assert_eq!(contract_commitment.u, dense_commitment.u);
     assert_eq!(
-        contract_hint.decomposed_inner_rows,
-        dense_hint.decomposed_inner_rows
+        contract_hint.decomposed_digits(),
+        dense_hint.decomposed_digits()
     );
 }
 
@@ -245,7 +245,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
 
     assert_eq!(contract_commitment.u, dense_commitment.u);
     assert_eq!(
-        contract_hint.decomposed_inner_rows,
-        dense_hint.decomposed_inner_rows
+        contract_hint.decomposed_digits(),
+        dense_hint.decomposed_digits()
     );
 }

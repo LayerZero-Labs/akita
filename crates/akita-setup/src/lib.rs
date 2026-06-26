@@ -490,8 +490,8 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_seed_digest, AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks,
-                    FlatRingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+                    setup_seed_digest, AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec,
+                    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -508,10 +508,10 @@ mod tests {
                 };
                 let decomposed = FlatDigitBlocks::from_blocks::<TEST_D>(vec![Vec::new()]);
                 let recomposed = vec![Vec::new()];
-                let hint: AkitaCommitmentHint<TestF, TEST_D> =
-                    AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                        decomposed, recomposed,
-                    );
+                let hint = AkitaCommitmentHint::from_batched_commit::<TEST_D>(
+                    vec![decomposed],
+                    vec![recomposed],
+                );
                 setup
                     .prefix_slots
                     .insert(SetupPrefixSlot {
@@ -521,7 +521,7 @@ mod tests {
                         commitment: SetupPrefixPublicCommitment {
                             rows: vec![FlatRingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
                         },
-                        hint: ErasedCommitmentHint::from_typed::<TEST_D>(hint),
+                        hint,
                     })
                     .unwrap();
                 save_prover_setup::<TestF, Cfg>(&setup, MAX_VARS, 1).unwrap();

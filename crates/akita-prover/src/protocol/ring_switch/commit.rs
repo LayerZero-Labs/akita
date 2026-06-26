@@ -1,6 +1,6 @@
 use super::*;
 use crate::compute::{CommitInnerPlan, ComputeBackendSetup, OperationCtx};
-use akita_types::ErasedCommitmentHint;
+use akita_types::AkitaCommitmentHint;
 
 /// Result of committing the next logical recursive witness.
 pub struct NextWitnessCommitment<F: FieldCore> {
@@ -9,7 +9,7 @@ pub struct NextWitnessCommitment<F: FieldCore> {
     /// Commitment to the physical next-level witness.
     pub commitment: FlatRingVec<F>,
     /// Prover hint for `commitment`.
-    pub hint: ErasedCommitmentHint<F>,
+    pub hint: AkitaCommitmentHint<F>,
 }
 
 /// Commit the D-agnostic ring-switch witness `w` at the caller-selected ring
@@ -31,7 +31,7 @@ pub fn commit_w<F, B, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     commit_ctx: &OperationCtx<'_, F, B>,
     commit_layout: &LevelParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
@@ -101,12 +101,10 @@ where
         }
         u
     };
-    let hint = {
-        AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-            inner.decomposed_inner_rows,
-            inner.recomposed_inner_rows,
-        )
-    };
+    let hint = AkitaCommitmentHint::from_batched_commit::<D>(
+        vec![inner.decomposed_inner_rows],
+        vec![inner.recomposed_inner_rows],
+    );
     Ok((RingCommitment { u }, hint))
 }
 
@@ -144,7 +142,7 @@ where
             Ok(NextWitnessCommitment {
                 witness: None,
                 commitment: FlatRingVec::from_commitment(&wc),
-                hint: ErasedCommitmentHint::from_typed_recursive(wh)?,
+                hint: wh,
             })
         } else {
             let committed_w =
@@ -160,7 +158,7 @@ where
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
                 commitment: FlatRingVec::from_commitment(&wc),
-                hint: ErasedCommitmentHint::from_typed_recursive(wh)?,
+                hint: wh,
             })
         }
     })

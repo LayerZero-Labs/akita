@@ -95,7 +95,7 @@ pub use proof::{
     AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
     AkitaStage1StageShape, AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup,
     CleartextWitnessProof, CleartextWitnessShape, CommitmentGroup, CommitmentVerifier, DummyProof,
-    ErasedCommitmentHint, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape,
+    ExtensionOpeningReductionProof, ExtensionOpeningReductionShape,
     FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, LevelProofShape, OpeningBatchLimits,
     OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection,
     PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixSeed, RelationOnlyStage2Inputs,

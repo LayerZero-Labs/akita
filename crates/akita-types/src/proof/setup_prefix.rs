@@ -8,7 +8,7 @@
 use crate::instance_descriptor::{digest_level_params, setup_seed_digest, DescriptorDigest};
 use crate::proof::{
     setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
-    AkitaCommitmentHint, ErasedCommitmentHint, FlatRingVec, RingCommitment,
+    AkitaCommitmentHint, FlatRingVec, RingCommitment,
 };
 use crate::LevelParams;
 use akita_algebra::CyclotomicRing;
@@ -388,7 +388,7 @@ pub struct SetupPrefixSlot<F: FieldCore> {
     pub natural_len: usize,
     pub padded_len: usize,
     pub commitment: SetupPrefixPublicCommitment<F>,
-    pub hint: ErasedCommitmentHint<F>,
+    pub hint: AkitaCommitmentHint<F>,
 }
 
 impl<F: FieldCore> SetupPrefixSlot<F> {
@@ -431,11 +431,6 @@ impl<F: FieldCore> SetupPrefixSlot<F> {
     /// Returns [`AkitaError::InvalidSetup`] when row widths do not match `D`.
     pub fn commitment_as_ring<const D: usize>(&self) -> Result<RingCommitment<F, D>, AkitaError> {
         RingCommitment::try_from(&self.commitment)
-    }
-
-    /// Rebuild the typed prover hint when `D` matches [`Self::ring_d`].
-    pub fn hint_as_typed<const D: usize>(&self) -> Result<AkitaCommitmentHint<F, D>, AkitaError> {
-        self.hint.to_typed::<D>()
     }
 }
 
@@ -489,8 +484,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
             .serialize_with_mode(&mut writer, compress)?;
         self.padded_len.serialize_with_mode(&mut writer, compress)?;
         self.commitment.serialize_with_mode(&mut writer, compress)?;
-        self.hint
-            .serialize_with_mode_for_ring_dim(&mut writer, compress, self.id.d_setup)
+        self.hint.serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -498,9 +492,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
             + self.natural_len.serialized_size(compress)
             + self.padded_len.serialized_size(compress)
             + self.commitment.serialized_size(compress)
-            + self
-                .hint
-                .serialized_size_for_ring_dim(compress, self.id.d_setup)
+            + self.hint.serialized_size(compress)
     }
 }
 
@@ -525,11 +517,11 @@ where
             validate,
             &(),
         )?;
-        let hint = ErasedCommitmentHint::deserialize_with_mode_for_ring_dim(
+        let hint = AkitaCommitmentHint::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
-            id.d_setup,
+            &(),
         )?;
         let out = Self {
             id,
@@ -1101,9 +1093,10 @@ mod tests {
         let slot = || {
             let decomposed = FlatDigitBlocks::from_blocks::<32>(vec![Vec::new()]);
             let recomposed = vec![Vec::new()];
-            let typed_hint: AkitaCommitmentHint<F, 32> =
-                AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
-            let hint = ErasedCommitmentHint::from_typed::<32>(typed_hint);
+            let hint = AkitaCommitmentHint::from_batched_commit::<32>(
+                vec![decomposed],
+                vec![recomposed],
+            );
             SetupPrefixSlot {
                 id,
                 natural_len: id.natural_len,
