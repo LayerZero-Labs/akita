@@ -254,7 +254,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     R,
     const D: usize,
 >(
-    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
+    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     needs_extension_reduction: bool,
     fold_claims: ProverOpeningBatch<'a, E, P, F, D>,
     eor_polys: &[&P],
@@ -408,7 +408,7 @@ where
     TS: ComputeBackendSetup<F>,
     R: ComputeBackendSetup<F>,
 {
-    stack: &'a ProverComputeStack<'a, F, D, C, O, TS, R>,
+    stack: &'a ProverComputeStack<'a, F, C, O, TS, R>,
     fold_claims: ProverOpeningBatch<'a, E, Q, F, D>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
@@ -583,7 +583,7 @@ type BoundNextWitness<F> = (
 pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixRegistry<F>,
-    stack: &'stack ProverComputeStack<'stack, F, D, C, O, TS, R>,
+    stack: &'stack ProverComputeStack<'stack, F, C, O, TS, R>,
     transcript: &mut T,
     level: usize,
     scheduled: &ExecutionSchedule,

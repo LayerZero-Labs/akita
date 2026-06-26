@@ -58,7 +58,6 @@ pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
     stacks: &'stack impl LevelProveStacks<
         'stack,
         Cfg::Field,
-        D,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -192,7 +191,7 @@ where
                     .prepare_expanded_with_envelope_ntt::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
                 let ring_prepared =
                     ring_backend.prepare_expanded_with_envelope_ntt::<D_LEVEL>(expanded_cloned)?;
-                let level_stack = ProverComputeStack::<Cfg::Field, D_LEVEL, C, O, TS, R>::new(
+                let level_stack = ProverComputeStack::<Cfg::Field, C, O, TS, R>::new(
                     (commit_backend, &commit_prepared),
                     (opening_backend, &opening_prepared),
                     (tensor_backend, &tensor_prepared),
@@ -279,7 +278,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
-    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
+    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     current_state: SuffixProverState<F, L>,
     _level: usize,
