@@ -43,7 +43,20 @@ pub use jl::mle::{
     eval_jl_mle_at, eval_jl_mle_at_from_eq_tables, eval_jl_mle_at_reference, eval_jl_mle_at_scalar,
     eval_jl_mle_at_scalar_from_eq_tables, eval_mle_from_weights,
 };
-pub use jl::{center_coefficients, JlImage, JlProjectionMatrix, DEFAULT_JL_ROWS, MAX_JL_DIGIT};
+pub use jl::{
+    center_coefficients, project_digits_reference, project_digits_scalar, JlImage,
+    JlProjectionMatrix, DEFAULT_JL_ROWS, MAX_JL_DIGIT,
+};
+
+/// Bench-only surface for criterion JL benches (not a stable API).
+#[doc(hidden)]
+pub mod jl_bench {
+    pub use crate::jl::mle::{
+        build_jl_row_weights_from_row_eq, eval_jl_mle_at_from_eq_tables, eval_jl_mle_at_scalar,
+        eval_jl_mle_at_scalar_from_eq_tables,
+    };
+    pub use crate::jl::{project_digits_reference, project_digits_scalar};
+}
 pub use sampler::{
     sample_sparse_challenges, sparse_challenge_absorb_buf, sparse_challenges_from_seed,
 };

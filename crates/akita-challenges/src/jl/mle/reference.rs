@@ -5,11 +5,10 @@
 use akita_algebra::EqPolynomial;
 use akita_field::{AkitaError, FieldCore};
 
-use super::common::{accum_sign_weight, entry_sign, validate_mle_points, JlMleLayout};
+use super::common::{accum_sign_weight, matrix_sign_at, validate_mle_points, JlMleLayout};
 use crate::jl::JlProjectionMatrix;
 
 /// `g[i] = Σ_j eq(r_J, j) · J[j, i]` by direct summation.
-#[doc(hidden)]
 pub fn build_jl_row_weights_reference<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
@@ -21,14 +20,8 @@ pub fn build_jl_row_weights_reference<L: FieldCore>(
     let mut g = vec![L::zero(); layout.col_hyper];
     for i in 0..matrix.cols() {
         let mut acc = L::zero();
-        for j in 0..layout.row_hyper {
-            if j >= matrix.n_rows() {
-                continue;
-            }
-            let sign = entry_sign(matrix, j, i);
-            if sign == 0 {
-                continue;
-            }
+        for j in 0..matrix.n_rows() {
+            let sign = matrix_sign_at(matrix, j, i);
             acc = accum_sign_weight(acc, sign, e_j[j]);
         }
         g[i] = acc;
@@ -37,7 +30,6 @@ pub fn build_jl_row_weights_reference<L: FieldCore>(
 }
 
 /// `Σ_{j,i} eq(r_J, j) eq(r_w, i) J[j,i]` by direct summation.
-#[doc(hidden)]
 pub fn eval_jl_mle_at_reference<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
@@ -49,18 +41,9 @@ pub fn eval_jl_mle_at_reference<L: FieldCore>(
     let e_j = EqPolynomial::evals(r_J)?;
     let e_w = EqPolynomial::evals(r_w)?;
     let mut acc = L::zero();
-    for j in 0..layout.row_hyper {
-        if j >= matrix.n_rows() {
-            continue;
-        }
-        for i in 0..layout.col_hyper {
-            if i >= matrix.cols() {
-                continue;
-            }
-            let sign = entry_sign(matrix, j, i);
-            if sign == 0 {
-                continue;
-            }
+    for j in 0..matrix.n_rows() {
+        for i in 0..matrix.cols() {
+            let sign = matrix_sign_at(matrix, j, i);
             let weight = e_j[j] * e_w[i];
             acc = accum_sign_weight(acc, sign, weight);
         }

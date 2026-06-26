@@ -45,6 +45,7 @@ harness = false
 [features]
 default = []
 parallel = ["akita-field/parallel"]
+jl-test-fixtures = []
 
 [lints]
 workspace = true

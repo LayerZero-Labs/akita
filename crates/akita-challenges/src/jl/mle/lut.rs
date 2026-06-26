@@ -1,9 +1,4 @@
 //! Per-byte sign-weight LUT helpers for fused JL MLE evaluation.
-//!
-//! A packed binary JL byte covers eight matrix columns. The production path
-//! builds two 16-entry nibble tables, one for each four-column half of the byte.
-//! This keeps table setup tiny while still reading only one matrix byte for
-//! eight signs.
 
 use akita_field::FieldCore;
 
@@ -14,22 +9,6 @@ use super::common::accum_sign_weight;
 /// Build a direct 16-entry nibble LUT from four `eq_w` weights.
 #[inline]
 pub(super) fn build_sign_weight_lut_16<L: FieldCore>(weights: &[L; 4], lut16: &mut [L; 16]) {
-    for (bits, out) in lut16.iter_mut().enumerate() {
-        let mut acc = L::zero();
-        for (lane, &weight) in weights.iter().enumerate() {
-            let sign = if ((bits >> lane) & 1) == 0 { -1 } else { 1 };
-            acc = accum_sign_weight(acc, sign, weight);
-        }
-        *out = acc;
-    }
-}
-
-/// Reference builder: expand every packed-nibble pattern directly.
-#[cfg(test)]
-pub(super) fn build_sign_weight_lut_16_reference<L: FieldCore>(
-    weights: &[L; 4],
-    lut16: &mut [L; 16],
-) {
     for (bits, out) in lut16.iter_mut().enumerate() {
         let mut acc = L::zero();
         for (lane, &weight) in weights.iter().enumerate() {
@@ -74,28 +53,5 @@ pub(super) fn accumulate_rows_from_nibble_luts<L: FieldCore>(
         let b = matrix.row_slice(j)[byte_idx];
         row_acc[j] += lo_lut[(b & 0x0f) as usize] + hi_lut[(b >> 4) as usize];
         j += 1;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_field::Fp64;
-
-    type F = Fp64<4294967197>;
-
-    #[test]
-    fn lut16_binary_matches_reference() {
-        let weights = [
-            F::from_u64(5),
-            F::from_u64(9),
-            F::from_u64(17),
-            F::from_u64(23),
-        ];
-        let mut fast = [F::zero(); 16];
-        let mut reference = [F::zero(); 16];
-        build_sign_weight_lut_16(&weights, &mut fast);
-        build_sign_weight_lut_16_reference(&weights, &mut reference);
-        assert_eq!(fast, reference);
     }
 }

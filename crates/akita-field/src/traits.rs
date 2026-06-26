@@ -374,6 +374,14 @@ pub trait CanonicalField:
     fn from_canonical_u128_reduced(val: u128) -> Self;
 }
 
+/// Recover the prime modulus `q` as `u128` for a base prime field.
+///
+/// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
+#[inline]
+pub fn field_modulus<F: FieldCore + CanonicalField>() -> u128 {
+    (-F::one()).to_canonical_u128() + 1
+}
+
 /// Field types with a cheap halving operation.
 ///
 /// This is intentionally narrower than core field algebra: only protocol paths

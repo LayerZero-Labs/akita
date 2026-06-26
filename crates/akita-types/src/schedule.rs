@@ -145,7 +145,7 @@ pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
 ///
 /// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
 pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
-    (-F::one()).to_canonical_u128() + 1
+    akita_field::field_modulus::<F>()
 }
 
 /// Total ring elements in the recursive witness polynomial.

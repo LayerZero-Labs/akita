@@ -1,5 +1,6 @@
 //! JL consistency transcript replay helpers shared by prover and verifier.
 
+use akita_algebra::PaddedHypercube;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::{labels, Transcript};
 
@@ -21,7 +22,9 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let row_bits = n_rows.next_power_of_two().trailing_zeros() as usize;
+    let row_bits = PaddedHypercube::from_live_len(n_rows)
+        .expect("JL row count is non-zero in protocol paths")
+        .log_len;
     (0..row_bits)
         .map(|_| transcript.challenge_scalar(labels::CHALLENGE_JL_ROW))
         .collect()

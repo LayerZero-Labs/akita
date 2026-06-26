@@ -1,16 +1,8 @@
 //! JL projection kernels: reference (checked `i64`) and fast (`i8` digits +
 //! `i32` accumulation, optional SIMD).
-//!
-//! The fast path narrows the validated balanced digits to `i8` once, then
-//! projects with a **column-panel** layout: the columns are partitioned into
-//! byte-aligned panels whose `i8` digit chunk stays L1-resident and is reused
-//! across all `n_rows` rows. The witness is therefore read once (not once per
-//! row), and the parallel path fans out over panels (reducing per-panel partial
-//! images) instead of over rows. See `project_columns` below.
 
 mod reference;
 mod scalar;
-pub(crate) use scalar::BINARY_SIGNS_FOR_BYTE;
 
 #[cfg(target_arch = "x86_64")]
 mod simd_x86;
@@ -23,21 +15,17 @@ use akita_field::parallel::*;
 
 pub(crate) use reference::project_row as project_row_reference;
 
-/// Map a packed bit to its binary sign: `0 -> -1`, `1 -> +1`.
-#[inline]
-pub(crate) fn bit_to_sign(bit: u8) -> i8 {
-    ((bit & 1) as i8) * 2 - 1
+fn fast_panel_bytes(row_bytes: usize) -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        super::panel::panel_span(row_bytes, super::panel::JL_PANEL_UNIT_MAX).min(row_bytes.max(1))
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        row_bytes.clamp(1, super::panel::JL_PANEL_UNIT_MAX)
+    }
 }
 
-/// Target column count per parallel panel. Sized so a panel's `i8` digit chunk
-/// (one byte per column) stays comfortably within L1 and is reused across every
-/// row of the panel.
-#[cfg(feature = "parallel")]
-fn parallel_panel_bytes(row_bytes: usize) -> usize {
-    super::panel::panel_span(row_bytes, super::panel::JL_PANEL_UNIT_MAX).min(row_bytes.max(1))
-}
-/// One row coordinate over one byte-aligned column panel, dispatched to the
-/// fastest available kernel (NEON, AVX-512/AVX2 `madd`, or scalar).
 #[inline]
 fn project_row_fast(row: &[u8], digits: &[i8], cols: usize) -> i32 {
     project_row_fast_dispatch(row, digits, cols)
@@ -70,69 +58,34 @@ fn project_row_fast_dispatch(row: &[u8], digits: &[i8], cols: usize) -> i32 {
     scalar::project_row(row, digits, cols)
 }
 
-/// Accumulate panel `p`'s contribution to every row coordinate into `coords`.
-///
-/// Panel `p` owns the byte range `[p*panel_bytes, (p+1)*panel_bytes)` of every
-/// row (its `i8` digit chunk is reused across all rows), so each digit and each
-/// matrix entry is read exactly once across the whole projection.
-#[inline]
-fn accumulate_panel(
-    coords: &mut [i32],
-    p: usize,
-    panel_bytes: usize,
+struct PanelProjection<'a> {
     row_bytes: usize,
-    packed_rows: &[u8],
-    digits: &[i8],
+    packed_rows: &'a [u8],
+    digits: &'a [i8],
     cols: usize,
-) {
-    let b0 = p * panel_bytes;
-    if b0 >= row_bytes {
-        return;
-    }
-    let b1 = (b0 + panel_bytes).min(row_bytes);
-    let col0 = b0 * 8;
-    let col1 = (b1 * 8).min(cols);
-    let panel_cols = col1 - col0;
-    let digit_chunk = &digits[col0..col1];
-
-    for (r, coord) in coords.iter_mut().enumerate() {
-        let row_start = r * row_bytes;
-        let row_chunk = &packed_rows[row_start + b0..row_start + b1];
-        *coord += project_row_fast(row_chunk, digit_chunk, panel_cols);
-    }
+    project_row: fn(&[u8], &[i8], usize) -> i32,
 }
 
 #[inline]
-fn accumulate_panel_scalar(
-    coords: &mut [i32],
-    p: usize,
-    panel_bytes: usize,
-    row_bytes: usize,
-    packed_rows: &[u8],
-    digits: &[i8],
-    cols: usize,
-) {
+fn accumulate_panel(coords: &mut [i32], p: usize, panel_bytes: usize, ctx: &PanelProjection<'_>) {
     let b0 = p * panel_bytes;
-    if b0 >= row_bytes {
+    if b0 >= ctx.row_bytes {
         return;
     }
-    let b1 = (b0 + panel_bytes).min(row_bytes);
+    let b1 = (b0 + panel_bytes).min(ctx.row_bytes);
     let col0 = b0 * 8;
-    let col1 = (b1 * 8).min(cols);
+    let col1 = (b1 * 8).min(ctx.cols);
     let panel_cols = col1 - col0;
-    let digit_chunk = &digits[col0..col1];
+    let digit_chunk = &ctx.digits[col0..col1];
 
     for (r, coord) in coords.iter_mut().enumerate() {
-        let row_start = r * row_bytes;
-        let row_chunk = &packed_rows[row_start + b0..row_start + b1];
-        *coord += scalar::project_row(row_chunk, digit_chunk, panel_cols);
+        let row_start = r * ctx.row_bytes;
+        let row_chunk = &ctx.packed_rows[row_start + b0..row_start + b1];
+        *coord += (ctx.project_row)(row_chunk, digit_chunk, panel_cols);
     }
 }
 
 /// Project all rows with the fast kernel using the column-panel layout.
-///
-/// Validated digits are narrowed to `i8` once (`|d| <= MAX_JL_DIGIT` fits `i8`).
-/// The narrowing pass is `O(cols)`, amortized over `n_rows` projection passes.
 pub(crate) fn project_rows_fast(
     n_rows: usize,
     row_bytes: usize,
@@ -141,29 +94,82 @@ pub(crate) fn project_rows_fast(
     cols: usize,
     parallel: bool,
 ) -> Vec<i32> {
-    let digits_i8: Vec<i8> = digits.iter().map(|&d| d as i8).collect();
+    project_rows_with_kernel(
+        &ProjectionJob {
+            n_rows,
+            row_bytes,
+            packed_rows,
+            digits,
+            cols,
+        },
+        parallel,
+        project_row_fast,
+        fast_panel_bytes,
+    )
+}
+
+fn serial_panel_bytes(row_bytes: usize) -> usize {
+    row_bytes.clamp(1, super::panel::JL_PANEL_UNIT_MAX)
+}
+
+/// Project all rows with the scalar row kernel, bypassing SIMD dispatch.
+pub(crate) fn project_rows_scalar(
+    n_rows: usize,
+    row_bytes: usize,
+    packed_rows: &[u8],
+    digits: &[i32],
+    cols: usize,
+) -> Vec<i32> {
+    project_rows_with_kernel(
+        &ProjectionJob {
+            n_rows,
+            row_bytes,
+            packed_rows,
+            digits,
+            cols,
+        },
+        false,
+        scalar::project_row,
+        serial_panel_bytes,
+    )
+}
+
+struct ProjectionJob<'a> {
+    n_rows: usize,
+    row_bytes: usize,
+    packed_rows: &'a [u8],
+    digits: &'a [i32],
+    cols: usize,
+}
+
+fn project_rows_with_kernel(
+    job: &ProjectionJob<'_>,
+    parallel: bool,
+    project_row_kernel: fn(&[u8], &[i8], usize) -> i32,
+    panel_bytes_for: fn(usize) -> usize,
+) -> Vec<i32> {
+    let digits_i8: Vec<i8> = job.digits.iter().map(|&d| d as i8).collect();
+    let ctx = PanelProjection {
+        row_bytes: job.row_bytes,
+        packed_rows: job.packed_rows,
+        digits: &digits_i8,
+        cols: job.cols,
+        project_row: project_row_kernel,
+    };
 
     #[cfg(feature = "parallel")]
     if parallel {
-        let panel_bytes = parallel_panel_bytes(row_bytes);
-        let num_panels = row_bytes.div_ceil(panel_bytes);
+        let panel_bytes = panel_bytes_for(job.row_bytes);
+        let num_panels = job.row_bytes.div_ceil(panel_bytes);
         return (0..num_panels)
             .into_par_iter()
             .map(|p| {
-                let mut partial = vec![0i32; n_rows];
-                accumulate_panel(
-                    &mut partial,
-                    p,
-                    panel_bytes,
-                    row_bytes,
-                    packed_rows,
-                    &digits_i8,
-                    cols,
-                );
+                let mut partial = vec![0i32; job.n_rows];
+                accumulate_panel(&mut partial, p, panel_bytes, &ctx);
                 partial
             })
             .reduce(
-                || vec![0i32; n_rows],
+                || vec![0i32; job.n_rows],
                 |mut acc, partial| {
                     for (a, b) in acc.iter_mut().zip(partial.iter()) {
                         *a += *b;
@@ -175,51 +181,11 @@ pub(crate) fn project_rows_fast(
     #[cfg(not(feature = "parallel"))]
     let _ = parallel;
 
-    // Serial path still blocks by column panel so the digit chunk stays
-    // L1-resident and is reused across rows.
-    let panel_bytes = row_bytes.clamp(1, super::panel::JL_PANEL_UNIT_MAX);
-    let num_panels = row_bytes.div_ceil(panel_bytes);
-    let mut coords = vec![0i32; n_rows];
+    let panel_bytes = panel_bytes_for(job.row_bytes);
+    let num_panels = job.row_bytes.div_ceil(panel_bytes);
+    let mut coords = vec![0i32; job.n_rows];
     for p in 0..num_panels {
-        accumulate_panel(
-            &mut coords,
-            p,
-            panel_bytes,
-            row_bytes,
-            packed_rows,
-            &digits_i8,
-            cols,
-        );
-    }
-    coords
-}
-
-/// Project all rows with the scalar row kernel, bypassing SIMD dispatch.
-///
-/// This is a benchmark/differential hook used to make scalar A/B evidence
-/// explicit on hosts where [`project_rows_fast`] would otherwise dispatch to
-/// NEON or AVX.
-pub(crate) fn project_rows_scalar(
-    n_rows: usize,
-    row_bytes: usize,
-    packed_rows: &[u8],
-    digits: &[i32],
-    cols: usize,
-) -> Vec<i32> {
-    let digits_i8: Vec<i8> = digits.iter().map(|&d| d as i8).collect();
-    let panel_bytes = row_bytes.clamp(1, super::panel::JL_PANEL_UNIT_MAX);
-    let num_panels = row_bytes.div_ceil(panel_bytes);
-    let mut coords = vec![0i32; n_rows];
-    for p in 0..num_panels {
-        accumulate_panel_scalar(
-            &mut coords,
-            p,
-            panel_bytes,
-            row_bytes,
-            packed_rows,
-            &digits_i8,
-            cols,
-        );
+        accumulate_panel(&mut coords, p, panel_bytes, &ctx);
     }
     coords
 }

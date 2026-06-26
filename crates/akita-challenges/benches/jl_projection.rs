@@ -1,35 +1,15 @@
 //! Microbenchmarks for the standalone JL projection prototype (`akita-challenges::jl`).
-//!
-//! Measures matrix sampling (`JlProjectionMatrix::sample`), integer projection
-//! (`project` on small balanced digits), scalar-only vs runtime SIMD kernels
-//! (NEON on aarch64, AVX2/AVX-512 where available on x86_64), and the
-//! squared-norm check (`JlImage::l2_norm_sq_checked`).
-//!
-//! Column counts are powers of two anchored to CI profile-bench tail geometry
-//! (`profile-bench-data`, `scripts/profile_bench_report.py`). See
-//! `planned_levels[].next_w_ring * D` and `tail_*_field_elems` in each case's
-//! `summary.json` (e.g. `fp128-onehot-nv32-np1-d64`):
-//!
-//! | bench `cols` | anchor (fp128 onehot nv=32, D=64)        |
-//! |-------------|-------------------------------------------|
-//! | 2^12 = 4096 | e+t+r field coeffs (2944)                 |
-//! | 2^14 = 16384| z Golomb coords (17600)                   |
-//! | 2^16 = 65536| bracket between z and full witness        |
-//! | 2^17 = 131072 | terminal `next_w_ring * D` (129344)   |
-//! | 2^18 = 262144 | penultimate fold / level-4 witness    |
-//!
-//! Run with:
-//!
-//! ```text
-//! cargo bench -p akita-challenges --bench jl_projection --features parallel -- --noplot
-//! ```
 
 #![allow(missing_docs)]
 
-use akita_challenges::{center_coefficients, JlProjectionMatrix, DEFAULT_JL_ROWS};
+use akita_challenges::{
+    center_coefficients, project_digits_reference, project_digits_scalar, JlProjectionMatrix,
+    DEFAULT_JL_ROWS,
+};
 use akita_field::Prime128OffsetA7F7;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{AkitaTranscript, Transcript};
+use akita_types::jl::jl_l2_norm_sq_checked;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 type F = Prime128OffsetA7F7;
@@ -119,9 +99,7 @@ fn bench_project_digits(c: &mut Criterion) {
         group.throughput(Throughput::Elements((N_ROWS * cols) as u64));
         group.bench_with_input(BenchmarkId::new("scalar", cols), &cols, |b, _| {
             b.iter(|| {
-                let image = matrix
-                    .project_digits_scalar(black_box(&digits))
-                    .expect("JL project digits scalar");
+                let image = project_digits_scalar(&matrix, black_box(&digits)).expect("scalar");
                 black_box(image)
             });
         });
@@ -169,9 +147,8 @@ fn bench_project_digits_reference(c: &mut Criterion) {
         group.throughput(Throughput::Elements((N_ROWS * cols) as u64));
         group.bench_with_input(BenchmarkId::new("checked-i64", cols), &cols, |b, _| {
             b.iter(|| {
-                let image = matrix
-                    .project_digits_reference(black_box(&digits))
-                    .expect("JL project reference");
+                let image =
+                    project_digits_reference(&matrix, black_box(&digits)).expect("reference");
                 black_box(image)
             });
         });
@@ -189,7 +166,7 @@ fn bench_l2_norm(c: &mut Criterion) {
     let mut group = c.benchmark_group("jl_l2_norm_sq");
     group.throughput(Throughput::Elements(N_ROWS as u64));
     group.bench_function(BenchmarkId::new("n256", cols), |b| {
-        b.iter(|| black_box(image.l2_norm_sq_checked().expect("l2 norm")));
+        b.iter(|| black_box(jl_l2_norm_sq_checked(image.coords()).expect("l2 norm")));
     });
     group.finish();
 }
@@ -206,7 +183,7 @@ fn bench_end_to_end(c: &mut Criterion) {
                 let matrix =
                     JlProjectionMatrix::sample::<F, _>(&mut tr, N_ROWS, cols).expect("sample");
                 let image = matrix.project(black_box(&coeffs)).expect("project");
-                let norm_sq = image.l2_norm_sq_checked().expect("norm");
+                let norm_sq = jl_l2_norm_sq_checked(image.coords()).expect("norm");
                 black_box(norm_sq)
             });
         });

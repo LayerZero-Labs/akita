@@ -36,9 +36,9 @@ pub use prime::{
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use traits::{
-    AdditiveAccumulator, AdditiveGroup, BalancedDigitLookup, CanonicalBitLength, CanonicalBytes,
-    CanonicalField, CanonicalU64, FieldCore, FixedByteSize, FixedBytes, FromPrimitiveInt,
-    HalvingField, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator, One, PseudoMersenneField,
-    RandomSampling, ReducingBytes, RingAccumulator, RingCore, SmoothFftField, TranscriptChallenge,
-    WithAccumulator, Zero,
+    field_modulus, AdditiveAccumulator, AdditiveGroup, BalancedDigitLookup, CanonicalBitLength,
+    CanonicalBytes, CanonicalField, CanonicalU64, FieldCore, FixedByteSize, FixedBytes,
+    FromPrimitiveInt, HalvingField, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator, One,
+    PseudoMersenneField, RandomSampling, ReducingBytes, RingAccumulator, RingCore, SmoothFftField,
+    TranscriptChallenge, WithAccumulator, Zero,
 };

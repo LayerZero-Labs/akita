@@ -2,7 +2,7 @@
 
 use akita_field::AkitaError;
 
-use super::bit_to_sign;
+use crate::jl::packed_byte::bit_to_sign;
 
 /// Add `sign(bit) * value` into `acc` with checked `i64` arithmetic.
 #[inline]

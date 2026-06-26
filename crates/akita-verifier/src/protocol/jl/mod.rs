@@ -12,9 +12,6 @@ use akita_types::jl::{
 };
 
 /// Verify a standalone JL consistency sumcheck proof.
-///
-/// The verifier receives `w_tilde(r_w)` through `w_eval_hook`; this standalone
-/// helper does not perform a commitment opening.
 pub fn verify_jl_consistency<F, T, W>(
     transcript: &mut T,
     matrix: &JlProjectionMatrix,
@@ -46,7 +43,6 @@ where
     })
 }
 
-/// Verifier instance for the JL product sumcheck.
 pub(crate) struct JlConsistencyVerifier<'a, F, W>
 where
     F: FieldCore,
@@ -97,8 +93,7 @@ mod tests {
     };
     use akita_prover::protocol::jl::prove_jl_consistency;
     use akita_transcript::AkitaTranscript;
-    use akita_types::jl::fixtures::{eval_padded_table_at, witness_evals_from_digits};
-    use akita_types::jl::padded_live_table;
+    use akita_types::jl::fixtures::{consistency_fixture, eval_padded_table_at};
 
     fn roundtrip_fixture<F>(seed: &[u8], n_rows: usize, live_x_cols: usize, ring_bits: usize)
     where
@@ -109,50 +104,41 @@ mod tests {
             + AkitaSerialize
             + FromPrimitiveInt,
     {
-        let ring_len = 1usize << ring_bits;
-        let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+        let fixture = consistency_fixture::<F>(seed, n_rows, live_x_cols, ring_bits);
         let mut prover_transcript = AkitaTranscript::<F>::new(seed);
-        let matrix = JlProjectionMatrix::sample::<F, _>(
+        let prover_matrix = JlProjectionMatrix::sample::<F, _>(
             &mut prover_transcript,
             n_rows,
-            live_x_cols * ring_len,
+            fixture.layout.live_len(),
         )
         .unwrap();
+        let (proof, r_w, _) = prove_jl_consistency(
+            &mut prover_transcript,
+            &prover_matrix,
+            fixture.layout,
+            &fixture.witness,
+            &fixture.image_coords,
+            Some(fixture.norm_bound),
+        )
+        .unwrap();
+
         let mut verifier_transcript = AkitaTranscript::<F>::new(seed);
         let verifier_matrix = JlProjectionMatrix::sample::<F, _>(
             &mut verifier_transcript,
             n_rows,
-            live_x_cols * ring_len,
+            fixture.layout.live_len(),
         )
         .unwrap();
-        let layout = JlWitnessLayout::new(matrix.cols(), live_x_cols, col_bits, ring_bits).unwrap();
-        let witness_digits: Vec<i32> = (0..layout.live_len()).map(|i| (i as i32 % 5) - 2).collect();
-        let witness = witness_evals_from_digits::<F>(&witness_digits);
-        let padded_witness = padded_live_table(layout, &witness).unwrap();
-        let image = matrix.project_digits(&witness_digits).unwrap();
-        let norm_bound = image.l2_norm_sq_checked().unwrap();
-
-        let (proof, r_w, _final_claim) = prove_jl_consistency(
-            &mut prover_transcript,
-            &matrix,
-            layout,
-            &witness,
-            image.coords(),
-            Some(norm_bound),
-        )
-        .unwrap();
-
         let challenges = verify_jl_consistency(
             &mut verifier_transcript,
             &verifier_matrix,
-            layout,
-            image.coords(),
-            Some(norm_bound),
+            fixture.layout,
+            &fixture.image_coords,
+            Some(fixture.norm_bound),
             &proof,
-            |point| eval_padded_table_at(&padded_witness, point),
+            |point| eval_padded_table_at(&fixture.padded_witness, point),
         )
         .unwrap();
-
         assert_eq!(challenges, r_w);
     }
 
@@ -165,48 +151,41 @@ mod tests {
             + AkitaSerialize
             + FromPrimitiveInt,
     {
-        let ring_len = 1usize << ring_bits;
-        let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+        let fixture = consistency_fixture::<F>(seed, n_rows, live_x_cols, ring_bits);
         let mut prover_transcript = AkitaTranscript::<F>::new(seed);
-        let matrix = JlProjectionMatrix::sample::<F, _>(
+        let prover_matrix = JlProjectionMatrix::sample::<F, _>(
             &mut prover_transcript,
             n_rows,
-            live_x_cols * ring_len,
+            fixture.layout.live_len(),
         )
         .unwrap();
+        let (proof, _, _) = prove_jl_consistency(
+            &mut prover_transcript,
+            &prover_matrix,
+            fixture.layout,
+            &fixture.witness,
+            &fixture.image_coords,
+            Some(fixture.norm_bound + 1),
+        )
+        .unwrap();
+        let mut tampered = fixture.image_coords.clone();
+        tampered[0] += 1;
+
         let mut verifier_transcript = AkitaTranscript::<F>::new(seed);
         let verifier_matrix = JlProjectionMatrix::sample::<F, _>(
             &mut verifier_transcript,
             n_rows,
-            live_x_cols * ring_len,
+            fixture.layout.live_len(),
         )
         .unwrap();
-        let layout = JlWitnessLayout::new(matrix.cols(), live_x_cols, col_bits, ring_bits).unwrap();
-        let witness_digits: Vec<i32> = (0..layout.live_len()).map(|i| (i as i32 % 5) - 2).collect();
-        let witness = witness_evals_from_digits::<F>(&witness_digits);
-        let padded_witness = padded_live_table(layout, &witness).unwrap();
-        let image = matrix.project_digits(&witness_digits).unwrap();
-        let norm_bound = image.l2_norm_sq_checked().unwrap() + 1;
-        let (proof, _, _) = prove_jl_consistency(
-            &mut prover_transcript,
-            &matrix,
-            layout,
-            &witness,
-            image.coords(),
-            Some(norm_bound),
-        )
-        .unwrap();
-        let mut tampered = image.coords().to_vec();
-        tampered[0] += 1;
-
         assert!(verify_jl_consistency(
             &mut verifier_transcript,
             &verifier_matrix,
-            layout,
+            fixture.layout,
             &tampered,
-            Some(norm_bound + 100),
+            Some(fixture.norm_bound + 100),
             &proof,
-            |point| eval_padded_table_at(&padded_witness, point),
+            |point| eval_padded_table_at(&fixture.padded_witness, point),
         )
         .is_err());
     }
@@ -251,10 +230,7 @@ mod tests {
         let matrix =
             JlProjectionMatrix::sample::<F, _>(&mut transcript, 8, live_x_cols * ring_len).unwrap();
         let layout = JlWitnessLayout::new(matrix.cols(), live_x_cols, 2, ring_bits).unwrap();
-        let witness_digits = vec![1i32; layout.live_len()];
-        let witness = witness_evals_from_digits::<F>(&witness_digits);
-        let image = matrix.project_digits(&witness_digits).unwrap();
-        let padded = padded_live_table(layout, &witness).unwrap();
+        let fixture = consistency_fixture::<F>(b"jl-verifier-malformed-layout", 8, 3, 2);
         let empty_proof = SumcheckProof {
             round_polys: Vec::new(),
         };
@@ -268,10 +244,10 @@ mod tests {
             &mut verify_transcript,
             &verify_matrix,
             layout,
-            image.coords(),
+            &fixture.image_coords,
             None,
             &empty_proof,
-            |point| eval_padded_table_at(&padded, point),
+            |point| eval_padded_table_at(&fixture.padded_witness, point),
         )
         .is_err());
     }

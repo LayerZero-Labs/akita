@@ -1,53 +1,32 @@
 //! Standalone Johnson-Lindenstrauss projection primitives (prototype).
-//!
-//! This module hosts the dense, field-granular JL projection used by the
-//! reveal-tail prototype: the verifier samples a dense binary-sign matrix
-//! `J ∈ {-1, +1}^{n_rows × cols}` from the Fiat-Shamir transcript, the
-//! prover projects a centered integer coefficient vector to the integer image
-//! `p = J · c`, and the image norm is checked over the integers.
-//!
-//! The projection acts on the *integer coefficient vector* of base-field
-//! elements; ring structure is irrelevant to it, so the public API takes a flat
-//! `&[F]` coefficient slice and the caller flattens any ring layout. This keeps
-//! `akita-challenges` at its field + transcript dependency layer.
-//!
-//! Scope: matrix sampling, integer projection, checked Euclidean-norm helpers,
-//! and an injective signed-coordinate field embedding. Joint matrix MLE eval lives
-//! in [`mle`]; consistency layout and wire shapes live in `akita-types::jl`;
-//! prove/verify sumcheck instances live in `akita-prover::protocol::jl` and
-//! `akita-verifier::protocol::jl`. Nonce regrind and recursive-flow wiring remain
-//! deferred (see `specs/akita-jl-tail-projection-prototype.md`, fusion D1–D8).
 
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{field_modulus, AkitaError, CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_JL_PROJECTION, CHALLENGE_JL_SEED};
 use akita_transcript::Transcript;
 
 use crate::sampler::xof::XofCursor;
 
+mod hooks;
 mod kernels;
 pub mod mle;
+mod packed_byte;
 mod panel;
+#[cfg(any(test, feature = "jl-test-fixtures"))]
+pub(crate) mod testutil;
 
-/// PRG domain separator for the JL matrix stream. Distinct from the
-/// sparse-challenge PRG domain so the two streams cannot collide on a shared
-/// transcript seed.
 const JL_PRG_DOMAIN: &[u8] = b"akita/jl-projection-prg";
-
-/// Version tag bound into the matrix-sampling context buffer. Bumping it
-/// changes every sampled matrix, separating proofs across geometry revisions.
 const JL_SAMPLE_DOMAIN_VERSION: u64 = 1;
 
 /// Default JL row count used by tests and as the prototype's reference size.
-/// The secure `n_rows` derivation is deferred (spec D6); callers parameterize.
 pub const DEFAULT_JL_ROWS: usize = 256;
 
 /// Maximum absolute balanced-digit magnitude for JL witness coefficients (`lb ≤ 6`).
 pub const MAX_JL_DIGIT: i32 = 32;
 
 /// Byte length of one packed row of `cols` binary-sign entries (1 bit each).
-fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
+pub(crate) fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
     if cols == 0 {
         return Err(AkitaError::InvalidInput(
             "JL matrix requires a non-zero column count".to_string(),
@@ -57,7 +36,7 @@ fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
 }
 
 #[inline]
-fn jl_geometry_overflow() -> AkitaError {
+pub(crate) fn jl_geometry_overflow() -> AkitaError {
     AkitaError::InvalidInput("JL matrix dimensions overflow".to_string())
 }
 
@@ -66,8 +45,7 @@ fn jl_digit_within_bound(d: i32) -> bool {
     (-MAX_JL_DIGIT..=MAX_JL_DIGIT).contains(&d)
 }
 
-/// Dense binary-sign JL projection matrix with entries in `{-1, +1}`, packed
-/// one bit per entry in a single contiguous row-major buffer.
+/// Dense binary-sign JL projection matrix with entries in `{-1, +1}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JlProjectionMatrix {
     n_rows: usize,
@@ -77,14 +55,22 @@ pub struct JlProjectionMatrix {
 }
 
 impl JlProjectionMatrix {
-    /// Number of projection rows (the image dimension).
     pub fn n_rows(&self) -> usize {
         self.n_rows
     }
 
-    /// Number of columns (the projected coefficient-vector length).
     pub fn cols(&self) -> usize {
         self.cols
+    }
+
+    #[inline]
+    pub(crate) fn row_bytes(&self) -> usize {
+        self.row_bytes
+    }
+
+    #[inline]
+    pub(crate) fn packed_rows(&self) -> &[u8] {
+        &self.packed_rows
     }
 
     #[inline]
@@ -93,16 +79,6 @@ impl JlProjectionMatrix {
         &self.packed_rows[start..start + self.row_bytes]
     }
 
-    /// Sample a dense binary-sign matrix deterministically from the transcript.
-    ///
-    /// Absorbs a context buffer (`n_rows`, `cols`, domain version), draws a
-    /// 32-byte seed, and expands `n_rows` packed rows from a single
-    /// JL-domain-separated XOF stream. Prover and verifier in the same
-    /// transcript state reconstruct an identical matrix.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `n_rows` or `cols` is zero.
     pub fn sample<F, T>(transcript: &mut T, n_rows: usize, cols: usize) -> Result<Self, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -145,17 +121,6 @@ impl JlProjectionMatrix {
         })
     }
 
-    /// Project a flat coefficient slice to its exact integer image `J · c`.
-    ///
-    /// Coefficients are centered to balanced `i32` digits and projected through
-    /// the fast kernel. Any input whose centered magnitude exceeds the balanced
-    /// digit bound [`MAX_JL_DIGIT`] (e.g. a full-magnitude fp128 element) is
-    /// rejected at the boundary as a non-digit witness.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `coeffs.len() != cols`, if any centered magnitude
-    /// exceeds `i32`, or if any centered digit exceeds [`MAX_JL_DIGIT`].
     pub fn project<F>(&self, coeffs: &[F]) -> Result<JlImage, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -172,17 +137,6 @@ impl JlProjectionMatrix {
         self.project_digits(&digits)
     }
 
-    /// Project a pre-centered balanced-digit vector with the fast `i32` kernel.
-    ///
-    /// Column-panel accumulation parallelizes over panels when the `parallel`
-    /// feature is enabled and `n_rows * cols` exceeds the internal threshold.
-    /// Runtime dispatch selects NEON (aarch64), AVX-512 (x86_64 when F/DQ/BW
-    /// are present), AVX2, or the scalar fast kernel.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on a shape mismatch or if any digit exceeds
-    /// [`MAX_JL_DIGIT`].
     pub fn project_digits(&self, digits: &[i32]) -> Result<JlImage, AkitaError> {
         validate_digit_witness(digits, self.cols)?;
         let coords = kernels::project_rows_fast(
@@ -195,128 +149,9 @@ impl JlProjectionMatrix {
         );
         Ok(JlImage { coords })
     }
-
-    /// Project pre-centered digits with the scalar kernel, bypassing SIMD dispatch.
-    ///
-    /// This is a benchmark/differential hook for honest scalar A/B evidence on
-    /// hosts where [`Self::project_digits`] uses NEON or AVX at runtime.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on a shape mismatch or if any digit exceeds
-    /// [`MAX_JL_DIGIT`].
-    #[doc(hidden)]
-    pub fn project_digits_scalar(&self, digits: &[i32]) -> Result<JlImage, AkitaError> {
-        validate_digit_witness(digits, self.cols)?;
-        let coords = kernels::project_rows_scalar(
-            self.n_rows,
-            self.row_bytes,
-            &self.packed_rows,
-            digits,
-            self.cols,
-        );
-        Ok(JlImage { coords })
-    }
-
-    /// Checked `i64` reference projection for tests and differential benches.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on shape mismatch, digit-bound violation, or `i64`
-    /// overflow during accumulation.
-    #[doc(hidden)]
-    pub fn project_digits_reference(&self, digits: &[i32]) -> Result<JlImage, AkitaError> {
-        validate_digit_witness(digits, self.cols)?;
-        let centered: Vec<i64> = digits.iter().map(|&d| i64::from(d)).collect();
-        let project_row = |row_idx: usize| {
-            kernels::project_row_reference(self.row_slice(row_idx), &centered, self.cols)
-        };
-        let coords = if use_parallel_projection(self.n_rows, self.cols) {
-            akita_field::cfg_into_iter!(0..self.n_rows)
-                .map(project_row)
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            (0..self.n_rows)
-                .map(project_row)
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        let coords: Vec<i32> = coords
-            .into_iter()
-            .map(|c| {
-                i32::try_from(c).map_err(|_| {
-                    AkitaError::InvalidInput(
-                        "JL reference coordinate exceeds i32 range for digit witness".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(JlImage { coords })
-    }
-
-    /// Reconstruct a matrix from explicit binary-sign rows. Test-only constructor for
-    /// projection-vs-reference and packing round-trip checks.
-    #[cfg(test)]
-    fn from_sign_rows(signs: &[Vec<i8>]) -> Result<Self, AkitaError> {
-        let n_rows = signs.len();
-        if n_rows == 0 {
-            return Err(AkitaError::InvalidInput(
-                "JL matrix requires a non-zero row count".to_string(),
-            ));
-        }
-        let cols = signs[0].len();
-        let row_bytes = row_bytes_for(cols)?;
-        if signs.iter().any(|row| row.len() != cols) {
-            return Err(AkitaError::InvalidInput(
-                "JL matrix row length mismatch".to_string(),
-            ));
-        }
-
-        let packed_len = n_rows
-            .checked_mul(row_bytes)
-            .ok_or_else(jl_geometry_overflow)?;
-        let mut packed_rows = vec![0u8; packed_len];
-        for (row_idx, row) in signs.iter().enumerate() {
-            let row_start = row_idx
-                .checked_mul(row_bytes)
-                .ok_or_else(jl_geometry_overflow)?;
-            for (col_idx, &sign) in row.iter().enumerate() {
-                let bit: u8 = match sign {
-                    -1 => 0,
-                    1 => 1,
-                    _ => {
-                        return Err(AkitaError::InvalidInput(
-                            "JL matrix entries must be in {-1, +1}".to_string(),
-                        ))
-                    }
-                };
-                packed_rows[row_start + (col_idx >> 3)] |= bit << (col_idx & 0b111);
-            }
-        }
-
-        Ok(Self {
-            n_rows,
-            cols,
-            row_bytes,
-            packed_rows,
-        })
-    }
-
-    /// Binary sign at `(row_idx, col_idx)`. Test-only accessor.
-    #[cfg(test)]
-    fn sign_at(&self, row_idx: usize, col_idx: usize) -> Option<i8> {
-        if row_idx >= self.n_rows || col_idx >= self.cols {
-            return None;
-        }
-        let bit = (self.row_slice(row_idx)[col_idx >> 3] >> (col_idx & 0b111)) & 1;
-        Some(kernels::bit_to_sign(bit))
-    }
 }
 
 /// Center a flat coefficient slice to balanced `i32` digits.
-///
-/// # Errors
-///
-/// Returns an error if any centered magnitude exceeds `i32` (non-digit input).
 pub fn center_coefficients<F: CanonicalField>(coeffs: &[F]) -> Result<Vec<i32>, AkitaError> {
     let q = field_modulus::<F>();
     let half_q = q / 2;
@@ -326,7 +161,7 @@ pub fn center_coefficients<F: CanonicalField>(coeffs: &[F]) -> Result<Vec<i32>, 
         .collect()
 }
 
-fn validate_digit_witness(digits: &[i32], cols: usize) -> Result<(), AkitaError> {
+pub(crate) fn validate_digit_witness(digits: &[i32], cols: usize) -> Result<(), AkitaError> {
     if digits.len() != cols {
         return Err(AkitaError::InvalidInput(format!(
             "JL projection expects {cols} centered coefficients, got {}",
@@ -346,17 +181,7 @@ fn validate_digit_witness(digits: &[i32], cols: usize) -> Result<(), AkitaError>
     Ok(())
 }
 
-/// Recover the field modulus `q` as a `u128` for a base prime field.
-///
-/// Wire embedding uses the canonical copy in `akita_types::jl::field_modulus`;
-/// this crate cannot depend on `akita-types`, so projection paths keep a local helper.
-#[inline]
-fn field_modulus<F: FieldCore + CanonicalField>() -> u128 {
-    (-F::one()).to_canonical_u128() + 1
-}
-
-/// Center a canonical residue in `[0, q)` to its balanced representative.
-fn center_to_i32(canonical: u128, q: u128, half_q: u128) -> Result<i32, AkitaError> {
+pub(crate) fn center_to_i32(canonical: u128, q: u128, half_q: u128) -> Result<i32, AkitaError> {
     let magnitude = if canonical > half_q {
         q - canonical
     } else {
@@ -375,7 +200,7 @@ fn center_to_i32(canonical: u128, q: u128, half_q: u128) -> Result<i32, AkitaErr
 }
 
 #[inline]
-fn use_parallel_projection(n_rows: usize, cols: usize) -> bool {
+pub(crate) fn use_parallel_projection(n_rows: usize, cols: usize) -> bool {
     panel::parallel_jl_enabled(n_rows, cols)
 }
 
@@ -386,81 +211,20 @@ pub struct JlImage {
 }
 
 impl JlImage {
-    /// Signed integer coordinates of the image.
     pub fn coords(&self) -> &[i32] {
         &self.coords
     }
 
-    /// Number of image coordinates (the matrix row count).
     pub fn len(&self) -> usize {
         self.coords.len()
     }
 
-    /// Whether the image has no coordinates.
     pub fn is_empty(&self) -> bool {
         self.coords.is_empty()
     }
-
-    /// Squared Euclidean norm over the integers, with checked accumulation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the running sum exceeds `u128`.
-    pub fn l2_norm_sq_checked(&self) -> Result<u128, AkitaError> {
-        let mut acc: u128 = 0;
-        for &c in &self.coords {
-            let mag = u128::from(c.unsigned_abs());
-            let sq = mag * mag;
-            acc = acc.checked_add(sq).ok_or_else(|| {
-                AkitaError::InvalidInput("JL image squared norm exceeds u128".to_string())
-            })?;
-        }
-        Ok(acc)
-    }
-
-    /// Accept the image iff `||p||_2^2 <= bound_sq` over the integers.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the norm overflows or exceeds `bound_sq`.
-    pub fn check_l2(&self, bound_sq: u128) -> Result<(), AkitaError> {
-        let norm_sq = self.l2_norm_sq_checked()?;
-        if norm_sq > bound_sq {
-            return Err(AkitaError::InvalidInput(format!(
-                "JL image squared L2 norm {norm_sq} exceeds bound {bound_sq}"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Embed each coordinate into the base field, requiring an injective signed
-    /// representative (`|p_j| < q/2`). Rejects coordinates that would alias
-    /// modulo `q` with a different Euclidean norm.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any coordinate falls outside the injective window.
-    pub fn embed_into_field<F>(&self) -> Result<Vec<F>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-    {
-        let q = field_modulus::<F>();
-        let half_q = q / 2;
-        self.coords
-            .iter()
-            .map(|&c| {
-                let mag = u128::from(c.unsigned_abs());
-                if mag > half_q {
-                    return Err(AkitaError::InvalidInput(format!(
-                        "JL image coordinate {c} outside injective signed window (|c| <= {half_q})"
-                    )));
-                }
-                let elem = F::from_canonical_u128_reduced(mag);
-                Ok(if c < 0 { -elem } else { elem })
-            })
-            .collect()
-    }
 }
+
+pub use hooks::{project_digits_reference, project_digits_scalar};
 
 #[cfg(test)]
 mod tests;

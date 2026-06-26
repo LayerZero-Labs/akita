@@ -3,6 +3,7 @@ use super::{
     eval_jl_mle_at_from_eq_tables, eval_jl_mle_at_reference, eval_jl_mle_at_scalar,
     eval_mle_from_weights,
 };
+use crate::jl::testutil::matrix_from_sign_rows;
 use crate::jl::{JlProjectionMatrix, DEFAULT_JL_ROWS};
 use akita_field::{FieldCore, Fp64, FromPrimitiveInt, Prime128Offset275, Prime32Offset99};
 
@@ -33,7 +34,7 @@ fn sample_sign_matrix(n_rows: usize, cols: usize) -> JlProjectionMatrix {
     let signs: Vec<Vec<i8>> = (0..n_rows)
         .map(|r| (0..cols).map(|c| binary_sign(r * 17 + c * 31)).collect())
         .collect();
-    JlProjectionMatrix::from_sign_rows(&signs).unwrap()
+    matrix_from_sign_rows(&signs).unwrap()
 }
 
 fn mle_roundtrip_for<L: FieldCore + FromPrimitiveInt>() {
@@ -78,7 +79,7 @@ fn mle_lut_matches_reference_small_matrix() {
     let signs: Vec<Vec<i8>> = (0..5)
         .map(|r| (0..7).map(|c| binary_sign(r + c)).collect())
         .collect();
-    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let matrix = matrix_from_sign_rows(&signs).unwrap();
     let r_J = vec![F64::from_u64(3), F64::from_u64(5), F64::from_u64(7)];
     let r_w = vec![F64::from_u64(11), F64::from_u64(13), F64::from_u64(17)];
 
@@ -120,7 +121,7 @@ fn sign_weight_lut_matches_row_accumulate() {
     build_sign_weight_lut_16(&hi_weights, &mut hi_lut);
 
     let signs: Vec<Vec<i8>> = vec![(0..25).map(|c| binary_sign(c * 5)).collect()];
-    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let matrix = matrix_from_sign_rows(&signs).unwrap();
     let row = matrix.row_slice(0);
 
     for byte_idx in 0..3 {
@@ -134,10 +135,10 @@ fn sign_weight_lut_matches_row_accumulate() {
 
 #[test]
 fn accumulate_row_weight_range_matches_entrywise() {
-    use super::common::{accum_sign_weight, accumulate_row_weight_range, entry_sign};
+    use super::common::{accum_sign_weight, accumulate_row_weight_range, matrix_sign_at};
 
     let signs: Vec<Vec<i8>> = vec![(0..17).map(|c| binary_sign(c * 5)).collect()];
-    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let matrix = matrix_from_sign_rows(&signs).unwrap();
     let row = matrix.row_slice(0);
     let col0 = 3;
     let n_cols = 10;
@@ -146,7 +147,7 @@ fn accumulate_row_weight_range_matches_entrywise() {
     let fast = accumulate_row_weight_range::<F64>(row, col0, n_cols, &weights);
     let mut slow = F64::zero();
     for (k, &weight) in weights.iter().enumerate() {
-        let sign = entry_sign(&matrix, 0, col0 + k);
+        let sign = matrix_sign_at(&matrix, 0, col0 + k);
         slow = accum_sign_weight(slow, sign, weight);
     }
     assert_eq!(fast, slow);
@@ -154,10 +155,10 @@ fn accumulate_row_weight_range_matches_entrywise() {
 
 #[test]
 fn scatter_row_weight_range_matches_entrywise() {
-    use super::common::{accum_sign_weight, entry_sign, scatter_row_weight_range};
+    use super::common::{accum_sign_weight, matrix_sign_at, scatter_row_weight_range};
 
     let signs: Vec<Vec<i8>> = vec![(0..23).map(|c| binary_sign(c * 5)).collect()];
-    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let matrix = matrix_from_sign_rows(&signs).unwrap();
     let row = matrix.row_slice(0);
     // Misaligned start and a sub-8 tail to exercise every branch of the scatter.
     let col0 = 2;
@@ -168,7 +169,7 @@ fn scatter_row_weight_range_matches_entrywise() {
     scatter_row_weight_range(&mut fast, row, col0, weight);
 
     let slow: Vec<F64> = (0..n_cols)
-        .map(|k| accum_sign_weight(F64::zero(), entry_sign(&matrix, 0, col0 + k), weight))
+        .map(|k| accum_sign_weight(F64::zero(), matrix_sign_at(&matrix, 0, col0 + k), weight))
         .collect();
     assert_eq!(fast, slow);
 }
@@ -204,7 +205,7 @@ fn image_claim_matches_row_weight_dot_witness_for_flat_layout() {
                 .collect()
         })
         .collect();
-    let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
+    let matrix = matrix_from_sign_rows(&signs).unwrap();
     let witness: Vec<i32> = (0..matrix.cols()).map(|i| (i as i32 % 5) - 2).collect();
     let image = matrix.project_digits(&witness).unwrap();
     let row_bits = matrix.n_rows().next_power_of_two().trailing_zeros() as usize;

@@ -14,6 +14,7 @@
 
 pub mod backend;
 pub mod eq_poly;
+pub mod hypercube;
 pub mod module;
 pub mod ntt;
 pub mod offset_eq;
@@ -33,6 +34,7 @@ pub use akita_field::{
 };
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
+pub use hypercube::PaddedHypercube;
 pub use module::{Module, VectorModule};
 pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};

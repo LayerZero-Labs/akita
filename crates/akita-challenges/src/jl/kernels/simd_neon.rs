@@ -12,7 +12,7 @@
 
 use std::arch::aarch64::*;
 
-use super::scalar::{BINARY_SIGNS_FOR_BYTE, SIGN_LUT};
+use crate::jl::packed_byte::{BINARY_SIGNS_FOR_BYTE, SIGN_LUT_I32};
 
 /// Gather the sixteen binary signs for two packed row bytes into one vector.
 #[inline]
@@ -74,7 +74,7 @@ pub(super) unsafe fn project_row_neon(row: &[u8], digits: &[i8], cols: usize) ->
         let byte = row[full_bytes];
         for lane in 0..remainder {
             let bit = (byte >> lane) & 1;
-            sum += SIGN_LUT[bit as usize] * i32::from(digits[coeff_idx]);
+            sum += SIGN_LUT_I32[bit as usize] * i32::from(digits[coeff_idx]);
             coeff_idx += 1;
         }
     }

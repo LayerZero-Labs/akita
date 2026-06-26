@@ -1,5 +1,6 @@
 //! Flat witness hypercube layout for the JL consistency sumcheck.
 
+use akita_algebra::PaddedHypercube;
 use akita_field::{AkitaError, FieldCore};
 
 /// Degree bound for the JL product sumcheck.
@@ -120,11 +121,12 @@ pub fn validate_layout_for_matrix_mle(
             actual: layout.live_len(),
         });
     }
-    let matrix_hyper = matrix_cols.next_power_of_two();
-    if layout.padded_len() != matrix_hyper {
+    let col_hyper = PaddedHypercube::from_live_len(matrix_cols)?;
+    if layout.padded_len() != col_hyper.padded_len {
         return Err(AkitaError::InvalidInput(format!(
-            "JL layout padded length {} does not match matrix MLE hypercube {matrix_hyper}",
-            layout.padded_len()
+            "JL layout padded length {} does not match matrix MLE hypercube {}",
+            layout.padded_len(),
+            col_hyper.padded_len
         )));
     }
     Ok(())

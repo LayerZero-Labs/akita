@@ -2,26 +2,6 @@
 //!
 //! Implements `J̃(r_J, r_w) = Σ_{j,i} eq(r_J,j) eq(r_w,i) J[j,i]` and the partial
 //! row-weight table `g[i] = Σ_j eq(r_J,j) J[j,i]` used by the consistency sumcheck.
-//!
-//! # Production eval (`eval_jl_mle_at`)
-//!
-//! The fused path materializes the two equality tables, then amortizes a
-//! per-byte sign-weight LUT across all matrix rows:
-//!
-//! 1. Outer loop: each byte-aligned 8-column window of `eq(r_w, ·)`.
-//! 2. Build two 16-entry LUTs once from the eight weights (one per nibble).
-//! 3. Inner loop: every row does two LUT lookups and one field add into `row_acc[j]`.
-//! 4. Scalar tail for `cols % 8`.
-//! 5. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
-//!
-//! On aarch64 fp128 (256 rows, 64K–256K cols), this LUT path beats the row-major
-//! scalar baseline (~3×) and deferred-reduction wide variants we tried (~10–30%
-//! slower than LUT). See `benches/jl_mle.rs` (`scalar` vs `lut`).
-//!
-//! Parallelism partitions byte windows into panels when the `parallel` feature is
-//! enabled and `n_rows · cols` is large enough.
-//!
-//! Naive reference helpers in the `reference` submodule back differential tests.
 
 #![allow(non_snake_case)] // `r_J` matches the spec / paper notation.
 
@@ -34,57 +14,24 @@ use akita_field::{AkitaError, FieldCore};
 mod common;
 mod lut;
 mod reference;
+mod row_weights;
 #[cfg(test)]
 mod tests;
 
-use crate::jl::panel::byte_aligned_panel_cols;
 #[cfg(feature = "parallel")]
-use crate::jl::panel::{panel_span, parallel_jl_enabled};
+use crate::jl::panel::panel_span;
+#[cfg(feature = "parallel")]
+use crate::jl::panel::parallel_jl_enabled;
 use crate::jl::JlProjectionMatrix;
-use common::{
-    accumulate_row_weight_range, scatter_row_weight_range, validate_eq_tables, validate_mle_points,
-    JlMleLayout,
-};
+use common::{accumulate_row_weight_range, validate_eq_tables, validate_mle_points, JlMleLayout};
 use lut::{accumulate_rows_from_nibble_luts, build_sign_weight_lut_16};
+use row_weights::{fill_row_weights, row_weight_panel_cols, sum_row_eq};
 
 pub use reference::{
     build_jl_row_weights_reference, eval_jl_mle_at_reference, eval_mle_from_weights,
 };
 
-const fn bit_lanes_for_byte(byte: u8) -> ([u8; 8], usize) {
-    let mut lanes = [0u8; 8];
-    let mut count = 0usize;
-    let mut lane = 0u8;
-    while lane < 8 {
-        if ((byte >> lane) & 1) != 0 {
-            lanes[count] = lane;
-            count += 1;
-        }
-        lane += 1;
-    }
-    (lanes, count)
-}
-
-const fn build_bit_lanes_for_byte() -> [([u8; 8], usize); 256] {
-    let mut out = [([0u8; 8], 0usize); 256];
-    let mut byte = 0u16;
-    while byte < 256 {
-        out[byte as usize] = bit_lanes_for_byte(byte as u8);
-        byte += 1;
-    }
-    out
-}
-
-static BIT_LANES_FOR_BYTE: [([u8; 8], usize); 256] = build_bit_lanes_for_byte();
-
 /// Prover row-weight table `g` after batching JL rows with `eq(r_J, ·)`.
-///
-/// The returned vector has length `2^{col_bits}` (padded hypercube); entries
-/// beyond `matrix.cols()` are zero.
-///
-/// # Errors
-///
-/// Returns an error if `r_J` has the wrong length or table allocation fails.
 pub fn build_jl_row_weights<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
@@ -95,22 +42,7 @@ pub fn build_jl_row_weights<L: FieldCore>(
     build_jl_row_weights_from_row_eq(matrix, &e_j)
 }
 
-/// Fused `J̃(r_J, r_w)` given precomputed `eq(r_J, ·)` and `eq(r_w, ·)` tables.
-///
-/// Bench / differential hook: production callers use [`eval_jl_mle_at`], which
-/// builds these tables once per call.
-#[doc(hidden)]
-pub fn eval_jl_mle_at_from_eq_tables<L: FieldCore>(
-    matrix: &JlProjectionMatrix,
-    e_j: &[L],
-    e_w: &[L],
-) -> Result<L, AkitaError> {
-    validate_eq_tables(matrix, e_j, e_w)?;
-    Ok(eval_jl_mle_at_from_eq_tables_impl(matrix, e_j, e_w))
-}
-
 /// Row-weight table given a precomputed `eq(r_J, ·)` vector.
-#[doc(hidden)]
 pub fn build_jl_row_weights_from_row_eq<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     e_j: &[L],
@@ -126,21 +58,13 @@ pub fn build_jl_row_weights_from_row_eq<L: FieldCore>(
     let mut g = vec![L::zero(); layout.col_hyper];
     let cols = matrix.cols();
     let n_rows = matrix.n_rows();
-    let panel_cols = byte_aligned_panel_cols(cols);
+    let panel_cols = row_weight_panel_cols(cols);
     let row_eq_total = sum_row_eq(e_j, n_rows);
-
     fill_row_weights(&mut g, panel_cols, cols, n_rows, matrix, e_j, row_eq_total);
     Ok(g)
 }
 
 /// Fused verifier evaluation `J̃(r_J, r_w)` without materializing the weight table.
-///
-/// Uses the per-4-column sign-weight LUT described in the module docs.
-///
-/// # Errors
-///
-/// Returns an error if challenge lengths mismatch the padded row/column hypercube
-/// or equality-table allocation would exceed budget.
 pub fn eval_jl_mle_at<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
@@ -150,8 +74,17 @@ pub fn eval_jl_mle_at<L: FieldCore>(
     Ok(eval_jl_mle_at_from_eq_tables_impl(matrix, &e_j, &e_w))
 }
 
+/// Fused `J̃(r_J, r_w)` given precomputed equality tables.
+pub fn eval_jl_mle_at_from_eq_tables<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_j: &[L],
+    e_w: &[L],
+) -> Result<L, AkitaError> {
+    validate_eq_tables(matrix, e_j, e_w)?;
+    Ok(eval_jl_mle_at_from_eq_tables_impl(matrix, e_j, e_w))
+}
+
 /// Row-major scalar fused eval with precomputed equality tables.
-#[doc(hidden)]
 pub fn eval_jl_mle_at_scalar_from_eq_tables<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     e_j: &[L],
@@ -179,7 +112,6 @@ pub fn eval_jl_mle_at_scalar_from_eq_tables<L: FieldCore>(
 }
 
 /// Row-major scalar fused eval (`benches/jl_mle` baseline).
-#[doc(hidden)]
 pub fn eval_jl_mle_at_scalar<L: FieldCore>(
     matrix: &JlProjectionMatrix,
     r_J: &[L],
@@ -210,37 +142,18 @@ fn eval_jl_mle_at_from_eq_tables_impl<L: FieldCore>(
     let full_cols = cols - (cols & 0b111);
     let tail_cols = cols & 0b111;
 
-    let mut row_acc = vec![L::zero(); n_rows];
-    #[cfg(feature = "parallel")]
-    if parallel_jl_enabled(n_rows, cols) {
-        row_acc = eval_jl_mle_lut_row_acc_parallel(matrix, e_w, full_cols);
-    } else {
-        let mut lo_lut = [L::zero(); 16];
-        let mut hi_lut = [L::zero(); 16];
-        accumulate_lut_byte_range(
-            &mut row_acc,
-            matrix,
-            e_w,
-            0,
-            full_cols,
-            &mut lo_lut,
-            &mut hi_lut,
-        );
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut lo_lut = [L::zero(); 16];
-        let mut hi_lut = [L::zero(); 16];
-        accumulate_lut_byte_range(
-            &mut row_acc,
-            matrix,
-            e_w,
-            0,
-            full_cols,
-            &mut lo_lut,
-            &mut hi_lut,
-        );
-    }
+    let mut row_acc = {
+        #[cfg(feature = "parallel")]
+        if parallel_jl_enabled(n_rows, cols) {
+            eval_jl_mle_lut_row_acc_parallel(matrix, e_w, full_cols)
+        } else {
+            accumulate_lut_row_acc_serial(matrix, e_w, full_cols)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            accumulate_lut_row_acc_serial(matrix, e_w, full_cols)
+        }
+    };
 
     if tail_cols > 0 {
         for (j, acc) in row_acc.iter_mut().enumerate() {
@@ -253,6 +166,27 @@ fn eval_jl_mle_at_from_eq_tables_impl<L: FieldCore>(
         }
     }
     dot_row_eq_weights(e_j, n_rows, &row_acc)
+}
+
+fn accumulate_lut_row_acc_serial<L: FieldCore>(
+    matrix: &JlProjectionMatrix,
+    e_w: &[L],
+    full_cols: usize,
+) -> Vec<L> {
+    let n_rows = matrix.n_rows();
+    let mut row_acc = vec![L::zero(); n_rows];
+    let mut lo_lut = [L::zero(); 16];
+    let mut hi_lut = [L::zero(); 16];
+    accumulate_lut_byte_range(
+        &mut row_acc,
+        matrix,
+        e_w,
+        0,
+        full_cols,
+        &mut lo_lut,
+        &mut hi_lut,
+    );
+    row_acc
 }
 
 #[cfg(feature = "parallel")]
@@ -324,105 +258,4 @@ fn dot_row_eq_weights<L: FieldCore>(e_j: &[L], n_rows: usize, row_acc: &[L]) -> 
         total += ej * row_acc[j];
     }
     total
-}
-
-#[inline]
-fn sum_row_eq<L: FieldCore>(e_j: &[L], n_rows: usize) -> L {
-    e_j.iter().take(n_rows).copied().sum()
-}
-
-fn fill_row_weights<L: FieldCore>(
-    g: &mut [L],
-    panel_cols: usize,
-    cols: usize,
-    n_rows: usize,
-    matrix: &JlProjectionMatrix,
-    e_j: &[L],
-    row_eq_total: L,
-) {
-    #[cfg(feature = "parallel")]
-    if parallel_jl_enabled(n_rows, cols) {
-        g.par_chunks_mut(panel_cols)
-            .enumerate()
-            .for_each(|(p, g_panel)| {
-                scatter_panel(
-                    g_panel,
-                    p * panel_cols,
-                    cols,
-                    n_rows,
-                    matrix,
-                    e_j,
-                    row_eq_total,
-                );
-            });
-        return;
-    }
-    for (p, g_panel) in g.chunks_mut(panel_cols).enumerate() {
-        scatter_panel(
-            g_panel,
-            p * panel_cols,
-            cols,
-            n_rows,
-            matrix,
-            e_j,
-            row_eq_total,
-        );
-    }
-}
-
-fn scatter_panel<L: FieldCore>(
-    g_panel: &mut [L],
-    col0: usize,
-    cols: usize,
-    n_rows: usize,
-    matrix: &JlProjectionMatrix,
-    e_j: &[L],
-    row_eq_total: L,
-) {
-    if col0 >= cols {
-        return;
-    }
-    let n = g_panel.len().min(cols - col0);
-    let g_active = &mut g_panel[..n];
-
-    if (col0 & 0b111) == 0 {
-        scatter_panel_byte_sums(g_active, col0, n_rows, matrix, e_j, row_eq_total);
-        return;
-    }
-
-    for (j, &w) in e_j.iter().take(n_rows).enumerate() {
-        scatter_row_weight_range(g_active, matrix.row_slice(j), col0, w);
-    }
-}
-
-fn scatter_panel_byte_sums<L: FieldCore>(
-    g_active: &mut [L],
-    col0: usize,
-    n_rows: usize,
-    matrix: &JlProjectionMatrix,
-    e_j: &[L],
-    row_eq_total: L,
-) {
-    debug_assert_eq!(col0 & 0b111, 0);
-
-    for byte_col in (0..g_active.len()).step_by(8) {
-        let lanes = (g_active.len() - byte_col).min(8);
-        let matrix_byte = (col0 + byte_col) >> 3;
-        let mut ones = [L::zero(); 8];
-
-        for (j, &w) in e_j.iter().take(n_rows).enumerate() {
-            let byte = matrix.row_slice(j)[matrix_byte];
-            let (set_lanes, set_count) = &BIT_LANES_FOR_BYTE[byte as usize];
-            for &lane in set_lanes.iter().take(*set_count) {
-                let lane = lane as usize;
-                if lane < lanes {
-                    ones[lane] += w;
-                }
-            }
-        }
-
-        for (lane, &sum_ones) in ones.iter().take(lanes).enumerate() {
-            g_active[byte_col + lane] = sum_ones + sum_ones - row_eq_total;
-        }
-    }
 }

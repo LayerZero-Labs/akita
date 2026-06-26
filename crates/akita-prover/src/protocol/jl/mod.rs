@@ -162,6 +162,7 @@ mod tests {
     use akita_field::Fp64;
     use akita_transcript::AkitaTranscript;
     use akita_types::jl::fixtures::witness_evals_from_digits;
+    use akita_types::jl::jl_l2_norm_sq_checked;
 
     type F = Fp64<4294967197>;
 
@@ -177,7 +178,7 @@ mod tests {
         let witness_digits: Vec<i32> = (0..layout.live_len()).map(|i| (i as i32 % 5) - 2).collect();
         let witness = witness_evals_from_digits(&witness_digits);
         let image = matrix.project_digits(&witness_digits).unwrap();
-        let norm_bound = image.l2_norm_sq_checked().unwrap();
+        let norm_bound = jl_l2_norm_sq_checked(image.coords()).unwrap();
         assert!(norm_bound > 0);
 
         assert!(prove_jl_consistency(
