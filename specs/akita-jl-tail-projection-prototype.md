@@ -305,7 +305,7 @@ Cost shape (updated after optimization investigation):
 | Point eval `J̃(r_J,r_w)` | Verifier (fusion final check) | PR1b `eval_jl_mle_at` | `Θ(n_rows · cols)`; **LUT-amortized** one-shot eval over byte quads |
 | Consistency sumcheck | Prover + verifier | PR2 | `k_w` witness rounds; verifier JL work is dominated by `eval_jl_mle_at` |
 
-There is no closed-form shortcut for a dense random `J` (unlike `TraceWeight`). Constant-factor wins come from split-eq nesting, byte-wide binary-sign decode, deferred extension-field reduction, column-panel / outer-tile parallelism, and SIMD. Binary signs remove ternary zeros, halve matrix bytes, and let one 256-entry byte LUT cover eight columns at once. At tail scale (`n_rows = 256`, `cols ~ 2^{17}`) the verifier eval is intentionally `Θ(n_rows · cols)` but must be engineered to the same standard as PR1 projection kernels.
+There is no closed-form shortcut for a dense random `J` (unlike `TraceWeight`). Constant-factor wins come from split-eq nesting, byte-wide binary-sign decode, deferred extension-field reduction, column-panel / outer-tile parallelism, and SIMD. Binary signs remove ternary zeros, halve matrix bytes, and let two tiny 16-entry nibble LUTs cover one eight-column packed byte. At tail scale (`n_rows = 256`, `cols ~ 2^{17}`) the verifier eval is intentionally `Θ(n_rows · cols)` but must be engineered to the same standard as PR1 projection kernels.
 
 ## Design
 
@@ -493,13 +493,13 @@ Both have the same asymptotic cost (`Θ(n_rows · cols)` matrix touches) but dif
 
 #### Production algorithm: LUT-amortized byte eval (binary target)
 
-The shipped PR #191 `eval_jl_mle_at` path does **not** use split-eq nesting; it matches the projection kernels' byte geometry. Under the binary-sign cutover the same idea remains, but the table is a direct 256-pattern byte LUT over eight binary signs rather than the old 81-pattern ternary table over four signs:
+The shipped PR #191 `eval_jl_mle_at` path does **not** use split-eq nesting; it matches the projection kernels' byte geometry. Under the binary-sign cutover the same idea remains, but each packed byte uses two 16-entry nibble LUTs rather than the old 81-pattern ternary table over four signs:
 
 1. Precompute `eq(r_J, ·)` and `eq(r_w, ·)` once (`EqPolynomial::evals`).
 2. Validate table lengths against the padded row/column hypercube (`validate_eq_tables`); bench hooks return `AkitaError` on short buffers instead of silent truncation.
 3. Partition witness columns into byte-aligned 8-column windows.
-4. For each packed byte: build a 256-entry sign-weight LUT from the eight `eq(r_w, ·)` weights.
-5. Scan every matrix row: one LUT lookup plus one field add per packed byte into per-row accumulators `row_acc[j]`.
+4. For each packed byte: build two 16-entry sign-weight LUTs from the eight `eq(r_w, ·)` weights.
+5. Scan every matrix row: two LUT lookups plus one field add per packed byte into per-row accumulators `row_acc[j]`.
 6. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
 
 On aarch64 fp128 at tail-scale column counts the existing ternary LUT path is ~3× faster than a row-major scalar baseline and beats deferred-reduction wide variants tried during PR1b (`benches/jl_mle.rs`, `scalar` vs `lut`). Binary should improve the same path through half the matrix bytes and much smaller LUT construction.
@@ -522,7 +522,7 @@ Matrix entries are uniform random bits (`0 -> -1`, `1 -> +1`), so every entry co
 
 Per matrix entry the update is `acc ± W`, not a general field multiply by `J`.
 
-**Byte-wide processing (primary micro-kernel):** replace PR1's ternary `SIGNS_FOR_BYTE` table with a binary sign table (`256 × 8` `i8`, 2 KiB, L1-resident) or with direct bit masks. For each packed row byte covering eight consecutive columns, load eight eq weights and eight signs; accumulate into a deferred extension-field accumulator (`MulBaseUnreduced` / `ProductAccum`, same contract as `partials_out_contribution`). For the MLE path, use a direct 256-entry byte LUT unless benchmarking shows a split nibble construction wins.
+**Byte-wide processing (primary micro-kernel):** replace PR1's ternary `SIGNS_FOR_BYTE` table with a binary sign table (`256 × 8` `i8`, 2 KiB, L1-resident) or with direct bit masks. For each packed row byte covering eight consecutive columns, load eight eq weights and eight signs; accumulate into a deferred extension-field accumulator (`MulBaseUnreduced` / `ProductAccum`, same contract as `partials_out_contribution`). For the MLE path, use two 16-entry nibble LUTs per packed byte; direct 256-entry byte-table construction was considered but table setup can dominate.
 
 **SIMD:** mirror PR1 layout (NEON `vmlal_s16` over sign×weight products; x86 `madd_epi16` / AVX-512 widening). Here the "digits" are extension-field eq weights (or their lifted `i16` limb patterns for base fields), not witness `i8` digits. Runtime arch dispatch like PR1. Binary signs also enable XOR/sign-mask variants for integer projection; benchmark against widened multiply-add before replacing the simple sign-table path.
 
@@ -533,7 +533,7 @@ Per matrix entry the update is `acc ± W`, not a general field multiply by `J`.
 **Helps (spec adopts):**
 
 1. **Fused verifier eval** — saves a `2^{k_w}` field-element write and a second pass; largest win for verifier memory bandwidth.
-2. **LUT-amortized byte scan** — per 8-column packed byte, one 256-entry sign-weight LUT reused across all rows.
+2. **LUT-amortized byte scan** — per 8-column packed byte, two 16-entry sign-weight LUTs reused across all rows.
 3. **Binary `SIGNS_FOR_BYTE` or direct bit masks + byte-wide scan** — amortizes sign decode over eight columns.
 4. **Column panels / outer-tile parallelism** — witness read once in projection; MLE parallel path fans over quad windows when `parallel` is enabled.
 5. **Branchless binary sign LUT** — `sign · W` with `sign ∈ {-1,+1}`.
@@ -838,13 +838,13 @@ This is the concrete code cutover from the landed ternary prototype to the binar
 **3. MLE kernels.**
 
 - Delete `BYTE_TO_TERNARY4`, `pair_to_ternary_digit`, and the 81-pattern DP.
-- Add a 256-entry byte LUT builder:
+- Add a 16-entry nibble LUT builder:
 
 ```text
-lut256[bits] = sum_{lane=0..7} sign(bit_l) * weight_l
+lut16[bits] = sum_{lane=0..3} sign(bit_l) * weight_l
 ```
 
-- For each packed byte, use one byte-LUT lookup. Keep the nibble split only as a benchmarked alternative if it proves faster.
+- For each packed byte, use one low-nibble and one high-nibble lookup. Direct 256-entry byte-table construction is a benchmarked alternative, not the default.
 - Update `accumulate_row_weight_range` and `scatter_row_weight_range` to decode binary signs.
 - Keep verifier final eval fused; do not materialize `g` on the verifier.
 

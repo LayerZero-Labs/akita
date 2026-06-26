@@ -100,7 +100,7 @@ fn malformed_point_length_returns_error() {
 #[test]
 fn sign_weight_lut_matches_row_accumulate() {
     use super::common::accumulate_row_weight_range;
-    use super::lut::build_sign_weight_lut_256;
+    use super::lut::build_sign_weight_lut_16;
 
     let weights: [F64; 8] = [
         F64::from_u64(3),
@@ -112,8 +112,12 @@ fn sign_weight_lut_matches_row_accumulate() {
         F64::from_u64(23),
         F64::from_u64(29),
     ];
-    let mut lut = [F64::zero(); 256];
-    build_sign_weight_lut_256(&weights, &mut lut);
+    let lo_weights = [weights[0], weights[1], weights[2], weights[3]];
+    let hi_weights = [weights[4], weights[5], weights[6], weights[7]];
+    let mut lo_lut = [F64::zero(); 16];
+    let mut hi_lut = [F64::zero(); 16];
+    build_sign_weight_lut_16(&lo_weights, &mut lo_lut);
+    build_sign_weight_lut_16(&hi_weights, &mut hi_lut);
 
     let signs: Vec<Vec<i8>> = vec![(0..25).map(|c| binary_sign(c * 5)).collect()];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
@@ -122,7 +126,8 @@ fn sign_weight_lut_matches_row_accumulate() {
     for byte_idx in 0..3 {
         let col0 = byte_idx * 8;
         let scalar = accumulate_row_weight_range(row, col0, 8, &weights);
-        let via_lut = lut[row[byte_idx] as usize];
+        let byte = row[byte_idx];
+        let via_lut = lo_lut[(byte & 0x0f) as usize] + hi_lut[(byte >> 4) as usize];
         assert_eq!(scalar, via_lut, "byte_idx={byte_idx}");
     }
 }

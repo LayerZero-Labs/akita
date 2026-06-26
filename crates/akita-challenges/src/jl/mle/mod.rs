@@ -9,9 +9,8 @@
 //! per-byte sign-weight LUT across all matrix rows:
 //!
 //! 1. Outer loop: each byte-aligned 8-column window of `eq(r_w, ·)`.
-//! 2. Build a 256-entry LUT once from the eight weights (one entry per binary
-//!    sign byte pattern).
-//! 3. Inner loop: every row does one LUT lookup and one field add into `row_acc[j]`.
+//! 2. Build two 16-entry LUTs once from the eight weights (one per nibble).
+//! 3. Inner loop: every row does two LUT lookups and one field add into `row_acc[j]`.
 //! 4. Scalar tail for `cols % 8`.
 //! 5. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
 //!
@@ -46,7 +45,7 @@ use common::{
     accumulate_row_weight_range, scatter_row_weight_range, validate_eq_tables, validate_mle_points,
     JlMleLayout,
 };
-use lut::{accumulate_rows_from_byte_lut, build_sign_weight_lut_256};
+use lut::{accumulate_rows_from_nibble_luts, build_sign_weight_lut_16};
 
 pub use reference::{
     build_jl_row_weights_reference, eval_jl_mle_at_reference, eval_mle_from_weights,
@@ -189,13 +188,31 @@ fn eval_jl_mle_at_from_eq_tables_impl<L: FieldCore>(
     if parallel_jl_enabled(n_rows, cols) {
         row_acc = eval_jl_mle_lut_row_acc_parallel(matrix, e_w, full_cols);
     } else {
-        let mut lut = [L::zero(); 256];
-        accumulate_lut_byte_range(&mut row_acc, matrix, e_w, 0, full_cols, &mut lut);
+        let mut lo_lut = [L::zero(); 16];
+        let mut hi_lut = [L::zero(); 16];
+        accumulate_lut_byte_range(
+            &mut row_acc,
+            matrix,
+            e_w,
+            0,
+            full_cols,
+            &mut lo_lut,
+            &mut hi_lut,
+        );
     }
     #[cfg(not(feature = "parallel"))]
     {
-        let mut lut = [L::zero(); 256];
-        accumulate_lut_byte_range(&mut row_acc, matrix, e_w, 0, full_cols, &mut lut);
+        let mut lo_lut = [L::zero(); 16];
+        let mut hi_lut = [L::zero(); 16];
+        accumulate_lut_byte_range(
+            &mut row_acc,
+            matrix,
+            e_w,
+            0,
+            full_cols,
+            &mut lo_lut,
+            &mut hi_lut,
+        );
     }
 
     if tail_cols > 0 {
@@ -228,8 +245,17 @@ fn eval_jl_mle_lut_row_acc_parallel<L: FieldCore>(
             let b0 = p * bytes_per_panel;
             let b1 = (b0 + bytes_per_panel).min(num_bytes);
             let mut panel_acc = vec![L::zero(); n_rows];
-            let mut lut = [L::zero(); 256];
-            accumulate_lut_byte_range(&mut panel_acc, matrix, e_w, b0 * 8, b1 * 8, &mut lut);
+            let mut lo_lut = [L::zero(); 16];
+            let mut hi_lut = [L::zero(); 16];
+            accumulate_lut_byte_range(
+                &mut panel_acc,
+                matrix,
+                e_w,
+                b0 * 8,
+                b1 * 8,
+                &mut lo_lut,
+                &mut hi_lut,
+            );
             panel_acc
         })
         .reduce(
@@ -250,22 +276,16 @@ fn accumulate_lut_byte_range<L: FieldCore>(
     e_w: &[L],
     col0_start: usize,
     col0_end: usize,
-    lut: &mut [L; 256],
+    lo_lut: &mut [L; 16],
+    hi_lut: &mut [L; 16],
 ) {
     let mut col0 = col0_start;
     while col0 < col0_end {
-        let weights: [L; 8] = [
-            e_w[col0],
-            e_w[col0 + 1],
-            e_w[col0 + 2],
-            e_w[col0 + 3],
-            e_w[col0 + 4],
-            e_w[col0 + 5],
-            e_w[col0 + 6],
-            e_w[col0 + 7],
-        ];
-        build_sign_weight_lut_256(&weights, lut);
-        accumulate_rows_from_byte_lut(row_acc, matrix, col0 >> 3, lut);
+        let lo_weights: [L; 4] = [e_w[col0], e_w[col0 + 1], e_w[col0 + 2], e_w[col0 + 3]];
+        let hi_weights: [L; 4] = [e_w[col0 + 4], e_w[col0 + 5], e_w[col0 + 6], e_w[col0 + 7]];
+        build_sign_weight_lut_16(&lo_weights, lo_lut);
+        build_sign_weight_lut_16(&hi_weights, hi_lut);
+        accumulate_rows_from_nibble_luts(row_acc, matrix, col0 >> 3, lo_lut, hi_lut);
         col0 += 8;
     }
 }
