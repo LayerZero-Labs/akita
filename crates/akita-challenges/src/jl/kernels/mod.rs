@@ -10,7 +10,7 @@
 
 mod reference;
 mod scalar;
-pub(crate) use scalar::SIGNS_FOR_BYTE;
+pub(crate) use scalar::BINARY_SIGNS_FOR_BYTE;
 
 #[cfg(target_arch = "x86_64")]
 mod simd_x86;
@@ -23,11 +23,10 @@ use akita_field::parallel::*;
 
 pub(crate) use reference::project_row as project_row_reference;
 
-/// Map a packed 2-bit pair to its ternary sign: `0b00 -> -1`, `0b11 -> +1`,
-/// `0b01`/`0b10 -> 0`.
+/// Map a packed bit to its binary sign: `0 -> -1`, `1 -> +1`.
 #[inline]
-pub(crate) fn pair_to_sign(pair: u8) -> i8 {
-    ((pair == 0b11) as i8) - ((pair == 0b00) as i8)
+pub(crate) fn bit_to_sign(bit: u8) -> i8 {
+    ((bit & 1) as i8) * 2 - 1
 }
 
 /// Target column count per parallel panel. Sized so a panel's `i8` digit chunk
@@ -91,8 +90,8 @@ fn accumulate_panel(
         return;
     }
     let b1 = (b0 + panel_bytes).min(row_bytes);
-    let col0 = b0 * 4;
-    let col1 = (b1 * 4).min(cols);
+    let col0 = b0 * 8;
+    let col1 = (b1 * 8).min(cols);
     let panel_cols = col1 - col0;
     let digit_chunk = &digits[col0..col1];
 
@@ -118,8 +117,8 @@ fn accumulate_panel_scalar(
         return;
     }
     let b1 = (b0 + panel_bytes).min(row_bytes);
-    let col0 = b0 * 4;
-    let col1 = (b1 * 4).min(cols);
+    let col0 = b0 * 8;
+    let col1 = (b1 * 8).min(cols);
     let panel_cols = col1 - col0;
     let digit_chunk = &digits[col0..col1];
 
@@ -233,7 +232,7 @@ mod tests {
     #[test]
     fn simd_dispatch_matches_scalar_kernel() {
         let cols: usize = 1027;
-        let row_bytes = (cols * 2).div_ceil(8);
+        let row_bytes = cols.div_ceil(8);
         let row: Vec<u8> = (0..row_bytes)
             .map(|i: usize| i.wrapping_mul(37) as u8)
             .collect();

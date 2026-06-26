@@ -1,8 +1,8 @@
 //! Standalone Johnson-Lindenstrauss projection primitives (prototype).
 //!
 //! This module hosts the dense, field-granular JL projection used by the
-//! reveal-tail prototype: the verifier samples a dense ternary matrix
-//! `J ∈ {-1, 0, +1}^{n_rows × cols}` from the Fiat-Shamir transcript, the
+//! reveal-tail prototype: the verifier samples a dense binary-sign matrix
+//! `J ∈ {-1, +1}^{n_rows × cols}` from the Fiat-Shamir transcript, the
 //! prover projects a centered integer coefficient vector to the integer image
 //! `p = J · c`, and the image norm is checked over the integers.
 //!
@@ -46,15 +46,14 @@ pub const DEFAULT_JL_ROWS: usize = 256;
 /// Maximum absolute balanced-digit magnitude for JL witness coefficients (`lb ≤ 6`).
 pub const MAX_JL_DIGIT: i32 = 32;
 
-/// Byte length of one packed row of `cols` ternary entries (2 bits each).
+/// Byte length of one packed row of `cols` binary-sign entries (1 bit each).
 fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
     if cols == 0 {
         return Err(AkitaError::InvalidInput(
             "JL matrix requires a non-zero column count".to_string(),
         ));
     }
-    let bit_pairs = cols.checked_mul(2).ok_or_else(jl_geometry_overflow)?;
-    Ok(bit_pairs.div_ceil(8))
+    Ok(cols.div_ceil(8))
 }
 
 #[inline]
@@ -67,8 +66,8 @@ fn jl_digit_within_bound(d: i32) -> bool {
     (-MAX_JL_DIGIT..=MAX_JL_DIGIT).contains(&d)
 }
 
-/// Dense ternary JL projection matrix with entries in `{-1, 0, +1}`, packed two
-/// bits per entry in a single contiguous row-major buffer.
+/// Dense binary-sign JL projection matrix with entries in `{-1, +1}`, packed
+/// one bit per entry in a single contiguous row-major buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JlProjectionMatrix {
     n_rows: usize,
@@ -94,7 +93,7 @@ impl JlProjectionMatrix {
         &self.packed_rows[start..start + self.row_bytes]
     }
 
-    /// Sample a dense ternary matrix deterministically from the transcript.
+    /// Sample a dense binary-sign matrix deterministically from the transcript.
     ///
     /// Absorbs a context buffer (`n_rows`, `cols`, domain version), draws a
     /// 32-byte seed, and expands `n_rows` packed rows from a single
@@ -127,6 +126,9 @@ impl JlProjectionMatrix {
         let packed_len = n_rows
             .checked_mul(row_bytes)
             .ok_or_else(jl_geometry_overflow)?;
+        if packed_len > isize::MAX as usize {
+            return Err(jl_geometry_overflow());
+        }
         let mut packed_rows = vec![0u8; packed_len];
         for row_idx in 0..n_rows {
             let start = row_idx
@@ -251,7 +253,7 @@ impl JlProjectionMatrix {
         Ok(JlImage { coords })
     }
 
-    /// Reconstruct a matrix from explicit sign rows. Test-only constructor for
+    /// Reconstruct a matrix from explicit binary-sign rows. Test-only constructor for
     /// projection-vs-reference and packing round-trip checks.
     #[cfg(test)]
     fn from_sign_rows(signs: &[Vec<i8>]) -> Result<Self, AkitaError> {
@@ -278,17 +280,16 @@ impl JlProjectionMatrix {
                 .checked_mul(row_bytes)
                 .ok_or_else(jl_geometry_overflow)?;
             for (col_idx, &sign) in row.iter().enumerate() {
-                let pair: u8 = match sign {
-                    -1 => 0b00,
-                    0 => 0b01,
-                    1 => 0b11,
+                let bit: u8 = match sign {
+                    -1 => 0,
+                    1 => 1,
                     _ => {
                         return Err(AkitaError::InvalidInput(
-                            "JL matrix entries must be in {-1, 0, +1}".to_string(),
+                            "JL matrix entries must be in {-1, +1}".to_string(),
                         ))
                     }
                 };
-                packed_rows[row_start + (col_idx >> 2)] |= pair << ((col_idx & 0b11) << 1);
+                packed_rows[row_start + (col_idx >> 3)] |= bit << (col_idx & 0b111);
             }
         }
 
@@ -300,15 +301,14 @@ impl JlProjectionMatrix {
         })
     }
 
-    /// Ternary sign at `(row_idx, col_idx)`. Test-only accessor.
+    /// Binary sign at `(row_idx, col_idx)`. Test-only accessor.
     #[cfg(test)]
     fn sign_at(&self, row_idx: usize, col_idx: usize) -> Option<i8> {
         if row_idx >= self.n_rows || col_idx >= self.cols {
             return None;
         }
-        let shift = (col_idx & 0b11) << 1;
-        let pair = (self.row_slice(row_idx)[col_idx >> 2] >> shift) & 0b11;
-        Some(kernels::pair_to_sign(pair))
+        let bit = (self.row_slice(row_idx)[col_idx >> 3] >> (col_idx & 0b111)) & 1;
+        Some(kernels::bit_to_sign(bit))
     }
 }
 

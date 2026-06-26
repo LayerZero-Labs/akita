@@ -31,7 +31,7 @@ The goal is to land reusable JL primitives, exercise the consistency-sumcheck me
 |-------|----------------|--------|
 | PR1 — matrix sample, integer projection, norm helpers | `akita-challenges::jl` | yes |
 | PR1 — fast kernels (column-panel `i8`/`i32`, runtime SIMD) | `akita-challenges::jl::kernels` | yes |
-| PR1b — `build_jl_row_weights`, `eval_jl_mle_at` | `akita-challenges::jl::mle` | yes (production MLE path is **LUT-amortized** per 4-column byte window; see **Joint MLE evaluation**) |
+| PR1b — `build_jl_row_weights`, `eval_jl_mle_at` | `akita-challenges::jl::mle` | yes (production MLE path is **LUT-amortized** per packed byte; see **Joint MLE evaluation**) |
 | PR2 — layout, wire validation, transcript replay, image claim | `akita-types::jl` | yes |
 | PR2 — consistency prove harness | `akita-prover::protocol::jl` | yes |
 | PR2 — consistency verify harness | `akita-verifier::protocol::jl` | yes |
@@ -49,7 +49,7 @@ The reason is both theoretical and practical:
 
 - **Theory precedent.** Achlioptas 2003, "Database-friendly random projections: Johnson-Lindenstrauss with binary coins", Theorem 1.1 explicitly proves Johnson-Lindenstrauss embeddings for independent `+1/-1` entries, scaled by `1/sqrt(k)`. So binary signs are a standard JL distribution, not a heuristic variant of ternary JL.
 - **Crypto implementation precedent.** Greyhound §6 states that its implementation deviates from LaBRADOR by sampling JL matrices with coefficients `±1` rather than `-1,0,1`, and §6.2 describes the resulting fast Four-Russians projection using the 16 signed sums of four coefficients.
-- **Akita implementation win.** A binary-sign row needs one bit per coordinate instead of two. Projection expansion and matrix memory traffic halve; the MLE four-column alphabet drops from `3^4 = 81` canonical patterns to `2^4 = 16`; and the projection hot loop becomes signed add/sub without a zero branch or zero-lane table.
+- **Akita implementation win.** A binary-sign row needs one bit per coordinate instead of two. Projection expansion and matrix memory traffic halve; the MLE packed-byte alphabet drops from ternary's collapsed 81-pattern four-column table to a direct 256-pattern eight-column table; and the projection hot loop becomes signed add/sub without a zero branch or zero-lane table.
 
 This revision is a **full cutover**, not a compatibility mode. Once implemented, `JlProjectionMatrix` means binary-sign JL. There should be no ternary/binary enum, no old packing decoder, and no proof/wire format that accepts both alphabets. PR #191 remains the mechanical prototype; the security writeup and implementation follow-up should target binary signs only.
 
@@ -305,7 +305,7 @@ Cost shape (updated after optimization investigation):
 | Point eval `J̃(r_J,r_w)` | Verifier (fusion final check) | PR1b `eval_jl_mle_at` | `Θ(n_rows · cols)`; **LUT-amortized** one-shot eval over byte quads |
 | Consistency sumcheck | Prover + verifier | PR2 | `k_w` witness rounds; verifier JL work is dominated by `eval_jl_mle_at` |
 
-There is no closed-form shortcut for a dense random `J` (unlike `TraceWeight`). Constant-factor wins come from split-eq nesting, byte/nibble-wide binary-sign decode, deferred extension-field reduction, column-panel / outer-tile parallelism, and SIMD. Binary signs remove ternary zeros, but they halve matrix bytes and collapse the 4-column MLE alphabet from 81 to 16 patterns. At tail scale (`n_rows = 256`, `cols ~ 2^{17}`) the verifier eval is intentionally `Θ(n_rows · cols)` but must be engineered to the same standard as PR1 projection kernels.
+There is no closed-form shortcut for a dense random `J` (unlike `TraceWeight`). Constant-factor wins come from split-eq nesting, byte-wide binary-sign decode, deferred extension-field reduction, column-panel / outer-tile parallelism, and SIMD. Binary signs remove ternary zeros, halve matrix bytes, and let one 256-entry byte LUT cover eight columns at once. At tail scale (`n_rows = 256`, `cols ~ 2^{17}`) the verifier eval is intentionally `Θ(n_rows · cols)` but must be engineered to the same standard as PR1 projection kernels.
 
 ## Design
 
@@ -491,15 +491,15 @@ Standalone slice between PR1 (projection) and PR2 (consistency sumcheck). Implem
 
 Both have the same asymptotic cost (`Θ(n_rows · cols)` matrix touches) but different memory behavior. The verifier path is the performance-critical one and must not allocate the weight hypercube.
 
-#### Production algorithm: LUT-amortized byte/nibble eval (binary target)
+#### Production algorithm: LUT-amortized byte eval (binary target)
 
-The shipped PR #191 `eval_jl_mle_at` path does **not** use split-eq nesting; it matches the projection kernels' byte geometry. Under the binary-sign cutover the same idea remains, but the table is 16-pattern rather than 81-pattern:
+The shipped PR #191 `eval_jl_mle_at` path does **not** use split-eq nesting; it matches the projection kernels' byte geometry. Under the binary-sign cutover the same idea remains, but the table is a direct 256-pattern byte LUT over eight binary signs rather than the old 81-pattern ternary table over four signs:
 
 1. Precompute `eq(r_J, ·)` and `eq(r_w, ·)` once (`EqPolynomial::evals`).
 2. Validate table lengths against the padded row/column hypercube (`validate_eq_tables`); bench hooks return `AkitaError` on short buffers instead of silent truncation.
-3. Partition witness columns into byte-aligned 8-column windows, or nibble-aligned 4-column windows when that gives cleaner SIMD scheduling.
-4. For each 4-column nibble: build a 16-entry sign-weight LUT from the four `eq(r_w, ·)` weights. For an 8-column byte, use two 16-entry LUT lookups or one 256-entry byte LUT built as the sum of two nibbles.
-5. Scan every matrix row: one or two LUT lookups plus field adds per packed byte into per-row accumulators `row_acc[j]`.
+3. Partition witness columns into byte-aligned 8-column windows.
+4. For each packed byte: build a 256-entry sign-weight LUT from the eight `eq(r_w, ·)` weights.
+5. Scan every matrix row: one LUT lookup plus one field add per packed byte into per-row accumulators `row_acc[j]`.
 6. Finish with `Σ_j eq(r_J,j) · row_acc[j]`.
 
 On aarch64 fp128 at tail-scale column counts the existing ternary LUT path is ~3× faster than a row-major scalar baseline and beats deferred-reduction wide variants tried during PR1b (`benches/jl_mle.rs`, `scalar` vs `lut`). Binary should improve the same path through half the matrix bytes and much smaller LUT construction.
@@ -522,7 +522,7 @@ Matrix entries are uniform random bits (`0 -> -1`, `1 -> +1`), so every entry co
 
 Per matrix entry the update is `acc ± W`, not a general field multiply by `J`.
 
-**Byte-wide processing (primary micro-kernel):** replace PR1's ternary `SIGNS_FOR_BYTE` table with a binary sign table (`256 × 8` `i8`, 2 KiB, L1-resident) or with direct bit masks. For each packed row byte covering eight consecutive columns, load eight eq weights and eight signs; accumulate into a deferred extension-field accumulator (`MulBaseUnreduced` / `ProductAccum`, same contract as `partials_out_contribution`). For the MLE path, prefer 4-column nibble LUTs when they cut table build from 256 entries to 16 without harming scan locality.
+**Byte-wide processing (primary micro-kernel):** replace PR1's ternary `SIGNS_FOR_BYTE` table with a binary sign table (`256 × 8` `i8`, 2 KiB, L1-resident) or with direct bit masks. For each packed row byte covering eight consecutive columns, load eight eq weights and eight signs; accumulate into a deferred extension-field accumulator (`MulBaseUnreduced` / `ProductAccum`, same contract as `partials_out_contribution`). For the MLE path, use a direct 256-entry byte LUT unless benchmarking shows a split nibble construction wins.
 
 **SIMD:** mirror PR1 layout (NEON `vmlal_s16` over sign×weight products; x86 `madd_epi16` / AVX-512 widening). Here the "digits" are extension-field eq weights (or their lifted `i16` limb patterns for base fields), not witness `i8` digits. Runtime arch dispatch like PR1. Binary signs also enable XOR/sign-mask variants for integer projection; benchmark against widened multiply-add before replacing the simple sign-table path.
 
@@ -533,7 +533,7 @@ Per matrix entry the update is `acc ± W`, not a general field multiply by `J`.
 **Helps (spec adopts):**
 
 1. **Fused verifier eval** — saves a `2^{k_w}` field-element write and a second pass; largest win for verifier memory bandwidth.
-2. **LUT-amortized nibble/byte scan** — per 4-column nibble, one 16-entry sign-weight LUT reused across all rows; an 8-column byte can use two nibble lookups or a 256-entry composed byte LUT.
+2. **LUT-amortized byte scan** — per 8-column packed byte, one 256-entry sign-weight LUT reused across all rows.
 3. **Binary `SIGNS_FOR_BYTE` or direct bit masks + byte-wide scan** — amortizes sign decode over eight columns.
 4. **Column panels / outer-tile parallelism** — witness read once in projection; MLE parallel path fans over quad windows when `parallel` is enabled.
 5. **Branchless binary sign LUT** — `sign · W` with `sign ∈ {-1,+1}`.
@@ -541,7 +541,7 @@ Per matrix entry the update is `acc ± W`, not a general field multiply by `J`.
 **Does not help enough (spec rejects as primary strategies):**
 
 1. **Zero-skip optimizations inherited from ternary JL.** Binary JL has no zero entries, so there is nothing to skip. The hot loop should focus on compact one-bit decode and signed add/sub.
-2. **Four-Russians / large pattern tables over `k` binary columns.** Classic 4R amortizes `2^k` partial-sum tables across many queries on the same block. The verifier runs **one** `eval_jl_mle_at` per proof; table build dominates once `k` grows past a byte. Stage-1/stage-2 prefix LUTs (`STAGE1_B4_PREFIX_LOOKUP_TABLE`, etc.) work because the table is reused across millions of sumcheck rounds. Keep the per-proof JL table at nibble/byte size.
+2. **Four-Russians / large pattern tables over `k` binary columns.** Classic 4R amortizes `2^k` partial-sum tables across many queries on the same block. The verifier runs **one** `eval_jl_mle_at` per proof; table build dominates once `k` grows past a byte. Stage-1/stage-2 prefix LUTs (`STAGE1_B4_PREFIX_LOOKUP_TABLE`, etc.) work because the table is reused across millions of sumcheck rounds. Keep the per-proof JL table at byte size.
 3. **Sparse / run-length `J` storage.** Would sacrifice the uniform dense XOF expansion and complicate matrix generation for uncertain gain on random data.
 4. **Materializing full `g` on the verifier** then `Σ_i eq(r_w,i) g[i]` — correct but strictly worse than `eval_jl_mle_at` for memory.
 
@@ -824,7 +824,7 @@ This is the concrete code cutover from the landed ternary prototype to the binar
 
 - Change `row_bytes_for(cols)` from `ceil(2*cols/8)` to `ceil(cols/8)`.
 - Replace the pair decoder with `bit_to_sign(bit) = if bit { +1 } else { -1 }`.
-- Bump `JL_SAMPLE_DOMAIN_VERSION`; every sampled matrix changes and old proofs must not replay.
+- Keep `JL_SAMPLE_DOMAIN_VERSION` unchanged while this PR branch is in development, per maintainer request. Revisit before any release/wire-stability point; every sampled matrix changes from the packing change even without a version bump.
 - Keep `JlProjectionMatrix` as the only type. Do not add an alphabet enum or a ternary compatibility constructor.
 - Update `from_sign_rows` test helper to pack one bit per sign and reject zero signs.
 
@@ -838,13 +838,13 @@ This is the concrete code cutover from the landed ternary prototype to the binar
 **3. MLE kernels.**
 
 - Delete `BYTE_TO_TERNARY4`, `pair_to_ternary_digit`, and the 81-pattern DP.
-- Add a 16-entry nibble LUT builder:
+- Add a 256-entry byte LUT builder:
 
 ```text
-lut16[bits] = sum_{lane=0..3} sign(bit_l) * weight_l
+lut256[bits] = sum_{lane=0..7} sign(bit_l) * weight_l
 ```
 
-- For each packed byte, either use two nibble lookups or expand to a 256-entry byte LUT as `lut16[lo] + lut16[hi]`.
+- For each packed byte, use one byte-LUT lookup. Keep the nibble split only as a benchmarked alternative if it proves faster.
 - Update `accumulate_row_weight_range` and `scatter_row_weight_range` to decode binary signs.
 - Keep verifier final eval fused; do not materialize `g` on the verifier.
 

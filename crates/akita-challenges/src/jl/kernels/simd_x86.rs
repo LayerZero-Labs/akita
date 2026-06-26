@@ -1,22 +1,23 @@
 //! x86_64 SIMD row projection kernels (AVX2 and AVX-512).
 //!
-//! Signs are `i8 {-1, 0, +1}` and digits are `i8` (`|d| <= MAX_JL_DIGIT = 32`).
+//! Signs are `i8 {-1, +1}` and digits are `i8` (`|d| <= MAX_JL_DIGIT = 32`).
 //! Both are sign-extended to `i16` and fed to `madd_epi16`, which multiplies
 //! `i16` pairs and horizontally adds them into `i32`: AVX2 fuses sixteen
-//! coefficients (four packed bytes) per step, AVX-512 fuses thirty-two (eight
+//! coefficients (two packed bytes) per step, AVX-512 fuses thirty-two (four
 //! packed bytes).
 
 use std::arch::x86_64::*;
 
-use super::scalar::{SIGNS_FOR_BYTE, SIGN_LUT};
+use super::scalar::{BINARY_SIGNS_FOR_BYTE, SIGN_LUT};
 
-/// Gather the ternary signs for `n` packed row bytes (`n <= 8`) into the low
-/// `4 * n` lanes of an `i8` buffer.
+/// Gather the binary signs for `n` packed row bytes (`n <= 4`) into the low
+/// `8 * n` lanes of an `i8` buffer.
 #[inline]
 fn signs_for_bytes(row: &[u8], byte_base: usize, n: usize) -> [i8; 32] {
     let mut signs = [0i8; 32];
     for k in 0..n {
-        signs[k * 4..k * 4 + 4].copy_from_slice(&SIGNS_FOR_BYTE[row[byte_base + k] as usize]);
+        signs[k * 8..k * 8 + 8]
+            .copy_from_slice(&BINARY_SIGNS_FOR_BYTE[row[byte_base + k] as usize]);
     }
     signs
 }
@@ -55,18 +56,22 @@ unsafe fn project_row_tail_scalar(
     mut sum: i32,
 ) -> i32 {
     for byte_idx in tail_start_byte..full_bytes {
-        let signs = &SIGNS_FOR_BYTE[row[byte_idx] as usize];
+        let signs = &BINARY_SIGNS_FOR_BYTE[row[byte_idx] as usize];
         sum += i32::from(signs[0]) * i32::from(digits[coeff_idx])
             + i32::from(signs[1]) * i32::from(digits[coeff_idx + 1])
             + i32::from(signs[2]) * i32::from(digits[coeff_idx + 2])
-            + i32::from(signs[3]) * i32::from(digits[coeff_idx + 3]);
-        coeff_idx += 4;
+            + i32::from(signs[3]) * i32::from(digits[coeff_idx + 3])
+            + i32::from(signs[4]) * i32::from(digits[coeff_idx + 4])
+            + i32::from(signs[5]) * i32::from(digits[coeff_idx + 5])
+            + i32::from(signs[6]) * i32::from(digits[coeff_idx + 6])
+            + i32::from(signs[7]) * i32::from(digits[coeff_idx + 7]);
+        coeff_idx += 8;
     }
     if remainder > 0 {
         let byte = row[full_bytes];
         for lane in 0..remainder {
-            let pair = (byte >> (lane << 1)) & 0b11;
-            sum += SIGN_LUT[pair as usize] * i32::from(digits[coeff_idx]);
+            let bit = (byte >> lane) & 1;
+            sum += SIGN_LUT[bit as usize] * i32::from(digits[coeff_idx]);
             coeff_idx += 1;
         }
     }
@@ -80,15 +85,15 @@ unsafe fn project_row_tail_scalar(
 pub(super) unsafe fn project_row_avx2(row: &[u8], digits: &[i8], cols: usize) -> i32 {
     debug_assert_eq!(digits.len(), cols);
 
-    let full_bytes = cols >> 2;
-    let remainder = cols & 0b11;
-    let chunk4 = full_bytes >> 2;
-    let tail_start_byte = chunk4 << 2;
+    let full_bytes = cols >> 3;
+    let remainder = cols & 0b111;
+    let chunk2 = full_bytes >> 1;
+    let tail_start_byte = chunk2 << 1;
     let mut coeff_idx = 0usize;
     let mut acc = _mm256_setzero_si256();
 
-    for chunk in 0..chunk4 {
-        let signs = signs_for_bytes(row, chunk << 2, 4);
+    for chunk in 0..chunk2 {
+        let signs = signs_for_bytes(row, chunk << 1, 2);
         let signs16 = _mm256_cvtepi8_epi16(_mm_loadu_si128(signs.as_ptr() as *const __m128i));
         let coeffs16 = _mm256_cvtepi8_epi16(_mm_loadu_si128(
             digits.as_ptr().add(coeff_idx) as *const __m128i
@@ -117,15 +122,15 @@ pub(super) unsafe fn project_row_avx2(row: &[u8], digits: &[i8], cols: usize) ->
 pub(super) unsafe fn project_row_avx512(row: &[u8], digits: &[i8], cols: usize) -> i32 {
     debug_assert_eq!(digits.len(), cols);
 
-    let full_bytes = cols >> 2;
-    let remainder = cols & 0b11;
-    let chunk8 = full_bytes >> 3;
-    let tail_start_byte = chunk8 << 3;
+    let full_bytes = cols >> 3;
+    let remainder = cols & 0b111;
+    let chunk4 = full_bytes >> 2;
+    let tail_start_byte = chunk4 << 2;
     let mut coeff_idx = 0usize;
     let mut acc = _mm512_setzero_si512();
 
-    for chunk in 0..chunk8 {
-        let signs = signs_for_bytes(row, chunk << 3, 8);
+    for chunk in 0..chunk4 {
+        let signs = signs_for_bytes(row, chunk << 2, 4);
         let signs16 = _mm512_cvtepi8_epi16(_mm256_loadu_si256(signs.as_ptr() as *const __m256i));
         let coeffs16 = _mm512_cvtepi8_epi16(_mm256_loadu_si256(
             digits.as_ptr().add(coeff_idx) as *const __m256i

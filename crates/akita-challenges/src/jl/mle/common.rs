@@ -1,8 +1,8 @@
-//! Shared JL MLE layout helpers and ternary accumulation primitives.
+//! Shared JL MLE layout helpers and binary-sign accumulation primitives.
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::jl::kernels::{pair_to_sign, SIGNS_FOR_BYTE};
+use crate::jl::kernels::{bit_to_sign, BINARY_SIGNS_FOR_BYTE};
 use crate::jl::JlProjectionMatrix;
 
 /// Hypercube geometry for JL row/column batching (`eq` tables pad to powers of two).
@@ -84,15 +84,13 @@ pub(super) fn entry_sign(matrix: &JlProjectionMatrix, row: usize, col: usize) ->
     if row >= matrix.n_rows() || col >= matrix.cols() {
         return 0;
     }
-    let shift = (col & 0b11) << 1;
-    let pair = (matrix.row_slice(row)[col >> 2] >> shift) & 0b11;
-    pair_to_sign(pair)
+    let bit = (matrix.row_slice(row)[col >> 3] >> (col & 0b111)) & 1;
+    bit_to_sign(bit)
 }
 
 #[inline]
 pub(super) fn accum_sign_weight<L: FieldCore>(acc: L, sign: i8, weight: L) -> L {
     match sign {
-        0 => acc,
         1 => acc + weight,
         -1 => acc - weight,
         _ => acc,
@@ -113,36 +111,36 @@ pub(super) fn accumulate_row_weight_range<L: FieldCore>(
     let mut w_idx = 0usize;
     let col_end = col0 + n_cols;
 
-    let misalign = col & 0b11;
+    let misalign = col & 0b111;
     if misalign > 0 {
-        let lane_limit = (4 - misalign).min(n_cols);
-        let byte = row[col >> 2];
+        let lane_limit = (8 - misalign).min(n_cols);
+        let byte = row[col >> 3];
         for lane in misalign..misalign + lane_limit {
-            let pair = (byte >> (lane << 1)) & 0b11;
-            acc = accum_sign_weight(acc, pair_to_sign(pair), weights[w_idx]);
+            let bit = (byte >> lane) & 1;
+            acc = accum_sign_weight(acc, bit_to_sign(bit), weights[w_idx]);
             w_idx += 1;
             col += 1;
         }
     }
 
     let remaining = col_end - col;
-    let full_bytes = remaining >> 2;
-    let byte_base = col >> 2;
+    let full_bytes = remaining >> 3;
+    let byte_base = col >> 3;
     for b in 0..full_bytes {
-        let signs = &SIGNS_FOR_BYTE[row[byte_base + b] as usize];
+        let signs = &BINARY_SIGNS_FOR_BYTE[row[byte_base + b] as usize];
         for &sign in signs {
             acc = accum_sign_weight(acc, sign, weights[w_idx]);
             w_idx += 1;
         }
-        col += 4;
+        col += 8;
     }
 
     let tail = col_end - col;
     if tail > 0 {
-        let byte = row[col >> 2];
+        let byte = row[col >> 3];
         for lane in 0..tail {
-            let pair = (byte >> (lane << 1)) & 0b11;
-            acc = accum_sign_weight(acc, pair_to_sign(pair), weights[w_idx]);
+            let bit = (byte >> lane) & 1;
+            acc = accum_sign_weight(acc, bit_to_sign(bit), weights[w_idx]);
             w_idx += 1;
         }
     }
@@ -152,7 +150,7 @@ pub(super) fn accumulate_row_weight_range<L: FieldCore>(
 }
 
 /// Scatter a single per-row `weight` into `g[k] += sign(row, col0+k) · weight` for
-/// `k in 0..g.len()`, decoding signs four-at-a-time with the byte-wide LUT.
+/// `k in 0..g.len()`, decoding signs eight-at-a-time with the byte-wide LUT.
 ///
 /// This is the transpose of [`accumulate_row_weight_range`]: the prover's
 /// `g[i] = Σ_j eq(r_J, j) · J[j, i]` sweeps rows and scatters each row's scalar
@@ -168,36 +166,36 @@ pub(super) fn scatter_row_weight_range<L: FieldCore>(
     let mut g_idx = 0usize;
     let col_end = col0 + n_cols;
 
-    let misalign = col & 0b11;
+    let misalign = col & 0b111;
     if misalign > 0 {
-        let lane_limit = (4 - misalign).min(n_cols);
-        let byte = row[col >> 2];
+        let lane_limit = (8 - misalign).min(n_cols);
+        let byte = row[col >> 3];
         for lane in misalign..misalign + lane_limit {
-            let pair = (byte >> (lane << 1)) & 0b11;
-            g[g_idx] = accum_sign_weight(g[g_idx], pair_to_sign(pair), weight);
+            let bit = (byte >> lane) & 1;
+            g[g_idx] = accum_sign_weight(g[g_idx], bit_to_sign(bit), weight);
             g_idx += 1;
             col += 1;
         }
     }
 
     let remaining = col_end - col;
-    let full_bytes = remaining >> 2;
-    let byte_base = col >> 2;
+    let full_bytes = remaining >> 3;
+    let byte_base = col >> 3;
     for b in 0..full_bytes {
-        let signs = &SIGNS_FOR_BYTE[row[byte_base + b] as usize];
+        let signs = &BINARY_SIGNS_FOR_BYTE[row[byte_base + b] as usize];
         for &sign in signs {
             g[g_idx] = accum_sign_weight(g[g_idx], sign, weight);
             g_idx += 1;
         }
-        col += 4;
+        col += 8;
     }
 
     let tail = col_end - col;
     if tail > 0 {
-        let byte = row[col >> 2];
+        let byte = row[col >> 3];
         for lane in 0..tail {
-            let pair = (byte >> (lane << 1)) & 0b11;
-            g[g_idx] = accum_sign_weight(g[g_idx], pair_to_sign(pair), weight);
+            let bit = (byte >> lane) & 1;
+            g[g_idx] = accum_sign_weight(g[g_idx], bit_to_sign(bit), weight);
             g_idx += 1;
         }
     }

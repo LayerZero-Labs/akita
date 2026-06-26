@@ -10,6 +10,14 @@ type F32 = Prime32Offset99;
 type F64 = Fp64<4294967197>;
 type F128 = Prime128Offset275;
 
+fn binary_sign(seed: usize) -> i8 {
+    if seed & 1 == 0 {
+        -1
+    } else {
+        1
+    }
+}
+
 fn challenge_point<L: FieldCore + FromPrimitiveInt>(bits: usize, seed: u64) -> Vec<L> {
     (0..bits)
         .map(|i| {
@@ -23,11 +31,7 @@ fn challenge_point<L: FieldCore + FromPrimitiveInt>(bits: usize, seed: u64) -> V
 
 fn sample_sign_matrix(n_rows: usize, cols: usize) -> JlProjectionMatrix {
     let signs: Vec<Vec<i8>> = (0..n_rows)
-        .map(|r| {
-            (0..cols)
-                .map(|c| (((r * 17 + c * 31) % 3) as i8) - 1)
-                .collect()
-        })
+        .map(|r| (0..cols).map(|c| binary_sign(r * 17 + c * 31)).collect())
         .collect();
     JlProjectionMatrix::from_sign_rows(&signs).unwrap()
 }
@@ -72,7 +76,7 @@ fn mle_lut_matches_reference_fp128() {
 #[test]
 fn mle_lut_matches_reference_small_matrix() {
     let signs: Vec<Vec<i8>> = (0..5)
-        .map(|r| (0..7).map(|c| ((r + c) % 3) as i8 - 1).collect())
+        .map(|r| (0..7).map(|c| binary_sign(r + c)).collect())
         .collect();
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
     let r_J = vec![F64::from_u64(3), F64::from_u64(5), F64::from_u64(7)];
@@ -98,22 +102,26 @@ fn sign_weight_lut_matches_row_accumulate() {
     use super::common::accumulate_row_weight_range;
     use super::lut::build_sign_weight_lut_256;
 
-    let weights: [F64; 4] = [
+    let weights: [F64; 8] = [
         F64::from_u64(3),
         F64::from_u64(7),
         F64::from_u64(11),
         F64::from_u64(13),
+        F64::from_u64(17),
+        F64::from_u64(19),
+        F64::from_u64(23),
+        F64::from_u64(29),
     ];
     let mut lut = [F64::zero(); 256];
     build_sign_weight_lut_256(&weights, &mut lut);
 
-    let signs: Vec<Vec<i8>> = vec![(0..17).map(|c| ((c * 2) % 3) as i8 - 1).collect()];
+    let signs: Vec<Vec<i8>> = vec![(0..25).map(|c| binary_sign(c * 5)).collect()];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
     let row = matrix.row_slice(0);
 
-    for byte_idx in 0..4 {
-        let col0 = byte_idx * 4;
-        let scalar = accumulate_row_weight_range(row, col0, 4, &weights);
+    for byte_idx in 0..3 {
+        let col0 = byte_idx * 8;
+        let scalar = accumulate_row_weight_range(row, col0, 8, &weights);
         let via_lut = lut[row[byte_idx] as usize];
         assert_eq!(scalar, via_lut, "byte_idx={byte_idx}");
     }
@@ -123,7 +131,7 @@ fn sign_weight_lut_matches_row_accumulate() {
 fn accumulate_row_weight_range_matches_entrywise() {
     use super::common::{accum_sign_weight, accumulate_row_weight_range, entry_sign};
 
-    let signs: Vec<Vec<i8>> = vec![(0..17).map(|c| ((c * 2) % 3) as i8 - 1).collect()];
+    let signs: Vec<Vec<i8>> = vec![(0..17).map(|c| binary_sign(c * 5)).collect()];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
     let row = matrix.row_slice(0);
     let col0 = 3;
@@ -143,10 +151,10 @@ fn accumulate_row_weight_range_matches_entrywise() {
 fn scatter_row_weight_range_matches_entrywise() {
     use super::common::{accum_sign_weight, entry_sign, scatter_row_weight_range};
 
-    let signs: Vec<Vec<i8>> = vec![(0..23).map(|c| ((c * 5) % 3) as i8 - 1).collect()];
+    let signs: Vec<Vec<i8>> = vec![(0..23).map(|c| binary_sign(c * 5)).collect()];
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
     let row = matrix.row_slice(0);
-    // Misaligned start and a sub-4 tail to exercise every branch of the scatter.
+    // Misaligned start and a sub-8 tail to exercise every branch of the scatter.
     let col0 = 2;
     let n_cols = 13;
     let weight = F64::from_u64(7);
@@ -187,7 +195,7 @@ fn image_claim_matches_row_weight_dot_witness_for_flat_layout() {
     let signs: Vec<Vec<i8>> = (0..8)
         .map(|r| {
             (0..live_x_cols * ring_len)
-                .map(|c| (((r * 17 + c * 31) % 3) as i8) - 1)
+                .map(|c| binary_sign(r * 17 + c * 31))
                 .collect()
         })
         .collect();
