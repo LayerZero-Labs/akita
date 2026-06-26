@@ -133,9 +133,9 @@ impl GeneratedFoldStep {
             inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
-        if self.n_a as usize != expected_n_a {
+        if (self.n_a as usize) < expected_n_a {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated schedule A-rank mismatch: stored n_a = {}, recomputed n_a = {expected_n_a}",
+                "generated schedule A-rank under security floor: stored n_a = {}, recomputed floor = {expected_n_a}",
                 self.n_a
             )));
         }

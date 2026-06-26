@@ -5,10 +5,15 @@
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-05 |
 | Revised     | 2026-06-08 (S5a + S5b done in #155; derived `d·B²` keys) |
-| Status      | proposed |
+| Status      | superseded |
 | PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (branch `quang/s3-s5-sis-estimator-spec`) |
+| Superseded-by | [`direct-linf-sis-cutover.md`](direct-linf-sis-cutover.md) |
 
 ## Summary
+
+> **Superseded (2026-06-26).** Euclidean (`norm=l2`) table regen is retired.
+> See [`direct-linf-sis-cutover.md`](direct-linf-sis-cutover.md) for coefficient-`L∞`
+> table generation on the `quangvdao/lattice-estimator` fork.
 
 Akita's L2 MSIS cutover ([`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md))
 needs regenerated `generated_sis_table/` rows: for each representative modulus family,

@@ -116,13 +116,71 @@ pub fn min_secure_rank(
     collision_l2_sq_rounded_up: u128,
     width: u64,
 ) -> Option<usize> {
-    let widths = sis_max_widths(sis_family, d, collision_l2_sq_rounded_up)?;
-    for (i, &max_w) in widths.iter().enumerate() {
-        if width <= max_w {
-            return Some(i + 1);
+    if let Some(widths) = sis_max_widths(sis_family, d, collision_l2_sq_rounded_up) {
+        for (i, &max_w) in widths.iter().enumerate() {
+            if width <= max_w {
+                return Some(i + 1);
+            }
         }
     }
-    None
+    exact_linf_from_l2_sq(d, collision_l2_sq_rounded_up)
+        .and_then(|linf| min_secure_rank_linf_direct(sis_family, d, linf, width))
+}
+
+fn exact_linf_from_l2_sq(d: u32, collision_l2_sq: u128) -> Option<u128> {
+    let d = u128::from(d);
+    if d == 0 || !collision_l2_sq.is_multiple_of(d) {
+        return None;
+    }
+    let sq = collision_l2_sq / d;
+    let root = isqrt_floor(sq);
+    (root.checked_mul(root)? == sq).then_some(root)
+}
+
+fn isqrt_floor(v: u128) -> u128 {
+    if v <= 1 {
+        return v;
+    }
+    let mut lo = 1u128;
+    let mut hi = v;
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if mid.saturating_mul(mid) <= v {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    lo
+}
+
+/// Direct coefficient-`L∞` SIS floor probes that have not yet been upstreamed
+/// into the generated Akita tables.
+///
+/// These points are Akita-specific stopgaps for the fp32 D=256 dense planner
+/// path, estimated with `scripts/probe_linf_sis_table.py` using ADPS16,
+/// `norm=oo`, `red_shape_model="lgsa"`, and `zeta_candidates=[0]` against
+/// malb/lattice-estimator commit `13a8e68`.
+#[must_use]
+pub fn min_secure_rank_linf_direct(
+    sis_family: SisModulusFamily,
+    d: u32,
+    collision_linf: u128,
+    width: u64,
+) -> Option<usize> {
+    if !matches!((sis_family, d), (SisModulusFamily::Q32, 256)) {
+        return None;
+    }
+    const Q32_D256_DIRECT_LINF_FLOORS: &[(usize, u128, u64)] = &[
+        // rank, max coefficient-L∞ collision, max ring-column width
+        (5, 2_857_520, 8_192),
+        (6, 4_041_376, 4_096),
+    ];
+    Q32_D256_DIRECT_LINF_FLOORS
+        .iter()
+        .find_map(|&(rank, max_linf, max_width)| {
+            (collision_linf <= max_linf && width <= max_width).then_some(rank)
+        })
 }
 
 /// Round a raw per-ring-row squared Euclidean collision bound up to the next
@@ -330,6 +388,36 @@ mod tests {
         );
         assert_eq!(
             min_secure_rank(SisModulusFamily::Q32, 128, pow2, 32_768),
+            None
+        );
+    }
+
+    #[test]
+    fn direct_linf_floor_covers_fp32_d256_dense_root_rescue_points() {
+        let raw_l2 = |linf: u128| 256u128 * linf * linf;
+
+        assert_eq!(
+            min_secure_rank(SisModulusFamily::Q32, 256, raw_l2(2_020_688), 8_192),
+            Some(5)
+        );
+        assert!(
+            AjtaiKeyParams::try_new(SisModulusFamily::Q32, 4, 8_192, raw_l2(2_020_688), 256)
+                .is_err()
+        );
+        assert_eq!(
+            min_secure_rank(SisModulusFamily::Q32, 256, raw_l2(2_857_520), 8_192),
+            Some(5)
+        );
+        assert_eq!(
+            min_secure_rank(SisModulusFamily::Q32, 256, raw_l2(4_041_376), 4_096),
+            Some(6)
+        );
+        assert_eq!(
+            min_secure_rank_linf_direct(SisModulusFamily::Q32, 256, 4_041_376, 4_096),
+            Some(6)
+        );
+        assert_eq!(
+            min_secure_rank_linf_direct(SisModulusFamily::Q32, 256, 4_041_376, 4_097),
             None
         );
     }

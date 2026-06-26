@@ -11,11 +11,12 @@
 use akita_challenges::fold_sparse_challenge_sample_count;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 
-use super::ajtai_key::{min_secure_rank, SisModulusFamily};
+use super::ajtai_key::{min_secure_rank, min_secure_rank_linf_direct, SisModulusFamily};
 use super::decomposition_digits::{num_digits_fold, num_digits_for_bound};
 use super::norm_bound::{
-    committed_fold_collision_l2_sq, fold_challenge_norms, fold_witness_linf_cap_policy,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    committed_fold_collision_l2_sq, committed_fold_collision_linf, fold_challenge_norms,
+    fold_witness_linf_cap_policy, l2_sq_from_linf, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    FoldWitnessNorms,
 };
 use crate::DecompositionParams;
 
@@ -220,10 +221,42 @@ fn choose_op_norm_rejection_for_a_role_inner(
     let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
     let challenge = fold_challenge_norms(stage1_config, fold_shape);
 
-    // ω and Γ share the same Lemma-7 collision shape (only the outer mass
-    // differs), priced through the canonical `committed_fold_collision_l2_sq`.
-    let rank_for_mass = |mass: u128| -> Option<(u128, usize)> {
-        let bucket = committed_fold_collision_l2_sq(
+    let cap_policy = fold_witness_linf_cap_policy(stage1_config, fold_shape, d);
+    let binding = crate::FoldLinfProtocolBinding::CURRENT;
+    let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
+
+    // ω and Γ share the same Lemma-7 collision shape (only the outer mass and
+    // possible operator-norm filter differ), priced through the canonical
+    // `committed_fold_collision_l2_sq`.
+    let rank_for_mass = |mass: u128, op_norm_rejection: bool| -> Option<(u128, usize)> {
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
+            cap_policy,
+            stage1_config,
+            fold_shape,
+            d,
+            op_norm_rejection,
+            inner_width as usize,
+            grind_target_accept_num,
+            grind_target_accept_den,
+        )
+        .ok()?;
+        let collision_linf = committed_fold_collision_linf(
+            mass,
+            challenge,
+            witness,
+            r_vars,
+            num_claims,
+            ring_subfield_norm_bound,
+            &cap_config,
+        )?;
+        let direct_linf =
+            min_secure_rank_linf_direct(sis_family, d as u32, collision_linf, inner_width)
+                .and_then(|rank| {
+                    l2_sq_from_linf(d as u128, collision_linf)
+                        .ok()
+                        .map(|bucket| (bucket, rank))
+                });
+        let l2_bucket = committed_fold_collision_l2_sq(
             sis_family,
             d as u32,
             mass,
@@ -232,12 +265,26 @@ fn choose_op_norm_rejection_for_a_role_inner(
             r_vars,
             num_claims,
             ring_subfield_norm_bound,
-        )?;
-        let rank = min_secure_rank(sis_family, d as u32, bucket, inner_width)?;
-        Some((bucket, rank))
+            &cap_config,
+        );
+        let l2 = l2_bucket.and_then(|bucket| {
+            min_secure_rank(sis_family, d as u32, bucket, inner_width).map(|rank| (bucket, rank))
+        });
+        match (l2, direct_linf) {
+            (Some(l2), Some(direct)) => {
+                if direct.1 < l2.1 {
+                    Some(direct)
+                } else {
+                    Some(l2)
+                }
+            }
+            (Some(l2), None) => Some(l2),
+            (None, Some(direct)) => Some(direct),
+            (None, None) => None,
+        }
     };
 
-    let (bucket_l1, rank_l1) = rank_for_mass(omega)?;
+    let (bucket_l1, rank_l1) = rank_for_mass(omega, false)?;
 
     let sample_count = fold_sparse_challenge_sample_count(fold_shape, r_vars, num_claims);
     let rejection_allowed = sample_count.is_some_and(|n| n <= max_sparse_samples);
@@ -246,7 +293,7 @@ fn choose_op_norm_rejection_for_a_role_inner(
         return Some((false, bucket_l1, rank_l1));
     }
 
-    let (bucket_gamma, rank_gamma) = rank_for_mass(gamma)?;
+    let (bucket_gamma, rank_gamma) = rank_for_mass(gamma, true)?;
     if rank_gamma >= rank_l1 {
         return Some((false, bucket_l1, rank_l1));
     }
@@ -307,9 +354,19 @@ mod tests {
         decomp: DecompositionParams,
         r_vars: usize,
         mass: u128,
+        op_norm_rejection: bool,
+        inner_width: usize,
     ) -> u128 {
         let witness = FoldWitnessNorms::new(decomp.log_basis, 64, 256, true);
         let challenge = fold_challenge_norms(shell, TensorChallengeShape::Flat);
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+            shell,
+            TensorChallengeShape::Flat,
+            64,
+            op_norm_rejection,
+            inner_width,
+        )
+        .expect("fold cap config");
         committed_fold_collision_l2_sq(
             SisModulusFamily::Q128,
             64,
@@ -319,6 +376,7 @@ mod tests {
             r_vars,
             1,
             1,
+            &cap_config,
         )
         .expect("collision bucket")
     }
@@ -359,8 +417,10 @@ mod tests {
                 ) else {
                     continue;
                 };
-                let bucket_l1 = bucket_for_mass(&shell, decomp, r_vars, omega);
-                let bucket_gamma = bucket_for_mass(&shell, decomp, r_vars, gamma);
+                let bucket_l1 =
+                    bucket_for_mass(&shell, decomp, r_vars, omega, false, inner_width_usize);
+                let bucket_gamma =
+                    bucket_for_mass(&shell, decomp, r_vars, gamma, true, inner_width_usize);
                 let rank_l1 =
                     min_secure_rank(SisModulusFamily::Q128, 64, bucket_l1, inner_width).unwrap();
                 let rank_gamma =

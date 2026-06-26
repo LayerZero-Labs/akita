@@ -34,8 +34,7 @@
 use akita_field::AkitaError;
 
 use super::norm_bound::{
-    fold_witness_beta, fold_witness_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
-    FoldWitnessNorms,
+    folded_witness_public_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use crate::DecompositionParams;
 
@@ -165,14 +164,14 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 ///
 /// Computes the folded-witness L∞ bound
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
-/// (via [`fold_witness_beta`]) from the per-level fold challenge and witness
+/// (via [`crate::sis::fold_witness_beta`]) from the per-level fold challenge and witness
 /// norms. Under [`crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind`], the signed range is
 /// sized from `min(β_inf, t*)` with `t*²` from [`crate::sis::fold_witness_linf_tail_bound_sq`];
 /// deterministic policies use `β_inf` alone.
 ///
 /// # Errors
 ///
-/// Returns `AkitaError::InvalidSetup` when [`fold_witness_beta`] rejects the
+/// Returns `AkitaError::InvalidSetup` when [`crate::sis::fold_witness_beta`] rejects the
 /// inputs (`r_vars >= 127` or `β` overflow), or when `β == 0` (a zero
 /// challenge/witness norm or `num_claims == 0` — no well-formed level folds a
 /// zero witness).
@@ -185,21 +184,7 @@ pub fn num_digits_fold(
     witness: FoldWitnessNorms,
     cap_config: FoldWitnessLinfCapConfig,
 ) -> Result<usize, AkitaError> {
-    let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
-    if beta == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "num_digits_fold: folded-witness bound β = 0".to_string(),
-        ));
-    }
-    let num_fold_blocks = (num_claims as u128)
-        .checked_mul(1u128 << r_vars)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("num_digits_fold: num_fold_blocks overflows u128".to_string())
-        })?;
-    let witness_linf_sq = witness
-        .infinity_norm()
-        .saturating_mul(witness.infinity_norm());
-    let cap = fold_witness_linf_cap(beta, num_fold_blocks, witness_linf_sq, &cap_config)?;
+    let cap = folded_witness_public_linf_cap(challenge, witness, r_vars, num_claims, &cap_config)?;
     if cap == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_digits_fold: fold witness L∞ cap is zero".to_string(),
