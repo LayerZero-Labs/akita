@@ -175,18 +175,13 @@ where
     })
 }
 
-pub(in crate::protocol::core) struct PreparedFoldReplay<
-    'a,
-    F: FieldCore,
-    E: FieldCore,
-    const D: usize,
-> {
+pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) lp: &'a LevelParams,
     pub(in crate::protocol::core) m_row_layout: MRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) v: RingBuf<F>,
-    pub(in crate::protocol::core) opening_batch:
-        VerifierOpeningBatch<'a, E, &'a [CyclotomicRing<F, D>]>,
+    pub(in crate::protocol::core) fold_commitment: &'a FlatRingVec<F>,
+    pub(in crate::protocol::core) opening_batch: VerifierOpeningBatch<'a, E, ()>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) ring_opening_point: RingOpeningPoint<F>,
     pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F>,
@@ -383,7 +378,7 @@ where
 pub(in crate::protocol::core) fn verify_fold<F, E, T, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    prepared: PreparedFoldReplay<'_, F, E, D>,
+    prepared: PreparedFoldReplay<'_, F, E>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -391,11 +386,7 @@ where
     T: Transcript<F>,
 {
     let opening_shape = prepared.opening_batch.to_shape();
-    let commitment_rows = prepared
-        .opening_batch
-        .single_group_commitment()
-        .copied()
-        .ok_or(AkitaError::InvalidProof)?;
+    let commitment_rows = prepared.fold_commitment.as_ring_slice_trusted::<D>();
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
             opening_shape.num_polynomials(),

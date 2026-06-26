@@ -34,7 +34,7 @@ pub(in crate::protocol::core) fn prepare_fold_data<'a, F, L, T, const D: usize>(
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
+) -> Result<PreparedFoldReplay<'a, F, L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -46,6 +46,9 @@ where
     let m_row_layout = proof.m_row_layout();
     proof.v_as_ring_slice::<D>()?;
     let commitment_u = current_state.commitment.as_ring_slice_trusted::<D>();
+    if commitment_u.len() != lp.effective_commit_rows() {
+        return Err(AkitaError::InvalidProof);
+    }
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
@@ -125,7 +128,7 @@ where
         opening_batch,
         vec![CommitmentGroup {
             claims: openings,
-            commitment: commitment_u,
+            commitment: (),
         }],
     )?;
     Ok(PreparedFoldReplay {
@@ -133,6 +136,7 @@ where
         m_row_layout,
         fold_grind_nonce,
         v: proof.fold_v_buf(),
+        fold_commitment: current_state.commitment,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
