@@ -1,6 +1,6 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
-use crate::descriptor_bytes::push_usize;
+use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{CleartextWitnessShape, LevelParams, OpeningBatchShape};
 use akita_field::{AkitaError, CanonicalField};
 
@@ -134,6 +134,134 @@ impl AkitaScheduleLookupKey {
     }
 }
 
+/// Root layout metadata frozen when a standalone commitment group is created.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CommitmentGroupLayout {
+    /// Per-group root schedule entry shape.
+    pub key: AkitaScheduleLookupKey,
+    /// Root block size exponent used for this group's committed `t_hat` shape.
+    pub m_vars: usize,
+    /// Root block count exponent used for this group's committed `t_hat` shape.
+    pub r_vars: usize,
+    /// Gadget basis selected for the standalone group commit.
+    pub log_basis: u32,
+    /// A-role row count selected for the committed inner rows.
+    pub n_a: usize,
+    /// Conservative B-role row count used by the standalone precommit.
+    pub conservative_n_b: usize,
+}
+
+impl CommitmentGroupLayout {
+    /// Build frozen group metadata from the concrete commit params.
+    pub fn from_params(key: AkitaScheduleLookupKey, params: &LevelParams) -> Self {
+        Self {
+            key,
+            m_vars: params.m_vars,
+            r_vars: params.r_vars,
+            log_basis: params.log_basis,
+            n_a: params.a_key.row_len(),
+            conservative_n_b: params.b_key.row_len(),
+        }
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        push_usize(bytes, self.key.num_vars);
+        push_usize(bytes, self.key.num_polynomials);
+        push_usize(bytes, self.m_vars);
+        push_usize(bytes, self.r_vars);
+        push_u32(bytes, self.log_basis);
+        push_usize(bytes, self.n_a);
+        push_usize(bytes, self.conservative_n_b);
+    }
+
+    /// Validate that this layout is a well-formed standalone commitment group.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        self.key.validate()?;
+        if self.n_a == 0 || self.conservative_n_b == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout requires nonzero A rows and conservative B rows"
+                    .to_string(),
+            ));
+        }
+        if self.log_basis == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout requires nonzero log_basis".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate that frozen `(m_vars, r_vars)` geometry matches `key.num_vars`.
+    pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError> {
+        let alpha = ring_dimension.trailing_zeros() as usize;
+        let Some(outer) = self
+            .m_vars
+            .checked_add(self.r_vars)
+            .and_then(|sum| sum.checked_add(alpha))
+        else {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout geometry overflow".to_string(),
+            ));
+        };
+        if outer != self.key.num_vars {
+            return Err(AkitaError::InvalidSetup(format!(
+                "commitment group layout geometry does not match key.num_vars: \
+                 m_vars={} r_vars={} alpha={} key.num_vars={}",
+                self.m_vars, self.r_vars, alpha, self.key.num_vars
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate metadata frozen by standalone `commit_group` at precommit time.
+    pub fn validate_frozen_precommit(
+        &self,
+        ring_dimension: usize,
+        min_log_basis: u32,
+    ) -> Result<(), AkitaError> {
+        self.validate()?;
+        self.validate_root_geometry(ring_dimension)?;
+        if self.log_basis != min_log_basis {
+            return Err(AkitaError::InvalidSetup(format!(
+                "precommitted group log_basis must equal min_basis({min_log_basis}), got {}",
+                self.log_basis
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Grouped root schedule lookup key for a main commitment plus earlier groups.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GroupBatchAkitaScheduleLookupKey {
+    /// Main group shape for the final commitment.
+    pub main: AkitaScheduleLookupKey,
+    /// Previously committed groups in caller-supplied transcript order.
+    pub precommitteds: Vec<CommitmentGroupLayout>,
+}
+
+impl GroupBatchAkitaScheduleLookupKey {
+    /// Number of commitment groups in this grouped root.
+    pub fn num_commitment_groups(&self) -> usize {
+        self.precommitteds.len() + 1
+    }
+
+    /// Validate per-group metadata.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        self.main.validate()?;
+        for layout in &self.precommitteds {
+            layout.validate()?;
+            if layout.key.num_vars != self.main.num_vars {
+                return Err(AkitaError::InvalidInput(
+                    "grouped root requires all commitment groups to share the same num_vars"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Number of gadget decomposition levels needed for `r` over field `F`.
 pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
@@ -219,6 +347,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     num_public_rows: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
+    lp.reject_grouped_root("w_ring_element_count_with_counts_for_layout_bits")?;
     let e_hat_count = num_polynomials
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
@@ -893,5 +1022,63 @@ mod tests {
         assert!(AkitaScheduleLookupKey::new(0, 1).validate().is_err());
         assert!(AkitaScheduleLookupKey::new(20, 0).validate().is_err());
         assert!(AkitaScheduleLookupKey::new(20, 4).validate().is_ok());
+    }
+
+    #[test]
+    fn group_batch_key_rejects_mixed_num_vars() {
+        let pre = CommitmentGroupLayout {
+            key: AkitaScheduleLookupKey::new(12, 1),
+            m_vars: 4,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let grouped = GroupBatchAkitaScheduleLookupKey {
+            main: AkitaScheduleLookupKey::new(20, 3),
+            precommitteds: vec![pre],
+        };
+
+        let err = grouped
+            .validate()
+            .expect_err("heterogeneous num_vars must be rejected");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn group_batch_key_allows_mixed_polynomial_counts() {
+        let pre = CommitmentGroupLayout {
+            key: AkitaScheduleLookupKey::new(20, 1),
+            m_vars: 12,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let grouped = GroupBatchAkitaScheduleLookupKey {
+            main: AkitaScheduleLookupKey::new(20, 3),
+            precommitteds: vec![pre],
+        };
+
+        grouped
+            .validate()
+            .expect("unequal K_g at a shared num_vars is allowed");
+        assert_eq!(grouped.num_commitment_groups(), 2);
+    }
+
+    #[test]
+    fn validate_frozen_precommit_rejects_geometry_mismatch() {
+        let layout = CommitmentGroupLayout {
+            key: AkitaScheduleLookupKey::new(20, 1),
+            m_vars: 4,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let err = layout
+            .validate_frozen_precommit(64, 2)
+            .expect_err("geometry must match num_vars");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }
