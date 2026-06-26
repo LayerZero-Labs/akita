@@ -343,9 +343,11 @@ landed in #218).
 Slice 4 is large (~700 dead-on-default cfg sites), so it ships as **five sequential
 PRs for maintainer reviewability**. The split is a *review* convenience, not a
 correctness boundary: because every zk site is dead on the default build, *any*
-ordering keeps the default build green and the golden digests unchanged. The
-order below is chosen so that **consumers are deleted before the schema they
-consume**, making the final schema PR a pure dead-field removal (lowest risk).
+ordering of **4a–4d** keeps the default build green and the golden digests
+unchanged. **4e** accepts one reviewed descriptor-v1 preamble re-pin (golden
+re-pins once); **4f** retires the golden tripwire after that. The order below is
+chosen so that **consumers are deleted before the schema they consume**, making
+the final schema PR a pure dead-field removal (lowest risk).
 
 Ordering invariants (must hold regardless of how PRs are merged/split):
 - **OI-1 — Cargo features stay until 4e.** PRs 4a–4d delete only `.rs` cfg code;
