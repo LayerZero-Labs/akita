@@ -199,7 +199,7 @@ where
                     (ring_backend, &ring_prepared),
                     expanded.as_ref(),
                 )?;
-                let level_prefix_slots = SetupPrefixRegistry::new();
+                let level_prefix_slots = prefix_slots;
                 let prepared_fold =
                     prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
                         &level_stack,
