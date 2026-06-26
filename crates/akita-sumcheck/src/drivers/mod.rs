@@ -10,10 +10,6 @@ pub use eq_factored::{
     advance_eq_factored_claim, EqFactoredSumcheckInstanceProverExt,
     EqFactoredSumcheckInstanceVerifierExt,
 };
-#[cfg(feature = "zk")]
-pub use eq_factored::{EqFactoredMaskedProveOutput, ZkEqFactoredSumcheckInstanceProverExt};
 pub use standard::{
     check_sumcheck_output_claim, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
-#[cfg(feature = "zk")]
-pub use standard::{MaskedProveOutput, ZkSumcheckInstanceProverExt};

@@ -26,11 +26,6 @@ pub use drivers::{
     advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
     EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
-#[cfg(feature = "zk")]
-pub use drivers::{
-    EqFactoredMaskedProveOutput, MaskedProveOutput, ZkEqFactoredSumcheckInstanceProverExt,
-    ZkSumcheckInstanceProverExt,
-};
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
