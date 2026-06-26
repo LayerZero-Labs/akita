@@ -88,7 +88,7 @@ pub use proof::{
     terminal_golomb_grind_tail_t_vectors, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     validate_batched_inputs, validate_public_matrix_matches_seed,
-    validate_scalar_point_matches_poly_arity, validate_segment_typed_z_payload,
+    align_recursive_opening_point, validate_scalar_point_matches_poly_arity, validate_segment_typed_z_payload,
     z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedFoldRoot,
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment,
     AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
@@ -118,7 +118,8 @@ pub use ring_dim_plan::{
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
-    schedule_terminal_direct_witness_shape, scheduled_next_level_params, w_ring_element_count,
+    schedule_terminal_direct_witness_shape, scheduled_next_level_params,
+    terminal_tail_grind_level_params, w_ring_element_count,
     w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, DirectStep,

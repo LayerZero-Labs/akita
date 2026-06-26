@@ -426,6 +426,12 @@ pub struct DirectStep {
     /// prover's terminal-fold path still receives a `LevelParams`-shaped
     /// successor (only `log_basis` is consulted there).
     pub params: Option<LevelParams>,
+    /// Optional override for terminal Golomb tail grind layout.
+    ///
+    /// Mixed-D hand schedules keep the envelope terminal witness shape while
+    /// later folds run at a smaller `ring_dimension`. When set, prover tail
+    /// grind uses these params instead of the terminal fold's active params.
+    pub tail_grind_level_params: Option<LevelParams>,
 }
 
 impl DirectStep {
@@ -535,6 +541,13 @@ impl Schedule {
                         }
                         None => bytes.push(0),
                     }
+                    match &direct.tail_grind_level_params {
+                        Some(params) => {
+                            bytes.push(1);
+                            params.append_descriptor_bytes(bytes);
+                        }
+                        None => {}
+                    }
                 }
             }
         }
@@ -588,6 +601,7 @@ pub fn root_direct_schedule(
             direct_bytes: 0,
             // Root-direct: stores the root commit layout.
             params: Some(commit_params),
+            tail_grind_level_params: None,
         })],
         total_bytes: 0,
     })
@@ -632,6 +646,26 @@ pub fn schedule_terminal_direct_witness_shape(
             "schedule is missing terminal direct witness step".to_string(),
         )),
     }
+}
+
+/// Level params for terminal Golomb tail grind setup.
+///
+/// Uniform schedules use the terminal fold's active params. Mixed-D fixtures may
+/// pin envelope geometry when the terminal witness shape outlives a ring-d drop.
+///
+/// # Errors
+///
+/// Returns an error if the schedule has no terminal fold step.
+pub fn terminal_tail_grind_level_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
+    if let Some(Step::Direct(direct)) = schedule.steps.last() {
+        if let Some(params) = &direct.tail_grind_level_params {
+            return Ok(params.clone());
+        }
+    }
+    let terminal_level = schedule.num_fold_levels().checked_sub(1).ok_or_else(|| {
+        AkitaError::InvalidSetup("schedule has no fold levels for tail grind".into())
+    })?;
+    Ok(schedule.get_execution_schedule(terminal_level)?.params)
 }
 
 /// Resolve one scheduled level's active Akita params.

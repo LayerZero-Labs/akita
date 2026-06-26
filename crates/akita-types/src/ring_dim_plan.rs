@@ -302,6 +302,7 @@ mod tests {
             witness_shape: shape,
             direct_bytes: 0,
             params: None,
+            tail_grind_level_params: None,
         }
     }
 

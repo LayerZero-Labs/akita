@@ -47,6 +47,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
             witness_shape: CleartextWitnessShape::FieldElements(16),
             direct_bytes: 0,
             params: None,
+            tail_grind_level_params: None,
         }),
     ];
 
@@ -76,6 +77,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
             witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
             direct_bytes: 0,
             params: None,
+            tail_grind_level_params: None,
         })],
         total_bytes: 0,
     };
@@ -135,6 +137,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
                     witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
                     direct_bytes: 0,
                     params: None,
+                    tail_grind_level_params: None,
                 })],
                 total_bytes: 0,
             })
@@ -402,6 +405,34 @@ fn presets_select_expected_sis_modulus_family() {
 }
 
 // ----- migrated from former `schedule_policy::tests` -------------------
+
+#[cfg(feature = "test-support")]
+#[test]
+fn mixed_d_suffix_params_recursive_vars_match_runtime_witness_domain() {
+    use crate::test_support::mixed_d_per_level_schedule;
+
+    let key = AkitaScheduleLookupKey::singleton(16);
+    let switch = 2usize;
+    let mixed = mixed_d_per_level_schedule::<fp128::D128Full, fp128::D64Full>(16, 1, switch)
+        .expect("mixed schedule");
+
+    fn suffix_witness_num_vars(w_len: usize, ring_d: usize) -> usize {
+        assert_eq!(w_len % ring_d, 0, "w_len={w_len} ring_d={ring_d}");
+        let ring_slots = w_len / ring_d;
+        let padded = ring_slots.next_power_of_two().max(1);
+        (padded * ring_d).trailing_zeros() as usize
+    }
+
+    for (level, fold) in mixed.fold_steps().enumerate().skip(switch) {
+        let witness_domain_bits =
+            suffix_witness_num_vars(fold.current_w_len, fold.params.ring_dimension);
+        let recursive = fold.params.recursive_opening_num_vars().unwrap();
+        assert_eq!(
+            recursive, witness_domain_bits,
+            "recursive opening vars must match witness hypercube at level {level}"
+        );
+    }
+}
 
 fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
     assert_plan_matches_runtime_w_sizes_for_key::<Cfg>(AkitaScheduleLookupKey::singleton(num_vars));

@@ -38,6 +38,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 witness_shape: CleartextWitnessShape::FieldElements(64),
                 direct_bytes: 32,
                 params: None,
+                tail_grind_level_params: None,
             }),
         ],
         total_bytes: 155,
@@ -419,6 +420,7 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
             witness_shape: CleartextWitnessShape::FieldElements(8),
             direct_bytes: 0,
             params: Some(sample_level_params()),
+            tail_grind_level_params: None,
         })],
         total_bytes: 0,
     };
@@ -428,6 +430,7 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
             witness_shape: CleartextWitnessShape::FieldElements(8),
             direct_bytes: 0,
             params: Some(other_params),
+            tail_grind_level_params: None,
         })],
         total_bytes: 0,
     };

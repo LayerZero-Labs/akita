@@ -336,6 +336,24 @@ pub fn padded_scalar_batch_num_vars(
     })
 }
 
+/// Pad or project a recursive opening point to a target variable count.
+///
+/// Coordinates are ordered `[ring_bits | outer block vars]`. When the target
+/// count shrinks, leading ring-slot coordinates are dropped before zero-padding.
+pub fn align_recursive_opening_point<PointF: FieldCore>(
+    opening_point: &[PointF],
+    target_num_vars: usize,
+) -> Vec<PointF> {
+    if opening_point.len() > target_num_vars {
+        let drop = opening_point.len() - target_num_vars;
+        opening_point[drop..].to_vec()
+    } else {
+        let mut padded_point = opening_point.to_vec();
+        padded_point.resize(target_num_vars, PointF::zero());
+        padded_point
+    }
+}
+
 /// Opening point length must match the padded batch domain selected at commit time.
 ///
 /// # Errors
