@@ -1,6 +1,4 @@
-#[cfg(test)]
-mod tests {
-    use akita_field::{
+use akita_field::{
         field_modulus, CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime32Offset99,
     };
     use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
@@ -207,4 +205,3 @@ mod tests {
         let mut t = AkitaTranscript::<F64>::new(DOMAIN_AKITA_PROTOCOL);
         assert!(JlProjectionMatrix::sample::<F64, _>(&mut t, usize::MAX, 8).is_err());
     }
-}

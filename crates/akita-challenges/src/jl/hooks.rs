@@ -1,5 +1,7 @@
 //! Bench and differential hooks for the JL projection prototype.
 
+#[cfg(feature = "parallel")]
+use akita_field::parallel::*;
 use akita_field::AkitaError;
 
 use super::kernels;

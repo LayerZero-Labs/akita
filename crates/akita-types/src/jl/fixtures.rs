@@ -5,7 +5,7 @@ use akita_challenges::JlProjectionMatrix;
 use akita_field::{
     field_modulus, AkitaError, CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge,
 };
-use akita_transcript::{AkitaTranscript, Transcript};
+use akita_transcript::AkitaTranscript;
 
 use super::{embed_signed_i32, jl_l2_norm_sq_checked, padded_live_table, JlWitnessLayout};
 

@@ -2,6 +2,8 @@
 
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
+#[cfg(feature = "parallel")]
+use crate::jl::panel::parallel_jl_enabled;
 
 use akita_field::FieldCore;
 
