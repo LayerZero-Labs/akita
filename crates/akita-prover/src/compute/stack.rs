@@ -18,7 +18,7 @@
 
 use crate::compute::backend::ComputeBackendSetup;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::AkitaExpandedSetup;
+use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::marker::PhantomData;
 
 /// A single operation context: a backend plus its validated prepared setup.
@@ -70,6 +70,20 @@ where
     /// Borrowed prepared setup for this operation cluster.
     pub fn prepared(&self) -> &'a B::PreparedSetup {
         self.prepared
+    }
+
+    /// Warm the full-envelope NTT slot for `ring_d` on this cluster's prepared setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the envelope key cannot be derived or cache build fails.
+    pub fn ensure_envelope_ntt(
+        &self,
+        expanded: &AkitaExpandedSetup<F>,
+        ring_d: usize,
+    ) -> Result<(), AkitaError> {
+        let key = NttCacheKey::from_envelope(expanded, ring_d)?;
+        self.backend.ensure_ntt_slot(self.prepared, key)
     }
 }
 
@@ -141,6 +155,22 @@ where
     /// Ring-switch operation context.
     pub fn ring_switch(&self) -> &OperationCtx<'a, F, R> {
         &self.ring_switch
+    }
+
+    /// Warm full-envelope NTT slots for every cluster at fold ring degree `ring_d`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any cluster fails envelope key derivation or cache build.
+    pub fn ensure_fold_level_envelope_ntt(
+        &self,
+        expanded: &AkitaExpandedSetup<F>,
+        ring_d: usize,
+    ) -> Result<(), AkitaError> {
+        self.commit.ensure_envelope_ntt(expanded, ring_d)?;
+        self.opening.ensure_envelope_ntt(expanded, ring_d)?;
+        self.tensor.ensure_envelope_ntt(expanded, ring_d)?;
+        self.ring_switch.ensure_envelope_ntt(expanded, ring_d)
     }
 }
 
