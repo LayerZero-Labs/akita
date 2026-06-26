@@ -1,8 +1,9 @@
 //! Microbenchmarks for the standalone JL projection prototype (`akita-challenges::jl`).
 //!
 //! Measures matrix sampling (`JlProjectionMatrix::sample`), integer projection
-//! (`project` on small balanced digits), fast vs reference kernels (scalar,
-//! NEON, AVX2, AVX-512), and the squared-norm check (`JlImage::l2_norm_sq_checked`).
+//! (`project` on small balanced digits), scalar-only vs runtime SIMD kernels
+//! (NEON on aarch64, AVX2/AVX-512 where available on x86_64), and the
+//! squared-norm check (`JlImage::l2_norm_sq_checked`).
 //!
 //! Column counts are powers of two anchored to CI profile-bench tail geometry
 //! (`profile-bench-data`, `scripts/profile_bench_report.py`). See
@@ -116,20 +117,47 @@ fn bench_project_digits(c: &mut Criterion) {
         let digits = center_coefficients(&coeffs).expect("center coeffs");
 
         group.throughput(Throughput::Elements((N_ROWS * cols) as u64));
-        group.bench_with_input(BenchmarkId::new("n256", cols), &cols, |b, _| {
+        group.bench_with_input(BenchmarkId::new("scalar", cols), &cols, |b, _| {
             b.iter(|| {
                 let image = matrix
-                    .project_digits(black_box(&digits))
-                    .expect("JL project digits");
+                    .project_digits_scalar(black_box(&digits))
+                    .expect("JL project digits scalar");
                 black_box(image)
             });
         });
+        group.bench_with_input(
+            BenchmarkId::new(runtime_project_digits_label(), cols),
+            &cols,
+            |b, _| {
+                b.iter(|| {
+                    let image = matrix
+                        .project_digits(black_box(&digits))
+                        .expect("JL project digits");
+                    black_box(image)
+                });
+            },
+        );
     }
     group.finish();
 }
 
-fn bench_project_reference(c: &mut Criterion) {
-    let mut group = c.benchmark_group("jl_project_reference");
+fn runtime_project_digits_label() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "neon"
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        "runtime-x86"
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "runtime"
+    }
+}
+
+fn bench_project_digits_reference(c: &mut Criterion) {
+    let mut group = c.benchmark_group("jl_project_digits_reference");
     for &cols in COLS_SIZES {
         group.sample_size(sample_size_for_cols(cols));
         let mut tr = fresh_transcript();
@@ -139,7 +167,7 @@ fn bench_project_reference(c: &mut Criterion) {
         let digits = center_coefficients(&coeffs).expect("center coeffs");
 
         group.throughput(Throughput::Elements((N_ROWS * cols) as u64));
-        group.bench_with_input(BenchmarkId::new("n256", cols), &cols, |b, _| {
+        group.bench_with_input(BenchmarkId::new("checked-i64", cols), &cols, |b, _| {
             b.iter(|| {
                 let image = matrix
                     .project_digits_reference(black_box(&digits))
@@ -191,7 +219,7 @@ criterion_group!(
     bench_sample,
     bench_project,
     bench_project_digits,
-    bench_project_reference,
+    bench_project_digits_reference,
     bench_l2_norm,
     bench_end_to_end
 );

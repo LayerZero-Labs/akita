@@ -103,6 +103,33 @@ fn accumulate_panel(
     }
 }
 
+#[inline]
+fn accumulate_panel_scalar(
+    coords: &mut [i32],
+    p: usize,
+    panel_bytes: usize,
+    row_bytes: usize,
+    packed_rows: &[u8],
+    digits: &[i8],
+    cols: usize,
+) {
+    let b0 = p * panel_bytes;
+    if b0 >= row_bytes {
+        return;
+    }
+    let b1 = (b0 + panel_bytes).min(row_bytes);
+    let col0 = b0 * 4;
+    let col1 = (b1 * 4).min(cols);
+    let panel_cols = col1 - col0;
+    let digit_chunk = &digits[col0..col1];
+
+    for (r, coord) in coords.iter_mut().enumerate() {
+        let row_start = r * row_bytes;
+        let row_chunk = &packed_rows[row_start + b0..row_start + b1];
+        *coord += scalar::project_row(row_chunk, digit_chunk, panel_cols);
+    }
+}
+
 /// Project all rows with the fast kernel using the column-panel layout.
 ///
 /// Validated digits are narrowed to `i8` once (`|d| <= MAX_JL_DIGIT` fits `i8`).
@@ -156,6 +183,36 @@ pub(crate) fn project_rows_fast(
     let mut coords = vec![0i32; n_rows];
     for p in 0..num_panels {
         accumulate_panel(
+            &mut coords,
+            p,
+            panel_bytes,
+            row_bytes,
+            packed_rows,
+            &digits_i8,
+            cols,
+        );
+    }
+    coords
+}
+
+/// Project all rows with the scalar row kernel, bypassing SIMD dispatch.
+///
+/// This is a benchmark/differential hook used to make scalar A/B evidence
+/// explicit on hosts where [`project_rows_fast`] would otherwise dispatch to
+/// NEON or AVX.
+pub(crate) fn project_rows_scalar(
+    n_rows: usize,
+    row_bytes: usize,
+    packed_rows: &[u8],
+    digits: &[i32],
+    cols: usize,
+) -> Vec<i32> {
+    let digits_i8: Vec<i8> = digits.iter().map(|&d| d as i8).collect();
+    let panel_bytes = row_bytes.clamp(1, super::panel::JL_PANEL_UNIT_MAX);
+    let num_panels = row_bytes.div_ceil(panel_bytes);
+    let mut coords = vec![0i32; n_rows];
+    for p in 0..num_panels {
+        accumulate_panel_scalar(
             &mut coords,
             p,
             panel_bytes,

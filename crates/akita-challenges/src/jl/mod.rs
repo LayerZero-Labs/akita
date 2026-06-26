@@ -194,6 +194,28 @@ impl JlProjectionMatrix {
         Ok(JlImage { coords })
     }
 
+    /// Project pre-centered digits with the scalar kernel, bypassing SIMD dispatch.
+    ///
+    /// This is a benchmark/differential hook for honest scalar A/B evidence on
+    /// hosts where [`Self::project_digits`] uses NEON or AVX at runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on a shape mismatch or if any digit exceeds
+    /// [`MAX_JL_DIGIT`].
+    #[doc(hidden)]
+    pub fn project_digits_scalar(&self, digits: &[i32]) -> Result<JlImage, AkitaError> {
+        validate_digit_witness(digits, self.cols)?;
+        let coords = kernels::project_rows_scalar(
+            self.n_rows,
+            self.row_bytes,
+            &self.packed_rows,
+            digits,
+            self.cols,
+        );
+        Ok(JlImage { coords })
+    }
+
     /// Checked `i64` reference projection for tests and differential benches.
     ///
     /// # Errors

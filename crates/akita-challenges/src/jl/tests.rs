@@ -60,6 +60,10 @@ fn fast_kernel_matches_reference_kernel() {
     let digits: Vec<i32> = (0..cols).map(|i| ((i % 33) as i32) - 16).collect();
     let matrix = JlProjectionMatrix::from_sign_rows(&signs).unwrap();
     assert_eq!(
+        matrix.project_digits_scalar(&digits).unwrap(),
+        matrix.project_digits_reference(&digits).unwrap()
+    );
+    assert_eq!(
         matrix.project_digits(&digits).unwrap(),
         matrix.project_digits_reference(&digits).unwrap()
     );

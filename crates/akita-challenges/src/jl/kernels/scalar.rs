@@ -8,7 +8,6 @@
 //! - every `|digits[i]| <= MAX_JL_DIGIT` (so each digit fits `i8`)
 //! - `cols * MAX_JL_DIGIT <= i32::MAX` so each row sum fits `i32`
 
-#[cfg(any(not(target_arch = "aarch64"), test))]
 use crate::jl::MAX_JL_DIGIT;
 
 /// Ternary sign for a packed 2-bit pair: `00 -> -1`, `11 -> +1`, `01`/`10 -> 0`.
@@ -49,7 +48,6 @@ pub(crate) static SIGNS_FOR_BYTE: [[i8; 4]; 256] = build_signs_for_byte_lut();
 ///
 /// On aarch64 the NEON kernel covers every path; this function is retained for
 /// differential tests and for non-NEON targets.
-#[cfg(any(not(target_arch = "aarch64"), test))]
 #[inline]
 pub(super) fn project_row(row: &[u8], digits: &[i8], cols: usize) -> i32 {
     debug_assert_eq!(digits.len(), cols);
