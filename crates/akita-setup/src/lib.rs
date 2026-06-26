@@ -443,6 +443,8 @@ mod tests {
 
         static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+        const TEST_D: usize = Cfg::D;
+
         fn cleanup_setup_file_shape(max_num_vars: usize, max_num_batched_polys: usize) {
             if let Some(path) = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys) {
                 let _ = fs::remove_file(path);
