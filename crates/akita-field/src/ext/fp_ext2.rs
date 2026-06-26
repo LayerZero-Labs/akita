@@ -62,6 +62,11 @@ pub trait FpExt2Config<F: FieldCore> {
 }
 
 /// Quadratic extension element `c0 + c1 * u` with `u^2 = NR`.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
+#[cfg_attr(
+    feature = "jolt-compat",
+    allocative(bound = "F: FieldCore + allocative::Allocative, C: FpExt2Config<F>")
+)]
 #[repr(transparent)]
 pub struct FpExt2<F: FieldCore, C: FpExt2Config<F>> {
     /// Coefficients `[c0, c1]` in basis `[1, u]`.
