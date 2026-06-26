@@ -139,6 +139,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore and do not write cell caches.",
     )
+    parser.add_argument(
+        "--cell-timeout",
+        type=float,
+        default=None,
+        help=(
+            "Per-cell wall-clock budget in seconds for --jobs sharding. A cell "
+            "exceeding it is killed, left uncached, and reported as failed "
+            "instead of stalling the run. Default: no timeout."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -676,15 +686,35 @@ def run_parallel_shards(
             file=sys.stderr,
         )
 
-        def run_one(work: tuple[int, int]) -> tuple[int, int, list[int]]:
+        def run_one(work: tuple[int, int]) -> tuple[int, int, list[int] | None]:
             d, collision = work
             cmd = build_child_argv(args, d, collision)
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            if proc.returncode != 0:
-                raise SystemExit(
-                    f"shard failed for d={d}, collision_linf={collision} "
-                    f"(exit {proc.returncode}):\n{proc.stderr}"
+            # Isolate per-cell failures: a crashed or timed-out cell returns a
+            # `None` sentinel (left uncached for retry) rather than aborting the
+            # whole sharded run. Lets an overnight regen finish the other cells
+            # and report which ones need a rerun.
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=args.cell_timeout,
                 )
+            except subprocess.TimeoutExpired:
+                print(
+                    f"// FAIL d={d}, collision_linf={collision}: timed out after "
+                    f"{args.cell_timeout}s; left uncached",
+                    file=sys.stderr,
+                )
+                return (d, collision, None)
+            if proc.returncode != 0:
+                print(
+                    f"// FAIL d={d}, collision_linf={collision} "
+                    f"(exit {proc.returncode}); left uncached:\n{proc.stderr.strip()}",
+                    file=sys.stderr,
+                )
+                return (d, collision, None)
             parsed = parse_csv_rows(proc.stdout)
             if not parsed:
                 widths = [0] * args.max_rank
@@ -705,9 +735,22 @@ def run_parallel_shards(
                 results.append(fut.result())
 
         results.sort()
+
+    failures = [(d, c) for d, c, widths in results if widths is None]
+    if failures:
+        preview = ", ".join(f"(d={d}, c={c})" for d, c in failures[:10])
+        more = "" if len(failures) <= 10 else f" (+{len(failures) - 10} more)"
+        print(
+            f"// {len(failures)} cell(s) FAILED and were left uncached; "
+            f"rerun the same command to retry just these: {preview}{more}",
+            file=sys.stderr,
+        )
+
     dead_dims: set[int] = set()
     filtered: list[tuple[int, int, list[int]]] = []
     for d, collision, widths in results:
+        if widths is None:
+            continue
         if d in dead_dims:
             continue
         if all(w == 0 for w in widths):
