@@ -670,7 +670,7 @@ where
     let relation_rows = if is_terminal_fold {
         &[][..]
     } else {
-        prepared_fold.instance.v.as_slice()
+        prepared_fold.instance.v_as_ring_slice()?
     };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
@@ -798,7 +798,7 @@ where
         let w_commitment_proof = committed_commitment.clone();
         let level_proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: prepared_fold.extension_opening_reduction,
-            v: FlatRingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
+            v: prepared_fold.instance.v.clone().into_compact(),
             fold_grind_nonce,
             stage1: stage1_proof,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {

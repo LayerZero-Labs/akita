@@ -423,14 +423,14 @@ where
         MRowLayout::WithDBlock => prepared.v.as_slice(),
         MRowLayout::WithoutDBlock => &[],
     };
-    let relation_y = generate_y::<F, D>(
+    let relation_y = RingBuf::from_ring_elems(&generate_y::<F, D>(
         y_v_slice,
         commitment_rows,
         n_d_active,
         prepared.lp.effective_commit_rows(),
         prepared.lp.b_inner_rows_per_group(),
         prepared.lp.a_key.row_len(),
-    )?;
+    )?);
     let relation_instance = RingRelationInstance::new(
         prepared.m_row_layout,
         stage1_challenges,
@@ -440,7 +440,7 @@ where
         gamma,
         row_coefficient_rings,
         relation_y,
-        prepared.v,
+        RingBuf::from_ring_elems(&prepared.v),
     )?;
     let ring_switch_replay = RingSwitchReplay {
         relation: &relation_instance,
@@ -473,7 +473,7 @@ where
     let relation_claim = relation_claim_from_rows_extension::<F, E, D>(
         &rs.tau1,
         rs.alpha,
-        &relation_instance.v,
+        relation_instance.v_as_ring_slice()?,
         commitment_rows,
     )?;
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
