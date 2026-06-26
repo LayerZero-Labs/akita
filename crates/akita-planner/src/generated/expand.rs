@@ -255,6 +255,7 @@ impl GeneratedFoldStep {
             // (`schedule_from_entry`) stamp the per-level value for fold steps so
             // a root-direct commit stays single-chunk.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
+            precommitted_groups: Vec::new(),
         };
         params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
     }

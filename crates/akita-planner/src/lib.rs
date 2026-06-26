@@ -17,6 +17,7 @@ pub use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusFamily};
 pub mod catalog_identity;
 pub mod emit;
 pub mod generated;
+mod group_batch;
 mod resolve;
 pub mod schedule_params;
 
@@ -27,8 +28,10 @@ pub use catalog_identity::{
 };
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 pub use generated::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
+pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
-    estimate_proof_bytes, generated_schedule_lookup_key, resolve_schedule, schedule_from_entry,
+    estimate_proof_bytes, generated_schedule_lookup_key, resolve_group_batch_schedule,
+    resolve_schedule, schedule_from_entry,
 };
 pub use schedule_params::find_schedule;
 

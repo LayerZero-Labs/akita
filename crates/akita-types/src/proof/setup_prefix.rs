@@ -749,6 +749,7 @@ fn active_setup_role_widths(
     level_params: &LevelParams,
     opening_batch: &OpeningBatchShape,
 ) -> Result<(usize, usize, usize), AkitaError> {
+    level_params.reject_grouped_root("active_setup_role_widths")?;
     let w_a = level_params
         .block_len
         .checked_mul(level_params.num_digits_commit)

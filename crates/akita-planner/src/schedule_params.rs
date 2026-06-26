@@ -297,6 +297,7 @@ fn derive_candidate_level_params(
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
             witness_chunk: policy.witness_chunk_for_level(fold_level),
+            precommitted_groups: Vec::new(),
         }
         .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
             continue;
@@ -840,6 +841,7 @@ fn compute_root_direct_level_params(
         cached_num_digits_fold_value: 1,
         // Root-direct ships the raw polynomial on the wire (no chunked commitment).
         witness_chunk: ChunkedWitnessCfg::default(),
+        precommitted_groups: Vec::new(),
     }
     .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
     Ok(Some(root_direct_params))
@@ -1056,6 +1058,7 @@ fn find_schedule_inner(
                 cached_num_digits_fold_claims: 0,
                 cached_num_digits_fold_value: 1,
                 witness_chunk: root_witness_chunk,
+                precommitted_groups: Vec::new(),
             }
             .with_fold_linf_cap_config(field_bits, key.num_polynomials) else {
                 continue;
