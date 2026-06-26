@@ -33,11 +33,21 @@ pub(crate) struct XofCursor {
 }
 
 impl XofCursor {
-    /// Build a cursor by absorbing the static domain separator followed by the
-    /// transcript-derived `seed` into a fresh SHAKE256 instance.
+    /// Build a cursor by absorbing the sparse-challenge domain separator
+    /// followed by the transcript-derived `seed` into a fresh SHAKE256 instance.
     pub(crate) fn from_seed(seed: &[u8]) -> Self {
+        Self::from_seed_with_domain(SPARSE_PRG_DOMAIN, seed)
+    }
+
+    /// Build a cursor by absorbing an explicit `domain` separator followed by
+    /// the transcript-derived `seed`.
+    ///
+    /// Callers outside the sparse-challenge family (e.g. the JL projection
+    /// sampler) pass their own domain so their PRG stream is separated from the
+    /// sparse-challenge stream and cannot collide on a shared seed.
+    pub(crate) fn from_seed_with_domain(domain: &[u8], seed: &[u8]) -> Self {
         let mut xof = Shake256::default();
-        xof.update(SPARSE_PRG_DOMAIN);
+        xof.update(domain);
         xof.update(seed);
         let mut cursor = Self {
             reader: xof.finalize_xof(),
@@ -64,7 +74,11 @@ impl XofCursor {
         b
     }
 
-    /// Copy `out.len()` bytes from the buffered XOF stream in one pass.
+    /// Fill `out` with the next bytes from the XOF stream.
+    ///
+    /// Used by callers that consume raw PRG bytes directly (e.g. packing a
+    /// ternary projection row two bits per entry) rather than via the typed
+    /// `next_*` draws.
     #[inline]
     pub(crate) fn fill_bytes(&mut self, out: &mut [u8]) {
         let mut off = 0;

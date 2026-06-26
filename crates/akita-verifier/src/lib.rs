@@ -30,6 +30,7 @@ mod stages;
 pub use akita_types::CommitmentVerifier;
 pub use proof::cleartext_witness_opening_matches;
 pub use protocol::{
-    batched_verify, prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay,
+    batched_verify, jl::verify_jl_consistency, prepare_ring_switch_row_eval,
+    RingSwitchDeferredRowEval, RingSwitchReplay,
 };
 pub use stages::stage1::AkitaStage1Verifier;

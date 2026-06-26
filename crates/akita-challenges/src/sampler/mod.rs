@@ -25,7 +25,7 @@ mod exact_shell;
 pub(crate) mod op_norm;
 mod op_norm_accumulate;
 mod uniform;
-mod xof;
+pub(crate) mod xof;
 
 pub(crate) use xof::XofCursor;
 

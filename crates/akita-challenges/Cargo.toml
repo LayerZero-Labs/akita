@@ -16,6 +16,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 sha3 = "0.10.8"
@@ -23,9 +24,18 @@ tracing = "0.1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+akita-types = { version = "0.1.0", path = "../akita-types" }
 
 [[bench]]
 name = "sparse_challenge"
+harness = false
+
+[[bench]]
+name = "jl_projection"
+harness = false
+
+[[bench]]
+name = "jl_mle"
 harness = false
 
 [[bench]]
@@ -35,6 +45,7 @@ harness = false
 [features]
 default = []
 parallel = ["akita-field/parallel"]
+jl-test-fixtures = []
 
 [lints]
 workspace = true

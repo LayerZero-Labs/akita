@@ -50,8 +50,10 @@ dependencies = [
 name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
+ "akita-algebra",
  "akita-field",
  "akita-transcript",
+ "akita-types",
  "criterion",
  "sha3 0.10.9",
  "tracing",
@@ -223,6 +225,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-field",
+ "akita-prover",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
