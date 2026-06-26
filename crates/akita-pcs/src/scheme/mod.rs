@@ -7,8 +7,8 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RootCommitBackend,
-    RootCommitPoly, RootProvePoly, UniformProverStack,
+    ComputeBackendSetup, LevelProveStacks, RecursiveWitnessProveFlowBackend, RootCommitBackend,
+    RootCommitPoly, RootProveFlowBackend, RootProvePoly, UniformProverStack,
 };
 use akita_prover::ProverOpeningBatch;
 use akita_prover::ProverTranscriptGrind;
@@ -143,7 +143,10 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: RootProvePoly<F, D>,
-        B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
+        B: RootProveFlowBackend<F, P, Self::ExtField, D>
+            + RecursiveWitnessProveFlowBackend<F, Self::ExtField>
+            + ComputeBackendSetup<F>
+            + 'a,
         <B as ComputeBackendSetup<F>>::PreparedSetup: 'a,
     {
         let t_prove_total = Instant::now();
