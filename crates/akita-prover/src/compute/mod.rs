@@ -32,6 +32,7 @@ mod plans;
 mod poly;
 mod stack;
 
+pub use crate::kernels::crt_ntt::NttSlotCacheAny;
 pub use backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,

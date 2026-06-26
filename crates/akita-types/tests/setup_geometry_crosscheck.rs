@@ -1,7 +1,10 @@
-//! Cross-check `setup_geometry_at` against `compute_setup_layout` on generated schedules.
+//! Cross-check setup geometry helpers on generated schedules.
 
 use akita_config::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
-use akita_types::{compute_setup_layout, setup_geometry_at, MRowLayout, SetupRelationShape};
+use akita_types::{
+    active_setup_field_len, compute_setup_layout, setup_required_for_shape, MRowLayout,
+    SetupRelationShape, SETUP_OFFLOAD_D_SETUP,
+};
 
 fn field_bits_for_sis(sis: akita_types::SisModulusFamily) -> u32 {
     match sis {
@@ -12,7 +15,7 @@ fn field_bits_for_sis(sis: akita_types::SisModulusFamily) -> u32 {
 }
 
 #[test]
-fn setup_geometry_matches_layout_on_generated_schedules() {
+fn setup_required_matches_layout_on_generated_schedules() {
     for family in ALL_GENERATED_FAMILIES {
         let policy = (family.policy)();
         let field_bits = field_bits_for_sis(policy.sis_family);
@@ -43,11 +46,28 @@ fn setup_geometry_matches_layout_on_generated_schedules() {
                     depth_fold,
                 )
                 .expect("relation shape");
-                let geometry = setup_geometry_at(level, &schedule, &shape).expect("geometry");
+                let required = setup_required_for_shape(&shape).expect("required");
                 let layout = compute_setup_layout(&shape).expect("layout");
                 assert_eq!(
-                    geometry.required, layout.required,
+                    required, layout.required,
                     "family={} key={key:?} level={level}",
+                    family.module_name,
+                );
+                let opening_batch =
+                    akita_types::OpeningBatchShape::new(key.num_vars, key.num_polynomials)
+                        .expect("opening batch");
+                let field_len = active_setup_field_len(
+                    lp,
+                    &opening_batch,
+                    m_row_layout,
+                    depth_fold,
+                    SETUP_OFFLOAD_D_SETUP,
+                )
+                .expect("field len");
+                assert_eq!(
+                    field_len,
+                    layout.required * SETUP_OFFLOAD_D_SETUP,
+                    "prefix field len must match sumcheck footprint family={} key={key:?} level={level}",
                     family.module_name,
                 );
             }

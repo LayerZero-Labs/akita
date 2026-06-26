@@ -1,4 +1,7 @@
 //! Runtime per-fold ring dimension plan derived from the effective schedule.
+//!
+//! Infrastructure for runtime ring cutover (waves 4+). Validation runs on every
+//! generated schedule table; orchestration wiring lands in the cutover PR.
 
 use std::collections::BTreeSet;
 

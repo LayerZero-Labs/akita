@@ -11,7 +11,7 @@ use akita_prover::{
 use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, padded_setup_prefix_len,
-    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams,
+    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams, MRowLayout,
     OpeningBatchShape, SetupPrefixSlotAny, SETUP_OFFLOAD_D_SETUP,
 };
 
@@ -102,9 +102,19 @@ where
         } else {
             &recursive_opening_batch
         };
+        let exec = schedule.get_execution_schedule(idx)?;
+        let m_row_layout = if exec.is_terminal {
+            MRowLayout::WithoutDBlock
+        } else {
+            MRowLayout::WithDBlock
+        };
+        let depth_fold = fold
+            .params
+            .num_digits_fold(opening_batch.num_polynomials(), F::modulus_bits())?;
         let next_fold = &folds[idx + 1];
         let natural_len =
-            active_setup_field_len(&fold.params, opening_batch, D)?.min(available_field_len);
+            active_setup_field_len(&fold.params, opening_batch, m_row_layout, depth_fold, D)?
+                .min(available_field_len);
         let n_prefix = padded_setup_prefix_len(natural_len);
         if n_prefix > available_field_len {
             continue;

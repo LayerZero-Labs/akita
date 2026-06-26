@@ -29,6 +29,9 @@ use std::sync::Arc;
 pub struct CpuBackend;
 
 /// CPU-prepared setup keyed by runtime ring dimension.
+///
+/// NTT caches are keyed by [`NttCacheKey`]; compile-time `D` on kernel entry points
+/// selects the envelope slot warmed at `prepare_expanded::<D>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
@@ -68,14 +71,7 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
 
 impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     fn envelope_ntt_key<const D: usize>(&self) -> Result<NttCacheKey, AkitaError> {
-        let num_ring_elements = self
-            .expanded
-            .shared_matrix()
-            .total_ring_elements_at::<D>()?;
-        Ok(NttCacheKey {
-            ring_d: D,
-            num_ring_elements,
-        })
+        NttCacheKey::from_envelope(&self.expanded, D)
     }
 
     pub(crate) fn shared_ntt<const D: usize>(&self) -> Result<&NttSlotCache<D>, AkitaError> {
@@ -568,6 +564,36 @@ mod tests {
         assert_eq!(profile.max_i8_log_basis, MAX_I8_LOG_BASIS);
         assert!(profile.balanced_digit_safe_width > 0);
         assert!(profile.raw_i8_safe_width > 0);
+    }
+
+    #[test]
+    fn cpu_prepared_setup_warms_multiple_ntt_slots() {
+        let setup =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, setup_envelope(32)).unwrap();
+        let mut prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let envelope_key =
+            NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
+        let partial_key = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: 1,
+        };
+        CpuBackend
+            .ensure_ntt_slot(&mut prepared, partial_key)
+            .expect("warm partial slot");
+        assert!(prepared.shared_ntt_cache_bytes() > 0);
+        CpuBackend
+            .ntt_slot(&prepared, envelope_key)
+            .expect("envelope slot still available");
+        CpuBackend
+            .ntt_slot(&prepared, partial_key)
+            .expect("partial slot retrievable");
+        let miss = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: 99_999,
+        };
+        CpuBackend
+            .ntt_slot(&prepared, miss)
+            .expect_err("unwarmed key missing");
     }
 
     #[test]

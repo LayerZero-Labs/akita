@@ -12,6 +12,13 @@ use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 
 /// Shared prepared-setup contract for prover compute backends.
+///
+/// ## Runtime ring cutover (phase 1)
+///
+/// `PreparedSetup` is keyed by [`NttCacheKey`] at runtime. Kernel traits still take
+/// `const D: usize` at the API boundary; `prepare_expanded::<D>` warms the envelope
+/// slot for compile-time `D`. Per-fold ring dimensions become runtime cache keys in
+/// later cutover waves (`ensure_ntt_slot` at prove entry).
 pub trait ComputeBackendSetup<F>: Send + Sync
 where
     F: FieldCore + CanonicalField,
