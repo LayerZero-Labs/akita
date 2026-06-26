@@ -11,7 +11,7 @@ pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
     tensor: &TensorChallengeSet,
     block_len: usize,
     num_digits: usize,
-) -> Result<DecomposeFoldWitness<F, D>, AkitaError>
+) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {

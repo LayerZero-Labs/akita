@@ -335,7 +335,7 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
+    ) -> DecomposeFoldWitness<F> {
         let inner_width = block_len * num_digits;
         let num_blocks = challenges.len();
 
@@ -359,7 +359,7 @@ where
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
         Ok(None)
     }
 
@@ -531,7 +531,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.decompose_fold(
             plan.challenges,
             plan.block_len,

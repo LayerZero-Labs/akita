@@ -140,7 +140,7 @@ macro_rules! delegate_opening_kernels {
                 prepared: Option<&Self::PreparedSetup>,
                 source: S,
                 plan: DecomposeFoldPlan<'_>,
-            ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+            ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
                 CpuBackend.decompose_fold(prepared, source, plan)
             }
         }

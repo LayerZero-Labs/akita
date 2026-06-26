@@ -17,7 +17,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AppendToTranscript,
     FlatDigitBlocks, FlatRingVec, OpeningBatchShape, OpeningGroupShape, OpeningPoints,
-    PointVariableSelection, RingCommitment,
+    PointVariableSelection, RingBuf, RingCommitment,
 };
 
 pub use api::{
@@ -236,57 +236,59 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
 }
 
 /// Prover-side output of the decompose + challenge-fold step.
+///
+/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
+/// closures borrow typed ring rows via [`Self::z_folded_rings_trusted`] and
+/// [`Self::centered_coeffs_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
-    /// Folded witness rows in ring form.
-    pub z_folded_rings: Vec<CyclotomicRing<F, D>>,
-    /// Centered integer coefficients for each `z_folded_rings` row.
-    pub centered_coeffs: Vec<[i32; D]>,
-    /// Infinity norm of `centered_coeffs`.
-    pub centered_inf_norm: u32,
-}
-
-/// Runtime ring-degree-erased [`DecomposeFoldWitness`] for fold relation storage.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ErasedDecomposeFoldWitness<F: FieldCore> {
-    z_folded_ring_coeffs: Vec<F>,
+pub struct DecomposeFoldWitness<F: FieldCore> {
+    /// Folded witness rows in flat ring storage.
+    pub z_folded_rings: RingBuf<F>,
     centered_coeffs_flat: Vec<i32>,
-    centered_inf_norm: u32,
+    /// Infinity norm of centered integer coefficients.
+    pub centered_inf_norm: u32,
     ring_dim: usize,
-    _marker: std::marker::PhantomData<F>,
 }
 
-impl<F: FieldCore> ErasedDecomposeFoldWitness<F> {
-    /// Flatten a typed decompose witness for D-free storage.
-    pub fn from_typed<const D: usize>(witness: DecomposeFoldWitness<F, D>) -> Self {
-        let mut z_folded_ring_coeffs =
-            Vec::with_capacity(witness.z_folded_rings.len().saturating_mul(D));
-        for ring in &witness.z_folded_rings {
-            z_folded_ring_coeffs.extend_from_slice(ring.coefficients());
-        }
-        let centered_coeffs_flat = witness
-            .centered_coeffs
-            .iter()
-            .flat_map(|row| row.iter().copied())
-            .collect();
+impl<F: FieldCore> DecomposeFoldWitness<F> {
+    /// Construct from typed ring rows at a kernel boundary.
+    pub fn from_parts<const D: usize>(
+        z_folded_rings: Vec<CyclotomicRing<F, D>>,
+        centered_coeffs: Vec<[i32; D]>,
+        centered_inf_norm: u32,
+    ) -> Self {
+        debug_assert_eq!(z_folded_rings.len(), centered_coeffs.len());
         Self {
-            z_folded_ring_coeffs,
-            centered_coeffs_flat,
-            centered_inf_norm: witness.centered_inf_norm,
+            z_folded_rings: RingBuf::from_ring_elems(&z_folded_rings),
+            centered_coeffs_flat: centered_coeffs
+                .iter()
+                .flat_map(|row| row.iter().copied())
+                .collect(),
+            centered_inf_norm,
             ring_dim: D,
-            _marker: std::marker::PhantomData,
         }
     }
 
-    /// Reconstruct the typed decompose witness without recomputing fold math.
-    ///
+    /// Stored ring dimension (coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Number of folded witness rows.
+    pub fn row_count(&self) -> usize {
+        self.centered_coeffs_flat
+            .len()
+            .checked_div(self.ring_dim)
+            .unwrap_or(0)
+    }
+
     /// # Errors
     ///
     /// Returns an error if the requested ring dimension does not match storage.
-    pub fn to_typed<const D: usize>(&self) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
         if self.ring_dim != D {
             return Err(AkitaError::InvalidInput(format!(
-                "erased decompose witness ring_d={} does not match requested D={D}",
+                "decompose fold witness ring_d={} does not match requested D={D}",
                 self.ring_dim
             )));
         }
@@ -296,40 +298,39 @@ impl<F: FieldCore> ErasedDecomposeFoldWitness<F> {
                 actual: self.centered_coeffs_flat.len(),
             });
         }
-        if !self.z_folded_ring_coeffs.len().is_multiple_of(D) {
+        if !self.z_folded_rings.can_decode_vec(D) {
             return Err(AkitaError::InvalidSize {
                 expected: D,
-                actual: self.z_folded_ring_coeffs.len(),
+                actual: self.z_folded_rings.coeff_len(),
             });
         }
-        let ring_count = self.z_folded_ring_coeffs.len() / D;
+        let ring_count = self.z_folded_rings.count();
         let row_count = self.centered_coeffs_flat.len() / D;
         if ring_count != row_count {
             return Err(AkitaError::InvalidInput(
-                "erased decompose witness ring row count mismatch".to_string(),
+                "decompose fold witness ring row count mismatch".to_string(),
             ));
         }
-        let (z_chunks, z_rem) = self.z_folded_ring_coeffs.as_chunks::<D>();
-        debug_assert!(z_rem.is_empty());
-        let z_folded_rings = z_chunks
-            .iter()
-            .map(|coeffs| CyclotomicRing::from_coefficients(*coeffs))
-            .collect();
-        let (centered_chunks, centered_rem) = self.centered_coeffs_flat.as_chunks::<D>();
-        debug_assert!(centered_rem.is_empty());
-        let centered_coeffs = centered_chunks
-            .iter()
-            .map(|row| {
-                let mut out = [0i32; D];
-                out.copy_from_slice(row);
-                out
-            })
-            .collect();
-        Ok(DecomposeFoldWitness {
-            z_folded_rings,
-            centered_coeffs,
-            centered_inf_norm: self.centered_inf_norm,
-        })
+        Ok(())
+    }
+
+    /// Borrow folded ring rows after [`Self::ensure_ring_dim`].
+    pub fn z_folded_rings_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
+        debug_assert_eq!(self.ring_dim, D);
+        self.z_folded_rings.as_ring_slice_trusted::<D>()
+    }
+
+    /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].
+    pub fn centered_coeffs_trusted<const D: usize>(&self) -> &[[i32; D]] {
+        debug_assert_eq!(self.ring_dim, D);
+        let (chunks, rem) = self.centered_coeffs_flat.as_chunks::<D>();
+        debug_assert!(rem.is_empty());
+        chunks
+    }
+
+    /// Owned copy of centered coefficient rows after [`Self::ensure_ring_dim`].
+    pub fn centered_coeffs_owned<const D: usize>(&self) -> Vec<[i32; D]> {
+        self.centered_coeffs_trusted::<D>().to_vec()
     }
 }
 

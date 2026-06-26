@@ -181,7 +181,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.poly.decompose_fold(
             plan.challenges,
             plan.block_len,

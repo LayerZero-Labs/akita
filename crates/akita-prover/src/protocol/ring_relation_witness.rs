@@ -1,6 +1,6 @@
 //! Prover-only secret witness for the negacyclic-ring relation.
 
-use crate::{DecomposeFoldWitness, ErasedDecomposeFoldWitness};
+use crate::DecomposeFoldWitness;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks, RingBuf};
 
@@ -50,7 +50,7 @@ impl ErasedFlatDigitBlocks {
 
 /// Prover secret for the per-fold ring relation (never built on the verifier).
 pub struct RingRelationWitness<F: FieldCore> {
-    pub z_folded_rings: ErasedDecomposeFoldWitness<F>,
+    pub z_folded_rings: DecomposeFoldWitness<F>,
     pub fold_grind_nonce: u32,
     e_hat: ErasedFlatDigitBlocks,
     pub e_folded: RingBuf<F>,
@@ -58,7 +58,7 @@ pub struct RingRelationWitness<F: FieldCore> {
 }
 
 type TypedRingRelationWitnessParts<F, const D: usize> = (
-    DecomposeFoldWitness<F, D>,
+    DecomposeFoldWitness<F>,
     u32,
     FlatDigitBlocks<D>,
     Vec<akita_algebra::CyclotomicRing<F, D>>,
@@ -68,14 +68,15 @@ type TypedRingRelationWitnessParts<F, const D: usize> = (
 impl<F: FieldCore> RingRelationWitness<F> {
     /// Capture typed fold-relation witness parts into D-free storage.
     pub fn from_typed<const D: usize>(
-        z_folded_rings: DecomposeFoldWitness<F, D>,
+        z_folded_rings: DecomposeFoldWitness<F>,
         fold_grind_nonce: u32,
         e_hat: FlatDigitBlocks<D>,
         e_folded: Vec<akita_algebra::CyclotomicRing<F, D>>,
         hint: AkitaCommitmentHint<F, D>,
     ) -> Self {
+        debug_assert_eq!(z_folded_rings.ring_dim(), D);
         Self {
-            z_folded_rings: ErasedDecomposeFoldWitness::from_typed(z_folded_rings),
+            z_folded_rings,
             fold_grind_nonce,
             e_hat: ErasedFlatDigitBlocks::from_typed(e_hat),
             e_folded: RingBuf::from_ring_elems(&e_folded),
@@ -84,8 +85,9 @@ impl<F: FieldCore> RingRelationWitness<F> {
     }
 
     pub fn into_typed<const D: usize>(self) -> Result<TypedRingRelationWitnessParts<F, D>, AkitaError> {
+        self.z_folded_rings.ensure_ring_dim::<D>()?;
         Ok((
-            self.z_folded_rings.to_typed::<D>()?,
+            self.z_folded_rings,
             self.fold_grind_nonce,
             self.e_hat.rebuild::<D>()?,
             self.e_folded.as_ring_slice_trusted::<D>().to_vec(),

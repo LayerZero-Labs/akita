@@ -67,7 +67,7 @@ where
         &e_folded,
         instance.ring_multiplier_point(),
         instance.row_coefficient_rings()?,
-        &z_folded_rings.centered_coeffs,
+        z_folded_rings.centered_coeffs_trusted::<D>(),
         z_folded_rings.centered_inf_norm,
         instance.y()?,
         opening_batch.num_polynomials(),
@@ -75,14 +75,14 @@ where
         lp.inner_width(),
         instance.m_row_layout(),
     )?;
-    let z_centered = z_folded_rings.centered_coeffs.clone();
+    let z_centered = z_folded_rings.centered_coeffs_owned::<D>();
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
             &e_hat,
             &decomposed_inner_rows,
             &u_concat_digits,
-            &z_folded_rings.centered_coeffs,
+            z_folded_rings.centered_coeffs_trusted::<D>(),
             &r,
             lp,
             num_claims,

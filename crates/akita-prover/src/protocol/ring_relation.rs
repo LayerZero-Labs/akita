@@ -120,30 +120,34 @@ where
 }
 
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
-    witnesses: Vec<DecomposeFoldWitness<F, D>>,
-) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    witnesses: Vec<DecomposeFoldWitness<F>>,
+) -> Result<DecomposeFoldWitness<F>, AkitaError> {
     let Some((first, rest)) = witnesses.split_first() else {
         return Err(AkitaError::InvalidInput(
             "batched decompose_fold requires at least one witness".to_string(),
         ));
     };
-    let z_len = first.z_folded_rings.len();
-    let coeff_len = first.centered_coeffs.len();
-    let mut z_folded_rings = first.z_folded_rings.clone();
-    let mut centered_coeffs = first.centered_coeffs.clone();
+    first.ensure_ring_dim::<D>()?;
+    let row_count = first.row_count();
+    let mut z_folded_rings = first.z_folded_rings_trusted::<D>().to_vec();
+    let mut centered_coeffs = first.centered_coeffs_owned::<D>();
 
     for witness in rest {
-        if witness.z_folded_rings.len() != z_len || witness.centered_coeffs.len() != coeff_len {
+        witness.ensure_ring_dim::<D>()?;
+        if witness.row_count() != row_count {
             return Err(AkitaError::InvalidInput(
                 "batched decompose_fold witness length mismatch".to_string(),
             ));
         }
-        for (dst, src) in z_folded_rings.iter_mut().zip(witness.z_folded_rings.iter()) {
+        for (dst, src) in z_folded_rings
+            .iter_mut()
+            .zip(witness.z_folded_rings_trusted::<D>())
+        {
             *dst += *src;
         }
         for (dst, src) in centered_coeffs
             .iter_mut()
-            .zip(witness.centered_coeffs.iter())
+            .zip(witness.centered_coeffs_trusted::<D>())
         {
             for k in 0..D {
                 dst[k] = dst[k].checked_add(src[k]).ok_or_else(|| {
@@ -162,11 +166,11 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         .max()
         .unwrap_or(0);
 
-    Ok(DecomposeFoldWitness {
+    Ok(DecomposeFoldWitness::from_parts(
         z_folded_rings,
         centered_coeffs,
         centered_inf_norm,
-    })
+    ))
 }
 
 pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
@@ -176,7 +180,7 @@ pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
     point_polys: &[&P],
     point_indices: &[usize],
     lp: &LevelParams,
-) -> Result<DecomposeFoldWitness<F, D>, AkitaError>
+) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     P: RootOpeningSource<F, D>,
@@ -222,7 +226,7 @@ where
             )? {
                 BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
                 BatchDecomposeFoldOutcome::FallbackPerPoly => {
-                    let witnesses: Vec<DecomposeFoldWitness<F, D>> = point_polys
+                    let witnesses: Vec<DecomposeFoldWitness<F>> = point_polys
                         .iter()
                         .zip(point_challenges.chunks(*num_blocks_per_claim))
                         .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
@@ -239,7 +243,7 @@ where
                             )
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    aggregate_decompose_fold_witnesses(witnesses)
+                    aggregate_decompose_fold_witnesses::<F, D>(witnesses)
                 }
                 BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
                     "sparse batched fold is unsupported for this polynomial backend".to_string(),

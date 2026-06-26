@@ -31,7 +31,7 @@ pub enum TensorPackedWitness<E: FieldCore> {
 #[derive(Debug)]
 pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
     /// Fused batched witness produced by the kernel.
-    Fused(DecomposeFoldWitness<F, D>),
+    Fused(DecomposeFoldWitness<F>),
     /// No fused path; caller should decompose-fold each polynomial and aggregate.
     FallbackPerPoly,
     /// Batch shape or challenge plan is not supported.
@@ -111,7 +111,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: S,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError>;
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError>;
 }
 
 /// Batched decompose-fold kernel over a borrowed opening-batch view `S`.
