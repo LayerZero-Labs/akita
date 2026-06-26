@@ -13,6 +13,7 @@ use akita_field::{AkitaError, ExtField, FieldCore, MulBase};
 
 use crate::layout::MRowLayout;
 use crate::proof::AkitaExpandedSetup;
+use crate::setup_geometry::{compute_setup_layout, SetupLayoutFootprint, SetupRelationShape};
 
 const POSSIBLE_CARRIES: usize = 2;
 
@@ -482,91 +483,35 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         let z_dims_pow2 = inputs.block_len.is_power_of_two();
 
-        let tiered = inputs.tier_split > 1;
-        if tiered && (inputs.n_f == 0 || inputs.num_segments != 1) {
-            return Err(AkitaError::InvalidSetup(
-                "tiered setup contribution requires n_f > 0 and a single commitment bundle".into(),
-            ));
-        }
-        let n_d_active = match inputs.m_row_layout {
-            MRowLayout::WithDBlock => inputs.n_d,
-            MRowLayout::WithoutDBlock => 0,
-        };
-        // Canonical row layout: consistency (1) | public | D (n_d_active) |
-        // COMMIT (F when tiered, else B) | B_inner (tiered) | A.
-        let d_start = checked_add(1, inputs.num_public_rows, "D row start")?;
-        // COMMIT block start (the F block when tiered, the B block otherwise).
-        let f_start = checked_add(d_start, n_d_active, "COMMIT row start")?;
-        let commit_rows_pg = if tiered { inputs.n_f } else { inputs.n_b };
-        let b_inner_rows_pg = if tiered {
-            checked_mul(inputs.tier_split, inputs.n_b, "B_inner rows")?
-        } else {
-            0
-        };
-        let commit_rows = checked_mul(commit_rows_pg, inputs.num_segments, "COMMIT row count")?;
-        let b_inner_start = checked_add(f_start, commit_rows, "B_inner row start")?;
-        let b_inner_rows_total =
-            checked_mul(b_inner_rows_pg, inputs.num_segments, "B_inner row count")?;
-        let a_start = checked_add(b_inner_start, b_inner_rows_total, "A row start")?;
-        let a_end = checked_add(a_start, inputs.n_a, "A row end")?;
-        // Non-tiered alias used by the packed B scan.
-        let b_start = f_start;
-        if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
+        let shape = SetupRelationShape::from(inputs);
+        let layout = compute_setup_layout(&shape)?;
+        let SetupLayoutFootprint {
+            required,
+            d_required,
+            b_required,
+            a_required,
+            b_inner_required,
+            f_required,
+            a_end,
+            d_start,
+            f_start,
+            b_start,
+            b_inner_start,
+            a_start,
+            n_d_active,
+            tiered,
+            b_inner_stride,
+            f_stride,
+            n_cols_e,
+            n_cols_t,
+            stride_t,
+            cols_per_poly_t,
+            b_per_claim_e,
+            ..
+        } = layout;
+        if inputs.rows > inputs.eq_tau1.len() {
             return Err(AkitaError::InvalidSetup(
                 "M-row weights are inconsistent with setup evaluator layout".into(),
-            ));
-        }
-
-        let stride_t = checked_mul(inputs.n_a, inputs.depth_open, "T stride")?;
-        let cols_per_poly_t = checked_mul(stride_t, inputs.num_blocks, "T polynomial width")?;
-        let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
-        let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
-        let max_group_poly_count = inputs
-            .num_polys_per_segment
-            .iter()
-            .copied()
-            .max()
-            .unwrap_or(0);
-        let n_cols_t = checked_mul(max_group_poly_count, cols_per_poly_t, "T column width")?;
-
-        let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
-        let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
-        // Packed B is disabled when tiered (the COMMIT block is F + B_inner,
-        // scanned separately so the stored B' is read once per entry).
-        let b_required = if tiered {
-            0
-        } else {
-            checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?
-        };
-        // Tiered stored-prefix footprints. `n_cols_t` is the full per-group B
-        // width; the stored B' is `n_cols_t / tier_split` reused across slices.
-        let (b_inner_stride, b_inner_required, f_stride, f_required) = if tiered {
-            if n_cols_t == 0 || !n_cols_t.is_multiple_of(inputs.tier_split) {
-                return Err(AkitaError::InvalidSetup(
-                    "tiered B' width does not divide the per-group T width".into(),
-                ));
-            }
-            let b_inner_stride = n_cols_t / inputs.tier_split;
-            let b_inner_required =
-                checked_mul(inputs.n_b, b_inner_stride, "B_inner setup footprint")?;
-            let f_stride = checked_mul(
-                checked_mul(inputs.tier_split, inputs.n_b, "F width")?,
-                inputs.depth_open,
-                "F width",
-            )?;
-            let f_required = checked_mul(inputs.n_f, f_stride, "F setup footprint")?;
-            (b_inner_stride, b_inner_required, f_stride, f_required)
-        } else {
-            (0, 0, 0, 0)
-        };
-        let required = d_required
-            .max(b_required)
-            .max(a_required)
-            .max(b_inner_required)
-            .max(f_required);
-        if required == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "setup evaluator requires a non-empty packed footprint".into(),
             ));
         }
 

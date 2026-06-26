@@ -17,7 +17,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            # Prefer install without `apt-get update`: runner package index is usually
+            # fresh enough, and update can flake when third-party apt mirrors 403.
+            sudo apt-get install -y --no-install-recommends ripgrep \
+              || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep; }
+          fi
+          rg --version
 
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
 

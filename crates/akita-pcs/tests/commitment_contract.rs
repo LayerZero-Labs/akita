@@ -80,18 +80,34 @@ impl<F> ComputeBackendSetup<F> for ContractCommitBackend
 where
     F: FieldCore + CanonicalField,
 {
-    type PreparedSetup<const RING_D: usize> = CpuPreparedSetup<F, RING_D>;
+    type PreparedSetup = CpuPreparedSetup<F>;
 
     fn prepare_expanded<const RING_D: usize>(
         &self,
         expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
-    ) -> Result<Self::PreparedSetup<RING_D>, AkitaError> {
-        CpuBackend.prepare_expanded(expanded)
+    ) -> Result<Self::PreparedSetup, AkitaError> {
+        CpuBackend.prepare_expanded::<RING_D>(expanded)
     }
 
-    fn prepared_expanded_setup<'a, const RING_D: usize>(
+    fn ensure_ntt_slot(
         &self,
-        prepared: &'a Self::PreparedSetup<RING_D>,
+        prepared: &mut Self::PreparedSetup,
+        key: akita_types::NttCacheKey,
+    ) -> Result<(), AkitaError> {
+        CpuBackend.ensure_ntt_slot(prepared, key)
+    }
+
+    fn ntt_slot<'a>(
+        &self,
+        prepared: &'a Self::PreparedSetup,
+        key: akita_types::NttCacheKey,
+    ) -> Result<&'a akita_prover::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
+        CpuBackend.ntt_slot(prepared, key)
+    }
+
+    fn prepared_expanded_setup<'a>(
+        &self,
+        prepared: &'a Self::PreparedSetup,
     ) -> &'a akita_types::AkitaExpandedSetup<F> {
         CpuBackend.prepared_expanded_setup(prepared)
     }
@@ -103,7 +119,7 @@ where
 {
     fn digit_rows<const RING_D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<RING_D>,
+        prepared: &Self::PreparedSetup,
         row_len: usize,
         digits: &[[i8; RING_D]],
         log_basis: u32,
@@ -119,7 +135,7 @@ where
 {
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: ContractCommitView<'_>,
         plan: CommitInnerPlan,
     ) -> Result<akita_prover::CommitInnerWitness<F, D>, AkitaError> {

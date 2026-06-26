@@ -54,7 +54,7 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 #[allow(clippy::too_many_arguments)]
 pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    prefix_slots: &SetupPrefixRegistry<Cfg::Field>,
     stacks: &'stack impl LevelProveStacks<
         'stack,
         Cfg::Field,
@@ -102,10 +102,10 @@ where
         + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
-    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
-    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
-    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
-    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {
@@ -198,7 +198,7 @@ where
                     (ring_backend, &ring_prepared),
                     expanded.as_ref(),
                 )?;
-                let level_prefix_slots = SetupPrefixProverRegistry::new();
+                let level_prefix_slots = SetupPrefixRegistry::new();
                 let prepared_fold =
                     prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
                         &level_stack,

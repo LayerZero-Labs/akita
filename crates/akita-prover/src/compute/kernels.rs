@@ -51,7 +51,7 @@ where
     /// Inner commitment that preserves the recomposed inner rows.
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: S,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>;
@@ -65,7 +65,7 @@ where
     /// Fused D/B cyclic rows plus A-side quotient rows.
     fn relation_rows(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: S,
         plan: RingSwitchRelationPlan,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
@@ -81,7 +81,7 @@ where
     /// A-side quotient rows for one additional public-row segment.
     fn quotient_rows(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: S,
         plan: RingSwitchQuotientPlan,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -100,7 +100,7 @@ where
     /// Fused fold + evaluation in one pass over the source.
     fn evaluate_and_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: S,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError>;
@@ -108,7 +108,7 @@ where
     /// Decompose + challenge-fold step.
     fn decompose_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: S,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError>;
@@ -122,7 +122,7 @@ where
     /// Fused batched decompose-fold at one opening point.
     fn decompose_fold_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: S,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError>;
@@ -138,7 +138,7 @@ where
     /// Tensor-column partials at one logical point.
     fn column_partials(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: S,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
@@ -148,14 +148,14 @@ where
     /// Tensor-packed root witness, dense or sparse when available.
     fn packed_witness(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: S,
     ) -> Result<TensorPackedWitness<E>, AkitaError>;
 
     /// Committed tensor-projected root polynomial.
     fn root_projection(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: S,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
@@ -172,7 +172,7 @@ where
     /// Tensor-column partials for a same-point batch.
     fn column_partials_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: S,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -185,7 +185,7 @@ where
     /// batch and the caller must fall back to dense materialization.
     fn sparse_linear_combination(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: S,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>;

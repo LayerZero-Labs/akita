@@ -28,7 +28,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
-use akita_types::{AkitaExpandedSetup, FpExtEncoding};
+use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey};
 use std::sync::Arc;
 
 macro_rules! delegate_compute_backend_setup {
@@ -37,19 +37,34 @@ macro_rules! delegate_compute_backend_setup {
         where
             F: FieldCore + CanonicalField,
         {
-            type PreparedSetup<const D: usize> =
-                <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup<D>;
+            type PreparedSetup = <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup;
 
             fn prepare_expanded<const D: usize>(
                 &self,
                 expanded: Arc<AkitaExpandedSetup<F>>,
-            ) -> Result<Self::PreparedSetup<D>, AkitaError> {
-                CpuBackend.prepare_expanded(expanded)
+            ) -> Result<Self::PreparedSetup, AkitaError> {
+                CpuBackend.prepare_expanded::<D>(expanded)
             }
 
-            fn prepared_expanded_setup<'a, const D: usize>(
+            fn ensure_ntt_slot(
                 &self,
-                prepared: &'a Self::PreparedSetup<D>,
+                prepared: &mut Self::PreparedSetup,
+                key: NttCacheKey,
+            ) -> Result<(), AkitaError> {
+                CpuBackend.ensure_ntt_slot(prepared, key)
+            }
+
+            fn ntt_slot<'a>(
+                &self,
+                prepared: &'a Self::PreparedSetup,
+                key: NttCacheKey,
+            ) -> Result<&'a crate::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
+                CpuBackend.ntt_slot(prepared, key)
+            }
+
+            fn prepared_expanded_setup<'a>(
+                &self,
+                prepared: &'a Self::PreparedSetup,
             ) -> &'a AkitaExpandedSetup<F> {
                 CpuBackend.prepared_expanded_setup(prepared)
             }
@@ -65,7 +80,7 @@ macro_rules! delegate_digit_rows {
         {
             fn digit_rows<const D: usize>(
                 &self,
-                prepared: &Self::PreparedSetup<D>,
+                prepared: &Self::PreparedSetup,
                 row_len: usize,
                 digits: &[[i8; D]],
                 log_basis: u32,
@@ -84,7 +99,7 @@ macro_rules! delegate_cyclic_rows {
         {
             fn cyclic_digit_rows<const D: usize>(
                 &self,
-                prepared: &Self::PreparedSetup<D>,
+                prepared: &Self::PreparedSetup,
                 row_len: usize,
                 digits: &[[i8; D]],
                 log_basis: u32,
@@ -104,7 +119,7 @@ macro_rules! delegate_opening_kernels {
         {
             fn evaluate_and_fold(
                 &self,
-                prepared: Option<&Self::PreparedSetup<D>>,
+                prepared: Option<&Self::PreparedSetup>,
                 source: S,
                 plan: OpeningFoldPlan<'_, F, D>,
             ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -113,7 +128,7 @@ macro_rules! delegate_opening_kernels {
 
             fn decompose_fold(
                 &self,
-                prepared: Option<&Self::PreparedSetup<D>>,
+                prepared: Option<&Self::PreparedSetup>,
                 source: S,
                 plan: DecomposeFoldPlan<'_>,
             ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
@@ -128,7 +143,7 @@ macro_rules! delegate_opening_kernels {
         {
             fn decompose_fold_batch(
                 &self,
-                prepared: Option<&Self::PreparedSetup<D>>,
+                prepared: Option<&Self::PreparedSetup>,
                 source: S,
                 plan: DecomposeFoldBatchPlan<'_>,
             ) -> Result<super::kernels::BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -148,7 +163,7 @@ macro_rules! delegate_tensor_kernels {
         {
             fn column_partials(
                 &self,
-                prepared: Option<&Self::PreparedSetup<D>>,
+                prepared: Option<&Self::PreparedSetup>,
                 source: S,
                 logical_point: &[E],
             ) -> Result<Vec<E>, AkitaError>
@@ -160,7 +175,7 @@ macro_rules! delegate_tensor_kernels {
 
             fn packed_witness(
                 &self,
-                prepared: Option<&Self::PreparedSetup<D>>,
+                prepared: Option<&Self::PreparedSetup>,
                 source: S,
             ) -> Result<super::kernels::TensorPackedWitness<E>, AkitaError> {
                 CpuBackend.packed_witness(prepared, source)
@@ -168,7 +183,7 @@ macro_rules! delegate_tensor_kernels {
 
             fn root_projection(
                 &self,
-                prepared: Option<&Self::PreparedSetup<D>>,
+                prepared: Option<&Self::PreparedSetup>,
                 source: S,
             ) -> Result<crate::backend::RootTensorProjectionPoly<F, D>, AkitaError>
             where
@@ -187,7 +202,7 @@ macro_rules! delegate_tensor_kernels {
         {
             fn column_partials_batch(
                 &self,
-                prepared: Option<&Self::PreparedSetup<D>>,
+                prepared: Option<&Self::PreparedSetup>,
                 source: S,
                 logical_point: &[E],
             ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -199,7 +214,7 @@ macro_rules! delegate_tensor_kernels {
 
             fn sparse_linear_combination(
                 &self,
-                prepared: Option<&Self::PreparedSetup<D>>,
+                prepared: Option<&Self::PreparedSetup>,
                 source: S,
                 coeffs: &[E],
             ) -> Result<
@@ -223,7 +238,7 @@ macro_rules! delegate_root_commit_kernel {
         {
             fn commit_inner(
                 &self,
-                prepared: &Self::PreparedSetup<D>,
+                prepared: &Self::PreparedSetup,
                 source: S,
                 plan: CommitInnerPlan,
             ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
@@ -242,7 +257,7 @@ macro_rules! delegate_ring_switch_kernels {
         {
             fn relation_rows(
                 &self,
-                prepared: &Self::PreparedSetup<D>,
+                prepared: &Self::PreparedSetup,
                 source: S,
                 plan: RingSwitchRelationPlan,
             ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
@@ -260,7 +275,7 @@ macro_rules! delegate_ring_switch_kernels {
         {
             fn quotient_rows(
                 &self,
-                prepared: &Self::PreparedSetup<D>,
+                prepared: &Self::PreparedSetup,
                 source: S,
                 plan: RingSwitchQuotientPlan,
             ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -288,7 +303,7 @@ where
 {
     fn dense_commit_rows<const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         plan: DenseCommitRowsPlan<'_, F, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         CpuBackend.dense_commit_rows(prepared, plan)
@@ -296,7 +311,7 @@ where
 
     fn onehot_commit_rows<const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
@@ -308,7 +323,7 @@ where
 
     fn sparse_ring_commit_rows<const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         plan: SparseRingCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
@@ -320,7 +335,7 @@ where
 
     fn recursive_witness_commit_rows<const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         plan: RecursiveWitnessCommitRowsPlan<'_, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         CpuBackend.recursive_witness_commit_rows(prepared, plan)
@@ -357,7 +372,7 @@ where
 {
     fn ring_switch_relation_rows<const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         plan: RingSwitchRelationRowsPlan<'_, D>,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
@@ -368,7 +383,7 @@ where
 
     fn ring_switch_quotient_rows<const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         plan: RingSwitchQuotientRowsPlan<'_, D>,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where

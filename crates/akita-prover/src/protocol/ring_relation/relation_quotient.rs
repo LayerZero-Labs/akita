@@ -208,7 +208,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_relation_quotient")]
 pub fn compute_relation_quotient<F, B, const D: usize>(
-    ring_switch_ctx: &OperationCtx<'_, F, B, D>,
+    ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
     challenges: &Challenges,
     e_hat_flat: &[[i8; D]],

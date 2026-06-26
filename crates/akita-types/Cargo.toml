@@ -35,6 +35,9 @@ parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
 
 [dev-dependencies]
 rand = "0.8"
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "schedules-default",
+] }
 
 [lints]
 workspace = true

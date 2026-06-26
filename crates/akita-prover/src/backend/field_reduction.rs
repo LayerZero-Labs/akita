@@ -170,7 +170,7 @@ where
 {
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: RootTensorProjectionView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
@@ -202,7 +202,7 @@ where
 {
     fn evaluate_and_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -228,7 +228,7 @@ where
 
     fn decompose_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
@@ -261,7 +261,7 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -334,7 +334,7 @@ where
 {
     fn column_partials(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
@@ -363,7 +363,7 @@ where
 
     fn packed_witness(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         match source.poly {
@@ -386,7 +386,7 @@ where
 
     fn root_projection(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
@@ -420,7 +420,7 @@ where
 {
     fn column_partials_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -443,7 +443,7 @@ where
 
     fn sparse_linear_combination(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {

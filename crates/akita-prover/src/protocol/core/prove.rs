@@ -87,7 +87,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    prefix_slots: &SetupPrefixRegistry<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
@@ -139,10 +139,10 @@ where
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
-    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
     let group_sizes = claims.group_sizes();
     validate_batched_inputs(expanded.as_ref(), claims.point(), &group_sizes, true)?;
@@ -175,7 +175,7 @@ where
     .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(&flat_polys, root_commit_params)?;
 
-    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+    bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         expanded.as_ref(),
         &opening_batch,
         &schedule,
@@ -229,7 +229,7 @@ where
 #[inline(never)]
 pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    prefix_slots: &SetupPrefixRegistry<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
@@ -282,10 +282,10 @@ where
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
-    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
