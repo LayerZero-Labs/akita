@@ -41,10 +41,7 @@ fn run_single_onehot_tensor(nv: usize) {
         let pt = random_point(nv, 0xc0ff_ee00 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
-            F,
-            TENSOR_D,
-        >>::setup_prover(nv, 1)
+        let setup = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_prover(nv, 1)
         .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let stack = akita_prover::UniformProverStack::uniform(
@@ -53,16 +50,16 @@ fn run_single_onehot_tensor(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_verifier(&setup);
+        let verifier_setup = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentProver<
+            F,
+            TENSOR_D,
+        >>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
-                &setup,
-                commit_input,
-                &stack,
-            )
-            .expect("commit");
+        let (commitment, hint) = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentProver<
+            F,
+            TENSOR_D,
+        >>::commit(&setup, commit_input, &stack)
+        .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, TENSOR_D, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -70,10 +67,7 @@ fn run_single_onehot_tensor(nv: usize) {
         let opening_groups = [&openings[..]];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
-        let proof = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
-            F,
-            TENSOR_D,
-        >>::batched_prove(
+        let proof = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::batched_prove(
             &setup,
             prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
             &stack,
@@ -86,10 +80,7 @@ fn run_single_onehot_tensor(nv: usize) {
         let decoded = round_trip_proof(&proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
-        let result = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
-            F,
-            TENSOR_D,
-        >>::batched_verify(
+        let result = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentVerifier<F, TENSOR_D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -129,10 +120,7 @@ fn run_single_dense_tensor(nv: usize) {
         let pt = random_point(nv, 0xd3e5_f00d + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
-            F,
-            TENSOR_D,
-        >>::setup_prover(nv, 1)
+        let setup = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_prover(nv, 1)
         .expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let stack = akita_prover::UniformProverStack::uniform(
@@ -141,16 +129,16 @@ fn run_single_dense_tensor(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_verifier(&setup);
+        let verifier_setup = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentProver<
+            F,
+            TENSOR_D,
+        >>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
-                &setup,
-                commit_input,
-                &stack,
-            )
-            .expect("commit");
+        let (commitment, hint) = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentProver<
+            F,
+            TENSOR_D,
+        >>::commit(&setup, commit_input, &stack)
+        .expect("commit");
 
         let poly_refs: [&DensePoly<F, TENSOR_D>; 1] = [&poly];
         let commitments = [commitment];
@@ -158,10 +146,7 @@ fn run_single_dense_tensor(nv: usize) {
         let opening_groups = [&openings[..]];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
-        let proof = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
-            F,
-            TENSOR_D,
-        >>::batched_prove(
+        let proof = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::batched_prove(
             &setup,
             prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
             &stack,
@@ -174,10 +159,7 @@ fn run_single_dense_tensor(nv: usize) {
         let decoded = round_trip_proof(&proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
-        let result = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
-            F,
-            TENSOR_D,
-        >>::batched_verify(
+        let result = <AkitaCommitmentScheme<D64OneHotTensor> as CommitmentVerifier<F, TENSOR_D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,

@@ -1,4 +1,5 @@
 use super::*;
+use akita_field::CanonicalField;
 
 /// Scale a per-polynomial root layout to a batched root layout without
 /// SIS-floor audit on the scaled B/D keys (synthetic fixture only).
@@ -41,9 +42,9 @@ fn scale_batched_root_layout_unchecked(
 }
 
 #[derive(Clone)]
-struct Fp32RingSubfieldRootFoldCfg;
+pub(crate) struct Fp32RingSubfieldRootFoldCfg;
 #[derive(Clone)]
-struct Fp32RingSubfieldOuterFallbackCfg;
+pub(crate) struct Fp32RingSubfieldOuterFallbackCfg;
 
 /// Synthetic root `LevelParams` for the two fp32 ring-subfield test
 /// fixtures.
@@ -326,7 +327,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 1;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
     let evals = (0..len)
@@ -475,7 +476,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
     let evals_a = (0..len)
@@ -589,7 +590,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     type SmallL = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
     let evals_a = (0..len)
@@ -692,7 +693,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
     let evals = (0..len)

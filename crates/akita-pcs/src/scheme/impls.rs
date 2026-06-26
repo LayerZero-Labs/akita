@@ -1,0 +1,264 @@
+//! Per-preset `CommitmentProver` / `CommitmentVerifier` impls for [`super::AkitaCommitmentScheme`].
+//!
+//! Rust cannot use `Cfg::D` in const-generic positions on a single blanket impl, so each
+//! shipped `CommitmentConfig` preset gets a macro-expanded impl with a literal root `D`.
+
+use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::tensor_verifier;
+macro_rules! impl_akita_commitment_scheme {
+    ($cfg:ty, $field:ty, $ext_field:ty, $d:expr) => {
+        impl akita_prover::CommitmentProver<$field, $d>
+            for $crate::scheme::AkitaCommitmentScheme<$cfg>
+        where
+            $cfg: akita_config::CommitmentConfig<Field = $field, ExtField = $ext_field>,
+            $field: akita_field::FieldCore
+                + akita_field::CanonicalField
+                + akita_field::RandomSampling
+                + akita_field::unreduced::HasWide
+                + akita_field::HalvingField
+                + akita_field::FromPrimitiveInt
+                + akita_field::PseudoMersenneField
+                + akita_serialization::Valid
+                + akita_serialization::AkitaSerialize,
+            $ext_field: akita_types::FpExtEncoding<$field>,
+            $ext_field: akita_field::FrobeniusExtField<$field>
+                + akita_field::FromPrimitiveInt
+                + akita_field::unreduced::HasUnreducedOps
+                + akita_field::unreduced::HasOptimizedFold
+                + akita_serialization::AkitaSerialize,
+        {
+            type ProverSetup = akita_prover::AkitaProverSetup<$field>;
+            type VerifierSetup = akita_types::AkitaVerifierSetup<$field>;
+            type Commitment = akita_types::RingCommitment<$field, $d>;
+            type ExtField = $ext_field;
+            type CommitHint = akita_types::AkitaCommitmentHint<$field>;
+            type BatchedProof = akita_types::AkitaBatchedProof<$field, $ext_field>;
+
+            fn setup_prover(
+                max_num_vars: usize,
+                max_num_polys_per_commitment_group: usize,
+            ) -> Result<Self::ProverSetup, akita_field::AkitaError> {
+                akita_types::validate_ring_subfield_role::<$field, $ext_field, $d>(
+                    "extension field",
+                )?;
+                akita_setup::new_prover_setup::<$field, $cfg>(
+                    max_num_vars,
+                    max_num_polys_per_commitment_group,
+                )
+            }
+
+            fn setup_prover_recursion(
+                max_num_vars: usize,
+                max_num_polys_per_commitment_group: usize,
+            ) -> Result<Self::ProverSetup, akita_field::AkitaError> {
+                akita_types::validate_ring_subfield_role::<$field, $ext_field, $d>(
+                    "extension field",
+                )?;
+                akita_setup::new_prover_setup_recursion::<$field, $cfg>(
+                    max_num_vars,
+                    max_num_polys_per_commitment_group,
+                )
+            }
+
+            fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
+                setup
+                    .verifier_setup()
+                    .expect("prover setup must convert to verifier setup")
+            }
+
+            #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
+            fn commit<P, B>(
+                setup: &Self::ProverSetup,
+                polys: &[P],
+                stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
+            ) -> Result<(Self::Commitment, Self::CommitHint), akita_field::AkitaError>
+            where
+                $field: akita_field::FromPrimitiveInt
+                    + akita_field::unreduced::HasWide
+                    + akita_field::RandomSampling
+                    + 'static,
+                <$field as akita_field::unreduced::HasWide>::Wide:
+                    From<$field> + akita_field::unreduced::ReduceTo<$field>,
+                B: akita_prover::compute::ComputeBackendSetup<$field>,
+                P: akita_prover::compute::RootCommitPoly<$field, $d>,
+                B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
+            {
+                setup.ensure_compile_time_ring_dim::<$d>()?;
+                akita_prover::commit::<$cfg, $d, P, B>(polys, setup.expanded.as_ref(), stack)
+            }
+
+            #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
+            fn batched_commit<P, B>(
+                setup: &Self::ProverSetup,
+                polys: &[P],
+                stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
+            ) -> Result<(Self::Commitment, Self::CommitHint), akita_field::AkitaError>
+            where
+                $field: akita_field::FromPrimitiveInt
+                    + akita_field::unreduced::HasWide
+                    + akita_field::RandomSampling
+                    + 'static,
+                <$field as akita_field::unreduced::HasWide>::Wide:
+                    From<$field> + akita_field::unreduced::ReduceTo<$field>,
+                B: akita_prover::compute::ComputeBackendSetup<$field>,
+                P: akita_prover::compute::RootCommitPoly<$field, $d>,
+                B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
+            {
+                setup.ensure_compile_time_ring_dim::<$d>()?;
+                akita_prover::batched_commit::<$cfg, $d, P, B>(
+                    polys,
+                    setup.expanded.as_ref(),
+                    stack,
+                )
+            }
+
+            #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
+            fn batched_prove<'a, T, P, B>(
+                setup: &Self::ProverSetup,
+                claims: akita_prover::ProverOpeningBatch<'a, Self::ExtField, P, $field, $d>,
+                stacks: &'a impl akita_prover::compute::LevelProveStacks<
+                    'a,
+                    $field,
+                    Commit = B,
+                    Opening = B,
+                    Tensor = B,
+                    RingSwitch = B,
+                >,
+                transcript: &mut T,
+                basis: akita_types::BasisMode,
+                setup_contribution_mode: akita_types::SetupContributionMode,
+            ) -> Result<Self::BatchedProof, akita_field::AkitaError>
+            where
+                T: akita_transcript::Transcript<$field>
+                    + akita_prover::ProverTranscriptGrind<$field>,
+                $field: akita_field::FromPrimitiveInt
+                    + akita_field::unreduced::HasWide
+                    + akita_field::RandomSampling
+                    + 'static,
+                <$field as akita_field::unreduced::HasWide>::Wide: From<$field>
+                    + akita_field::unreduced::ReduceTo<$field>
+                    + akita_field::AdditiveGroup,
+                B: akita_prover::compute::ComputeBackendSetup<$field>,
+                P: akita_prover::compute::RootProvePoly<$field, $d>,
+                B: akita_prover::compute::RootProveFlowBackend<$field, P, $ext_field, $d>
+                    + akita_prover::compute::RecursiveWitnessProveFlowBackend<$field, $ext_field>
+                    + 'a,
+                <B as akita_prover::compute::ComputeBackendSetup<$field>>::PreparedSetup: 'a,
+            {
+                let t_prove_total = std::time::Instant::now();
+                akita_types::validate_ring_subfield_role::<$field, $ext_field, $d>(
+                    "extension field",
+                )?;
+                setup.ensure_compile_time_ring_dim::<$d>()?;
+                let proof = akita_prover::batched_prove::<$cfg, T, P, B, B, B, B, $d>(
+                    &setup.expanded,
+                    &setup.prefix_slots,
+                    stacks,
+                    claims,
+                    transcript,
+                    basis,
+                    setup_contribution_mode,
+                )?;
+
+                tracing::info!(
+                    levels = proof.num_fold_levels() + usize::from(proof.root.as_fold().is_some()),
+                    elapsed_s = t_prove_total.elapsed().as_secs_f64(),
+                    "akita batched prove complete"
+                );
+
+                Ok(proof)
+            }
+        }
+
+        impl akita_verifier::CommitmentVerifier<$field, $d>
+            for $crate::scheme::AkitaCommitmentScheme<$cfg>
+        where
+            $cfg: akita_config::CommitmentConfig<Field = $field, ExtField = $ext_field>,
+            $field: akita_field::FieldCore
+                + akita_field::CanonicalField
+                + akita_field::RandomSampling
+                + akita_field::unreduced::HasWide
+                + akita_field::HalvingField
+                + akita_field::FromPrimitiveInt
+                + akita_field::PseudoMersenneField
+                + akita_serialization::Valid
+                + akita_serialization::AkitaSerialize,
+            $ext_field: akita_types::FpExtEncoding<$field>,
+            $ext_field: akita_field::FrobeniusExtField<$field>
+                + akita_field::FromPrimitiveInt
+                + akita_serialization::AkitaSerialize,
+        {
+            type VerifierSetup = akita_types::AkitaVerifierSetup<$field>;
+            type Commitment = akita_types::RingCommitment<$field, $d>;
+            type ExtField = $ext_field;
+            type BatchedProof = akita_types::AkitaBatchedProof<$field, $ext_field>;
+
+            #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
+            fn batched_verify<T: akita_transcript::Transcript<$field>>(
+                proof: &Self::BatchedProof,
+                setup: &Self::VerifierSetup,
+                transcript: &mut T,
+                claims: akita_types::VerifierOpeningBatch<'_, Self::ExtField, &Self::Commitment>,
+                basis: akita_types::BasisMode,
+                setup_contribution_mode: akita_types::SetupContributionMode,
+            ) -> Result<(), akita_field::AkitaError> {
+                let t_verify_akita = std::time::Instant::now();
+                akita_types::validate_ring_subfield_role::<$field, $ext_field, $d>(
+                    "extension field",
+                )?;
+                setup.ensure_root_ring_dim($d)?;
+                akita_verifier::batched_verify::<$cfg, T, $d>(
+                    proof,
+                    setup,
+                    transcript,
+                    claims,
+                    basis,
+                    setup_contribution_mode,
+                )?;
+
+                tracing::info!(
+                    levels = proof.num_fold_levels() + 1,
+                    elapsed_s = t_verify_akita.elapsed().as_secs_f64(),
+                    "akita batched verify complete"
+                );
+
+                Ok(())
+            }
+
+            fn protocol_name() -> &'static [u8] {
+                b"Akita"
+            }
+        }
+    };
+}
+
+impl_akita_commitment_scheme!(fp128::D128Full, fp128::Field, fp128::Field, 128);
+impl_akita_commitment_scheme!(fp128::D128OneHot, fp128::Field, fp128::Field, 128);
+impl_akita_commitment_scheme!(fp128::D64Full, fp128::Field, fp128::Field, 64);
+impl_akita_commitment_scheme!(fp128::D64OneHot, fp128::Field, fp128::Field, 64);
+impl_akita_commitment_scheme!(fp128::D64OneHotTiered, fp128::Field, fp128::Field, 64);
+impl_akita_commitment_scheme!(fp128::D32Full, fp128::Field, fp128::Field, 32);
+impl_akita_commitment_scheme!(fp128::D32OneHot, fp128::Field, fp128::Field, 32);
+
+impl_akita_commitment_scheme!(fp32::D64Full, fp32::Field, fp32::ExtensionField, 64);
+impl_akita_commitment_scheme!(fp32::D64OneHot, fp32::Field, fp32::ExtensionField, 64);
+impl_akita_commitment_scheme!(fp32::D128Full, fp32::Field, fp32::ExtensionField, 128);
+impl_akita_commitment_scheme!(fp32::D128OneHot, fp32::Field, fp32::ExtensionField, 128);
+impl_akita_commitment_scheme!(fp32::D256Full, fp32::Field, fp32::ExtensionField, 256);
+impl_akita_commitment_scheme!(fp32::D256OneHot, fp32::Field, fp32::ExtensionField, 256);
+
+impl_akita_commitment_scheme!(fp64::D128Full, fp64::Field, fp64::ExtensionField, 128);
+impl_akita_commitment_scheme!(fp64::D128OneHot, fp64::Field, fp64::ExtensionField, 128);
+impl_akita_commitment_scheme!(fp64::D256Full, fp64::Field, fp64::ExtensionField, 256);
+impl_akita_commitment_scheme!(fp64::D256OneHot, fp64::Field, fp64::ExtensionField, 256);
+impl_akita_commitment_scheme!(fp64::D64Full, fp64::Field, fp64::ExtensionField, 64);
+impl_akita_commitment_scheme!(fp64::D64OneHot, fp64::Field, fp64::ExtensionField, 64);
+impl_akita_commitment_scheme!(fp64::D32Full, fp64::Field, fp64::ExtensionField, 32);
+impl_akita_commitment_scheme!(fp64::D32OneHot, fp64::Field, fp64::ExtensionField, 32);
+
+impl_akita_commitment_scheme!(
+    tensor_verifier::fp128::D64OneHotTensor,
+    fp128::Field,
+    fp128::Field,
+    64
+);

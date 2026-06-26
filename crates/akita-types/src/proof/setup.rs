@@ -6,7 +6,7 @@ use crate::FlatMatrix;
 use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{FieldCore, RandomSampling};
+use akita_field::{AkitaError, FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -92,6 +92,30 @@ pub struct AkitaVerifierSetup<F: FieldCore> {
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
     pub prefix_slots: SetupPrefixVerifierRegistry<F>,
+}
+
+impl<F: FieldCore> AkitaVerifierSetup<F> {
+    /// Setup envelope ring degree.
+    #[must_use]
+    pub fn gen_ring_dim(&self) -> usize {
+        self.expanded.seed().gen_ring_dim
+    }
+
+    /// Reject verification when the root envelope ring degree mismatches.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `root_d` does not match [`Self::gen_ring_dim`].
+    #[inline]
+    pub fn ensure_root_ring_dim(&self, root_d: usize) -> Result<(), AkitaError> {
+        if self.gen_ring_dim() != root_d {
+            return Err(AkitaError::InvalidInput(format!(
+                "setup gen_ring_dim={} does not match scheme root ring degree {root_d}",
+                self.gen_ring_dim()
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl<F: FieldCore> AkitaExpandedSetup<F> {

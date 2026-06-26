@@ -1,16 +1,8 @@
-//! Test-only layout helpers shared by the workspace's integration tests,
-//! unit tests, and the `profile` example.
+//! Mixed-D schedule stitching for Wave 0 fixtures and Phase 4 planner bring-up.
 //!
-//! Everything in this module is gated behind the `test-support` Cargo
-//! feature, which production builds never enable: it is switched on only
-//! through the dev-dependency edge of `akita-pcs`, so the helpers here are
-//! compiled for test/example/bench targets and are
-//! absent from every shipped artifact. Production callers size their
-//! per-poly inputs through [`CommitmentConfig::get_params_for_batched_commitment`]
-//! directly and never need this module.
-//!
-//! Mixed-D schedule stitching lives here for Wave 0 only; Phase 4 should move
-//! this builder into `akita-planner` next to expansion.
+//! Production callers size inputs through [`CommitmentConfig::get_params_for_batched_commitment`].
+//! Phase 4 moves this module beside generated expansion in `akita-planner` once envelope
+//! policy and DP `ring_d` search land.
 
 use akita_field::AkitaError;
 use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
@@ -180,7 +172,7 @@ where
             envelope_folds.len()
         )));
     }
-    if switch_at_fold == 0 && switch_at_fold < envelope_folds.len() {
+    if switch_at_fold == 0 {
         return Err(AkitaError::InvalidSetup(
             "switch_at_fold=0 is unsupported; use switch_at_fold >= 1 for mixed-D fixtures".into(),
         ));

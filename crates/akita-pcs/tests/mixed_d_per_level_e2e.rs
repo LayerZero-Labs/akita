@@ -27,7 +27,7 @@ use common::*;
 type Cfg = fp128::D128Full;
 type SuffixCfg = fp128::D64Full;
 type F = fp128::Field;
-type Scheme = AkitaCommitmentScheme<D, Cfg>;
+type Scheme = AkitaCommitmentScheme<Cfg>;
 const D: usize = Cfg::D;
 
 /// Fold levels `[0, MIXED_D_SWITCH_FOLD)` use D128; `[MIXED_D_SWITCH_FOLD, …)` use D64.

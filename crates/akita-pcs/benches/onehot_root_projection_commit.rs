@@ -11,9 +11,12 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
+use akita_prover::AkitaProverSetup;
 use akita_prover::{commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly};
 use akita_serialization::{AkitaSerialize, Valid};
+use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, RingCommitment};
 use akita_types::{FpExtEncoding, OpeningBatchShape};
+use akita_verifier::CommitmentVerifier;
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
@@ -104,10 +107,27 @@ where
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize,
+    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+            F,
+            D,
+            ProverSetup = AkitaProverSetup<F>,
+            ExtField = Cfg::ExtField,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            CommitHint = AkitaCommitmentHint<F>,
+            BatchedProof = AkitaBatchedProof<F, Cfg::ExtField>,
+        > + CommitmentVerifier<
+            F,
+            D,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            ExtField = Cfg::ExtField,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F, Cfg::ExtField>,
+        >,
 {
     assert_eq!(D, Cfg::D);
 
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
+    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<Cfg>;
 
     let num_vars = env_usize("AKITA_ROOT_COMMIT_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_ROOT_COMMIT_NUM_POLYS", DEFAULT_NUM_POLYS);
