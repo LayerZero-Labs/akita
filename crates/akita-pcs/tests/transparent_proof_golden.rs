@@ -18,9 +18,9 @@ use akita_field::FieldCore;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly};
 use akita_serialization::AkitaSerialize;
-use akita_verifier::CommitmentVerifier;
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode};
+use akita_verifier::CommitmentVerifier;
 use common::{dense_field_evals, opening_from_poly, OneHotCfg, F, ONEHOT_D, ONEHOT_K};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -149,7 +149,11 @@ fn build_d64_full_nv15_proof_bytes() -> Vec<u8> {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            common::verify_input(&opening_point[..], std::slice::from_ref(&opening), &commitments[0]),
+            common::verify_input(
+                &opening_point[..],
+                std::slice::from_ref(&opening),
+                &commitments[0],
+            ),
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
         )
