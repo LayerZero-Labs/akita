@@ -73,8 +73,8 @@ for the full policy. In short:
 
 ## Offline SIS table regen
 
-Regenerating `generated_sis_table/` is a manual Sage workflow, not part of Rust CI.
+Regenerating `generated_sis_linf_table/` is a manual Sage workflow, not part of Rust CI.
 See [`scripts/sis_golden/README.md`](scripts/sis_golden/README.md) for submodule init,
 golden refresh (`refresh_golden.py`), replay check (`check.py`), per-family regen
-(`gen_sis_table.py --jobs`), and full table stitch
-(`stitch_generated_sis_table.py --jobs 6 --max-rank 20`).
+(`gen_sis_linf_table.py --jobs`), and full table stitch
+(`stitch_generated_sis_linf_table.py --jobs 6 --max-rank 20`).

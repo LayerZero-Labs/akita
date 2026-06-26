@@ -13,4 +13,6 @@ bench_results/
 scripts/__pycache__/
 scripts/tests/__pycache__/
 
+.sis_linf_cache/
+
 .cursor/

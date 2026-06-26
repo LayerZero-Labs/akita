@@ -8,7 +8,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use super::ajtai_key::{collision_l2_sq_for_linf_envelope, SisModulusFamily};
+use super::ajtai_key::{collision_linf_bucket_for_envelope, SisModulusFamily};
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
 /// per-operand L1/L∞ bounds:
@@ -169,35 +169,14 @@ pub fn folded_witness_public_linf_cap(
     fold_witness_linf_cap(beta, num_fold_blocks, witness_linf_sq, cap_config)
 }
 
-/// A-role committed-level per-ring-row squared Euclidean collision bucket.
+/// A-role audited coefficient-`L∞` collision bucket for SIS rank lookup.
 ///
-/// Prices the folded witness sum `z = Σ c_i·s_i` in the L2 MSIS table. Lemma 7
-/// gives `‖z_A‖_2 ≤ 8 · op_norm(c) · ‖z‖_2 · ν` on the extracted kernel. The
-/// verifier accepts only folded witnesses inside the public cap used for
-/// `z`'s digit/Golomb representation (`min(β_inf, t*)` under the certified
-/// tail/grind policy, `β_inf` otherwise), so A-role binding uses that same cap.
-/// MSIS accounting converts the resulting L∞ collision via
-/// `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:
-///
-/// ```text
-/// collision_A_inf = 8 · mass · z_public_cap · nu,
-/// collision_l2_sq   = ceil_bucket(d · collision_A_inf^2),
-///   mass   = ω (L1) or Γ (operator-norm cap) per [`crate::sis::committed_fold_a_role_mass`],
-///   z_public_cap = folded_witness_public_linf_cap(...),
-///   nu     = ring_subfield_norm_bound.
-/// ```
-///
-/// The cap still starts from `β_inf`, which uses `||c||_1` from
-/// [`FoldChallengeNorms`]; only the Lemma-7 outer multiplier is `op_norm_cap`
-/// (`ω` or `Γ` per level policy).
-///
-/// Returns `None` on overflow or when the collision exceeds every audited bucket
-/// for `(sis_family, d)`.
+/// Lemma 7 gives `‖z_A‖_∞ ≤ 8 · op_norm(c) · z_public_cap · ν` on the extracted
+/// kernel. The verifier accepts only folded witnesses inside the public cap used
+/// for `z`'s digit/Golomb representation, so A-role binding uses that same cap.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn committed_fold_collision_l2_sq(
-    sis_family: SisModulusFamily,
-    d: u32,
+pub fn committed_fold_collision_bucket(
     op_norm_cap: u128,
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
@@ -215,10 +194,10 @@ pub fn committed_fold_collision_l2_sq(
         ring_subfield_norm_bound,
         cap_config,
     )?;
-    collision_l2_sq_for_linf_envelope(sis_family, d, collision_linf)
+    collision_linf_bucket_for_envelope(collision_linf)
 }
 
-/// Exact coefficient-`L∞` A-role collision before Euclidean table conversion.
+/// Raw coefficient-`L∞` A-role collision before bucket rounding.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn committed_fold_collision_linf(
@@ -239,16 +218,14 @@ pub fn committed_fold_collision_linf(
         .checked_mul(u128::from(ring_subfield_norm_bound))
 }
 
-/// B-role (`t̂`) rounded-up SIS collision bucket via `||v||_2^2 <= d·||v||_inf^2`.
-///
-/// The natural coefficient-`L∞` opening-digit collision is `2^lb − 1`.
+/// B-role (`t̂`) audited coefficient-`L∞` collision bucket (`2^lb − 1`).
 pub fn rounded_up_collision_norm_t(
-    sis_family: SisModulusFamily,
-    d: usize,
+    _sis_family: SisModulusFamily,
+    _d: usize,
     log_basis: u32,
 ) -> Option<u128> {
     let linf = 1u128.checked_shl(log_basis)?.checked_sub(1)?;
-    collision_l2_sq_for_linf_envelope(sis_family, d as u32, linf)
+    collision_linf_bucket_for_envelope(linf)
 }
 
 /// D-role (`ŵ`) rounded-up SIS collision bucket. Identical bound to the B role.
@@ -734,31 +711,6 @@ pub fn fold_witness_linf_cap(
     }
 }
 
-// --- L2 MSIS accounting (`l2_sq_from_linf`) ---------------------------------
-//
-// A-role table lookup uses Lemma 7 plus [`l2_sq_from_linf`] (see
-// [`committed_fold_collision_l2_sq`]). The same conversion prices B/D roles.
-
-/// Convert a coefficient-`L∞` collision bound to its Euclidean (L2) counterpart
-/// via `||v||_2 <= sqrt(d)·||v||_inf`, kept squared and exact:
-/// `||v||_2^2 <= d·linf^2`.
-///
-/// This lets the B-role and D-role opening-digit collisions (natural bound
-/// `2^lb - 1`, the difference of two balanced digits) be priced by the same
-/// Euclidean MSIS floor as the A-role, rather than a separate `L∞` table.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] on `u128` overflow of `d · linf^2`.
-#[inline]
-pub fn l2_sq_from_linf(d: u128, linf: u128) -> Result<u128, AkitaError> {
-    linf.checked_mul(linf)
-        .and_then(|sq| sq.checked_mul(d))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("l2_sq_from_linf: d · ||v||_inf^2 overflows u128".to_string())
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -791,50 +743,24 @@ mod tests {
     }
 
     #[test]
-    fn l2_sq_from_linf_matches_sqrt_d_envelope() {
-        // B/D-role digit collision 2^lb - 1 at lb=3 is 7; ||v||_2^2 <= d·49.
-        assert_eq!(l2_sq_from_linf(64, 7).unwrap(), 64 * 49);
-        assert!(l2_sq_from_linf(u128::MAX, u128::MAX).is_err());
-    }
-
-    #[test]
-    fn committed_fold_collision_l2_sq_matches_lemma7_conversion() {
-        use super::super::ajtai_key::derived_collision_l2_sq_key;
-
+    fn committed_fold_collision_bucket_ceilings_linf() {
         let challenge = FoldChallengeNorms {
             infinity_norm: 8,
             l1_norm: 54,
         };
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
         let cap_config = FoldWitnessLinfCapConfig::worst_case_beta_only();
-        let z_public_cap =
-            folded_witness_public_linf_cap(challenge, witness, 2, 1, &cap_config).unwrap();
-        let collision_linf = 8u128 * challenge.l1_norm * z_public_cap;
-        let envelope =
-            collision_l2_sq_for_linf_envelope(SisModulusFamily::Q32, 64, collision_linf).unwrap();
-        assert_eq!(
-            committed_fold_collision_l2_sq(
-                SisModulusFamily::Q32,
-                64,
-                challenge.l1_norm,
-                challenge,
-                witness,
-                2,
-                1,
-                1,
-                &cap_config,
-            )
-            .unwrap(),
-            envelope,
-        );
-        assert_eq!(
-            envelope,
-            derived_collision_l2_sq_key(SisModulusFamily::Q32, 64, collision_linf).unwrap(),
-        );
-        assert!(
-            envelope >= l2_sq_from_linf(64, collision_linf).unwrap(),
-            "derived bucket ceilings L∞ before squaring",
-        );
+        let bucket = committed_fold_collision_bucket(
+            challenge.l1_norm,
+            challenge,
+            witness,
+            2,
+            1,
+            1,
+            &cap_config,
+        )
+        .unwrap();
+        assert_eq!(bucket, 16_383);
     }
 
     #[test]
@@ -855,9 +781,7 @@ mod tests {
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&shell, shape, 64, true, 1024).unwrap();
-        let cap_collision = committed_fold_collision_l2_sq(
-            SisModulusFamily::Q32,
-            64,
+        let cap_collision = committed_fold_collision_linf(
             shape.effective_operator_norm_cap(&shell) as u128,
             challenge,
             witness,
@@ -869,9 +793,7 @@ mod tests {
         .unwrap();
         let l1_cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&shell, shape, 64, false, 1024).unwrap();
-        let wasteful_collision = committed_fold_collision_l2_sq(
-            SisModulusFamily::Q32,
-            64,
+        let wasteful_collision = committed_fold_collision_linf(
             challenge.l1_norm,
             challenge,
             witness,

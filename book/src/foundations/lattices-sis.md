@@ -17,7 +17,7 @@ that lets a role be re-priced between them.
 **Sources to fold in**
 
 - Paper §2.2 `def:msis` (Module-SIS; the two-norm interchange).
-- `crates/akita-types/src/sis/` (`mod.rs`, `ajtai_key.rs`, `generated_sis_table.rs`).
+- `crates/akita-types/src/sis/` (`mod.rs`, `ajtai_key.rs`, `generated_sis_linf_table/`).
 - `specs/akita-sis-consolidation.md`.
 - External: Hachi (Lemma 5-7), SuperNeo, LaBRADOR. See [References](./references.md).
 

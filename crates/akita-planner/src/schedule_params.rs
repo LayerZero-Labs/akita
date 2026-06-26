@@ -102,7 +102,7 @@ fn multi_tiered_keys(
         let Some(n_b_small) = min_secure_rank(
             b_key.sis_family(),
             ring_d as u32,
-            b_key.collision_l2_sq(),
+            b_key.collision_linf(),
             shrunk_width as u64,
         ) else {
             continue;
@@ -129,7 +129,7 @@ fn multi_tiered_keys(
             b_key.sis_family(),
             n_b_small,
             shrunk_width,
-            b_key.collision_l2_sq(),
+            b_key.collision_linf(),
             ring_d,
         )?;
         return Ok((f, tiered_b_key, Some(f_key)));
@@ -1162,8 +1162,8 @@ mod tiering_tests {
         // F width = f · n_b' · δ_open, same collision bucket as B.
         assert_eq!(fk.col_len(), f * out_b.row_len() * DELTA_OPEN);
         let norm = tiered_collision();
-        assert_eq!(out_b.collision_l2_sq(), norm);
-        assert_eq!(fk.collision_l2_sq(), norm);
+        assert_eq!(out_b.collision_linf(), norm);
+        assert_eq!(fk.collision_linf(), norm);
         // Minimality: no smaller divisor of width_t (in 2..f) makes B' fit under A.
         for smaller in 2..f {
             if !width_t.is_multiple_of(smaller) {

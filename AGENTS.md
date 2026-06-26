@@ -46,5 +46,5 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | CI test timing | [`docs/ci-test-timing.md`](docs/ci-test-timing.md) |
 | Profiling harness | [`book/src/usage/profiling.md`](book/src/usage/profiling.md) |
 | Transcript hardening | [`specs/transcript-hardening.md`](specs/transcript-hardening.md) |
-| Offline SIS table regen | `scripts/stitch_generated_sis_table.py` (Sage + pinned `third_party/lattice-estimator`) |
+| Offline SIS table regen | `scripts/stitch_generated_sis_linf_table.py` (Sage + pinned `third_party/lattice-estimator`) |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |

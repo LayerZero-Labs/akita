@@ -46,7 +46,10 @@ def load_golden(path: Path) -> list[dict[str, str]]:
 def main() -> int:
     args = parse_args()
     sys.path.insert(0, str(SCRIPTS))
-    from gen_sis_table import (  # noqa: WPS433
+    from gen_sis_linf_table import (  # noqa: WPS433
+        DEFAULT_RED_COST_MODEL,
+        DEFAULT_RED_SHAPE_MODEL,
+        DEFAULT_ZETA_CANDIDATES,
         binary_search_max_width,
         estimate_bits,
         estimator_git_sha,
@@ -71,7 +74,8 @@ def main() -> int:
         key = (int(row["q"]), int(row["d"]), int(row["collision"]))
         grouped[key].append(row)
 
-    SIS, RC, log, oo, ZZ, RealField = load_estimator(estimator_path)
+    SIS, RC, log, oo = load_estimator(estimator_path)
+    zeta_candidates = DEFAULT_ZETA_CANDIDATES
     failures = 0
 
     for (q, d, collision), group in sorted(grouped.items()):
@@ -83,14 +87,24 @@ def main() -> int:
             target_bits = float(row["target_bits"])
             search_cap = int(row["search_cap"])
             actual = binary_search_max_width(
-                SIS, RC, log, oo, ZZ, RealField,
-                q, d, rank, collision,
-                target_bits, search_cap,
+                SIS,
+                RC,
+                log,
+                oo,
+                q,
+                d,
+                rank,
+                collision,
+                target_bits,
+                search_cap,
+                DEFAULT_RED_COST_MODEL,
+                DEFAULT_RED_SHAPE_MODEL,
+                zeta_candidates,
             )
             if actual != expected:
                 failures += 1
                 print(
-                    f"FAIL q={q} d={d} collision={collision} rank={rank}: "
+                    f"FAIL q={q} d={d} collision_linf={collision} rank={rank}: "
                     f"expected max_width={expected}, got {actual}",
                     file=sys.stderr,
                 )
@@ -99,7 +113,7 @@ def main() -> int:
             if expected < prev_width:
                 failures += 1
                 print(
-                    f"FAIL rank monotonicity q={q} d={d} collision={collision}: "
+                    f"FAIL rank monotonicity q={q} d={d} collision_linf={collision}: "
                     f"rank {rank} max_width={expected} < prior {prev_width}",
                     file=sys.stderr,
                 )
@@ -109,24 +123,46 @@ def main() -> int:
                 continue
 
             secure_bits = estimate_bits(
-                SIS, RC, log, oo, ZZ, RealField, q, d, rank, expected, collision,
+                SIS,
+                RC,
+                log,
+                oo,
+                q,
+                d,
+                rank,
+                expected,
+                collision,
+                DEFAULT_RED_COST_MODEL,
+                DEFAULT_RED_SHAPE_MODEL,
+                zeta_candidates,
             )
             if secure_bits < target_bits:
                 failures += 1
                 print(
-                    f"FAIL bracket q={q} d={d} collision={collision} rank={rank}: "
+                    f"FAIL bracket q={q} d={d} collision_linf={collision} rank={rank}: "
                     f"width={expected} has only {secure_bits:.2f} bits",
                     file=sys.stderr,
                 )
                 continue
 
             insecure_bits = estimate_bits(
-                SIS, RC, log, oo, ZZ, RealField, q, d, rank, expected + 1, collision,
+                SIS,
+                RC,
+                log,
+                oo,
+                q,
+                d,
+                rank,
+                expected + 1,
+                collision,
+                DEFAULT_RED_COST_MODEL,
+                DEFAULT_RED_SHAPE_MODEL,
+                zeta_candidates,
             )
             if insecure_bits >= target_bits:
                 failures += 1
                 print(
-                    f"FAIL bracket q={q} d={d} collision={collision} rank={rank}: "
+                    f"FAIL bracket q={q} d={d} collision_linf={collision} rank={rank}: "
                     f"width={expected + 1} still has {insecure_bits:.2f} bits",
                     file=sys.stderr,
                 )

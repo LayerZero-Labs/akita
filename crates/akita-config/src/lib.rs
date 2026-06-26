@@ -385,7 +385,7 @@ mod sis_schedule_width_audit {
             let d = u32::try_from(lp.ring_dimension).expect("ring dimension fits in u32");
             let family = lp.a_key.sis_family();
 
-            let a_collision = lp.a_key.collision_l2_sq();
+            let a_collision = lp.a_key.collision_linf();
             let a_rank = min_secure_rank(
                 family,
                 d,
@@ -407,7 +407,7 @@ mod sis_schedule_width_audit {
                 lp.a_key.row_len(),
             );
 
-            let b_collision = lp.b_key.collision_l2_sq();
+            let b_collision = lp.b_key.collision_linf();
             let b_rank = min_secure_rank(
                 family,
                 d,
@@ -429,7 +429,7 @@ mod sis_schedule_width_audit {
                 lp.b_key.row_len(),
             );
 
-            let d_collision = lp.d_key.collision_l2_sq();
+            let d_collision = lp.d_key.collision_linf();
             let d_rank = min_secure_rank(
                 family,
                 d,
@@ -512,7 +512,7 @@ mod fp128_policy_tests {
             panic!("small-field schedule should start with a root fold");
         };
         assert!(
-            root.params.a_key.collision_l2_sq() >= root.params.b_key.collision_l2_sq() * 2,
+            root.params.a_key.collision_linf() >= root.params.b_key.collision_linf() * 2,
             "A-role collision should include the psi norm bound"
         );
     }

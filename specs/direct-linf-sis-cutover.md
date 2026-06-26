@@ -14,8 +14,8 @@
 [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) cut Akita over to an **L2 / Euclidean MSIS floor table** (#155) and planned an in-protocol **folded-witness L2 certificate** (slices S6–S10).
 Investigation (2026-06-26) shows:
 
-- The **L2 certificate path was never implemented** in Rust (`fold_l2`, `B_l2`, `ell_hat`, `carry_hat` do not exist in the tree). Only the spec and the dormant [`four_square.rs`](../crates/akita-types/src/sis/four_square.rs) helper remain.
-- The **L2 MSIS table path is shipped** (`generated_sis_table/`, `min_secure_rank`, `collision_l2_sq` on `AjtaiKeyParams`) and is the current authority for A/B/D rank lookup via `collision_l2_sq_for_linf_envelope`.
+- The **L2 certificate path was never implemented** in Rust (`fold_l2`, `B_l2`, `ell_hat`, `carry_hat` do not exist in the tree). The dormant `four_square.rs` helper was deleted on cutover.
+- The **L2 MSIS table path was retired** (`generated_sis_table/`, `collision_l2_sq`, hybrid `min(L2, direct-L∞)`). **Direct coefficient-`L∞`** (`generated_sis_linf_table/`, `collision_linf`) is now the sole rank authority.
 - That L2 surrogate can **under-price A-role rank** relative to direct coefficient-`L∞` SIS (concrete counterexample below).
 
 **Decision:** revert security pricing to **coefficient-`L∞` only**. Delete all L2-certificate planned work and retire the L2 MSIS table path after generated direct-`L∞` floors land. Do **not** implement the L2 certificate.
@@ -54,28 +54,34 @@ Protected by: `akita-types::sis` tests, `generated_tables`, `fold-linf-rejection
 - Changing operator-norm predicate math (#207) or fold challenge sampling families.
 - Runtime Sage inside planner or verifier.
 
-## What is actually in the tree today
+## What is in the tree today (post-cutover branch)
 
-### Shipped: L2 MSIS table (to remove)
+### Retired: L2 MSIS table (removed)
+
+| Piece | Was |
+|-------|-----|
+| Euclidean floor modules | `generated_sis_table/` (deleted) |
+| L2 generator | `scripts/gen_sis_table.py` (deleted; replaced by `gen_sis_linf_table.py`) |
+| Hybrid migration | `min(L2, direct-L∞)` in `op_norm_pricing.rs` (deleted) |
+| fp32 stopgap rectangles | `min_secure_rank_linf_direct` (deleted) |
+
+### Shipped: direct coefficient-L∞ floors
 
 | Piece | Location |
 |-------|----------|
-| Euclidean floor modules | `crates/akita-types/src/sis/generated_sis_table/` |
-| L2 table generator | `scripts/gen_sis_table.py` (`norm=l2`, BDGL16) |
-| Rank lookup | `min_secure_rank`, `sis_max_widths` |
-| L2 bucket derivation | `collision_l2_sq_for_linf_envelope`, `derived_collision_l2_sq_key`, `ceil_supported_collision` |
-| A-role L2 collision | `committed_fold_collision_l2_sq` |
-| Stored key field | `AjtaiKeyParams.collision_l2_sq` |
-| Hybrid migration | `min(L2, direct-L∞)` in `op_norm_pricing.rs` |
-| fp32 stopgap rectangles | `min_secure_rank_linf_direct` |
+| L∞ floor modules | `crates/akita-types/src/sis/generated_sis_linf_table/` |
+| L∞ generator | `scripts/gen_sis_linf_table.py`, `scripts/stitch_generated_sis_linf_table.py` |
+| Rank lookup | `min_secure_rank(family, d, collision_linf, width)` |
+| Stored key field | `AjtaiKeyParams.collision_linf` |
+| A-role collision | `committed_fold_collision_bucket` / `committed_fold_collision_linf` |
 
-### Never shipped: L2 certificate (delete from specs + code)
+### Never shipped: L2 certificate (deleted from specs + code)
 
 | Piece | Status |
 |-------|--------|
 | S6–S10, S13 in [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) | Spec-only; **cancelled** |
-| [`four_square.rs`](../crates/akita-types/src/sis/four_square.rs) | Dead helper for Lagrange slack; **delete on cutover** |
-| `l2_sq_from_linf` | Used only for L2 table bridge; **delete** |
+| `four_square.rs` | Deleted on cutover |
+| `l2_sq_from_linf` | Deleted |
 
 ### Shipped: fold `‖z‖_∞` grind (keep + extend in planner)
 
@@ -128,24 +134,24 @@ Pure direct-`L∞` DP: **+392 B** total on this CI shape; one-hot fp128 D64 unch
 
 **Delete L2 certificate + L2 table path**
 
-- [ ] Remove [`four_square.rs`](../crates/akita-types/src/sis/four_square.rs) and all exports/tests.
-- [ ] Remove `committed_fold_collision_l2_sq`, `l2_sq_from_linf`, `collision_l2_sq_for_linf_envelope`, `derived_collision_l2_sq_key`, and L2-only `ceil_supported_collision` ladder tied to `generated_sis_table/`.
-- [ ] Remove `crates/akita-types/src/sis/generated_sis_table/` and `scripts/gen_sis_table.py` L2 path (or replace script with `L∞`-only generator).
-- [ ] Rename `AjtaiKeyParams.collision_l2_sq` → `collision_linf` (full cutover, no alias).
-- [ ] Delete `min_secure_rank_linf_direct`, `exact_linf_from_l2_sq` fallback, hybrid `match (l2, direct_linf)`.
-- [ ] Mark [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) certificate slices S6–S10/S13 **cancelled**; set spec `Superseded-by:` this file.
-- [ ] Mark [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) `Superseded-by:` this file.
+- [x] Remove `four_square.rs` and all exports/tests.
+- [x] Remove `committed_fold_collision_l2_sq`, `l2_sq_from_linf`, `collision_l2_sq_for_linf_envelope`, `derived_collision_l2_sq_key`, and L2-only `ceil_supported_collision` ladder tied to `generated_sis_table/`.
+- [x] Remove `generated_sis_table/` and `scripts/gen_sis_table.py` (replaced by `gen_sis_linf_table.py`).
+- [x] Rename `AjtaiKeyParams.collision_l2_sq` → `collision_linf` (full cutover, no alias).
+- [x] Delete `min_secure_rank_linf_direct`, `exact_linf_from_l2_sq` fallback, hybrid `match (l2, direct_linf)`.
+- [x] Mark [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) certificate slices S6–S10/S13 **cancelled**.
+- [x] Mark [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) `Superseded-by:` this file.
 
 **Direct `L∞` floors**
 
-- [ ] `scripts/gen_sis_linf_table.py` (+ stitcher) generates max-width tables for all `(family, d)` in `supports_family_dimension`.
+- [x] `scripts/gen_sis_linf_table.py` (+ stitcher) generates max-width tables for all `(family, d)` in `supports_family_dimension`.
 - [ ] Checked-in `generated_sis_linf_table/`; `min_secure_rank` looks up coefficient-`L∞` collision `B` directly.
-- [ ] Golden cells in `scripts/sis_golden/` (or sibling) for `norm=oo` replay.
-- [ ] Estimator pinned to **`quangvdao/lattice-estimator`** standalone branch; metadata records fork URL + SHA. One targeted upstream PR later; malb/lattice-estimator [#215](https://github.com/malb/lattice-estimator/pull/215) and [#216](https://github.com/malb/lattice-estimator/pull/216) are **closed without merge** (confirmed 2026-06-26).
+- [x] Golden scripts rewired for `norm=oo` (`scripts/sis_golden/`); CSV refresh pending Sage regen.
+- [x] Estimator pinned to **`quangvdao/lattice-estimator`** @ `a31d06b`.
 
 **Planner + schedules**
 
-- [ ] All roles (A/B/D) price through direct `L∞` floors.
+- [x] All roles (A/B/D) price through direct `L∞` floors.
 - [ ] Regenerate `akita-schedules`; `generated_tables` clean.
 - [ ] `fp32_dense_planner_diag` un-ignored or promoted to golden subset.
 - [ ] Fold-linf grind documented in planner diagnostics; what-if `p_grind` scoring hook for optimization studies.

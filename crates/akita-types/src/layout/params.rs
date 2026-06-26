@@ -320,8 +320,7 @@ impl LevelParams {
             challenge,
             witness,
             self.fold_linf_cap_config,
-        )
-        .unwrap_or(1);
+        )?;
         if root_num_claims > 1 {
             self.cached_num_digits_fold_claims = root_num_claims;
             self.cached_num_digits_fold_value = crate::sis::num_digits_fold(
@@ -332,8 +331,7 @@ impl LevelParams {
                 challenge,
                 witness,
                 self.fold_linf_cap_config,
-            )
-            .unwrap_or(self.num_digits_fold_one);
+            )?;
         } else {
             self.cached_num_digits_fold_claims = 0;
             self.cached_num_digits_fold_value = self.num_digits_fold_one;
@@ -791,21 +789,21 @@ impl LevelParams {
                 self.a_key.sis_family,
                 self.a_key.row_len,
                 inner_width,
-                self.a_key.collision_l2_sq,
+                self.a_key.collision_linf,
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
                 self.b_key.sis_family,
                 self.b_key.row_len,
                 outer_width,
-                self.b_key.collision_l2_sq,
+                self.b_key.collision_linf,
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 self.d_key.sis_family,
                 self.d_key.row_len,
                 d_matrix_width,
-                self.d_key.collision_l2_sq,
+                self.d_key.collision_linf,
                 d,
             ),
             num_blocks,
@@ -839,13 +837,13 @@ impl LevelParams {
     /// from `other`.
     ///
     /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
-    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_l2_sq`
+    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_linf`
     /// is not a layout field** — it is the SIS-floor bucket the rank
     /// (`row_len`) was sized against — so it is preserved from `self`,
     /// matching the placement of `row_len` and `sis_family`. Pulling
-    /// `collision_l2_sq` from `other` would lose the audited bucket when
+    /// `collision_linf` from `other` would lose the audited bucket when
     /// the layout argument was constructed via
-    /// [`LevelParams::params_only`] (which leaves `collision_l2_sq = 0`)
+    /// [`LevelParams::params_only`] (which leaves `collision_linf = 0`)
     /// or threaded through [`Self::with_decomp`], and would let the SIS
     /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Result<Self, AkitaError> {
@@ -857,21 +855,21 @@ impl LevelParams {
                 self.a_key.sis_family,
                 self.a_key.row_len,
                 other.a_key.col_len,
-                self.a_key.collision_l2_sq,
+                self.a_key.collision_linf,
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
                 self.b_key.sis_family,
                 self.b_key.row_len,
                 other.b_key.col_len,
-                self.b_key.collision_l2_sq,
+                self.b_key.collision_linf,
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 self.d_key.sis_family,
                 self.d_key.row_len,
                 other.d_key.col_len,
-                self.d_key.collision_l2_sq,
+                self.d_key.collision_linf,
                 d,
             ),
             num_blocks: other.num_blocks,
@@ -886,7 +884,7 @@ impl LevelParams {
             onehot_chunk_size: other.onehot_chunk_size,
             // The tier (split factor + `f_key` rank/bucket) is sized against the
             // same SIS floor as the ranks, so it stays with `self`, matching the
-            // placement of `b_key`'s `row_len`/`collision_l2_sq`.
+            // placement of `b_key`'s `row_len`/`collision_linf`.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),

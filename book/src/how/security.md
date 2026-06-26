@@ -16,7 +16,7 @@ a minimum secure rank, the modulus families, and how the two norm models
 
 **Sources to fold in**
 
-- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table.rs`.
+- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_linf_table/`.
 - Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
 - `docs/security-posture.md`, `specs/akita-sis-consolidation.md`.
 
@@ -43,5 +43,5 @@ page [Euclidean security model](../roadmap/euclidean-security.md).
 **Sources to fold in**
 
 - `specs/l2-msis-opnorm-folded-witness.md` (flagship active spec; S1/S4/S7 done, rest open).
-- `crates/akita-challenges/src/sampler/op_norm.rs`, `crates/akita-types/src/sis/four_square.rs`.
+- `crates/akita-challenges/src/sampler/op_norm.rs`.
 - Paper §3.12 (fold-response ℓ₂ bounds), App C `sec:opnorm-support` (accepted-support floor).

@@ -1,12 +1,13 @@
 # SIS golden reference cells
 
-Offline regression cells for `scripts/gen_sis_table.py` against the pinned
-`third_party/lattice-estimator` checkout.
+Offline regression cells for `scripts/gen_sis_linf_table.py` against the pinned
+`third_party/lattice-estimator` checkout (coefficient-`L∞` norm, ADPS16 + lgsa).
 
 ## Setup
 
 ```bash
 git submodule update --init third_party/lattice-estimator
+cd third_party/lattice-estimator && git checkout a31d06b9a614461fd007571880424919a71a8fda
 ```
 
 ## Refresh golden
@@ -18,7 +19,7 @@ sage -python scripts/sis_golden/refresh_golden.py
 ```
 
 The grid covers q32/q64/q128, `d ∈ {32,64,128,256}`, ranks `{1,5,20}`, and
-includes the degenerate knee at `(q32, d=32, collision_l2_sq=16384)`.
+representative coefficient-`L∞` collision buckets.
 
 ## Check
 
@@ -34,11 +35,11 @@ Regenerate and stitch every SIS table row with the pinned
 `third_party/lattice-estimator` checkout:
 
 ```bash
-sage -python scripts/stitch_generated_sis_table.py --jobs 6
+sage -python scripts/stitch_generated_sis_linf_table.py --jobs 6
 ```
 
 The stitcher uses `--max-rank 20`, passes `--estimator-path
 third_party/lattice-estimator` to every shard, and rejects any estimator checkout
-whose `HEAD` does not match `metadata.json`.
+whose `HEAD` does not match the pin in `gen_sis_linf_table.py`.
 
 Manual workflow only. Rust CI does not require Sage or an initialized submodule.

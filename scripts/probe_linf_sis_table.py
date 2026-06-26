@@ -2,7 +2,7 @@
 """
 Probe direct L-infinity SIS estimates for Akita planner candidate cells.
 
-This is a diagnostic companion to `gen_sis_table.py`, not a production table
+This is a diagnostic companion to `gen_sis_linf_table.py`, not a production table
 generator.  It evaluates explicit `(d, B, width, rank)` cells where:
 
     n = rank * d
@@ -39,7 +39,7 @@ if hasattr(signal, "SIGPIPE"):
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from gen_sis_table import (  # noqa: E402
+from gen_sis_linf_table import (  # noqa: E402
     DEFAULT_JOBS_CAP,
     FAMILIES,
     estimator_git_sha,
@@ -306,7 +306,7 @@ def probe_one(point: ProbePoint, max_m: int, allow_large_m: bool, target_bits: f
             ),
             red_cost_model=reduction_model(),
             red_shape_model=_RED_SHAPE_MODEL,
-            zeta_candidates=list(_ZETA_CANDIDATES),
+            zeta=_ZETA_CANDIDATES[0],
             diagnostics=True,
             log_level=0,
         )

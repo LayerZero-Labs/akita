@@ -17,7 +17,10 @@ GOLDEN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(GOLDEN_DIR))
 
-from gen_sis_table import (  # noqa: E402
+from gen_sis_linf_table import (  # noqa: E402
+    DEFAULT_RED_COST_MODEL,
+    DEFAULT_RED_SHAPE_MODEL,
+    DEFAULT_ZETA_CANDIDATES,
     FAMILIES,
     assert_pinned_estimator,
     binary_search_max_width,
@@ -55,7 +58,8 @@ def main() -> int:
     args = parse_args()
     estimator_path = locate_estimator(args.estimator_path)
     assert_pinned_estimator(estimator_path)
-    SIS, RC, log, oo, ZZ, RealField = load_estimator(estimator_path)
+    SIS, RC, log, oo = load_estimator(estimator_path)
+    zeta_candidates = DEFAULT_ZETA_CANDIDATES
 
     rows: list[dict[str, object]] = []
     t0 = time.time()
@@ -65,13 +69,23 @@ def main() -> int:
         for rank in GOLDEN_RANKS:
             cell_t0 = time.time()
             max_width = binary_search_max_width(
-                SIS, RC, log, oo, ZZ, RealField,
-                q, d, rank, collision,
-                args.target_bits, search_cap,
+                SIS,
+                RC,
+                log,
+                oo,
+                q,
+                d,
+                rank,
+                collision,
+                args.target_bits,
+                search_cap,
+                DEFAULT_RED_COST_MODEL,
+                DEFAULT_RED_SHAPE_MODEL,
+                zeta_candidates,
             )
             elapsed = time.time() - cell_t0
             print(
-                f"family={family} d={d} collision={collision} rank={rank} "
+                f"family={family} d={d} collision_linf={collision} rank={rank} "
                 f"max_width={max_width} ({elapsed:.1f}s)",
                 file=sys.stderr,
             )
@@ -100,13 +114,13 @@ def main() -> int:
     metadata = {
         "description": (
             f"{len(GOLDEN_WORK_ITEMS)} work items × ranks {GOLDEN_RANKS} "
-            f"= {len(rows)} golden cells across q32/q64/q128."
+            f"= {len(rows)} golden cells (coefficient-L∞ norm=oo, ADPS16+lgsa)."
         ),
         "lattice_estimator_remote": estimator_remote_url(estimator_path),
         "lattice_estimator_sha": estimator_git_sha(estimator_path),
         "golden_ranks": GOLDEN_RANKS,
         "work_items": [
-            {"family": family, "d": d, "collision": collision}
+            {"family": family, "d": d, "collision_linf": collision}
             for family, d, collision in GOLDEN_WORK_ITEMS
         ],
     }
