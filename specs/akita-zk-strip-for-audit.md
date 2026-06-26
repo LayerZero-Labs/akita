@@ -53,7 +53,8 @@ milestone; transparent path only):
 | 4b | Verifier fold replay + hiding verify (→ `akita-verifier` = 0) | In review |
 | 4c | Prover blinding/compute leaf (→ prover compute/kernels/ring_switch/ring_relation = 0) | In review |
 | 4d | Prover fold-replay + witness sizing (→ prover/config/planner/setup/sumcheck = 0) | Done |
-| 4e | Schema unification + residual sweep + delete `zk` Cargo features + `akita-r1cs/` (→ global grep = 0) | Not started |
+| 4e | Schema unification + residual sweep + delete `zk` Cargo features + `akita-r1cs/` (→ global grep = 0) | In review |
+| 4f | Retire Slice-0 / verify-side proof-byte golden (post-strip only) | In review |
 
 As of `c998034f`, `main` still carries ~940 `feature = "zk"` lines across
 `crates/**/src` (verifier ~204, prover ~435, types ~275, sumcheck ~29, config ~39,
@@ -104,7 +105,7 @@ Affected surfaces:
 
 | # | Invariant | Why it holds | Protected by |
 |---|-----------|--------------|--------------|
-| I1 | Transparent (default-build) proof bytes are unchanged. | The default build never compiled any `#[cfg(feature="zk")]` line; every paired site keeps the existing `not(zk)` arm verbatim. | **New** golden-byte test (Slice 0); existing serde roundtrips `akita_e2e.rs` |
+| I1 | Transparent (default-build) proof bytes are unchanged through slice 4d; 4e lands descriptor v1 at version 1 without bumping. | The default build never compiled any `#[cfg(feature="zk")]` line; 4e preserves schedule witness-shape descriptor tags and re-pins golden once for the v1 preamble. | Slice-0 golden (slices 0–4e); retired in 4f; then serde roundtrips + `akita_e2e.rs` |
 | I2 | Transparent transcript bytes/labels are unchanged. | The only zk absorb (`ABSORB_ZK_HIDING_COMMITMENT`) is itself zk-gated; the masked next-w-eval feeds the *same* single `append_serde(ABSORB_STAGE2_NEXT_W_EVAL, …)` whose value on the non-zk path is the genuine unmasked `w_eval` ([`fold.rs:873-877`](../crates/akita-prover/src/protocol/core/fold.rs)). Labels never enter the sponge (`labels.rs`, `sponge.rs` ignores the label arg). | `transcript_is_deterministic_for_identical_schedule`; sponge `labels_do_not_enter_production_sponge` |
 | I3 | Transparent sumcheck claim absorbs (`ABSORB_SUMCHECK_CLAIM`) stay unchanged; zk-only sumcheck drivers (`prove_zk`/`verify_zk`, masked round polys, zk EOR replay in `fold.rs`) are deleted wholesale and must not be folded into transparent `prove`/`verify` or orchestration. | Transparent paths already emit one claim absorb per sumcheck (standard/eq-factored drivers, batched stage-3, EOR verifier); zk drivers are cfg-swapped siblings using the same label. Slice 4 must drop zk arms verbatim without changing which transparent caller absorbs which claim value. | I2 transcript test; code review |
 | I4 | Setup serialization for the transparent path is unchanged. | `zk_b_matrix`/`zk_d_matrix` are serialized strictly *after* shared fields, only under cfg; no `not(zk)` padding counterpart. | Setup serialize→deserialize roundtrip (`setup.rs` tests) |
@@ -139,14 +140,13 @@ Affected surfaces:
 - [x] `cargo check --workspace --no-default-features --features parallel,disk-persistence`
       succeeds (transparent merge gate; #218).
 - [ ] `cargo clippy --all --all-targets -- -D warnings` and the `--no-default-features` variant both pass without any `zk` feature in existence.
-- [x] The Slice-0 golden-byte digests are **byte-identical across slices 0–4d**
+- [x] The Slice-0 golden-byte digests were **byte-identical across slices 0–4d**
       (`fp128::D64Full` nv=15 → `c99fcc18…b767072`; `fp128::D64OneHot` nv=20 →
-      `4849bef9…cd0daf1b`). **PR 4e** keeps `AKITA_INSTANCE_DESCRIPTOR_VERSION`
-      at **`1`** (no bump) and restores schedule witness-shape descriptor tags
-      (reserved `PackedDigits` tag `0`, `FieldElements` tag `1`, `SegmentTyped`
-      tag `2`) so the only transcript change is the intentional v1 descriptor
-      preamble, not accidental tag renumbering. Golden re-pins once at the 4e
-      head (`f96dd986…` / `480a6bc9…`). **PR 4f** retires the tripwire.
+      `4849bef9…cd0daf1b`). **PR 4e** kept `AKITA_INSTANCE_DESCRIPTOR_VERSION`
+      at **`1`** (no bump), restored schedule witness-shape descriptor tags, and
+      re-pinned once (`f96dd986…` / `480a6bc9…`). **Retired in PR 4f**: the
+      test file `crates/akita-pcs/tests/transparent_proof_golden.rs` is deleted
+      so intentional protocol evolution is not blocked by pinned SHA-256 constants.
 - [x] `lhl_blinding` compiles in the default build, its unit tests pass, and it is
       no longer behind any `cfg`.
 - [x] A `zk-wip` branch and an annotated tag (`zk-prefix-snapshot-2026-06`)
@@ -165,17 +165,16 @@ cargo check --workspace --no-default-features --features parallel,disk-persisten
 cargo clippy --all --all-targets --no-default-features -- -D warnings
 ```
 
-**Slice-0 tripwire** (added before any deletion): `crates/akita-pcs/tests/transparent_proof_golden.rs`
-pins SHA-256 of serialized transparent proofs for two **folded** (not root-direct)
-instances: `fp128::D64Full` nv=15 and `fp128::D64OneHot` nv=20. Pair with
-transcript-determinism assertions in the same file.
+**Slice-0 tripwire** (added before any deletion, **retired in PR 4f**):
+`crates/akita-pcs/tests/transparent_proof_golden.rs` pinned SHA-256 of serialized
+transparent proofs for two **folded** instances (`fp128::D64Full` nv=15 and
+`fp128::D64OneHot` nv=20) plus a verify-side deserialize→`batched_verify` check.
+It gated invariant I1 during slices 0–4e only. After 4f, use serde roundtrips
+and e2e prove/verify tests instead of fixed proof-byte digests.
 
-**Verify-side golden** (added in PR 4a, *before* any verifier deletion): extend
-the golden test so it deserializes the pinned proof bytes and asserts the
-verifier **accepts** them. The existing tripwire pins prover output; this pins
-verifier *behavior* on a fixed proof, so any accidental change to the transparent
-verify path during 4a/4b fails immediately. It must stay green through every
-slice 4 PR.
+**Verify-side golden** (added in PR 4a, retired with 4f): the golden test
+deserialized pinned proof bytes and asserted the verifier accepted them. That
+behavioral pin is no longer in-tree after the strip completes.
 
 **`--features zk` leg:** was run on slices 0–2 only. After slice 3 (`akita-r1cs`
 removed) and slice 2 (zk schedules deleted), `cargo … --all-features` is expected
@@ -296,11 +295,14 @@ build is already the transparent path.
 
 ### Execution — sequenced slices
 
-Each slice is independently committable and gated by the transparent test run +
-the Slice-0 golden digest. Slices 1–3 landed in [#218](https://github.com/LayerZero-Labs/akita/pull/218).
-Slice 4 depends on 1–3 and ships as PRs 4a–4e; the final PR (4e) also removes the
-`zk` Cargo features and the `akita-r1cs/` dir (the old "slice 5", now folded in —
-its CI half already landed in #218).
+Each slice is independently committable and gated by the transparent test run.
+Slices 0–4e also required the Slice-0 golden digest when that test existed.
+Slices 1–3 landed in [#218](https://github.com/LayerZero-Labs/akita/pull/218).
+Slice 4 depends on 1–3 and ships as PRs 4a–4e; PR 4f retires the golden
+tripwire **after** 4e merges (see [PR 4f](#slice-4f--retire-golden-tripwire)).
+The final schema PR (4e) also removes the `zk` Cargo features and the
+`akita-r1cs/` dir (the old "slice 5", now folded in — its CI half already
+landed in #218).
 
 **Slice 0 — Preserve + tripwire.** ✅ *Landed #218*
 - `git branch zk-wip` at current `main`; `git tag -a zk-prefix-snapshot-2026-06`.
@@ -365,11 +367,12 @@ Ordering invariants (must hold regardless of how PRs are merged/split):
 | 4c | Prover blinding/compute leaf | prover `compute/`, `kernels/`, `ring_switch/`, `ring_relation*`, `backend/recursive/hint`, `api` commit wiring → 0 | The mechanical "generate blinding" half (mirror of 4a): cfg(zk) compute-backend B/D kernels (`compute/{cpu,poly,backend,delegating_cpu,stack}`, `kernels/*`); `ring_switch/{commit,evals,coeffs}` blinding; `ring_relation*` blinding; `hints` blinding digits; `api/{commitment,setup_prefix}` wiring. **Defers** all `core/*` orchestration, `zk_hiding_commit.rs`, masked-sumcheck plumbing, and `masking.rs` if a 4d caller remains. Additive-only ⇒ not transcript-sensitive. |
 | 4d | Prover fold-replay + witness sizing | **akita-prover, akita-config, akita-planner, akita-setup, akita-sumcheck → 0** | `core.rs` + `core/{fold,prove,suffix,root_fold,extension_opening_reduction}.rs`; `ZkHidingProverState`/`build_zk_hiding_context`/pads; `zk_hiding_commit.rs`; masked-sumcheck prove plumbing (`sumcheck/**`); delete `akita-sumcheck` **`prove_zk`** driver; `akita-config` `zk_hiding_witness_len` + `akita-planner` `resolve`/`catalog_identity` + `akita-setup` sizing (the drift pair, deleted together). **I3 review focus** (mirror of 4b). |
 | 4e | Schema unification + residual + feature deletion | **global `rg` → 0** | `akita-types` `proof/{wire,levels,containers,shapes,ring_relation,proof_size,hints}.rs`: drop `zk_hiding` field, `ZkHidingProof`, the `sumcheck_proof`↔`_masked` / `next_w_eval`↔`_masked` swaps + the masked **type definitions** (OI-2; now unreferenced → pure dead-field removal); residual `.rs` cfg(zk) in `akita-pcs` (tests + `src/scheme/tests` + `examples/profile/report.rs`), `akita-algebra`, `akita-challenges`; delete every `zk = [...]` in all 13 `Cargo.toml` + leaf stubs; delete the orphaned `crates/akita-r1cs/` dir; docs (book feature-flags page, AGENTS.md); final `rg 'feature = "zk"' crates/` → 0 gate. |
+| 4f | Retire golden tripwire | (test deletion only) | Delete `crates/akita-pcs/tests/transparent_proof_golden.rs`; update book + this spec. **Merge last**, after 4e; do **not** fold into 4a–4e even if those PRs are squashed together. |
 
 Per-PR Definition of Done (uniform — all must pass to merge):
 1. `cargo nextest run --no-default-features --features parallel,disk-persistence` green.
 2. `cargo clippy --all --all-targets --no-default-features -- -D warnings` clean — **no new `#[allow(dead_code)]`**; if the strip orphans an item, delete it.
-3. Golden digests in `transparent_proof_golden.rs` **unchanged** (see Acceptance Criteria) and the verify-side golden green.
+3. For PRs **4a–4e only:** golden digests in `transparent_proof_golden.rs` unchanged and verify-side golden green. **4f explicitly deletes that test.**
 4. The PR's "driven to 0" crate(s) report `git grep -c 'feature = "zk"' -- 'crates/<crate>/src/**/*.rs'` = **0** (4e: global, including tests/examples/Cargo).
 5. Net-negative LOC modulo the verify-side test; no new abstractions, shims, renames, or transparent-logic edits.
 
@@ -381,9 +384,17 @@ logic. The strip is purely subtractive; anything that requires authoring protoco
 logic is a sign the arms were not cleanly paired and needs human review.
 
 *Verify (whole slice 4):* I1/I2 are most at risk in the fold-replay PRs (4b/4d) —
-gate every PR on the golden digest + full transparent e2e. Run `--features zk` once
+gate PRs 4a–4e on the golden digest + full transparent e2e. Run `--features zk` once
 *before* 4a to confirm the pre-strip feature still built historically; do **not**
 expect it after.
+
+**Slice 4f — Retire golden tripwire.** ⏳ *After 4e merges*
+- Delete `crates/akita-pcs/tests/transparent_proof_golden.rs` and retire golden
+  references in book/spec docs.
+- **Merge policy:** land 4f as its own PR **after** the zk-strip stack (4a–4e).
+  Collapsing 4a–4e into fewer PRs is fine; **do not** fold 4f into that stack.
+- *Verify:* default test run green without the golden test; e2e serde roundtrips
+  remain the ongoing wire regression gate.
 
 **Optional merges (Q1):** 4a+4b may merge if verifier review bandwidth allows;
 4c+4d may merge if you'd rather review the prover as one unit (both touch only
@@ -393,15 +404,16 @@ reintroduces the dangling-reference window OI-2 avoids.
 
 After 4e: `cargo check --features zk` **errors** (the feature is gone) and
 `rg 'feature = "zk"' crates/` returns nothing — the audit-clean end state.
+After 4f: pinned proof-byte digests are no longer a merge gate; protocol wire
+format may evolve without re-pinning SHA-256 constants in CI.
 
 #### Survives-complete (un-gate only, no completion work)
 
 The tiered/recursive setup engine and the SegmentTyped terminal witness stack are
 gated on **runtime** ring-dimension/`tier_split`, *orthogonal* to `zk`; the
-`fp32`/`fp128` non-zk arms are the live path. `PackedDigits` becomes dead
-production type after the prover fold-replay PR (4d, which removes the
-`terminal_direct_witness_shape` selector) — leave it and flag a follow-up.
-`schedule_terminal_direct_witness_shape` is already unconditional.
+`fp32`/`fp128` non-zk arms are the live path. `PackedDigits` was removed in 4e
+(schema unification). `schedule_terminal_direct_witness_shape` is unconditional
+`SegmentTyped`.
 
 ### Alternatives Considered
 
