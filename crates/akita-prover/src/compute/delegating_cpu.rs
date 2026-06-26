@@ -48,7 +48,7 @@ macro_rules! delegate_compute_backend_setup {
 
             fn ensure_ntt_slot(
                 &self,
-                prepared: &mut Self::PreparedSetup,
+                prepared: &Self::PreparedSetup,
                 key: NttCacheKey,
             ) -> Result<(), AkitaError> {
                 CpuBackend.ensure_ntt_slot(prepared, key)
@@ -56,18 +56,19 @@ macro_rules! delegate_compute_backend_setup {
 
             fn register_setup_contract_ntt_slot(
                 &self,
-                prepared: &mut Self::PreparedSetup,
+                prepared: &Self::PreparedSetup,
                 key: NttCacheKey,
             ) -> Result<(), AkitaError> {
                 CpuBackend.register_setup_contract_ntt_slot(prepared, key)
             }
 
-            fn ntt_slot<'a>(
+            fn with_ntt_slot<R>(
                 &self,
-                prepared: &'a Self::PreparedSetup,
+                prepared: &Self::PreparedSetup,
                 key: NttCacheKey,
-            ) -> Result<&'a crate::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
-                CpuBackend.ntt_slot(prepared, key)
+                f: impl FnOnce(&crate::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
+            ) -> Result<R, AkitaError> {
+                CpuBackend.with_ntt_slot(prepared, key, f)
             }
 
             fn prepared_expanded_setup<'a>(

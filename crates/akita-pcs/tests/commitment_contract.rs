@@ -91,18 +91,19 @@ where
 
     fn ensure_ntt_slot(
         &self,
-        prepared: &mut Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         key: akita_types::NttCacheKey,
     ) -> Result<(), AkitaError> {
         CpuBackend.ensure_ntt_slot(prepared, key)
     }
 
-    fn ntt_slot<'a>(
+    fn with_ntt_slot<R>(
         &self,
-        prepared: &'a Self::PreparedSetup,
+        prepared: &Self::PreparedSetup,
         key: akita_types::NttCacheKey,
-    ) -> Result<&'a akita_prover::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
-        CpuBackend.ntt_slot(prepared, key)
+        f: impl FnOnce(&akita_prover::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
+        CpuBackend.with_ntt_slot(prepared, key, f)
     }
 
     fn prepared_expanded_setup<'a>(
