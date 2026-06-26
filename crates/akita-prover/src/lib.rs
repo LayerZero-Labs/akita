@@ -247,7 +247,7 @@ pub struct DecomposeFoldWitness<F: FieldCore> {
     ///
     /// Hot paths borrow typed rows via [`Self::centered_coeffs_trusted`].
     centered_coeffs_flat: Vec<i32>,
-    /// Infinity norm of [`centered_coeffs_flat`].
+    /// Infinity norm of the flat centered coefficient storage above.
     pub centered_inf_norm: u32,
     /// Ring dimension (field coefficients per ring element), fixed at construction.
     ring_dim: usize,
