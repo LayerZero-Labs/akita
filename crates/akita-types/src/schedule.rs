@@ -1,6 +1,6 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
-use crate::descriptor_bytes::{push_usize};
+use crate::descriptor_bytes::push_usize;
 use crate::{CleartextWitnessShape, LevelParams, OpeningBatchShape};
 use akita_field::{AkitaError, CanonicalField};
 
@@ -243,13 +243,13 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         ))
         .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
 
-        e_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(u_concat_count))
-            .and_then(|n| n.checked_add(z_pre_count))
-            .and_then(|n| n.checked_add(r_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
-    }
+    e_hat_count
+        .checked_add(t_hat_count)
+        .and_then(|n| n.checked_add(u_concat_count))
+        .and_then(|n| n.checked_add(z_pre_count))
+        .and_then(|n| n.checked_add(r_count))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
+}
 
 /// Parameters for one fold level in the computed schedule.
 #[derive(Clone, Debug)]
@@ -544,17 +544,16 @@ pub fn scheduled_next_level_params(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::golomb_rice::golomb_rice_encode_vec;
+    use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
+    use crate::tail_golomb_rice_z_params;
     use crate::{
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
         AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-        MRowLayout, SisModulusFamily, TerminalLevelProof,
-        EXTENSION_OPENING_REDUCTION_DEGREE,
+        MRowLayout, SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
     };
-    use crate::golomb_rice::golomb_rice_encode_vec;
-    use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
-    use crate::tail_golomb_rice_z_params;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
@@ -577,12 +576,9 @@ mod tests {
         let layout = segment_shape.layout;
         let (rice_low_bits, zigzag_w) =
             tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
-        let z_payload = golomb_rice_encode_vec(
-            &vec![0i64; layout.z_coords],
-            rice_low_bits,
-            zigzag_w,
-        )
-        .expect("encode zero z segment");
+        let z_payload =
+            golomb_rice_encode_vec(&vec![0i64; layout.z_coords], rice_low_bits, zigzag_w)
+                .expect("encode zero z segment");
         let witness = SegmentTypedWitness {
             layout,
             z_payload,
@@ -630,7 +626,6 @@ mod tests {
         }
     }
 
-
     fn dummy_eq_factored_sumcheck<F: FieldCore>(
         rounds: usize,
         degree: usize,
@@ -646,7 +641,6 @@ mod tests {
                 .collect(),
         }
     }
-
 
     fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {

@@ -46,17 +46,13 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         decomposed_inner_rows: FlatDigitBlocks<D>,
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
     ) -> Self {
-        Self::with_recomposed_inner_rows(
-            vec![decomposed_inner_rows],
-            vec![recomposed_inner_rows],
-        )
+        Self::with_recomposed_inner_rows(vec![decomposed_inner_rows], vec![recomposed_inner_rows])
     }
 
     /// Get the optional recomposed inner rows grouped by polynomial.
     pub fn recomposed_inner_rows(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
         self.recomposed_inner_rows.as_deref()
     }
-
 
     /// Consume the hint and return per-polynomial digit rows plus optional
     /// recomposed inner rows.

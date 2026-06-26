@@ -292,11 +292,7 @@ fn table_fn_name(module_name: &str) -> String {
 }
 
 fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
-    writeln!(
-        out,
-        "#[cfg(feature = \"fp128-d64-onehot-tiered\")]"
-    )
-    .map_err(|e| e.to_string())?;
+    writeln!(out, "#[cfg(feature = \"fp128-d64-onehot-tiered\")]").map_err(|e| e.to_string())?;
     writeln!(out, "pub mod fp128_d64_onehot_tiered;").map_err(|e| e.to_string())?;
     Ok(())
 }

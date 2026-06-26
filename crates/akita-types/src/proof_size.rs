@@ -21,15 +21,12 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
-
 fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
     stage1_tree_stage_shapes(rounds, b)
         .into_iter()
         .map(|stage| {
-            ({
-
-                    sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
-                            }) + stage.child_claims * elem_bytes
+            ({ sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes) })
+                + stage.child_claims * elem_bytes
         })
         .sum::<usize>()
         + elem_bytes
@@ -178,12 +175,9 @@ mod tests {
         let layout = segment_shape.layout;
         let (rice_low_bits, zigzag_w) =
             tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
-        let z_payload = golomb_rice_encode_vec(
-            &vec![0i64; layout.z_coords],
-            rice_low_bits,
-            zigzag_w,
-        )
-        .expect("encode zero z segment");
+        let z_payload =
+            golomb_rice_encode_vec(&vec![0i64; layout.z_coords], rice_low_bits, zigzag_w)
+                .expect("encode zero z segment");
         let witness = SegmentTypedWitness {
             layout,
             z_payload,
@@ -204,7 +198,6 @@ mod tests {
         }
     }
 
-
     fn dummy_eq_factored_sumcheck<F: FieldCore>(
         rounds: usize,
         degree: usize,
@@ -220,7 +213,6 @@ mod tests {
                 .collect(),
         }
     }
-
 
     fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {

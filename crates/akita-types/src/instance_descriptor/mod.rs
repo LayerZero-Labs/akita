@@ -454,8 +454,7 @@ impl Valid for ProtocolFeatureSet {
     fn check(&self) -> Result<(), SerializationError> {
         if self.zk {
             return Err(SerializationError::InvalidData(
-                "descriptor protocol_features.zk must be false after zk-strip cutover"
-                    .to_string(),
+                "descriptor protocol_features.zk must be false after zk-strip cutover".to_string(),
             ));
         }
         Ok(())

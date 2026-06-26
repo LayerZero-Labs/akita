@@ -232,7 +232,6 @@ fn tiny_terminal_stage2() -> SumcheckProof<F> {
     }
 }
 
-
 #[test]
 fn terminal_level_proof_serde_round_trip() {
     let final_witness = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![

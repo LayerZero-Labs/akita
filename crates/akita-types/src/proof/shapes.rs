@@ -140,7 +140,6 @@ pub(super) fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckPro
         .collect()
 }
 
-
 fn eq_factored_sumcheck_shape<F: FieldCore>(
     sc: &EqFactoredSumcheckProof<F>,
 ) -> EqFactoredSumcheckProofShape {
@@ -150,7 +149,6 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
         .map_or(0, |p| p.coeffs_except_linear_term.len());
     (sc.round_polys.len(), degree)
 }
-
 
 pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,

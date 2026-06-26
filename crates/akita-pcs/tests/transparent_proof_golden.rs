@@ -110,8 +110,9 @@ fn verify_deserialized_d64_full_nv15(fixture: &TransparentGoldenFixture<{ fp128:
     const D: usize = Cfg::D;
     const CASE: &str = "fp128 D64Full nv15";
 
-    let proof = AkitaBatchedProof::<F, F>::deserialize_compressed(&fixture.bytes[..], &fixture.shape)
-        .unwrap_or_else(|e| panic!("{CASE}: deserialize pinned proof bytes: {e}"));
+    let proof =
+        AkitaBatchedProof::<F, F>::deserialize_compressed(&fixture.bytes[..], &fixture.shape)
+            .unwrap_or_else(|e| panic!("{CASE}: deserialize pinned proof bytes: {e}"));
     let mut verifier_transcript = AkitaTranscript::<F>::new(fixture.transcript_label);
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -133,8 +134,9 @@ fn verify_deserialized_d64_full_nv15(fixture: &TransparentGoldenFixture<{ fp128:
 fn verify_deserialized_d64_onehot_nv20(fixture: &TransparentGoldenFixture<ONEHOT_D>) {
     const CASE: &str = "fp128 D64OneHot nv20";
 
-    let proof = AkitaBatchedProof::<F, F>::deserialize_compressed(&fixture.bytes[..], &fixture.shape)
-        .unwrap_or_else(|e| panic!("{CASE}: deserialize pinned proof bytes: {e}"));
+    let proof =
+        AkitaBatchedProof::<F, F>::deserialize_compressed(&fixture.bytes[..], &fixture.shape)
+            .unwrap_or_else(|e| panic!("{CASE}: deserialize pinned proof bytes: {e}"));
     let mut verifier_transcript = AkitaTranscript::<F>::new(fixture.transcript_label);
     <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
         &proof,
@@ -226,9 +228,8 @@ fn build_d64_full_nv15_fixture() -> TransparentGoldenFixture<{ fp128::D64Full::D
             opening_point,
             opening,
             commitment: commitments[0].clone(),
-            verifier_setup: <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(
-                &setup,
-            ),
+            verifier_setup:
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup),
             transcript_label: TRANSCRIPT_LABEL,
         }
     })

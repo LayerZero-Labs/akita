@@ -85,7 +85,6 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usi
         .and_then(|len| len.checked_mul(lp.block_len))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
-
     let u_len = lp.u_concat_ring_len_per_group();
 
     Ok(RingRelationSegmentLengths {

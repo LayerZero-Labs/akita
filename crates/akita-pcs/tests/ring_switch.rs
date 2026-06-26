@@ -1,6 +1,5 @@
 //! Ring-switch integration regressions.
 
-
 use akita_algebra::CyclotomicRing;
 #[cfg(all(test, feature = "parallel"))]
 use akita_field::parallel::*;

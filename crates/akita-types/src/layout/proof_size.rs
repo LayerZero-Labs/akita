@@ -77,11 +77,13 @@ pub fn extension_opening_reduction_proof_bytes(
     }
     let elem_bytes = field_bytes(challenge_field_bits);
     let rounds = opening_vars - split_bits;
-    Ok(partials.saturating_mul(elem_bytes).saturating_add(sumcheck_bytes(
-        rounds,
-        EXTENSION_OPENING_REDUCTION_DEGREE,
-        elem_bytes,
-    )))
+    Ok(partials
+        .saturating_mul(elem_bytes)
+        .saturating_add(sumcheck_bytes(
+            rounds,
+            EXTENSION_OPENING_REDUCTION_DEGREE,
+            elem_bytes,
+        )))
 }
 
 /// Planned recursive witness size in ring elements for a singleton fold.

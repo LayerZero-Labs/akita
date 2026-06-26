@@ -115,9 +115,7 @@ where
             .max(lp.d_key.row_len().checked_mul(d_width).ok_or_else(|| {
                 AkitaError::InvalidSetup("D setup footprint overflow".to_string())
             })?);
-    Ok(akita_types::SetupMatrixEnvelope {
-        max_setup_len,
-    })
+    Ok(akita_types::SetupMatrixEnvelope { max_setup_len })
 }
 
 /// Total-claim limit shared by both fp32 ring-subfield fixtures.
