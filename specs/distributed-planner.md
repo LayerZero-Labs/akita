@@ -215,27 +215,36 @@ replication.
 
 ### Cutover to single-chunk
 
-Let `R = num_activated_levels`. A fold level consumes a chunked **input** witness
-iff its absolute level `L` satisfies `L < R` (0-indexed). Define the resolved
-chunk count for the input witness at level `L`:
+Let `R = num_activated_levels`. In this codebase a fold step's `LevelParams`
+describes the witness that step **commits/produces** — the witness whose size is
+`next_w_len(L) = w_ring_element_count(params(L))`, which becomes the input of fold
+`L + 1`. The distributed prover keeps per-node $\widehat z$ on the leading `R`
+folds, so the witness committed at level `L` is chunked iff `L < R`. Define one
+resolved chunk count per level:
 
 ```text
 chunks_at_level(L) = num_chunks   if uses_multi_chunk() && L < R
                      1            otherwise
 ```
 
-The **output** witness of level `L` is the **input** witness of level `L + 1`, so
-its chunk count is `chunks_at_level(L + 1)`. This gives a single, unambiguous
-cutover with no extra round:
+**Single source per level.** Both `params(L).witness_chunk` **and** the
+`next_w_len(L)` width pricing use `chunks_at_level(L)` — they describe the same
+witness, so a future verifier that recomputes the witness size from
+`lp.witness_chunk` always agrees with the planner. There is no separate
+input/output chunk count.
 
-- Levels `0 .. R - 2`: chunked input **and** chunked output.
-- Level `R - 1` (the **cutover fold**): chunked input, single-chunk output
-  (`chunks_at_level(R) = 1`). The nodes coalesce to one logical prover here —
-  modeled only as witness shrink in the planner; prover mechanics are out of scope.
-- Level `R` and beyond: single-chunk input and output.
+This gives a single, unambiguous cutover with no extra round:
 
-Equivalently, exactly the leading `R` fold levels carry a chunked input witness;
-the replicated-$\widehat z$ cost is paid on those `R` levels and nowhere else.
+- Levels `0 .. R - 1`: commit a **chunked** witness (`chunks_at_level = num_chunks`).
+- Level `R` (the **cutover fold**): its input is the chunked witness committed by
+  level `R - 1`, but it commits a **single-chunk** witness (`chunks_at_level(R) = 1`).
+  The nodes coalesce to one logical prover here — modeled only as witness shrink in
+  the planner; prover mechanics are out of scope.
+- Level `R + 1` and beyond: single-chunk throughout.
+
+Equivalently, exactly the leading `R` committed witnesses (levels `0 .. R - 1`)
+carry replicated $\widehat z$; the divisibility constraint
+(`num_blocks % num_chunks == 0`) applies to each such level's `num_blocks`.
 
 If the optimal schedule has fewer than `R` folds, only the executed prefix uses
 chunked pricing; the remaining configured activated levels are a no-op.
@@ -434,8 +443,8 @@ emitted `LevelParams`:
   `witness_chunk = ChunkedWitnessCfg { num_chunks: chunks_at_level(L), num_activated_levels: R }`
   when `chunks_at_level(L) > 1`, and `ChunkedWitnessCfg::default()` otherwise
   (so single-chunk and tail levels are byte-identical to today).
-- `chunks_at_level` is the **input** chunk count from the cutover model above
-  (the relation MLE the verifier evaluates at level `L` sees the input witness).
+- `chunks_at_level(L)` describes the witness committed at level `L` (the one whose
+  size is `next_w_len(L)`); the same count prices that level's `next_w_len`.
 
 The catalog identity (Step 7) embeds the full `ChunkedWitnessCfg` so catalogs
 cannot alias across multi-chunk vs non-chunked presets. No new descriptor-byte
@@ -515,32 +524,32 @@ This is the core review section. Implement in roughly this order.
 #### Step 2 — Witness width integration
 
 1. Implement `w_ring_element_count_for_chunks`.
-2. Add a single resolver `chunks_at_level(policy, fold_level) -> usize` (the
-   **input** chunk count at absolute level `fold_level`), with
-   `let mc = policy.witness_chunk; let R = mc.num_activated_levels`:
+2. Add a single resolver `PlannerPolicy::chunks_at_level(fold_level) -> usize` —
+   the chunk count of the witness committed at absolute level `fold_level`, with
+   `let mc = self.witness_chunk; let R = mc.num_activated_levels`:
    - if `!mc.uses_multi_chunk()` → `1`
    - else if `fold_level < R` → `mc.num_chunks`
    - else → `1`
-3. The **output** witness count of the fold at level `L` is
-   `chunks_at_level(L + 1)` (the input of the next level). Replace direct calls to
-   `w_ring_element_count_with_counts_for_layout_bits` in the planner with
-   `w_ring_element_count_for_chunks`, passing `chunks_at_level(L + 1)` when pricing
-   `next_w_len`, and `chunks_at_level(L)` when pricing the input witness.
+3. Replace direct calls to `w_ring_element_count_with_counts_for_layout_bits` in
+   the planner with `w_ring_element_count_for_chunks`, passing
+   `chunks_at_level(L)` when pricing the witness committed at level `L` (its
+   `next_w_len`). The same count is stamped on `params(L).witness_chunk`, so the
+   metadata and the priced size never diverge.
 
-This one resolver subsumes the earlier input/output enumerations and makes the
-cutover (output of level `R-1` is single-chunk) fall out automatically.
+The cutover falls out automatically: level `R` commits a single-chunk witness
+(`chunks_at_level(R) = 1`) consuming the chunked witness committed by level
+`R - 1`.
 
 #### Step 3 — Root DP enumeration (`find_schedule` / `schedule_params.rs`)
 
 At the root-only loop over `(log_basis, r_vars)` (absolute level `L = 0`):
 
 1. **Skip** candidates with `num_blocks % num_chunks != 0` when
-   `mc.uses_multi_chunk()`.
+   `mc.uses_multi_chunk()` (the root commits a chunked witness when `R >= 1`).
 2. Compute `next_w_len` / `next_w_len_terminal` via
    `w_ring_element_count_for_chunks(..., key.num_polynomials, …,
-   chunks_at_level(1))`. For `R >= 2` that is `num_chunks` (output still chunked);
-   for `R == 1` it is `1` (root is the cutover, output single-chunk); for
-   single-chunk policies it is `1` (unchanged).
+   chunks_at_level(0))` — `num_chunks` when `R >= 1`, else `1` (single-chunk
+   policies are unchanged).
 3. Set the root fold step's `witness_chunk` from `chunks_at_level(0)` (i.e.
    `num_chunks` when `R >= 1`, else default). Root-direct `LevelParams` stays
    `ChunkedWitnessCfg::default()`.
@@ -569,15 +578,16 @@ struct SuffixCtx<'a> {
 For each suffix fold at absolute level `L` (`L >= 1`; the root `L == 0` is handled
 separately in Step 3), with `mc = policy.witness_chunk`:
 
-1. **Input** chunk count = `chunks_at_level(L)` (what the relation MLE sees).
-2. **Output** chunk count for `next_w_len` = `chunks_at_level(L + 1)`. The cutover
-   falls out: at `L == R - 1` the output is `1`, at `L >= R` both are `1`.
-3. Use `num_polynomials = 1` for recursive suffix folds (same as today).
-4. Set the fold step's `witness_chunk` from the **input** count at this level:
-   `ChunkedWitnessCfg { num_chunks: chunks_at_level(L), num_activated_levels: mc.num_activated_levels }`
-   when `chunks_at_level(L) > 1`, else `ChunkedWitnessCfg::default()`.
-5. `derive_candidate_level_params` stays unchanged for SIS key geometry; only
-   witness-length accounting changes.
+1. `num_chunks = chunks_at_level(L)` — the chunk count of the witness committed at
+   this level. Skip candidate `r`-splits whose `num_blocks % num_chunks != 0`.
+2. Price `next_w_len` / `next_w_len_terminal` with
+   `w_ring_element_count_for_chunks(..., 1, …, num_chunks)`. Use
+   `num_polynomials = 1` for recursive suffix folds (same as today).
+3. Set the fold step's `witness_chunk` from the same count:
+   `ChunkedWitnessCfg { num_chunks, num_activated_levels: mc.num_activated_levels }`
+   when `num_chunks > 1`, else `ChunkedWitnessCfg::default()`.
+4. `derive_candidate_level_params` gains a `fold_level` argument so it can resolve
+   `num_chunks`; SIS key geometry is otherwise unchanged.
 
 Because `chunks_at_level` depends only on `(policy, L)` and the policy is fixed
 per resolution, the existing memo key `(level, current_w_len,
@@ -612,10 +622,11 @@ Mirror the DP chunk-resolution when walking compact
 [`GeneratedStep`](../crates/akita-planner/src/generated/mod.rs) entries:
 
 1. Track absolute `fold_level` as today.
-2. When expanding each fold's `LevelParams`, set `witness_chunk` from
-   `chunks_at_level(fold_level)` exactly as in Steps 3–4.
-3. Recompute `next_w_len` with `w_ring_element_count_for_chunks` (passing
-   `chunks_at_level(fold_level + 1)`) instead of the singleton helper.
+2. When expanding each fold's `LevelParams`, stamp `witness_chunk` from
+   `chunks_at_level(fold_level)` exactly as in Steps 3–4 (the expander defaults it
+   so a root-direct commit stays single-chunk; the walker overrides it for folds).
+3. Recompute `next_w_len` with `w_ring_element_count_for_chunks` passing
+   `chunks_at_level(fold_level)` instead of the singleton helper.
 4. Validate at catalog load: multi-chunk tables embed
    `identity.witness_chunk == policy.witness_chunk`.
 
@@ -664,10 +675,16 @@ Add **D = 64 multi-chunk companions** for the existing non-zk D64 families:
 |-------------|-------------------|----------------------|
 | `fp128_d64_onehot` | `fp128_d64_onehot_multi_chunk` | `fp128::D64OneHotMultiChunk` |
 | `fp128_d64_full` | `fp128_d64_full_multi_chunk` | `fp128::D64FullMultiChunk` |
-| `fp128_d64_onehot_tensor` | `fp128_d64_onehot_tensor_multi_chunk` | `tensor_verifier::fp128::D64OneHotTensorMultiChunk` |
 
 **Exclude** `fp128_d64_onehot_tiered_multi_chunk` until tiered + multi-$\widehat z$
-is designed.
+is designed. The **tensor** verifier family (`fp128_d64_onehot_tensor`) does
+**not** get a multi-chunk companion: the tensor-shaped root challenge is an
+orthogonal verifier-cost optimization, kept separate from the distributed-prover
+witness layout for now.
+
+The companions delegate every layout parameter to their base `Cfg` via the
+`impl_multi_chunk_companion!` helper and override only `chunked_witness_cfg()`
+(→ `ChunkedWitnessCfg::d64_production()`) and `schedule_catalog()`.
 
 Each multi-chunk `Cfg`:
 
@@ -709,7 +726,6 @@ Commit new files:
 
 - `crates/akita-schedules/src/generated/fp128_d64_onehot_multi_chunk.rs`
 - `crates/akita-schedules/src/generated/fp128_d64_full_multi_chunk.rs`
-- `crates/akita-schedules/src/generated/fp128_d64_onehot_tensor_multi_chunk.rs`
 
 Non-zk only in this spec phase.
 
@@ -733,11 +749,11 @@ Non-zk only in this spec phase.
               ┌────────────────────────────────────────┐
               │  Root DP (level 0)                      │
               │  skip if num_blocks % num_chunks != 0   │
-              │  input chunks_at_level(0); out at_lvl(1)│
+              │  commit chunks_at_level(0) witness      │
               ├────────────────────────────────────────┤
               │  Suffix DP (levels ≥ 1)                 │
-              │  input chunked while L < R; cutover at  │
-              │  output of level R−1 (→ single-chunk)   │
+              │  levels 0..R−1 commit chunked witness;  │
+              │  level R commits single-chunk (cutover) │
               └──────────────┬─────────────────────────┘
                              ▼
               Schedule { Fold*, Direct }
@@ -780,8 +796,8 @@ Non-zk only in this spec phase.
   `== 1` from level `3` onward for a smoke `num_vars` key.
 - [ ] Root DP skips `(log_basis, r_vars)` whose `num_blocks % 8 != 0` when
   `num_chunks = 8`.
-- [ ] Three `_multi_chunk` D64 modules emitted; `validate_catalog_identity`
-  passes with embedded `witness_chunk == d64_production()`.
+- [ ] Two `_multi_chunk` D64 modules emitted (`onehot`, `full`);
+  `validate_catalog_identity` passes with embedded `witness_chunk == d64_production()`.
 - [ ] `generated_schedule_tables_match_find_schedule` passes with
   `--features all-schedules` including multi-chunk families (same keys as siblings,
   different policies).
@@ -812,7 +828,7 @@ Non-zk only in this spec phase.
   bytes when `num_chunks > 1`, driven by $(\texttt{num\_chunks} - 1)$ extra
   $\widehat z$ segments per multi-chunk level and longer sum-checks. The planner
   reports this in `Schedule.total_bytes`; it does not search for smaller proofs.
-- **Table size:** Three new D64 modules with the **same row count** as their
+- **Table size:** Two new D64 modules with the **same row count** as their
   non-chunked siblings (one entry per `(num_vars, num_polynomials)`); schedules
   differ because emission runs DP with a multi-chunk `PlannerPolicy.witness_chunk`.
 - **DP runtime:** Root loop skips more `r_vars` candidates due to divisibility;

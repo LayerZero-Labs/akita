@@ -10,9 +10,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape_for_key, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    terminal_direct_witness_shape_for_key, w_ring_element_count_for_chunks, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout,
+    Schedule, Step,
 };
 
 use crate::catalog_identity::validate_catalog_identity;
@@ -21,6 +21,7 @@ use crate::generated::{
     table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
     GeneratedStep,
 };
+use crate::schedule_params::validate_policy_witness_chunk;
 use crate::PlannerPolicy;
 
 ///
@@ -41,6 +42,7 @@ pub fn resolve_schedule(
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
+    validate_policy_witness_chunk(policy)?;
     let Some(table) = catalog else {
         return find_schedule(
             key,
@@ -150,7 +152,7 @@ pub fn schedule_from_entry(
                 } else {
                     1
                 };
-                let lp = level.expand_to_level_params(
+                let mut lp = level.expand_to_level_params(
                     policy,
                     &ring_challenge_config,
                     fold_level,
@@ -158,11 +160,17 @@ pub fn schedule_from_entry(
                     fold_challenge_shape_at_level(inputs),
                     level_num_claims,
                 )?;
-                let (num_polynomials, num_public_rows) = if fold_level == 0 {
-                    (key.num_polynomials, 1)
+                // Stamp the per-level chunk layout (the expander defaults it so a
+                // root-direct commit stays single-chunk); must match the DP.
+                lp.witness_chunk = policy.witness_chunk_for_level(fold_level);
+                let num_polynomials = if fold_level == 0 {
+                    key.num_polynomials
                 } else {
-                    (1, 1)
+                    1
                 };
+                // Chunk count of the witness this level commits/produces. Equal to
+                // the count stamped on `lp.witness_chunk`, mirroring the DP.
+                let num_chunks = policy.chunks_at_level(fold_level);
                 let mul_d = |ring: usize| -> Result<usize, AkitaError> {
                     ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
                         AkitaError::InvalidSetup(
@@ -171,22 +179,23 @@ pub fn schedule_from_entry(
                     })
                 };
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let ring = w_ring_element_count_with_counts_for_layout_bits(
+                    let ring = w_ring_element_count_for_chunks(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        num_public_rows,
                         MRowLayout::WithoutDBlock,
+                        num_chunks,
                     )?;
                     let len = mul_d(ring)?;
                     terminal_witness_field_len = Some(len);
                     (len, None, MRowLayout::WithoutDBlock)
                 } else {
-                    let ring = w_ring_element_count_with_counts_bits(
+                    let ring = w_ring_element_count_for_chunks(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        num_public_rows,
+                        MRowLayout::WithDBlock,
+                        num_chunks,
                     )?;
                     let len = mul_d(ring)?;
                     let GeneratedStep::Fold(next_level) = next else {
@@ -199,7 +208,7 @@ pub fn schedule_from_entry(
                         level: fold_level + 1,
                         current_w_len: len,
                     };
-                    let next_lp = next_level.expand_to_level_params(
+                    let mut next_lp = next_level.expand_to_level_params(
                         policy,
                         &ring_challenge_config,
                         fold_level + 1,
@@ -207,6 +216,7 @@ pub fn schedule_from_entry(
                         fold_challenge_shape_at_level(next_inputs),
                         1,
                     )?;
+                    next_lp.witness_chunk = policy.witness_chunk_for_level(fold_level + 1);
                     (len, Some(next_lp), MRowLayout::WithDBlock)
                 };
                 // Single commitment group at one point: one public row per level.
@@ -345,7 +355,7 @@ pub fn estimate_proof_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{DecompositionParams, SisModulusFamily};
+    use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusFamily};
 
     fn flat_policy() -> PlannerPolicy {
         PlannerPolicy {
@@ -362,6 +372,7 @@ mod tests {
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             tiered: false,
+            witness_chunk: ChunkedWitnessCfg::default(),
         }
     }
 
@@ -385,6 +396,78 @@ mod tests {
         let via_find =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find");
         assert_eq!(via_resolve.total_bytes, via_find.total_bytes);
+    }
+
+    #[test]
+    fn multi_chunk_policy_sets_witness_chunk_per_level() {
+        let mut policy = flat_policy();
+        policy.witness_chunk = ChunkedWitnessCfg::d64_production(); // (8, 3)
+        let key = AkitaScheduleLookupKey::new(24, 1);
+        let sched = find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find");
+
+        let mut fold_idx = 0usize;
+        let mut saw_chunked = false;
+        for step in &sched.steps {
+            if let Step::Fold(f) = step {
+                let nc = f.params.witness_chunk.num_chunks;
+                if fold_idx < 3 {
+                    assert_eq!(nc, 8, "fold level {fold_idx} should be chunked");
+                    saw_chunked = true;
+                } else {
+                    assert_eq!(nc, 1, "fold level {fold_idx} should be single-chunk");
+                }
+                // Root fold num_blocks must be divisible by num_chunks.
+                if nc > 1 {
+                    assert_eq!(f.params.num_blocks % 8, 0);
+                }
+                fold_idx += 1;
+            }
+        }
+        assert!(saw_chunked, "expected at least one chunked fold level");
+
+        // Table-free resolution must match the DP for the same policy.
+        let via_resolve = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
+            .expect("resolve");
+        assert_eq!(via_resolve.total_bytes, sched.total_bytes);
+    }
+
+    #[test]
+    fn multi_chunk_does_not_perturb_single_chunk_schedule() {
+        // A policy with default (single-chunk) witness_chunk must reproduce the
+        // exact schedule of today's planner for the same key.
+        let key = AkitaScheduleLookupKey::new(22, 1);
+        let base = flat_policy();
+        let mut explicit_default = flat_policy();
+        explicit_default.witness_chunk = ChunkedWitnessCfg::default();
+        let a = find_schedule(key, &base, ring_challenge_config, fold_shape).expect("a");
+        let b =
+            find_schedule(key, &explicit_default, ring_challenge_config, fold_shape).expect("b");
+        assert_eq!(a.total_bytes, b.total_bytes);
+        assert_eq!(a.steps.len(), b.steps.len());
+    }
+
+    #[test]
+    fn find_schedule_rejects_non_power_of_two_chunks() {
+        let mut policy = flat_policy();
+        policy.witness_chunk = ChunkedWitnessCfg {
+            num_chunks: 6,
+            num_activated_levels: 2,
+        };
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
+            .expect_err("non-power-of-two chunk count must be rejected");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn find_schedule_rejects_tiered_multi_chunk() {
+        let mut policy = flat_policy();
+        policy.tiered = true;
+        policy.witness_chunk = ChunkedWitnessCfg::d64_production();
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
+            .expect_err("tiered + multi-chunk must be rejected");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]

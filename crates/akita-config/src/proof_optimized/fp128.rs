@@ -34,6 +34,15 @@ pub struct D32OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
+/// Multi-chunk (distributed-prover) companion of [`D64OneHot`]. Shares every
+/// layout parameter with its sibling but prices the chunked witness layout.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64OneHotMultiChunk;
+
+/// Multi-chunk (distributed-prover) companion of [`D64Full`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64FullMultiChunk;
+
 impl_proof_optimized_preset!(
     D128Full,
     Field,
@@ -106,6 +115,18 @@ impl_proof_optimized_preset!(
         "fp128_d64_onehot_tiered",
         fp128_d64_onehot_tiered_table
     )
+);
+impl_multi_chunk_companion!(
+    D64OneHotMultiChunk,
+    D64OneHot,
+    "schedules-fp128-d64-onehot-multi-chunk",
+    fp128_d64_onehot_multi_chunk_table
+);
+impl_multi_chunk_companion!(
+    D64FullMultiChunk,
+    D64Full,
+    "schedules-fp128-d64-full-multi-chunk",
+    fp128_d64_full_multi_chunk_table
 );
 impl_proof_optimized_preset!(
     D32Full,

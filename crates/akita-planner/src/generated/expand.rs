@@ -250,6 +250,11 @@ impl GeneratedFoldStep {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            // The chunk layout depends on the step's role (fold vs root-direct
+            // commit), which the caller knows; default here and let the caller
+            // (`schedule_from_entry`) stamp the per-level value for fold steps so
+            // a root-direct commit stays single-chunk.
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         };
         params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
     }

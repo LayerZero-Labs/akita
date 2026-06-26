@@ -219,6 +219,27 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         tensor_verifier::fp128::D64OneHotTensor
     ),
+    // Multi-chunk (distributed-prover) companions of the non-zk D64 families.
+    // Same `(num_vars, num_polynomials)` keys as their siblings; schedules differ
+    // because the policy prices the chunked witness layout. Non-zk only for now.
+    #[cfg(not(feature = "zk"))]
+    family_row!(
+        "fp128_d64_onehot_multi_chunk",
+        "FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-onehot-multi-chunk",
+        1,
+        50,
+        fp128::D64OneHotMultiChunk
+    ),
+    #[cfg(not(feature = "zk"))]
+    family_row!(
+        "fp128_d64_full_multi_chunk",
+        "FP128_D64_FULL_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-full-multi-chunk",
+        1,
+        50,
+        fp128::D64FullMultiChunk
+    ),
     // Tiered companion of `fp128_d64_onehot`
     #[cfg(not(feature = "zk"))]
     family_row!(
