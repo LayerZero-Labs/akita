@@ -3,12 +3,12 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::parallel::*;
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, FromPrimitiveInt, Zero};
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 use akita_sumcheck::UniPoly;
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly};
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage1_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 4] {
     [
         PrefixPoint::Finite(E::one()),
@@ -19,7 +19,7 @@ pub(crate) fn stage1_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [Prefix
 }
 
 /// Safe full stage-1 fallback domain `{0, 1, -1, 2, Infinity}`.
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 5] {
     [
         PrefixPoint::Finite(E::zero()),
@@ -118,7 +118,7 @@ pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> boo
     skip_all,
     name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_compact"
 )]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
@@ -277,7 +277,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     })
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage1_storage_vector_from_quad<E: FieldCore + FromPrimitiveInt>(
     quad: [E; 4],
     b: usize,
@@ -379,7 +379,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
         }
     }
 
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     pub(crate) fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round0_poly(),
@@ -387,7 +387,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
         }
     }
 
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     pub(crate) fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round1_poly(r0),
@@ -411,7 +411,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let q_x = add_quadratic_coeffs(
             scale_quadratic_coeffs(self.x_row_coeffs[0], E::one() - self.tau1),
@@ -420,7 +420,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
         coeff_array_to_poly(mul_linear_by_quadratic_coeffs(self.tau0, q_x))
     }
 
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
         let y_values: [E; 3] =
             std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(self.x_row_coeffs[y_idx], r0));
@@ -447,7 +447,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt> Stage1B8BivariateSkipState<E> {
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let l1_at_0 = E::one() - self.tau1;
         let l1_at_1 = self.tau1;
@@ -462,7 +462,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1B8BivariateSkipState<E> {
         UniPoly::from_evals(&evals)
     }
 
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
         let l0_at_r0 = linear_eq_eval(self.tau0, r0);
         let evals: Vec<E> = (0..=5u64)

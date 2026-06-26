@@ -154,22 +154,6 @@
       "consider_updating": ["book/src/usage/**", "README.md"]
     },
     {
-      "id": "zk-r1cs",
-      "description": "Zero-knowledge path and deferred R1CS",
-      "code": [
-        "crates/akita-r1cs/**",
-        "crates/akita-prover/src/protocol/masking.rs",
-        "crates/akita-prover/src/protocol/zk_*"
-      ],
-      "consider_updating": [
-        "book/src/foundations/zero-knowledge.md",
-        "book/src/roadmap/zero-knowledge.md",
-        "book/src/roadmap/verifier-offloading.md",
-        "book/src/roadmap/euclidean-security.md",
-        "specs/akita-zk-*.md"
-      ]
-    },
-    {
       "id": "ci-tooling",
       "description": "CI workflows and repo scripts",
       "code": [".github/workflows/**", "scripts/**"],

@@ -31,7 +31,6 @@ logging-transcript = []
 # for the crate to compile with default-features disabled.
 transcript-blake2b = ["spongefish/blake2", "spongefish/sha3"]
 transcript-keccak = ["spongefish/keccak", "spongefish/sha3"]
-zk = []
 
 [lints]
 workspace = true

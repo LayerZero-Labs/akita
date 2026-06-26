@@ -1,7 +1,6 @@
 use super::*;
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn batched_commit_matches_individual_commits() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);

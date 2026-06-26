@@ -1,5 +1,4 @@
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 use akita_algebra::poly::multilinear_eval;
 use akita_field::{

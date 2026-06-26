@@ -19,7 +19,6 @@ Disable parallel locally: `cargo build --no-default-features` (or add only the f
 |---------|---------|
 | `disk-persistence` | Disk-backed setup cache paths (`akita-setup/disk-persistence`) |
 | `logging-transcript` | `LoggingTranscript` schedule events and wire-before-squeeze smell checks in transcript tests |
-| `zk` | Zero-knowledge proving path; pulls `akita-r1cs` into sumcheck and verifier |
 | `profile-ci` | Schedule features needed for the CI profile-bench matrix (see [Profiling](./profiling.md)) |
 
 Per-crate feature tables live in each `crates/*/Cargo.toml`.

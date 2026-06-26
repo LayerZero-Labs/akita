@@ -651,8 +651,8 @@ mod round_flow;
 mod sparse_y;
 mod x_prefix;
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests;
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) use round_flow::{advance_stage1_claim, pad_compact_witness};

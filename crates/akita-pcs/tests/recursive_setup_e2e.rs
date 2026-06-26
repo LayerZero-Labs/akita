@@ -17,7 +17,6 @@
 //!   pins the setup-product sumcheck as load-bearing rather than cosmetic.
 
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 

@@ -262,7 +262,7 @@ pub(super) fn safe_crt_chunk_width<
         .filter(|&chunk_width| chunk_width > 0)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use akita_algebra::ntt::tables::{

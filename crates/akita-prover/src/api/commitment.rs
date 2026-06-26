@@ -5,8 +5,6 @@ use crate::compute::{
     RootCommitBackend, RootCommitKernel, RootCommitPoly, RootCommitSource, RootPolyShape,
     UniformProverStack,
 };
-#[cfg(feature = "zk")]
-use crate::protocol::masking::sample_blinding_digits;
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
 use akita_algebra::CyclotomicRing;
@@ -403,9 +401,6 @@ where
                 Ok(())
             },
         )?;
-    #[cfg(feature = "zk")]
-    let b_blinding_digits =
-        sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
     validate_commit_outer_input_nonempty(b_input_digits.len())?;
     let u: Vec<CyclotomicRing<F, D>> = if params.f_key.is_some() {
         // Tiered: the sent commitment is the second-tier image
@@ -413,32 +408,12 @@ where
         // is a non-goal; tiered proofs are exercised non-zk.
         tiered_commit_u_final::<F, D, B>(backend, prepared, params, &b_input_digits)?
     } else {
-        #[cfg(feature = "zk")]
-        let mut u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-            prepared,
-            params.b_key.row_len(),
-            &b_input_digits,
-            params.log_basis,
-        )?;
-        #[cfg(not(feature = "zk"))]
         let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
             prepared,
             params.b_key.row_len(),
             &b_input_digits,
             params.log_basis,
         )?;
-        #[cfg(feature = "zk")]
-        {
-            let blinding_rows = backend.zk_b_digit_rows::<D>(
-                prepared,
-                params.b_key.row_len(),
-                b_blinding_digits.flat_digits().len(),
-                b_blinding_digits.flat_digits(),
-            )?;
-            for (row, blinding) in u.iter_mut().zip(blinding_rows) {
-                *row += blinding;
-            }
-        }
         if u.len() != params.b_key.row_len() {
             return Err(AkitaError::InvalidSetup(format!(
                 "backend returned {} B commitment rows, expected {}",
@@ -451,8 +426,6 @@ where
     let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
         decomposed_inner_rows,
         recomposed_inner_rows,
-        #[cfg(feature = "zk")]
-        vec![b_blinding_digits],
     );
     Ok((RingCommitment { u }, hint))
 }
@@ -773,13 +746,7 @@ mod tests {
         let expanded = AkitaProverSetup::<F, D>::generate_with_capacity(
             5,
             1,
-            SetupMatrixEnvelope {
-                max_setup_len: 8,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            },
+            SetupMatrixEnvelope { max_setup_len: 8 },
         )
         .unwrap()
         .expanded;

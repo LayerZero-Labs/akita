@@ -582,7 +582,7 @@ fn arctan_inv(x: i128) -> (i128, i128) {
     (sum - slack, sum + slack)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::SparseChallenge;
@@ -899,5 +899,5 @@ mod tests {
 
 /// Ignored measurement harness for the operator-norm predicate and `D=64`
 /// exact-shell rejection sampling. See [`perf`] for the runnable studies.
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod perf;

@@ -80,17 +80,7 @@ where
                     .expanded
                     .shared_matrix()
                     .total_ring_elements_at::<D>()?;
-                #[cfg(feature = "zk")]
-                let cached_zk_b_total =
-                    setup.expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
-                #[cfg(feature = "zk")]
-                let cached_zk_d_total =
-                    setup.expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
                 let cached_shape_covers_request = cached_total >= max_setup_len;
-                #[cfg(feature = "zk")]
-                let cached_shape_covers_request = cached_shape_covers_request
-                    && cached_zk_b_total >= setup_envelope.max_zk_b_len
-                    && cached_zk_d_total >= setup_envelope.max_zk_d_len;
                 if cached_shape_covers_request {
                     tracing::info!("Loaded setup from disk; backend preparation is explicit");
                     return Ok(setup);
@@ -377,14 +367,6 @@ fn deserialize_cached_setup<
             "cached setup seed matrix shape does not match cache key".to_string(),
         ));
     }
-    #[cfg(feature = "zk")]
-    if seed.max_zk_b_len != expected_envelope.max_zk_b_len
-        || seed.max_zk_d_len != expected_envelope.max_zk_d_len
-    {
-        return Err(SerializationError::InvalidData(
-            "cached setup seed ZK matrix shape does not match cache key".to_string(),
-        ));
-    }
     let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
         &mut *reader,
         Compress::Yes,
@@ -393,34 +375,7 @@ fn deserialize_cached_setup<
         seed.gen_ring_dim,
         seed.matrix_field_elements()?,
     )?;
-    #[cfg(feature = "zk")]
-    let zk_b_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
-        &mut *reader,
-        Compress::Yes,
-        Validate::Yes,
-        seed.max_zk_b_len,
-        seed.gen_ring_dim,
-        seed.zk_b_matrix_field_elements()?,
-    )?;
-    #[cfg(feature = "zk")]
-    let zk_d_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
-        &mut *reader,
-        Compress::Yes,
-        Validate::Yes,
-        seed.max_zk_d_len,
-        seed.gen_ring_dim,
-        seed.zk_d_matrix_field_elements()?,
-    )?;
-    Ok(
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            seed,
-            shared_matrix,
-            #[cfg(feature = "zk")]
-            zk_b_matrix,
-            #[cfg(feature = "zk")]
-            zk_d_matrix,
-        ),
-    )
+    Ok(AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix))
 }
 
 #[cfg(feature = "disk-persistence")]
@@ -559,13 +514,6 @@ mod tests {
                 };
                 let decomposed = FlatDigitBlocks::<TEST_D>::from_blocks(vec![Vec::new()]);
                 let recomposed = vec![Vec::new()];
-                #[cfg(feature = "zk")]
-                let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                    decomposed,
-                    recomposed,
-                    FlatDigitBlocks::empty(),
-                );
-                #[cfg(not(feature = "zk"))]
                 let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
                     decomposed, recomposed,
                 );
@@ -621,10 +569,6 @@ mod tests {
                 let corrupt = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     prover_setup.expanded.seed().clone(),
                     FlatMatrix::from_flat_data(vec![TestF::zero(); total * TEST_D], TEST_D),
-                    #[cfg(feature = "zk")]
-                    prover_setup.expanded.zk_b_matrix().clone(),
-                    #[cfg(feature = "zk")]
-                    prover_setup.expanded.zk_d_matrix().clone(),
                 );
                 let corrupt = AkitaProverSetup {
                     expanded: Arc::new(corrupt),
@@ -680,10 +624,6 @@ mod tests {
                 let stale = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     stale_seed,
                     prover_setup.expanded.shared_matrix().clone(),
-                    #[cfg(feature = "zk")]
-                    prover_setup.expanded.zk_b_matrix().clone(),
-                    #[cfg(feature = "zk")]
-                    prover_setup.expanded.zk_d_matrix().clone(),
                 );
                 let stale = AkitaProverSetup {
                     expanded: Arc::new(stale),

@@ -36,13 +36,10 @@ pub use batch::{
     validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, ProverCommitmentRows, RingCommitment};
-#[cfg(feature = "zk")]
-pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
 pub use direct_witness::{
     segment_typed_witness_shape, terminal_direct_witness_shape,
     terminal_direct_witness_shape_for_key, CleartextWitnessProof, CleartextWitnessShape,
-    PackedDigits,
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
@@ -104,17 +101,14 @@ pub use terminal_witness::{
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
-#[cfg(not(feature = "zk"))]
 use akita_sumcheck::EqFactoredSumcheckProof;
 use akita_sumcheck::{
     uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
 };
-#[cfg(feature = "zk")]
-use akita_sumcheck::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
 use std::marker::PhantomData;

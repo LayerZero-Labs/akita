@@ -19,7 +19,6 @@
 //! near-cartesian-product runtime blowup.
 
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 mod common;
 
@@ -45,7 +44,6 @@ fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, 
         .expect("onehot poly under dense config")
 }
 
-#[cfg(not(feature = "zk"))]
 mod non_zk_aggregated_cases {
     use super::*;
 
