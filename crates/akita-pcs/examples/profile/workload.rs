@@ -395,7 +395,7 @@ fn run_prove<
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
-            ProverSetup = AkitaProverSetup<FF, D>,
+            ProverSetup = AkitaProverSetup<FF>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -550,7 +550,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
-            ProverSetup = AkitaProverSetup<FF, D>,
+            ProverSetup = AkitaProverSetup<FF>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -657,7 +657,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
-            ProverSetup = AkitaProverSetup<FF, D>,
+            ProverSetup = AkitaProverSetup<FF>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -763,7 +763,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
-            ProverSetup = AkitaProverSetup<FF, D>,
+            ProverSetup = AkitaProverSetup<FF>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,

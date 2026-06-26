@@ -3,29 +3,34 @@
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
-    derive_public_matrix_flat, sample_public_matrix_seed, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixRegistry, SetupPrefixVerifierRegistry,
+    derive_public_matrix_flat, dispatch_ring_dim_result, sample_public_matrix_seed,
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, SetupMatrixEnvelope,
+    SetupPrefixRegistry, SetupPrefixVerifierRegistry,
 };
 use std::sync::Arc;
 
 /// Prover setup artifact.
 ///
-/// Backend-prepared compute state is intentionally not stored here. Host code
-/// prepares a compute backend from the expanded setup when it wants to prove.
+/// Ring degree is carried in [`AkitaExpandedSetup`] seed metadata (`gen_ring_dim`),
+/// not as a type parameter. Backend-prepared compute state is intentionally not
+/// stored here; host code prepares a compute backend from the expanded setup
+/// when it wants to prove.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaProverSetup<F: FieldCore, const D: usize> {
+pub struct AkitaProverSetup<F: FieldCore> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
     pub prefix_slots: SetupPrefixRegistry<F>,
 }
 
-impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
+impl<F: FieldCore> AkitaProverSetup<F> {
+    /// Setup envelope ring degree.
+    #[must_use]
+    pub fn gen_ring_dim(&self) -> usize {
+        self.expanded.seed().gen_ring_dim
+    }
+
     /// Generate a prover setup from already-computed setup capacity bounds.
-    ///
-    /// The caller supplies config-derived capacity bounds. This constructor
-    /// owns only the concrete prover artifact: matrix expansion for the chosen
-    /// capacity envelope.
     ///
     /// # Errors
     ///
@@ -33,6 +38,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     /// descriptor cannot be built.
     #[tracing::instrument(skip_all, name = "AkitaProverSetup::generate_with_capacity")]
     pub fn generate_with_capacity(
+        gen_ring_dim: usize,
         max_num_vars: usize,
         max_num_batched_polys: usize,
         setup_envelope: SetupMatrixEnvelope,
@@ -44,7 +50,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         let seed = AkitaSetupSeed {
             max_num_vars,
             max_num_batched_polys,
-            gen_ring_dim: D,
+            gen_ring_dim,
             max_setup_len: setup_envelope.max_setup_len,
             public_matrix_seed,
         };
@@ -52,15 +58,18 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             AkitaError::InvalidSetup(format!("setup seed validation failed: {err}"))
         })?;
 
-        let shared_flat =
-            derive_public_matrix_flat::<F, D>(setup_envelope.max_setup_len, &public_matrix_seed);
-        let expanded = Arc::new(
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
-        );
-
-        Ok(Self {
-            expanded,
-            prefix_slots: SetupPrefixRegistry::new(),
+        dispatch_ring_dim_result!(gen_ring_dim, |D| {
+            let shared_flat = derive_public_matrix_flat::<F, D>(
+                setup_envelope.max_setup_len,
+                &public_matrix_seed,
+            );
+            let expanded = Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
+            );
+            Ok(Self {
+                expanded,
+                prefix_slots: SetupPrefixRegistry::new(),
+            })
         })
     }
 
@@ -81,10 +90,6 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
     ///
-    /// Use this when the caller has already run strict setup validation, for
-    /// example through checked setup deserialization. This still re-checks
-    /// seed-to-matrix derivation at the trust boundary.
-    ///
     /// # Errors
     ///
     /// Returns an error if the expanded setup does not match its seed.
@@ -100,15 +105,9 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
 
     /// Wrap a seed-validated [`AkitaExpandedSetup`] in a prover setup.
     ///
-    /// This skips seed-to-matrix rederivation. Use it only when the caller
-    /// just verified the matrix with `validate_public_matrix_matches_seed` in
-    /// the same trust boundary, such as the disk-cache loader in
-    /// `akita-setup`.
-    ///
     /// # Errors
     ///
-    /// Returns an error if the setup's generation dimension does not match
-    /// `D` or its internal shape metadata is malformed.
+    /// Returns an error if setup seed/matrix metadata is inconsistent.
     pub fn from_seed_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
         F: CanonicalField + Valid,
@@ -119,12 +118,6 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         expanded.shared_matrix().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup matrix validation failed: {err}"))
         })?;
-        if expanded.seed().gen_ring_dim != D {
-            return Err(AkitaError::InvalidSetup(format!(
-                "expanded setup ring dimension {} does not match prover D={D}",
-                expanded.seed().gen_ring_dim
-            )));
-        }
         if expanded.shared_matrix().gen_ring_dim() != expanded.seed().gen_ring_dim {
             return Err(AkitaError::InvalidSetup(
                 "expanded setup matrix generation dimension does not match setup seed".to_string(),
@@ -135,8 +128,11 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
                 "expanded setup matrix length does not match setup seed".to_string(),
             ));
         }
+        let gen_ring_dim = expanded.seed().gen_ring_dim;
+        expanded
+            .shared_matrix()
+            .total_ring_elements_at_dyn(gen_ring_dim)?;
         let expanded = Arc::new(expanded);
-        expanded.shared_matrix().total_ring_elements_at::<D>()?;
         Ok(Self {
             expanded,
             prefix_slots: SetupPrefixRegistry::new(),
@@ -156,9 +152,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize, const D: usize> Valid
-    for AkitaProverSetup<F, D>
-{
+impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
         self.prefix_slots.check()
@@ -171,24 +165,9 @@ mod tests {
     use akita_field::Prime128Offset275;
 
     #[test]
-    fn validated_expanded_setup_rejects_mismatched_ring_dimension() {
-        let setup = AkitaProverSetup::<Prime128Offset275, 64>::generate_with_capacity(
-            8,
-            1,
-            SetupMatrixEnvelope { max_setup_len: 1 },
-        )
-        .expect("generate D=64 setup");
-        let expanded = (*setup.expanded).clone();
-
-        let err = AkitaProverSetup::<Prime128Offset275, 32>::from_validated_expanded(expanded)
-            .expect_err("D=64 setup must not be reinterpreted as D=32");
-
-        assert!(err.to_string().contains("ring dimension 64"));
-    }
-
-    #[test]
     fn generate_with_capacity_rejects_zero_setup_len() {
-        let zero_len = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
+        let zero_len = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            32,
             8,
             1,
             SetupMatrixEnvelope { max_setup_len: 0 },
@@ -205,7 +184,8 @@ mod tests {
             SetupPrefixSlotAny, SetupPrefixSlotId,
         };
 
-        let mut setup = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
+        let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            32,
             8,
             1,
             SetupMatrixEnvelope { max_setup_len: 1 },
