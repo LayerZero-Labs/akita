@@ -351,7 +351,6 @@ mod tests {
     use super::*;
     use crate::AkitaProverSetup;
     use crate::CpuBackend;
-    use crate::CpuPreparedSetup;
     use akita_field::{AkitaError, Fp64};
     use akita_types::SetupMatrixEnvelope;
 
