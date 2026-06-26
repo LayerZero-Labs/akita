@@ -14,7 +14,6 @@
 //! - dense: 10, 15, 18
 
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 

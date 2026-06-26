@@ -13,10 +13,6 @@ fn reject_test_segment_layout() -> RingRelationSegmentLayout {
         offset_u: 0,
         offset_z: 0,
         offset_r: 0,
-        #[cfg(feature = "zk")]
-        b_blinding_offset: 0,
-        #[cfg(feature = "zk")]
-        d_blinding_offset: 0,
     }
 }
 

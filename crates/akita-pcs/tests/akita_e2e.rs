@@ -20,7 +20,6 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
-#[cfg(not(feature = "zk"))]
 use akita_types::{
     schedule_terminal_direct_witness_shape, CleartextWitnessProof, CleartextWitnessShape, Schedule,
 };
@@ -55,7 +54,6 @@ const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-#[cfg(not(feature = "zk"))]
 fn schedule_bytes_with_realized_terminal_z<FF, L>(
     proof: &AkitaBatchedProof<FF, L>,
     schedule: &Schedule,
@@ -196,7 +194,6 @@ type DenseFixture<FField, E, const D: usize> = (
 );
 
 /// Active log-basis of a runtime schedule's terminal direct step.
-#[cfg(not(feature = "zk"))]
 fn schedule_terminal_log_basis<Cfg: CommitmentConfig>(schedule: &akita_types::Schedule) -> u32 {
     let field_bits = Cfg::decomposition().field_bits();
     match schedule.steps.last() {
@@ -357,7 +354,6 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::FlatRingVec<FField>) {
     let mut coeffs = flat.coeffs().to_vec();
     let first = coeffs
@@ -367,30 +363,18 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::FlatRingVec<FFi
     *flat = akita_types::FlatRingVec::from_coeffs(coeffs);
 }
 
-#[cfg(not(feature = "zk"))]
 fn mutate_terminal_e_hat_digit<FField: FieldCore>(
     witness: &mut akita_types::CleartextWitnessProof<FField>,
-    layout: akita_types::TerminalWitnessSegmentLayout,
+    _layout: akita_types::TerminalWitnessSegmentLayout,
 ) {
     match witness {
-        akita_types::CleartextWitnessProof::PackedDigits(packed) => {
-            let mut digits = (0..packed.num_elems)
-                .map(|idx| packed.digit_at(idx).expect("packed digit index"))
-                .collect::<Vec<_>>();
-            let digit = digits
-                .get_mut(layout.e_hat_digit_offset)
-                .expect("terminal e_hat offset must be in range");
-            *digit = if *digit == -1 { 0 } else { -1 };
-            *packed = akita_types::PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
-        }
         akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
             bump_flat_ring_vec(&mut segment.e_fields);
         }
-        _ => panic!("trace tamper fixture expects packed or segment-typed terminal witness"),
+        _ => panic!("trace tamper fixture expects segment-typed terminal witness"),
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn terminal_witness_mut<FField: FieldCore, L: FieldCore>(
     proof: &mut AkitaBatchedProof<FField, L>,
 ) -> &mut akita_types::CleartextWitnessProof<FField> {
@@ -411,7 +395,6 @@ fn terminal_witness_mut<FField: FieldCore, L: FieldCore>(
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn assert_invalid_proof<T: core::fmt::Debug>(
     case: &str,
     result: Result<T, akita_field::AkitaError>,
@@ -491,12 +474,10 @@ fn full_d64_prove_verify() {
         assert!(proof_bytes > 0, "proof must be non-empty");
         let total_fold_levels = batched_total_fold_levels(&proof);
         assert!(total_fold_levels > 0, "proof must have at least one level");
-        #[cfg(not(feature = "zk"))]
-        {
-            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
-                .expect("schedule plan");
-            assert_eq!(total_fold_levels, plan.num_fold_levels());
-        }
+
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
+            .expect("schedule plan");
+        assert_eq!(total_fold_levels, plan.num_fold_levels());
 
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -530,7 +511,6 @@ fn full_d64_prove_verify() {
     });
 }
 
-#[cfg(not(feature = "zk"))]
 #[test]
 fn trace_internalization_rejects_tampered_root_fold_handle() {
     init_rayon_pool();
@@ -563,7 +543,6 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
     });
 }
 
-#[cfg(not(feature = "zk"))]
 #[test]
 fn trace_internalization_rejects_tampered_recursive_fold_handle() {
     init_rayon_pool();
@@ -650,7 +629,6 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
     });
 }
 
-#[cfg(not(feature = "zk"))]
 #[test]
 fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
     init_rayon_pool();
@@ -702,12 +680,9 @@ fn full_d32_prove_verify() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(D32_TEST_NV, b"akita_e2e/full-d32");
 
-        #[cfg(not(feature = "zk"))]
-        {
-            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(D32_TEST_NV))
-                .expect("schedule plan");
-            assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
-        }
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(D32_TEST_NV))
+            .expect("schedule plan");
+        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
         let commitments = [commitment];
         let openings = [opening];
@@ -806,7 +781,6 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = TINY_DIRECT_TEST_NV;
-        #[cfg(not(feature = "zk"))]
         let plan = {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan");
@@ -869,7 +843,6 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         assert_eq!(batched_total_fold_levels(&proof), 0);
         assert!(proof.is_root_direct());
-        #[cfg(not(feature = "zk"))]
         assert_eq!(proof.size(), plan.total_bytes);
         let direct_witnesses = proof
             .root
@@ -887,20 +860,18 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             opening,
             "direct witness should preserve the public opening"
         );
-        #[cfg(not(feature = "zk"))]
-        {
-            let (recomputed_commitment, _) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-                F,
-                D,
-            >>::commit(
-                &setup, std::slice::from_ref(&reconstructed), &stack
-            )
-            .expect("recompute commitment from direct witness");
-            assert_eq!(
-                recomputed_commitment, commitments[0],
-                "direct witness should preserve the root commitment"
-            );
-        }
+
+        let (recomputed_commitment, _) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(
+            &setup, std::slice::from_ref(&reconstructed), &stack
+        )
+        .expect("recompute commitment from direct witness");
+        assert_eq!(
+            recomputed_commitment, commitments[0],
+            "direct witness should preserve the root commitment"
+        );
 
         let mut proof_bytes = Vec::new();
         proof
@@ -942,22 +913,19 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-full-mixed");
 
-        #[cfg(not(feature = "zk"))]
-        {
-            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
-                .expect("schedule plan");
-            assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+        let plan =
+            Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
+        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
-            assert_eq!(
-                proof
-                    .final_witness()
-                    .as_segment_typed()
-                    .expect("terminal witness should be segment-typed")
-                    .layout
-                    .log_basis,
-                schedule_terminal_log_basis::<Cfg>(&plan)
-            );
-        }
+        assert_eq!(
+            proof
+                .final_witness()
+                .as_segment_typed()
+                .expect("terminal witness should be segment-typed")
+                .layout
+                .log_basis,
+            schedule_terminal_log_basis::<Cfg>(&plan)
+        );
 
         let mut proof_bytes = Vec::new();
         proof
@@ -1065,37 +1033,35 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let decoded =
             AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof.shape())
                 .expect("deserialize adaptive onehot proof");
-        #[cfg(not(feature = "zk"))]
-        {
-            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
-                .expect("schedule plan");
-            assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
-            // `Schedule::total_bytes` is the planner's public upper bound. For
-            // segment-typed tails the schedule budgets the variable-length
-            // Golomb `z` segment at its worst-case public length; the proof
-            // carries the realized byte length on the wire.
-            assert!(
-                proof.size() <= plan.total_bytes,
-                "runtime proof {} exceeds planner upper bound {}",
-                proof.size(),
-                plan.total_bytes
-            );
-            assert_eq!(
-                schedule_bytes_with_realized_terminal_z(&proof, &plan),
-                proof.size(),
-                "planner/runtime proof-size accounting should be exact once the \
+
+        let plan =
+            Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
+        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+        // `Schedule::total_bytes` is the planner's public upper bound. For
+        // segment-typed tails the schedule budgets the variable-length
+        // Golomb `z` segment at its worst-case public length; the proof
+        // carries the realized byte length on the wire.
+        assert!(
+            proof.size() <= plan.total_bytes,
+            "runtime proof {} exceeds planner upper bound {}",
+            proof.size(),
+            plan.total_bytes
+        );
+        assert_eq!(
+            schedule_bytes_with_realized_terminal_z(&proof, &plan),
+            proof.size(),
+            "planner/runtime proof-size accounting should be exact once the \
                  realized variable-length terminal z payload is substituted",
-            );
-            assert_eq!(
-                decoded
-                    .final_witness()
-                    .as_segment_typed()
-                    .expect("terminal witness should be segment-typed")
-                    .layout
-                    .log_basis,
-                schedule_terminal_log_basis::<Cfg>(&plan)
-            );
-        }
+        );
+        assert_eq!(
+            decoded
+                .final_witness()
+                .as_segment_typed()
+                .expect("terminal witness should be segment-typed")
+                .layout
+                .log_basis,
+            schedule_terminal_log_basis::<Cfg>(&plan)
+        );
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
@@ -1139,7 +1105,6 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             // for very large `num_vars`, so the DP returns this edge instead
             // of a folded schedule; it carries no basis to check.
             akita_types::Step::Direct(direct) => match &direct.witness_shape {
-                akita_types::CleartextWitnessShape::PackedDigits((_, bits)) => *bits <= 6,
                 akita_types::CleartextWitnessShape::FieldElements(_) => true,
                 akita_types::CleartextWitnessShape::SegmentTyped(shape) => {
                     shape.layout.log_basis <= 6
@@ -1369,16 +1334,11 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                     .final_witness_mut()
                     .expect("terminal root proof must carry terminal stage-2 proof")
                 {
-                    akita_types::CleartextWitnessProof::PackedDigits(packed) => {
-                        packed.data[0] ^= 1;
-                    }
                     akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
                         segment.z_payload[0] ^= 1;
                     }
                     akita_types::CleartextWitnessProof::FieldElements(_) => {
-                        panic!(
-                            "expected packed-digits or segment-typed final witness for tamper test"
-                        );
+                        panic!("expected segment-typed final witness for tamper test");
                     }
                 }
             }

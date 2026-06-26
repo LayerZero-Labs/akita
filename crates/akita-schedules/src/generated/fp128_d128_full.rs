@@ -803,7 +803,6 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[128];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_d128_full",
-    zk_enabled: false,
     sis_family: SisModulusFamily::Q128,
     ring_dimension: 128,
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 128, log_open_bound: None },

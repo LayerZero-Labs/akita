@@ -9,9 +9,7 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-#[cfg(not(feature = "zk"))]
 use akita_types::schedule_terminal_direct_witness_shape;
-#[cfg(not(feature = "zk"))]
 use akita_types::terminal_golomb_grind_tail_t_vectors;
 
 /// Prover state carried between suffix fold levels.
@@ -30,12 +28,6 @@ pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
     pub sumcheck_challenges: Vec<L>,
     /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
     pub opening: L,
-    /// Transcript-visible masked handle for `opening`.
-    #[cfg(feature = "zk")]
-    pub opening_public: L,
-    /// Proof-level ZK hiding material fixed at batched-prove startup.
-    #[cfg(feature = "zk")]
-    pub zk_hiding: ZkHidingProverState<F>,
 }
 
 impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
@@ -125,9 +117,7 @@ where
     let mut current_state = starting_state;
     let mut level = 1usize;
 
-    #[cfg(not(feature = "zk"))]
     let terminal_direct_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
-    #[cfg(not(feature = "zk"))]
     let terminal_tail_t_vectors = {
         let terminal_level = planned_num_levels - 1;
         let terminal_scheduled = schedule.get_execution_schedule(terminal_level)?;
@@ -149,14 +139,7 @@ where
             MRowLayout::WithDBlock
         };
         let tail_t_vectors = if is_terminal_level {
-            #[cfg(not(feature = "zk"))]
-            {
-                terminal_tail_t_vectors
-            }
-            #[cfg(feature = "zk")]
-            {
-                None
-            }
+            terminal_tail_t_vectors
         } else {
             None
         };
@@ -184,7 +167,6 @@ where
                 prepared_fold,
                 setup_contribution_mode,
                 is_terminal_level,
-                #[cfg(not(feature = "zk"))]
                 if is_terminal_level {
                     Some(terminal_direct_witness_shape)
                 } else {
@@ -242,7 +224,6 @@ where
                     prepared_fold,
                     setup_contribution_mode,
                     is_terminal_level,
-                    #[cfg(not(feature = "zk"))]
                     if is_terminal_level {
                         Some(terminal_direct_witness_shape)
                     } else {
@@ -265,10 +246,7 @@ where
         current_state = out.next_state;
         level += 1;
     };
-    #[cfg(not(feature = "zk"))]
     let terminal = terminal_result;
-    #[cfg(feature = "zk")]
-    let (terminal, zk_hiding) = terminal_result;
 
     let mut steps = intermediate_levels;
     let final_w_len = terminal.final_witness().num_elems();
@@ -281,8 +259,6 @@ where
 
     Ok(RecursiveSuffixOutcome {
         steps,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         num_levels: planned_num_levels,
     })
 }
@@ -342,10 +318,6 @@ where
         commitment,
         hint,
         sumcheck_challenges,
-        #[cfg(feature = "zk")]
-        opening_public,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         ..
     } = current_state;
     let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
@@ -380,14 +352,8 @@ where
         fold_claims,
         &logical_polys[..],
         &eor_opening_batch,
-        #[cfg(feature = "zk")]
-        None,
-        #[cfg(feature = "zk")]
-        Some(opening_public),
         true,
         transcript,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         opening_point.to_vec(),
         || Ok(()),
         level_params,
@@ -399,7 +365,7 @@ where
     )
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocol::core::fold::compute_trace_target;

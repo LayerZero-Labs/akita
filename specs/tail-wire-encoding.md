@@ -1,5 +1,9 @@
 # Spec: Tail Wire Encoding (commitment elision + segment-typed entropy coding)
 
+> **Pre-zk-strip historical.** This umbrella spec predates the zk-strip
+> ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
+> `feature = "zk"` or `PackedDigits` describe removed code preserved on `zk-wip`.
+
 | Field       | Value                                                     |
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |

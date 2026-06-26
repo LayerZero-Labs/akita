@@ -75,7 +75,6 @@ pub struct GeneratedScheduleTableEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
-    pub zk_enabled: bool,
     pub sis_family: SisModulusFamily,
     pub ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,

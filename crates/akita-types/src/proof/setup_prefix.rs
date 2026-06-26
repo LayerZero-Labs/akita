@@ -997,10 +997,6 @@ mod tests {
             max_num_batched_polys: 1,
             gen_ring_dim: d_setup,
             max_setup_len: 2,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
             public_matrix_seed: [3u8; 32],
         };
         let prefix_params =
@@ -1079,13 +1075,6 @@ mod tests {
         let slot = || {
             let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
             let recomposed = vec![Vec::new()];
-            #[cfg(feature = "zk")]
-            let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                decomposed,
-                recomposed,
-                FlatDigitBlocks::empty(),
-            );
-            #[cfg(not(feature = "zk"))]
             let hint =
                 AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
             SetupPrefixSlot {

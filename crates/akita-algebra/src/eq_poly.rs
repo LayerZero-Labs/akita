@@ -262,7 +262,7 @@ impl<E: FieldCore> SplitEqEvals<E> {
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::RandomSampling;

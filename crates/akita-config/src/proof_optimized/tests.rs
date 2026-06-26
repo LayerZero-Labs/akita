@@ -5,7 +5,6 @@ use akita_field::{CanonicalField, One};
 #[cfg(feature = "schedules-default")]
 use akita_planner::generated::GeneratedScheduleTable;
 #[cfg(feature = "schedules-default")]
-#[cfg(not(feature = "zk"))]
 use akita_schedules::{
     fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
 };
@@ -45,7 +44,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
         }),
         Step::Direct(DirectStep {
             current_w_len: 1 << 4,
-            witness_shape: CleartextWitnessShape::PackedDigits((16, 3)),
+            witness_shape: CleartextWitnessShape::FieldElements(16),
             direct_bytes: 0,
             params: None,
         }),
@@ -122,13 +121,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope {
-                max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            })
+            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
         }
         fn basis_range() -> (u32, u32) {
             (3, 3)
@@ -197,10 +190,6 @@ fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
             Ok(SetupMatrixEnvelope {
                 max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
             })
         }
 
@@ -237,7 +226,6 @@ fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
     // Locks in the fix for the descriptor-binding bug at
     // `akita_prover::protocol::core` and
@@ -356,9 +344,6 @@ fn setup_matrix_scan_uses_one_shared_opening_point() {
 fn setup_envelope_poly_counts_match_shipped_table_keys() {
     assert_eq!(super::setup_envelope_poly_counts(1), vec![1]);
     assert_eq!(super::setup_envelope_poly_counts(2), vec![1, 2]);
-    #[cfg(feature = "zk")]
-    assert_eq!(super::setup_envelope_poly_counts(4), vec![1, 2, 3, 4]);
-    #[cfg(not(feature = "zk"))]
     assert_eq!(super::setup_envelope_poly_counts(4), vec![1, 4]);
 }
 
@@ -379,13 +364,7 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
                 }
             }
         }
-        SetupMatrixEnvelope {
-            max_setup_len,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
-        }
+        SetupMatrixEnvelope { max_setup_len }
     }
 
     for max_nv in [16usize, 24, 30] {
@@ -409,7 +388,6 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn presets_select_expected_sis_modulus_family() {
     assert_eq!(
         <fp128::D32Full as CommitmentConfig>::sis_modulus_family(),
@@ -427,12 +405,10 @@ fn presets_select_expected_sis_modulus_family() {
 
 // ----- migrated from former `schedule_policy::tests` -------------------
 
-#[cfg(not(feature = "zk"))]
 fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
     assert_plan_matches_runtime_w_sizes_for_key::<Cfg>(AkitaScheduleLookupKey::singleton(num_vars));
 }
 
-#[cfg(not(feature = "zk"))]
 fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) {
     let schedule = Cfg::runtime_schedule(key).expect("planner should succeed");
     let num_fold_levels = schedule.num_fold_levels();
@@ -467,7 +443,7 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
     }
 }
 
-#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
+#[cfg(feature = "schedules-default")]
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     for entry in table.entries {
         let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
@@ -550,7 +526,7 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     }
 }
 
-#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
+#[cfg(feature = "schedules-default")]
 fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     let mut checked_folded_entry = false;
     for entry in table
@@ -586,7 +562,7 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
 }
 
 #[test]
-#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
+#[cfg(feature = "schedules-default")]
 fn generated_fp128_schedule_tables_match_cfg_schedule() {
     assert_every_table_entry_materializes::<fp128::D128Full>(fp128_d128_full_table());
     assert_every_table_entry_materializes::<fp128::D128OneHot>(fp128_d128_onehot_table());
@@ -595,7 +571,7 @@ fn generated_fp128_schedule_tables_match_cfg_schedule() {
 }
 
 #[test]
-#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
+#[cfg(feature = "schedules-default")]
 fn generated_small_field_schedule_tables_match_cfg_schedule() {
     assert_every_table_entry_materializes::<fp32::D128OneHot>(fp32_d128_onehot_table());
     assert_every_table_entry_materializes::<fp32::D256OneHot>(fp32_d256_onehot_table());
@@ -605,7 +581,7 @@ fn generated_small_field_schedule_tables_match_cfg_schedule() {
 }
 
 #[test]
-#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
+#[cfg(feature = "schedules-default")]
 fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D128OneHot>(fp32_d128_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D256OneHot>(fp32_d256_onehot_table());
@@ -615,17 +591,7 @@ fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
 }
 
 #[test]
-#[cfg(all(feature = "schedules-default", feature = "zk"))]
-fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D128OneHot>(fp32_d128_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D256OneHot>(fp32_d256_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128Full>(fp64_d128_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128OneHot>(fp64_d128_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D256OneHot>(fp64_d256_onehot_table());
-}
-
-#[test]
-#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
+#[cfg(feature = "schedules-default")]
 fn generated_batched_roots_restore_scaled_widths() {
     assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
     assert_generated_batched_roots_are_scaled::<fp128::D128OneHot>(fp128_d128_onehot_table());
@@ -633,7 +599,7 @@ fn generated_batched_roots_restore_scaled_widths() {
 }
 
 #[test]
-#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
+#[cfg(feature = "schedules-default")]
 fn generated_d128_full_table_materializes_valid_plans() {
     let table = fp128_d128_full_table();
     for entry in table.entries {
@@ -644,7 +610,6 @@ fn generated_d128_full_table_materializes_valid_plans() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn adaptive_bounded_plan_matches_runtime_next_w_len() {
     for num_vars in [14, 20, 30] {
         assert_plan_matches_runtime_w_sizes::<fp128::D64Full>(num_vars);
@@ -652,7 +617,6 @@ fn adaptive_bounded_plan_matches_runtime_next_w_len() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn adaptive_onehot_plan_matches_runtime_next_w_len() {
     for num_vars in [15, 30, 44] {
         assert_plan_matches_runtime_w_sizes::<fp128::D64OneHot>(num_vars);
@@ -660,7 +624,7 @@ fn adaptive_onehot_plan_matches_runtime_next_w_len() {
 }
 
 #[test]
-#[cfg(all(feature = "schedules-default", not(feature = "zk")))]
+#[cfg(feature = "schedules-default")]
 fn batched_root_plan_matches_runtime_next_w_len() {
     let table = fp128_d64_onehot_table();
     let entry = table
@@ -674,7 +638,6 @@ fn batched_root_plan_matches_runtime_next_w_len() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
     let key = AkitaScheduleLookupKey::new(30, 4);
     let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
@@ -704,7 +667,6 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn tight_block_len_is_no_larger_than_pow2() {
     for num_vars in [14, 20, 30] {
         let schedule =

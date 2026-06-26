@@ -35,7 +35,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             }),
             Step::Direct(crate::DirectStep {
                 current_w_len: 256,
-                witness_shape: CleartextWitnessShape::PackedDigits((64, 3)),
+                witness_shape: CleartextWitnessShape::FieldElements(64),
                 direct_bytes: 32,
                 params: None,
             }),
@@ -53,7 +53,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             },
             sis_modulus_family: SisModulusFamily::Q32,
             setup_seed_digest: [1; 32],
-            protocol_features: ProtocolFeatureSet { zk: false },
+            protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         },
         PlanSection::from_schedule(&schedule),
@@ -68,7 +68,30 @@ fn rejects_removed_q16_sis_family_tag() {
     assert!(matches!(err, SerializationError::InvalidData(_)));
 }
 
-#[cfg(not(feature = "zk"))]
+#[test]
+fn setup_section_rejects_mismatched_zk_protocol_feature() {
+    let mut descriptor = sample_descriptor();
+    descriptor.setup.protocol_features.zk = true;
+    let err = descriptor
+        .check()
+        .expect_err("zk=true must be rejected on transparent build");
+    assert!(matches!(err, SerializationError::InvalidData(_)));
+    assert!(
+        err.to_string().contains("protocol features"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn descriptor_deserialize_rejects_zk_protocol_feature() {
+    let mut descriptor = sample_descriptor();
+    descriptor.setup.protocol_features.zk = true;
+    let bytes = descriptor.canonical_bytes().expect("serialize");
+    let err = AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &())
+        .expect_err("zk=true wire must be rejected on transparent build");
+    assert!(matches!(err, SerializationError::InvalidData(_)));
+}
+
 #[test]
 fn fold_linf_descriptor_canonical_digest_pinned() {
     let bytes = sample_descriptor()
@@ -79,12 +102,12 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             221,
             [
-                0x89, 0x2a, 0xd5, 0x49, 0xae, 0xec, 0xea, 0x86, 0x29, 0x96, 0x65, 0x42, 0x30, 0x4f,
-                0xdc, 0xf0, 0xd7, 0xc2, 0xc2, 0xed, 0x24, 0x34, 0xfb, 0xd4, 0x48, 0x73, 0x14, 0x1a,
-                0x1a, 0x6c, 0xcd, 0x3d,
+                0xc4, 0xc8, 0xa7, 0x1a, 0x85, 0x0d, 0x03, 0x9d, 0xb9, 0xf5, 0x1e, 0xc5, 0x89, 0x95,
+                0x03, 0xba, 0xd3, 0x23, 0xae, 0x10, 0xbb, 0x12, 0x91, 0x10, 0x9c, 0x1c, 0xfc, 0xf2,
+                0xe5, 0xeb, 0x02, 0x47,
             ]
         ),
-        "update pinned digest after dropping CallSection num_claims from the wire"
+        "update pinned digest when descriptor setup-section bindings change"
     );
 }
 
@@ -335,10 +358,6 @@ fn setup_seed_digest_matches_setup_section() {
         max_num_batched_polys: 2,
         gen_ring_dim: 4,
         max_setup_len: 2,
-        #[cfg(feature = "zk")]
-        max_zk_b_len: 1,
-        #[cfg(feature = "zk")]
-        max_zk_d_len: 1,
         public_matrix_seed: [7; 32],
     };
     let section = SetupSection::from_parts(
@@ -372,11 +391,11 @@ fn effective_schedule_digest_binds_direct_shape() {
     let schedule_b = Schedule {
         steps: vec![Step::Direct(crate::DirectStep {
             current_w_len: 8,
-            witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
-            direct_bytes: 3,
+            witness_shape: CleartextWitnessShape::FieldElements(9),
+            direct_bytes: 9,
             params: None,
         })],
-        total_bytes: 3,
+        total_bytes: 9,
     };
 
     assert_ne!(

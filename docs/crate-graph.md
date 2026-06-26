@@ -27,7 +27,6 @@ orchestration lives in `akita-pcs`.
 | `akita-setup` | Setup construction and optional cache |
 | `akita-verifier` | Verifier replay (no prover polynomial backends) |
 | `akita-prover` | Commitment, proving, witnesses, polynomial backends |
-| `akita-r1cs` | Deferred R1CS for `zk` only |
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
 
 ## Dependency Layers
@@ -41,7 +40,6 @@ graph TD
   Transcript["akita-transcript"]
   Challenges["akita-challenges"]
   Sumcheck["akita-sumcheck"]
-  R1cs["akita-r1cs"]
   Types["akita-types"]
   Planner["akita-planner"]
   Config["akita-config"]
@@ -58,12 +56,10 @@ graph TD
   Transcript --> Ser
   Challenges --> Field
   Challenges --> Transcript
-  R1cs --> Field
   Sumcheck --> Algebra
   Sumcheck --> Field
   Sumcheck --> Ser
   Sumcheck --> Transcript
-  Sumcheck -. "zk" .-> R1cs
   Types --> Algebra
   Types --> Challenges
   Types --> Field
@@ -86,7 +82,6 @@ graph TD
   Verifier --> Sumcheck
   Verifier --> Transcript
   Verifier --> Types
-  Verifier -. "zk" .-> R1cs
   Prover --> Algebra
   Prover --> Challenges
   Prover --> Config
@@ -113,8 +108,6 @@ graph TD
   Pcs --> Types
   Pcs --> Verifier
 ```
-
-Dotted edges (`akita-r1cs`) are enabled only by the `zk` feature.
 
 ## Ownership Rules
 
@@ -149,9 +142,6 @@ Dotted edges (`akita-r1cs`) are enabled only by the `zk` feature.
   and transcript append traits. It should not grow planner search or prover
   algorithms (the generated table *representation* and search live in
   `akita-planner`).
-- `akita-r1cs` owns the deferred R1CS relations used only by the `zk` path; it is
-  an optional dependency of `akita-sumcheck` and `akita-verifier` and is not on
-  the transparent prove/verify path.
 - `akita-pcs` is the broad umbrella crate: it owns the end-to-end
   `AkitaCommitmentScheme` orchestration, re-exports the full public surface, and
   hosts examples and integration tests. Verifier-only integrations should not use
