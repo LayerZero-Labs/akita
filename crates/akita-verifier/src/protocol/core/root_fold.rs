@@ -25,8 +25,6 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -73,9 +71,6 @@ where
     }
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?;
-    #[cfg(feature = "zk")]
-    let opening_masks = vec![None; num_claims];
-
     let root_eor = verify_fold_eor::<F, E, T, D>(
         extension_opening_reduction,
         &[],
@@ -88,21 +83,10 @@ where
         BlockOrder::RowMajor,
         false,
         transcript,
-        #[cfg(feature = "zk")]
-        &opening_masks,
-        #[cfg(feature = "zk")]
-        "root extension-opening partial claim",
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
     )?;
     let reduction_check = root_eor.reduction_challenges;
     let prepared_points = root_eor.prepared_points;
-    #[cfg(not(feature = "zk"))]
     let eor_trace_final = root_eor.final_relation;
-    #[cfg(feature = "zk")]
-    let zk_eor_final = root_eor.final_relation;
     let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
     if extension_opening_reduction.is_some() {
         for pt in &prepared_point.padded_point {
@@ -126,31 +110,11 @@ where
     };
     let ordinary_trace_eval_target =
         batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, &openings)?;
-    #[cfg(not(feature = "zk"))]
     let trace_eval_target = eor_trace_final
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
         .unwrap_or(ordinary_trace_eval_target);
-    #[cfg(feature = "zk")]
-    let (trace_eval_target, trace_eval_target_mask) =
-        if let Some((final_claim, _)) = zk_eor_final.as_ref() {
-            (final_claim.public, final_claim.mask.clone())
-        } else {
-            (
-                ordinary_trace_eval_target,
-                ZkR1csLinearCombination::<E>::zero(),
-            )
-        };
-    #[cfg(not(feature = "zk"))]
     let trace_claim_scales = eor_trace_final
-        .as_ref()
-        .map(|(_, factors_by_point)| {
-            let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_polynomials()])
-        })
-        .transpose()?;
-    #[cfg(feature = "zk")]
-    let trace_claim_scales = zk_eor_final
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
@@ -219,18 +183,8 @@ where
         trace_block_opening: Some(trace_block_opening),
         trace_eval_target,
         trace_eval_scale: E::one(),
-        #[cfg(feature = "zk")]
-        trace_eval_target_mask,
         trace_claim_scales,
         trace_basis: basis,
     };
-    verify_fold::<F, E, T, D>(
-        setup,
-        transcript,
-        prepared,
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
-    )
+    verify_fold::<F, E, T, D>(setup, transcript, prepared)
 }

@@ -11,15 +11,9 @@ pub use eq_factored::{
     EqFactoredSumcheckInstanceVerifierExt,
 };
 #[cfg(feature = "zk")]
-pub use eq_factored::{
-    EqFactoredMaskedProveOutput, ZkEqFactoredFinalRelation, ZkEqFactoredSumcheckInstanceProverExt,
-    ZkEqFactoredSumcheckInstanceVerifierExt,
-};
+pub use eq_factored::{EqFactoredMaskedProveOutput, ZkEqFactoredSumcheckInstanceProverExt};
 pub use standard::{
     check_sumcheck_output_claim, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
 #[cfg(feature = "zk")]
-pub use standard::{
-    MaskedProveOutput, ZkSumcheckFinalRelation, ZkSumcheckInstanceProverExt,
-    ZkSumcheckInstanceVerifierExt,
-};
+pub use standard::{MaskedProveOutput, ZkSumcheckInstanceProverExt};

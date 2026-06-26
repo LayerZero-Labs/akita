@@ -28,9 +28,8 @@ pub use drivers::{
 };
 #[cfg(feature = "zk")]
 pub use drivers::{
-    EqFactoredMaskedProveOutput, MaskedProveOutput, ZkEqFactoredFinalRelation,
-    ZkEqFactoredSumcheckInstanceProverExt, ZkEqFactoredSumcheckInstanceVerifierExt,
-    ZkSumcheckFinalRelation, ZkSumcheckInstanceProverExt, ZkSumcheckInstanceVerifierExt,
+    EqFactoredMaskedProveOutput, MaskedProveOutput, ZkEqFactoredSumcheckInstanceProverExt,
+    ZkSumcheckInstanceProverExt,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,

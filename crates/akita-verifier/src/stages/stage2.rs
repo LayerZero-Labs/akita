@@ -5,10 +5,6 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
-#[cfg(feature = "zk")]
-use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
-#[cfg(feature = "zk")]
-use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
@@ -132,8 +128,6 @@ pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     },
     ClaimedEval {
         eval: E,
-        #[cfg(feature = "zk")]
-        mask: ZkR1csLinearCombination<E>,
     },
 }
 
@@ -183,12 +177,6 @@ where
 pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     batching_coeff: E,
     s_claim: E,
-    #[cfg(feature = "zk")]
-    s_claim_mask: ZkR1csLinearCombination<E>,
-    #[cfg(feature = "zk")]
-    relation_claim_mask: ZkR1csLinearCombination<E>,
-    #[cfg(feature = "zk")]
-    trace_claim_mask: ZkR1csLinearCombination<E>,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
     alpha_evals_y: Vec<E>,
@@ -217,9 +205,6 @@ where
     pub(crate) fn new(
         batching_coeff: E,
         s_claim: E,
-        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-        #[cfg(feature = "zk")] trace_claim_mask: ZkR1csLinearCombination<E>,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         stage1_point: Vec<E>,
         alpha_evals_y: Vec<E>,
@@ -260,12 +245,6 @@ where
         Ok(Self {
             batching_coeff,
             s_claim,
-            #[cfg(feature = "zk")]
-            s_claim_mask,
-            #[cfg(feature = "zk")]
-            relation_claim_mask,
-            #[cfg(feature = "zk")]
-            trace_claim_mask,
             witness_oracle,
             stage1_point,
             alpha_evals_y,
@@ -367,89 +346,6 @@ where
         let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
         Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<'a, F, E, const D: usize> ZkSumcheckFinalRelation<E> for AkitaStage2Verifier<'a, F, E, D>
-where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
-{
-    /// Record the deferred relation tying the stage-2 masked input to the
-    /// stage-1 masked `s_claim` handoff.
-    fn initial_claim_mask(
-        &self,
-        _relations: &mut ZkRelationAccumulator<E>,
-    ) -> Result<ZkR1csLinearCombination<E>, AkitaError> {
-        let mut input_mask = ZkR1csLinearCombination::zero();
-        input_mask.add_scaled(self.batching_coeff, &self.s_claim_mask);
-        input_mask.add_scaled(E::one(), &self.relation_claim_mask);
-        input_mask.add_scaled(E::one(), &self.trace_claim_mask);
-        Ok(input_mask)
-    }
-
-    fn record_input_relation(
-        &self,
-        _masked_input_claim: E,
-        _masked_round_sum: E,
-        _round_sum_mask: &ZkR1csLinearCombination<E>,
-        _relations: &mut ZkRelationAccumulator<E>,
-    ) -> Result<(), AkitaError> {
-        // Compressed sumcheck omits the linear term and reconstructs it from the
-        // incoming masked claim, so the first-round chain equation has no
-        // independent witness content to record here.
-        Ok(())
-    }
-
-    fn record_final_relation(
-        &self,
-        challenges: &[E],
-        final_claim: ZkR1csLinearCombination<E>,
-        relations: &mut ZkRelationAccumulator<E>,
-    ) -> Result<(), AkitaError> {
-        let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
-        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
-        let row_val = self.row_eval(x_challenges)?;
-        let trace_val = if let Some(trace) = &self.trace {
-            let trace_weight = eval_trace_terms_closed::<F, E, D>(
-                &trace.layout,
-                y_challenges,
-                x_challenges,
-                &trace.trace_terms,
-            )?;
-            trace.trace_coeff * trace_weight
-        } else {
-            E::zero()
-        };
-
-        // At the sampled point r = (r_y, r_x), the fused Stage-2 oracle is
-        //
-        //   gamma * eq(stage1_point, r) * w(r) * (w(r) + 1)
-        //     + w(r) * alpha(r_y) * row(r_x).
-        //
-        // `final_claim` is already the unmasked final sumcheck claim as an LC.
-        // If the next witness evaluation was public-masked, `w_lc` is
-        // eval_masked - eval_mask; otherwise it is a constant direct witness
-        // evaluation. The R1CS row below records the oracle equality as
-        //
-        //   w(r) * [gamma * eq(stage1_point, r) * w(r)
-        //     + gamma * eq(stage1_point, r) + alpha(r_y) * row(r_x)]
-        //     = final_claim.
-        let w_lc = match &self.witness_oracle {
-            Stage2WitnessOracle::Cleartext { .. } => {
-                ZkR1csLinearCombination::constant(self.witness_eval(challenges)?)
-            }
-            Stage2WitnessOracle::ClaimedEval { eval, mask } => {
-                ZkRelationAccumulator::unmask_lc(*eval, mask)
-            }
-        };
-        let mut scaled_virtual = ZkR1csLinearCombination::zero();
-        scaled_virtual.add_scaled(self.batching_coeff * eq_val, &w_lc);
-        scaled_virtual.constant += self.batching_coeff * eq_val + alpha_val * row_val + trace_val;
-        relations.push_r1cs("stage-2 final oracle", w_lc, scaled_virtual, final_claim)?;
-        Ok(())
     }
 }
 
