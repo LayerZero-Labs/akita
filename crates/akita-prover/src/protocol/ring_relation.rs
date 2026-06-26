@@ -20,7 +20,7 @@ use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec, MRowLayout,
-    RingSliceSerializer,
+    OpeningBatchShape, RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -504,5 +504,158 @@ impl RingRelationProver {
             hint: flattened_hint,
         };
         Ok((instance, witness, commitment_flat))
+    }
+
+    /// Build the ring-relation instance and witness for one suffix fold level.
+    ///
+    /// Commitment rows are read from `commitment` only; no [`ProverOpeningBatch`]
+    /// shell is required.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "RingRelationProver::new_suffix")]
+    #[inline(never)]
+    pub fn new_suffix<'a, F, T, P, OB, RB, const D: usize>(
+        opening_ctx: &OperationCtx<'_, F, OB>,
+        ring_switch_ctx: &OperationCtx<'_, F, RB>,
+        opening_point: RingOpeningPoint<F>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
+        commitment: FlatRingVec<F>,
+        hint: AkitaCommitmentHint<F, D>,
+        polys: &[&'a P],
+        pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
+        lp: LevelParams,
+        transcript: &mut T,
+        row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
+        opening_batch: OpeningBatchShape,
+        m_row_layout: MRowLayout,
+        terminal_tail_t_vectors: Option<usize>,
+    ) -> Result<RingRelationProveOutput<F, D>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F> + ProverTranscriptGrind<F>,
+        P: RootOpeningSource<F, D>,
+        OB: DigitRowsComputeBackend<F>
+            + for<'b> OpeningBatchKernel<P::OpeningBatchView<'b>, F, D>
+            + for<'b> OpeningFoldKernel<P::OpeningView<'b>, F, D>,
+        RB: DigitRowsComputeBackend<F>,
+    {
+        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+        let num_claims = polys.len();
+        if num_claims != 1 {
+            return Err(AkitaError::InvalidInput(
+                "suffix fold claims require exactly one polynomial".to_string(),
+            ));
+        }
+        let commitment_rows = commitment.as_ring_slice_trusted::<D>();
+        if commitment_rows.len() != lp.effective_commit_rows() {
+            return Err(AkitaError::InvalidInput(
+                "suffix fold commitment has the wrong length".to_string(),
+            ));
+        }
+        let group_sizes = vec![num_claims];
+        let hints = vec![hint];
+        if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "batched prover opening-point layout mismatch".to_string(),
+            ));
+        }
+        if ring_multiplier_point.a_len() < lp.block_len
+            || ring_multiplier_point.b_len() != lp.num_blocks
+        {
+            return Err(AkitaError::InvalidInput(
+                "batched prover ring-multiplier opening-point layout mismatch".to_string(),
+            ));
+        }
+        if polys.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "batched prover requires at least one polynomial".to_string(),
+            ));
+        }
+        if polys.len() != pre_folded_e_by_poly.len() {
+            return Err(AkitaError::InvalidInput(
+                "batched prover input lengths do not match".to_string(),
+            ));
+        }
+        if row_coefficient_rings.len() != num_claims {
+            return Err(AkitaError::InvalidInput(
+                "batched prover row coefficient length does not match claim count".to_string(),
+            ));
+        }
+        let gamma = row_coefficient_rings
+            .iter()
+            .map(|ring| ring.coefficients()[0])
+            .collect::<Vec<_>>();
+
+        let e_hat = {
+            let _span = tracing::info_span!("decompose_batched_e_hat").entered();
+            decompose_e_hat::<F, D>(&pre_folded_e_by_poly, lp.num_digits_open, lp.log_basis)?
+        };
+        let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
+            hints,
+            &group_sizes,
+            lp.num_digits_open,
+            lp.log_basis,
+        )?;
+
+        let opening_backend = opening_ctx.backend();
+        let v = compute_v_rows_for_layout::<F, T, RB, D>(
+            ring_switch_ctx,
+            transcript,
+            &lp,
+            &e_hat,
+            m_row_layout,
+        )?;
+
+        if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
+            let e_folded_flat: Vec<CyclotomicRing<F, D>> = pre_folded_e_by_poly
+                .iter()
+                .flat_map(|block| block.iter().cloned())
+                .collect();
+            absorb_terminal_e_folded_fields::<F, T, D>(transcript, &e_folded_flat)?;
+        }
+        let (z_folded_rings, challenges, fold_grind_nonce) =
+            fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
+                opening_backend,
+                Some(opening_ctx.prepared()),
+                transcript,
+                polys,
+                &lp,
+                num_claims,
+                terminal_tail_t_vectors,
+            )?;
+
+        let (y_v_slice, n_d_active) = match m_row_layout {
+            MRowLayout::WithDBlock => (v.as_slice(), lp.d_key.row_len()),
+            MRowLayout::WithoutDBlock => (&[][..], 0usize),
+        };
+        let y = generate_y::<F, D>(
+            y_v_slice,
+            commitment_rows,
+            n_d_active,
+            lp.effective_commit_rows(),
+            lp.b_inner_rows_per_group(),
+            lp.a_key.row_len(),
+        )?;
+        let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
+
+        let instance = RingRelationInstance::new_from_rings::<D>(
+            m_row_layout,
+            challenges,
+            opening_point,
+            ring_multiplier_point,
+            opening_batch,
+            gamma,
+            row_coefficient_rings,
+            y,
+            v,
+        )?;
+        instance.check_v_shape_for_level::<D>(&lp)?;
+        let witness = RingRelationWitness {
+            z_folded_rings,
+            fold_grind_nonce,
+            e_hat,
+            e_folded,
+            hint: flattened_hint,
+        };
+        Ok((instance, witness, commitment))
     }
 }

@@ -362,7 +362,6 @@ fn run() -> Result<(), String> {
             polynomials: &poly_refs[..],
             commitment: (commitment.clone(), hint),
         }],
-        carried_flat_commitment: None,
     };
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,

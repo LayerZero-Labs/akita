@@ -11,7 +11,7 @@ use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::protocol::RingRelationProver;
 use crate::{
-    ProverOpeningBatch, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
+    ProverOpeningBatch, ProverTranscriptGrind, RingRelationInstance,
     RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;

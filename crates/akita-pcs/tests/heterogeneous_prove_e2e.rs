@@ -111,7 +111,6 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
                 polynomials: &poly_refs[..],
                 commitment: (commitments[0].clone(), hint),
             }],
-            carried_flat_commitment: None,
         },
         &mut prover_transcript,
         BasisMode::Lagrange,

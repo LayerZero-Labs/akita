@@ -129,7 +129,6 @@ mod tests {
                 polynomials,
                 commitment: (commitment.clone(), hint),
             }],
-            carried_flat_commitment: None,
         }
     }
 

@@ -1,15 +1,20 @@
 use super::*;
-use crate::backend::RecursiveWitnessFlat;
-use crate::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, SuffixOpeningProveBackend,
-    SuffixRingSwitchProveBackend, SuffixTensorProveBackend, TensorBackendFor,
-};
-use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::schedule_terminal_direct_witness_shape;
-use akita_types::terminal_golomb_grind_tail_t_vectors;
+use crate::RootTensorProjectionPoly;
+use crate::backend::{RecursiveCommitmentHintCache, RecursiveWitnessFlat};
+use crate::compute::{
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootPolyShape,
+    SuffixOpeningProveBackend, SuffixRingSwitchProveBackend, SuffixTensorProveBackend,
+    TensorBackendFor,
+};
+use akita_types::{
+    padded_scalar_batch_num_vars, terminal_golomb_grind_tail_t_vectors,
+    validate_scalar_point_matches_poly_arity, AkitaCommitmentHint,
+    OpeningGroupShape, OpeningPoints, PointVariableSelection,
+    schedule_terminal_direct_witness_shape,
+};
 
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
@@ -34,6 +39,83 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
         self.logical_w.as_ref().unwrap_or(&self.w)
+    }
+}
+
+/// Single-claim suffix fold input: flat commitment rows plus one typed hint.
+///
+/// Suffix levels store commitment as [`FlatRingVec`] in [`SuffixProverState`].
+/// This type threads that representation into fold preparation without placing
+/// rows in [`crate::ProverOpeningBatch`].
+#[derive(Debug, Clone)]
+pub(in crate::protocol::core) struct SuffixFoldClaims<'a, PointF: Clone, P, F: FieldCore, const D: usize>
+{
+    pub(in crate::protocol::core) point: OpeningPoints<'a, PointF>,
+    pub(in crate::protocol::core) point_vars: PointVariableSelection,
+    pub(in crate::protocol::core) polynomials: &'a [&'a P],
+    pub(in crate::protocol::core) commitment: FlatRingVec<F>,
+    pub(in crate::protocol::core) hint: AkitaCommitmentHint<F, D>,
+}
+
+impl<'a, PointF: Clone, P, F: FieldCore, const D: usize>
+    SuffixFoldClaims<'a, PointF, P, F, D>
+{
+    /// Build the single-claim batch used by recursive suffix fold levels.
+    pub(in crate::protocol::core) fn new(
+        opening_point: &[PointF],
+        recursive_num_vars: usize,
+        polynomials: &'a [&'a P],
+        commitment: FlatRingVec<F>,
+        hint: RecursiveCommitmentHintCache<F>,
+    ) -> Result<Self, AkitaError>
+    where
+        PointF: FieldCore,
+    {
+        let typed_hint = hint.to_typed::<D>()?;
+        let opening_batch = OpeningBatchShape::new(recursive_num_vars, 1)?;
+        let point_vars = opening_batch
+            .groups()
+            .first()
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("recursive opening batch requires one group".to_string())
+            })?
+            .point_vars
+            .clone();
+        let mut padded_point = opening_point.to_vec();
+        padded_point.resize(recursive_num_vars, PointF::zero());
+        Ok(Self {
+            point: padded_point.into(),
+            point_vars,
+            polynomials,
+            commitment,
+            hint: typed_hint,
+        })
+    }
+
+    pub(in crate::protocol::core) fn point(&self) -> &[PointF] {
+        self.point.as_ref()
+    }
+
+    pub(in crate::protocol::core) fn flat_polys(&self) -> Vec<&'a P> {
+        self.polynomials.to_vec()
+    }
+
+    pub(in crate::protocol::core) fn to_opening_shape<PolyF>(&self) -> Result<OpeningBatchShape, AkitaError>
+    where
+        PolyF: FieldCore,
+        P: RootPolyShape<PolyF, D>,
+    {
+        let padded_num_vars = padded_scalar_batch_num_vars(
+            self.polynomials.iter().map(|poly| poly.num_vars()),
+        )?;
+        validate_scalar_point_matches_poly_arity(self.point().len(), padded_num_vars)?;
+        OpeningBatchShape::from_groups(
+            padded_num_vars,
+            vec![OpeningGroupShape {
+                point_vars: self.point_vars.clone(),
+                num_polynomials: self.polynomials.len(),
+            }],
+        )
     }
 }
 
@@ -263,20 +345,19 @@ where
     let eor_opening_batch =
         VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let fold_claims = ProverOpeningBatch::new_suffix(
+    let fold_claims = SuffixFoldClaims::new(
         opening_point,
         recursive_num_vars,
         &fold_polys,
         commitment,
         hint,
     )?;
-    prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
+    super::fold::prepare_suffix_fold_inner::<F, L, T, _, C, O, TS, R, D>(
         stack,
         needs_extension_reduction,
         fold_claims,
         &logical_polys[..],
         &eor_opening_batch,
-        true,
         transcript,
         opening_point.to_vec(),
         || Ok(()),
@@ -295,10 +376,27 @@ mod tests {
     use crate::protocol::core::fold::compute_trace_target;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
-    use akita_types::RingOpeningPoint;
+    use akita_types::{FlatDigitBlocks, RingOpeningPoint};
 
     type TestF = Fp32<251>;
     const D: usize = 4;
+
+    #[test]
+    fn suffix_fold_claims_keeps_flat_commitment_without_opening_batch() {
+        let commitment = FlatRingVec::from_coeffs(vec![TestF::one(); D]);
+        let polys: &[&CyclotomicRing<TestF, D>] = &[];
+        let hint = AkitaCommitmentHint::<TestF, D>::singleton(
+            FlatDigitBlocks::zeroed(vec![1]).expect("digit blocks"),
+        );
+        let claims = SuffixFoldClaims::<TestF, CyclotomicRing<TestF, D>, TestF, D> {
+            point: vec![TestF::one()].into(),
+            point_vars: PointVariableSelection::prefix(1, 1).expect("point vars"),
+            polynomials: polys,
+            commitment: commitment.clone(),
+            hint,
+        };
+        assert_eq!(claims.commitment, commitment);
+    }
 
     #[test]
     fn non_zk_eor_mismatch_is_rejected() {
