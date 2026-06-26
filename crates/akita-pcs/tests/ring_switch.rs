@@ -91,12 +91,12 @@ mod tests {
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
     use akita_pcs::{CanonicalField, Transcript};
-    use akita_prover::CommitmentProver;
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
+    use akita_prover::CommitmentProver;
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverCommitmentGroup, ProverOpeningBatch,
         RingRelationProver,
