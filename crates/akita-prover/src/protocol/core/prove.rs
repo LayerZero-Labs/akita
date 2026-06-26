@@ -297,6 +297,12 @@ where
             "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
         )));
     }
+    for level in 0..ring_plan.num_folds {
+        let ring_d = ring_plan.dim_at(level)?;
+        stacks
+            .prove_stack_at_level(level)
+            .ensure_fold_level_envelope_ntt(expanded.as_ref(), ring_d)?;
+    }
 
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
