@@ -1094,11 +1094,11 @@ mod tests {
             level_params_digest: [9u8; 32],
         };
         let slot = || {
-            let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
+            let decomposed = FlatDigitBlocks::from_blocks::<32>(vec![Vec::new()]);
             let recomposed = vec![Vec::new()];
-            let typed_hint =
+            let typed_hint: AkitaCommitmentHint<F, 32> =
                 AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
-            let hint = ErasedCommitmentHint::from_typed(typed_hint);
+            let hint = ErasedCommitmentHint::from_typed::<32>(typed_hint);
             SetupPrefixSlot {
                 id,
                 natural_len: id.natural_len,

@@ -212,7 +212,7 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     lp: &LevelParams,
     challenges: &Challenges,
     e_hat_flat: &[[i8; D]],
-    t_hat: &FlatDigitBlocks<D>,
+    t_hat: &FlatDigitBlocks,
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     e_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
@@ -275,7 +275,7 @@ where
             .block_sizes()
             .iter()
             .any(|&block_size| block_size != expected_t_hat_block_digits)
-        || t_hat.flat_digits().len() != expected_t_hat_flat_digits
+        || t_hat.plane_count() != expected_t_hat_flat_digits
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -310,7 +310,7 @@ where
     let use_relation_b_rows = !tiered;
     let relation_n_b = if use_relation_b_rows { n_b } else { 0 };
     let relation_t_hat: &[[i8; D]] = if use_relation_b_rows {
-        t_hat.flat_digits()
+        t_hat.flat_digits_trusted::<D>()
     } else {
         &[]
     };
@@ -391,7 +391,7 @@ where
         let n_b_small = n_b;
         let width_small = lp.b_key.col_len();
         let delta_open = lp.num_digits_open;
-        let t_flat = t_hat.flat_digits();
+        let t_flat = t_hat.flat_digits_trusted::<D>();
         if width_small == 0 || !t_flat.len().is_multiple_of(width_small) {
             return Err(AkitaError::InvalidProof);
         }

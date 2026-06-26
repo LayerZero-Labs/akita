@@ -100,7 +100,7 @@ where
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut decomposed_inner_rows = FlatDigitBlocks::zeroed(block_sizes)?;
+    let mut decomposed_inner_rows = FlatDigitBlocks::zeroed::<D>(block_sizes)?;
     let dst_blocks = decomposed_inner_rows.split_blocks_mut();
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
@@ -135,7 +135,7 @@ where
     )?;
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
-    b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits());
+    b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits_trusted::<D>());
     let u = backend.digit_rows::<D>(
         prepared,
         level_params.b_key.row_len(),

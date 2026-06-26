@@ -235,9 +235,6 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// well-formed for ring dimension `D`.
     #[inline]
     pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        if self.ring_dim == D {
-            return Ok(self.as_ring_slice_trusted::<D>());
-        }
         if D == 0
             || (self.ring_dim > 0 && self.ring_dim != D)
             || !self.coeffs.len().is_multiple_of(D)
@@ -384,10 +381,15 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
 }
 
 /// Flat digit-plane storage plus explicit block boundaries.
+///
+/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
+/// closures borrow typed digit planes via [`Self::flat_digits_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlatDigitBlocks<const D: usize> {
-    flat_digits: Vec<[i8; D]>,
+pub struct FlatDigitBlocks {
+    /// Digit planes stored row-major (`D` coefficients per plane).
+    digits: Vec<i8>,
     block_sizes: Vec<usize>,
+    ring_dim: usize,
 }
 
 /// Iterator over logical blocks inside [`FlatDigitBlocks`].
@@ -397,13 +399,52 @@ pub struct FlatDigitBlockIter<'a, const D: usize> {
     offset: usize,
 }
 
-impl<const D: usize> FlatDigitBlocks<D> {
-    /// Construct an empty digit-block collection.
+impl FlatDigitBlocks {
+    /// Construct an empty digit-block collection (ring dimension unset).
     pub fn empty() -> Self {
         Self {
-            flat_digits: Vec::new(),
+            digits: Vec::new(),
             block_sizes: Vec::new(),
+            ring_dim: 0,
         }
+    }
+
+    /// Stored ring dimension (coefficients per digit plane).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Number of digit planes in the flat stream.
+    pub fn plane_count(&self) -> usize {
+        self.digits
+            .len()
+            .checked_div(self.ring_dim.max(1))
+            .unwrap_or(0)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "flat digit blocks ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if !self.digits.len().is_multiple_of(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.digits.len(),
+            });
+        }
+        let expected_planes: usize = self.block_sizes.iter().sum();
+        if self.digits.len() / D != expected_planes {
+            return Err(AkitaError::InvalidInput(
+                "flat digit block plane count mismatch".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Construct zero-initialized flat digits for explicit block sizes.
@@ -411,24 +452,28 @@ impl<const D: usize> FlatDigitBlocks<D> {
     /// # Errors
     ///
     /// Returns an error if the block sizes overflow the total flat length.
-    pub fn zeroed(block_sizes: Vec<usize>) -> Result<Self, AkitaError> {
+    pub fn zeroed<const D: usize>(block_sizes: Vec<usize>) -> Result<Self, AkitaError> {
         let total_planes = block_sizes.iter().try_fold(0usize, |acc, &size| {
             acc.checked_add(size).ok_or_else(|| {
                 AkitaError::InvalidInput("flat digit block size overflow".to_string())
             })
         })?;
         Ok(Self {
-            flat_digits: vec![[0i8; D]; total_planes],
+            digits: vec![0i8; total_planes.saturating_mul(D)],
             block_sizes,
+            ring_dim: D,
         })
     }
 
-    /// Construct from flat digits and explicit block sizes.
+    /// Construct from typed digit planes at a kernel boundary.
     ///
     /// # Errors
     ///
     /// Returns an error if the block sizes do not sum to the flat digit count.
-    pub fn new(flat_digits: Vec<[i8; D]>, block_sizes: Vec<usize>) -> Result<Self, AkitaError> {
+    pub fn from_planes<const D: usize>(
+        flat_digits: Vec<[i8; D]>,
+        block_sizes: Vec<usize>,
+    ) -> Result<Self, AkitaError> {
         let expected = block_sizes.iter().try_fold(0usize, |acc, &size| {
             acc.checked_add(size).ok_or_else(|| {
                 AkitaError::InvalidInput("flat digit block size overflow".to_string())
@@ -441,22 +486,42 @@ impl<const D: usize> FlatDigitBlocks<D> {
             });
         }
         Ok(Self {
-            flat_digits,
+            digits: flat_digits
+                .iter()
+                .flat_map(|plane| plane.iter().copied())
+                .collect(),
             block_sizes,
+            ring_dim: D,
         })
     }
 
+    /// Construct from flat digits and explicit block sizes when `ring_dim` is known.
+    pub(crate) fn from_stored_parts(
+        digits: Vec<i8>,
+        block_sizes: Vec<usize>,
+        ring_dim: usize,
+    ) -> Self {
+        Self {
+            digits,
+            block_sizes,
+            ring_dim,
+        }
+    }
+
     /// Flatten a block-owned representation into canonical storage.
-    pub fn from_blocks(blocks: Vec<Vec<[i8; D]>>) -> Self {
+    pub fn from_blocks<const D: usize>(blocks: Vec<Vec<[i8; D]>>) -> Self {
         let block_sizes: Vec<usize> = blocks.iter().map(Vec::len).collect();
         let total_planes: usize = block_sizes.iter().sum();
-        let mut flat_digits = Vec::with_capacity(total_planes);
+        let mut digits = Vec::with_capacity(total_planes.saturating_mul(D));
         for block in blocks {
-            flat_digits.extend(block);
+            for plane in block {
+                digits.extend_from_slice(&plane);
+            }
         }
         Self {
-            flat_digits,
+            digits,
             block_sizes,
+            ring_dim: D,
         }
     }
 
@@ -480,20 +545,28 @@ impl<const D: usize> FlatDigitBlocks<D> {
         &self.block_sizes
     }
 
-    /// Flat digit stream in column-major block order.
-    pub fn flat_digits(&self) -> &[[i8; D]] {
-        &self.flat_digits
+    /// Borrow typed digit planes after [`Self::ensure_ring_dim`].
+    pub fn flat_digits_trusted<const D: usize>(&self) -> &[[i8; D]] {
+        debug_assert_eq!(self.ring_dim, D);
+        let (chunks, rem) = self.digits.as_chunks::<D>();
+        debug_assert!(rem.is_empty());
+        chunks
     }
 
-    /// Mutable flat digit stream in column-major block order.
-    pub fn flat_digits_mut(&mut self) -> &mut [[i8; D]] {
-        &mut self.flat_digits
+    /// Mutable typed digit planes after [`Self::ensure_ring_dim`].
+    pub fn flat_digits_trusted_mut<const D: usize>(&mut self) -> &mut [[i8; D]] {
+        debug_assert_eq!(self.ring_dim, D);
+        let (chunks, rem) = self.digits.as_chunks_mut::<D>();
+        debug_assert!(rem.is_empty());
+        chunks
     }
 
     /// Split the flat digit stream into disjoint mutable block slices.
-    pub fn split_blocks_mut(&mut self) -> Vec<&mut [[i8; D]]> {
+    pub fn split_blocks_mut<const D: usize>(&mut self) -> Vec<&mut [[i8; D]]> {
+        debug_assert_eq!(self.ring_dim, D);
+        let (planes, _) = self.digits.as_chunks_mut::<D>();
         let mut blocks = Vec::with_capacity(self.block_sizes.len());
-        let mut tail = self.flat_digits.as_mut_slice();
+        let mut tail = planes;
         for &block_size in &self.block_sizes {
             let (head, rest) = tail.split_at_mut(block_size);
             blocks.push(head);
@@ -503,66 +576,76 @@ impl<const D: usize> FlatDigitBlocks<D> {
     }
 
     /// Iterate over blocks as slices into the flat digit stream.
-    pub fn iter_blocks(&self) -> FlatDigitBlockIter<'_, D> {
+    pub fn iter_blocks<const D: usize>(&self) -> FlatDigitBlockIter<'_, D> {
         FlatDigitBlockIter {
-            flat_digits: &self.flat_digits,
+            flat_digits: self.flat_digits_trusted::<D>(),
             block_sizes: &self.block_sizes,
             offset: 0,
         }
     }
 
     /// Iterate over logical blocks.
-    pub fn iter(&self) -> FlatDigitBlockIter<'_, D> {
-        self.iter_blocks()
+    pub fn iter<const D: usize>(&self) -> FlatDigitBlockIter<'_, D> {
+        self.iter_blocks::<D>()
     }
 
     /// Append the flat digit stream to `dst`.
-    pub fn extend_flat_digits(&self, dst: &mut Vec<[i8; D]>) {
-        dst.extend_from_slice(&self.flat_digits);
+    pub fn extend_flat_digits<const D: usize>(&self, dst: &mut Vec<[i8; D]>) {
+        dst.extend_from_slice(self.flat_digits_trusted::<D>());
     }
 
     /// Truncate every block to at most `block_len` digit planes.
     pub fn truncate_each_block(&mut self, block_len: usize) {
-        if self.block_sizes.iter().all(|&size| size <= block_len) {
+        if self.ring_dim == 0 || self.block_sizes.iter().all(|&size| size <= block_len) {
             return;
         }
 
+        let d = self.ring_dim;
         let total_planes: usize = self
             .block_sizes
             .iter()
             .map(|&size| size.min(block_len))
             .sum();
-        let mut new_flat = Vec::with_capacity(total_planes);
-        let mut offset = 0usize;
+        let mut new_digits = Vec::with_capacity(total_planes.saturating_mul(d));
+        let mut plane_idx = 0usize;
         for size in &mut self.block_sizes {
             let keep = (*size).min(block_len);
-            new_flat.extend_from_slice(&self.flat_digits[offset..offset + keep]);
-            offset += *size;
+            for _ in 0..keep {
+                let start = plane_idx * d;
+                new_digits.extend_from_slice(&self.digits[start..start + d]);
+                plane_idx += 1;
+            }
+            plane_idx += *size - keep;
             *size = keep;
         }
-        self.flat_digits = new_flat;
+        self.digits = new_digits;
     }
 
     /// Consume the storage and rebuild owned blocks.
-    pub fn into_blocks(self) -> Vec<Vec<[i8; D]>> {
+    pub fn into_blocks<const D: usize>(self) -> Vec<Vec<[i8; D]>> {
+        debug_assert_eq!(self.ring_dim, D);
         let mut blocks = Vec::with_capacity(self.block_sizes.len());
+        let planes = self.flat_digits_trusted::<D>();
         let mut offset = 0usize;
-        for size in self.block_sizes {
-            blocks.push(self.flat_digits[offset..offset + size].to_vec());
+        for &size in &self.block_sizes {
+            blocks.push(planes[offset..offset + size].to_vec());
             offset += size;
         }
         blocks
     }
 
-    /// Consume into the flat digits and block sizes.
-    pub fn into_parts(self) -> (Vec<[i8; D]>, Vec<usize>) {
-        (self.flat_digits, self.block_sizes)
+    /// Consume into typed digit planes and block sizes.
+    pub fn into_planes<const D: usize>(self) -> (Vec<[i8; D]>, Vec<usize>) {
+        debug_assert_eq!(self.ring_dim, D);
+        let (chunks, rem) = self.digits.as_chunks::<D>();
+        debug_assert!(rem.is_empty());
+        (chunks.to_vec(), self.block_sizes)
     }
 }
 
-impl<const D: usize> Valid for FlatDigitBlocks<D> {
+impl Valid for FlatDigitBlocks {
     fn check(&self) -> Result<(), SerializationError> {
-        if D == 0 {
+        if self.ring_dim == 0 {
             return Err(SerializationError::InvalidData(
                 "flat digit blocks require a non-zero ring dimension".to_string(),
             ));
@@ -572,65 +655,78 @@ impl<const D: usize> Valid for FlatDigitBlocks<D> {
                 SerializationError::InvalidData("flat digit block size overflow".to_string())
             })
         })?;
-        if expected != self.flat_digits.len() {
+        let plane_count = self
+            .digits
+            .len()
+            .checked_div(self.ring_dim)
+            .ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "flat digit block digit length is not divisible by ring_dim".to_string(),
+                )
+            })?;
+        if expected != plane_count {
             return Err(SerializationError::InvalidData(format!(
-                "flat digit block sizes sum to {expected}, but digit stream has {} planes",
-                self.flat_digits.len()
+                "flat digit block sizes sum to {expected}, but digit stream has {plane_count} planes",
             )));
         }
         Ok(())
     }
 }
 
-impl<const D: usize> AkitaSerialize for FlatDigitBlocks<D> {
+impl AkitaSerialize for FlatDigitBlocks {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        if self.ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "cannot serialize flat digit blocks without ring_dim".to_string(),
+            ));
+        }
         self.block_sizes
             .serialize_with_mode(&mut writer, compress)?;
-        for plane in &self.flat_digits {
-            for digit in plane {
-                digit.serialize_with_mode(&mut writer, compress)?;
-            }
+        for digit in &self.digits {
+            digit.serialize_with_mode(&mut writer, compress)?;
         }
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.block_sizes.serialized_size(compress) + self.flat_digits.len() * D
+        self.block_sizes.serialized_size(compress) + self.digits.len()
     }
 }
 
-impl<const D: usize> AkitaDeserialize for FlatDigitBlocks<D> {
-    type Context = ();
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
+impl FlatDigitBlocks {
+    /// Deserialize digit blocks for a schedule-known ring dimension.
+    pub fn deserialize_typed<const D: usize, R: Read>(
+        reader: &mut R,
         compress: Compress,
         validate: Validate,
-        _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let block_sizes =
-            Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            Vec::<usize>::deserialize_with_mode(&mut *reader, compress, validate, &())?;
         let total_planes = block_sizes.iter().try_fold(0usize, |acc, &size| {
             acc.checked_add(size).ok_or_else(|| {
                 SerializationError::InvalidData("flat digit block size overflow".to_string())
             })
         })?;
-        let mut flat_digits = Vec::new();
-        super::reserve_shape_len(&mut flat_digits, total_planes)?;
+        let mut digits = Vec::new();
+        super::reserve_shape_len(&mut digits, total_planes.saturating_mul(D))?;
         for _ in 0..total_planes {
-            let mut plane = [0i8; D];
-            for digit in &mut plane {
-                *digit = i8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            for _ in 0..D {
+                digits.push(i8::deserialize_with_mode(
+                    &mut *reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
             }
-            flat_digits.push(plane);
         }
         let out = Self {
-            flat_digits,
+            digits,
             block_sizes,
+            ring_dim: D,
         };
         if validate == Validate::Yes {
             out.check()?;

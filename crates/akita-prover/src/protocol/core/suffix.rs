@@ -386,7 +386,7 @@ mod tests {
         let commitment = FlatRingVec::from_coeffs(vec![TestF::one(); D]);
         let polys: &[&CyclotomicRing<TestF, D>] = &[];
         let hint = AkitaCommitmentHint::<TestF, D>::singleton(
-            FlatDigitBlocks::zeroed(vec![1]).expect("digit blocks"),
+            FlatDigitBlocks::zeroed::<D>(vec![1]).expect("digit blocks"),
         );
         let claims = SuffixFoldClaims::<TestF, CyclotomicRing<TestF, D>, TestF, D> {
             point: vec![TestF::one()].into(),

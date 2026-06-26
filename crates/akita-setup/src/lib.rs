@@ -507,7 +507,7 @@ mod tests {
                     n_prefix: TEST_D,
                     level_params_digest: [9u8; 32],
                 };
-                let decomposed = FlatDigitBlocks::<TEST_D>::from_blocks(vec![Vec::new()]);
+                let decomposed = FlatDigitBlocks::from_blocks::<TEST_D>(vec![Vec::new()]);
                 let recomposed = vec![Vec::new()];
                 let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
                     decomposed, recomposed,
@@ -673,7 +673,7 @@ mod tests {
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.b_key.row_len(),
-                            inner.decomposed_inner_rows.flat_digits(),
+                            inner.decomposed_inner_rows.flat_digits_trusted::<TEST_D>(),
                             lp.log_basis,
                         )
                         .unwrap()

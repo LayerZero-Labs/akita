@@ -344,5 +344,5 @@ pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
     pub recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Digit decompositions of `A * s_i` in flat column-major order plus
     /// explicit block boundaries.
-    pub decomposed_inner_rows: FlatDigitBlocks<D>,
+    pub decomposed_inner_rows: FlatDigitBlocks,
 }

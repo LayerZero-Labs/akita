@@ -63,16 +63,16 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     pre_folded_e: &[Vec<CyclotomicRing<F, D>>],
     depth_open: usize,
     log_basis: u32,
-) -> Result<FlatDigitBlocks<D>, AkitaError> {
+) -> Result<FlatDigitBlocks, AkitaError> {
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
     let total_rows: usize = pre_folded_e.iter().map(Vec::len).sum();
-    let mut e_hat = FlatDigitBlocks::zeroed(vec![depth_open; total_rows])?;
+    let mut e_hat = FlatDigitBlocks::zeroed::<D>(vec![depth_open; total_rows])?;
     let mut offset = 0usize;
     for folded_rows in pre_folded_e {
         for w_i in folded_rows {
             w_i.balanced_decompose_pow2_i8_into_with_params(
-                &mut e_hat.flat_digits_mut()[offset..offset + depth_open],
+                &mut e_hat.flat_digits_trusted_mut::<D>()[offset..offset + depth_open],
                 &decompose_params,
             );
             offset += depth_open;
@@ -286,14 +286,14 @@ fn compute_v_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
     row_len: usize,
-    e_hat: &FlatDigitBlocks<D>,
+    e_hat: &FlatDigitBlocks,
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
-    let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits(), log_basis)?;
+    let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits_trusted::<D>(), log_basis)?;
     if rows.len() != row_len {
         return Err(AkitaError::InvalidProof);
     }
@@ -304,7 +304,7 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB>,
     transcript: &mut T,
     lp: &LevelParams,
-    e_hat: &FlatDigitBlocks<D>,
+    e_hat: &FlatDigitBlocks,
     m_row_layout: MRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -318,7 +318,7 @@ where
         MRowLayout::WithDBlock => {
             let _span = tracing::info_span!(
                 "compute_relation_v",
-                e_hat_planes = e_hat.flat_digits().len()
+                e_hat_planes = e_hat.plane_count()
             )
             .entered();
             let v = compute_v_rows(backend, prepared, lp.d_key.row_len(), e_hat, lp.log_basis)?;

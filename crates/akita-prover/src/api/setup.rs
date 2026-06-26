@@ -190,9 +190,9 @@ mod tests {
             SetupMatrixEnvelope { max_setup_len: 1 },
         )
         .expect("generate setup");
-        let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
+        let decomposed = FlatDigitBlocks::from_blocks::<32>(vec![Vec::new()]);
         let recomposed = vec![Vec::new()];
-        let hint =
+        let hint: AkitaCommitmentHint<Prime128Offset275, 32> =
             AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
         setup
             .prefix_slots
@@ -209,7 +209,7 @@ mod tests {
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![FlatRingVec::from_coeffs(vec![Prime128Offset275::zero()])],
                 },
-                hint: ErasedCommitmentHint::from_typed(hint),
+                hint: ErasedCommitmentHint::from_typed::<32>(hint),
             })
             .expect("insert malformed slot");
 

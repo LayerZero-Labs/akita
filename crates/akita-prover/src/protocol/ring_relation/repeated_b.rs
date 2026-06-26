@@ -35,7 +35,7 @@ pub(super) fn repeated_b_commitment_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
     n_b: usize,
-    t_hat: &FlatDigitBlocks<D>,
+    t_hat: &FlatDigitBlocks,
     num_polys_per_segment: &[usize],
     blocks_per_claim: usize,
     log_basis: u32,
@@ -93,21 +93,21 @@ where
             .checked_add(group_planes)
             .ok_or(AkitaError::InvalidProof)?;
         t_hat
-            .flat_digits()
+            .flat_digits_trusted::<D>()
             .get(plane_offset..next_plane_offset)
             .ok_or(AkitaError::InvalidProof)?;
         groups.push((plane_offset, next_plane_offset));
         block_offset = next_block_offset;
         plane_offset = next_plane_offset;
     }
-    if block_offset != t_hat.block_count() || plane_offset != t_hat.flat_digits().len() {
+    if block_offset != t_hat.block_count() || plane_offset != t_hat.plane_count() {
         return Err(AkitaError::InvalidProof);
     }
 
     let mut rows = Vec::with_capacity(num_polys_per_segment.len() * n_b);
     for (start, end) in groups {
         let group_digits = t_hat
-            .flat_digits()
+            .flat_digits_trusted::<D>()
             .get(start..end)
             .ok_or(AkitaError::InvalidProof)?;
         let group_rows = if group_digits.len() == row_width {
@@ -171,7 +171,7 @@ mod tests {
                     .collect()
             })
             .collect();
-        let t_hat = FlatDigitBlocks::from_blocks(blocks);
+        let t_hat = FlatDigitBlocks::from_blocks::<D>(blocks);
         let got = repeated_b_commitment_rows::<F, _, D>(
             &CpuBackend,
             &prepared,
@@ -195,12 +195,12 @@ mod tests {
             &slot,
             n_b,
             row_width,
-            &t_hat.flat_digits()[..row_width],
+            &t_hat.flat_digits_trusted::<D>()[..row_width],
             log_basis,
         )
         .expect("first expected rows");
         let mut second_digits = vec![[0i8; D]; row_width];
-        second_digits[..block_width].copy_from_slice(&t_hat.flat_digits()[row_width..]);
+        second_digits[..block_width].copy_from_slice(&t_hat.flat_digits_trusted::<D>()[row_width..]);
         let second = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(
             &slot,
             n_b,
@@ -221,7 +221,7 @@ mod tests {
                     .collect()
             })
             .collect();
-        let nonuniform_t_hat = FlatDigitBlocks::from_blocks(nonuniform_blocks);
+        let nonuniform_t_hat = FlatDigitBlocks::from_blocks::<D>(nonuniform_blocks);
         assert!(repeated_b_commitment_rows::<F, _, D>(
             &CpuBackend,
             &prepared,
@@ -246,7 +246,7 @@ mod tests {
                 })
                 .collect();
         let same_total_nonuniform_t_hat =
-            FlatDigitBlocks::from_blocks(same_total_nonuniform_blocks);
+            FlatDigitBlocks::from_blocks::<D>(same_total_nonuniform_blocks);
         assert!(repeated_b_commitment_rows::<F, _, D>(
             &CpuBackend,
             &prepared,

@@ -99,7 +99,7 @@ pub fn decompose_commit_blocks_into<F, const D: usize>(
     rows: &[Vec<CyclotomicRing<F, D>>],
     num_digits_open: usize,
     log_basis: u32,
-) -> Result<FlatDigitBlocks<D>, AkitaError>
+) -> Result<FlatDigitBlocks, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
@@ -116,7 +116,7 @@ where
                 })
         })
         .collect::<Result<_, _>>()?;
-    let mut out = FlatDigitBlocks::zeroed(block_sizes)?;
+    let mut out = FlatDigitBlocks::zeroed::<D>(block_sizes)?;
     let dst_blocks = out.split_blocks_mut();
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)

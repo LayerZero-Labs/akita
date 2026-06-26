@@ -112,14 +112,14 @@ pub fn terminal_witness_transcript_parts(
 /// Returns an error when the block layout is malformed or the logical
 /// terminal `e_hat` byte stream would be empty.
 pub fn terminal_e_hat_bytes_from_blocks<const D: usize>(
-    e_hat: &FlatDigitBlocks<D>,
+    e_hat: &FlatDigitBlocks,
     planes_per_block: usize,
 ) -> Result<Vec<u8>, AkitaError> {
     let total_blocks = e_hat.block_count();
     let expected_planes = total_blocks
         .checked_mul(planes_per_block)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal e_hat width overflow".to_string()))?;
-    if planes_per_block == 0 || e_hat.flat_digits().len() != expected_planes {
+    if planes_per_block == 0 || e_hat.plane_count() != expected_planes {
         return Err(AkitaError::InvalidInput(
             "terminal e_hat block layout does not match open digit depth".to_string(),
         ));
@@ -132,7 +132,7 @@ pub fn terminal_e_hat_bytes_from_blocks<const D: usize>(
     for compound_dig in 0..planes_per_block {
         for block in 0..total_blocks {
             bytes.extend(
-                e_hat.flat_digits()[block * planes_per_block + compound_dig]
+                e_hat.flat_digits_trusted::<D>()[block * planes_per_block + compound_dig]
                     .iter()
                     .copied()
                     .map(|digit| digit as u8),
@@ -301,10 +301,10 @@ mod tests {
 
     #[test]
     fn terminal_e_hat_bytes_from_blocks_uses_plane_major_order() {
-        let e_hat = FlatDigitBlocks::from_blocks(vec![vec![[1, 2], [3, 4]], vec![[5, 6], [7, 8]]]);
+        let e_hat = FlatDigitBlocks::from_blocks::<2>(vec![vec![[1, 2], [3, 4]], vec![[5, 6], [7, 8]]]);
 
         assert_eq!(
-            terminal_e_hat_bytes_from_blocks(&e_hat, 2).unwrap(),
+            terminal_e_hat_bytes_from_blocks::<2>(&e_hat, 2).unwrap(),
             vec![1, 2, 5, 6, 3, 4, 7, 8]
         );
     }

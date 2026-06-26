@@ -29,11 +29,11 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     pub fn from_typed<const D: usize>(hint: AkitaCommitmentHint<F, D>) -> Result<Self, AkitaError> {
         let (flat_hint_digits, recomposed_inner_rows) = hint.into_flat_parts();
         let decomposed_inner_row_block_sizes = flat_hint_digits.block_sizes().to_vec();
-        let total_digit_planes: usize = flat_hint_digits.flat_digits().len();
-        let mut decomposed_inner_rows = Vec::with_capacity(total_digit_planes * D);
-        for plane in flat_hint_digits.flat_digits() {
-            decomposed_inner_rows.extend_from_slice(plane);
-        }
+        let decomposed_inner_rows = flat_hint_digits
+            .flat_digits_trusted::<D>()
+            .iter()
+            .flat_map(|plane| plane.iter().copied())
+            .collect();
 
         let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
             AkitaError::InvalidInput(
@@ -132,8 +132,8 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
             ));
         }
 
-        let decomposed_inner_rows = FlatDigitBlocks::new(
-            decomposed_inner_rows,
+        let decomposed_inner_rows = FlatDigitBlocks::from_planes::<D>(
+            flat_digits.to_vec(),
             self.decomposed_inner_row_block_sizes.clone(),
         )?;
         Ok(AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
