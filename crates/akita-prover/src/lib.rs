@@ -244,9 +244,13 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
 pub struct DecomposeFoldWitness<F: FieldCore> {
     /// Folded witness rows in flat ring storage.
     pub z_folded_rings: RingBuf<F>,
+    /// Centered integer coefficients for each [`z_folded_rings`] row, stored row-major flat.
+    ///
+    /// Hot paths borrow typed rows via [`Self::centered_coeffs_trusted`].
     centered_coeffs_flat: Vec<i32>,
-    /// Infinity norm of centered integer coefficients.
+    /// Infinity norm of [`centered_coeffs_flat`].
     pub centered_inf_norm: u32,
+    /// Ring dimension (field coefficients per ring element), fixed at construction.
     ring_dim: usize,
 }
 
