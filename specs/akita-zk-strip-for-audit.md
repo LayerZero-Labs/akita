@@ -52,7 +52,7 @@ milestone; transparent path only):
 | 4a | Verifier blinding-recompute leaf + verify-side golden | In review |
 | 4b | Verifier fold replay + hiding verify (→ `akita-verifier` = 0) | In review |
 | 4c | Prover blinding/compute leaf (→ prover compute/kernels/ring_switch/ring_relation = 0) | In review |
-| 4d | Prover fold-replay + witness sizing (→ prover/config/planner/setup/sumcheck = 0) | Not started |
+| 4d | Prover fold-replay + witness sizing (→ prover/config/planner/setup/sumcheck = 0) | Done |
 | 4e | Schema unification + residual sweep + delete `zk` Cargo features + `akita-r1cs/` (→ global grep = 0) | Not started |
 
 As of `c998034f`, `main` still carries ~940 `feature = "zk"` lines across

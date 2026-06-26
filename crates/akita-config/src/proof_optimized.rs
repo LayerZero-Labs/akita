@@ -172,14 +172,7 @@ pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<us
     if max_num_batched_polys <= 1 {
         vec![1]
     } else {
-        #[cfg(feature = "zk")]
-        {
-            (1..=max_num_batched_polys).collect()
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            vec![1, max_num_batched_polys]
-        }
+        vec![1, max_num_batched_polys]
     }
 }
 
@@ -398,11 +391,11 @@ macro_rules! impl_proof_optimized_preset {
     };
     (@schedule_catalog tiered ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
-            #[cfg(all(feature = $feat, not(feature = "zk")))]
+            #[cfg(feature = $feat)]
             {
                 Some(akita_schedules::$table())
             }
-            #[cfg(not(all(feature = $feat, not(feature = "zk"))))]
+            #[cfg(not(feature = $feat))]
             {
                 None
             }

@@ -25,15 +25,7 @@ use akita_config::generated_families::{
 use akita_planner::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 
 fn generator_command() -> &'static str {
-    #[cfg(feature = "zk")]
-    {
-        "cargo run --release -p akita-config --features zk --bin gen_schedule_tables -- \
-         <output-dir>"
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        "cargo run --release -p akita-config --bin gen_schedule_tables -- <output-dir>"
-    }
+    "cargo run --release -p akita-config --bin gen_schedule_tables -- <output-dir>"
 }
 
 fn sorted_unique_specs(specs: &[EmitSpec]) -> Vec<EmitSpec> {
@@ -69,7 +61,7 @@ fn main() -> Result<(), String> {
     };
 
     if !wiring_only {
-        let zk_enabled = cfg!(feature = "zk");
+        let zk_enabled = false;
         let generator_command = generator_command();
         for family in ALL_GENERATED_FAMILIES {
             if let Some(ref names) = filter {

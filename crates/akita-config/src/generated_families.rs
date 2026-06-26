@@ -220,7 +220,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         tensor_verifier::fp128::D64OneHotTensor
     ),
     // Tiered companion of `fp128_d64_onehot`
-    #[cfg(not(feature = "zk"))]
     family_row!(
         "fp128_d64_onehot_tiered",
         "FP128_D64_ONEHOT_TIERED_SCHEDULES",

@@ -160,7 +160,7 @@ pub fn validate_catalog_identity(
     let embedded = catalog.identity;
     let expected = catalog_identity_expectation(
         embedded.family_name,
-        cfg!(feature = "zk"),
+        false,
         policy,
         catalog.entries,
         ring_challenge_config,
@@ -389,7 +389,7 @@ mod tests {
     ) -> GeneratedScheduleCatalogIdentity {
         expected_catalog_identity(
             "fp128_d64_onehot",
-            cfg!(feature = "zk"),
+            false,
             policy,
             entries,
             sample_ring_challenge_config,
@@ -420,7 +420,7 @@ mod tests {
         let policy = sample_policy();
         let entries = sample_entries();
         let mut wrong = expected_identity(&policy, entries);
-        wrong.zk_enabled = !cfg!(feature = "zk");
+        wrong.zk_enabled = !false;
         let catalog = GeneratedScheduleTable {
             entries,
             identity: wrong,
@@ -479,7 +479,7 @@ mod tests {
 
         let err = expected_catalog_identity(
             "fp128_d64_onehot",
-            cfg!(feature = "zk"),
+            false,
             &policy,
             entries,
             sample_ring_challenge_config,
