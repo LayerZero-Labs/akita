@@ -4,8 +4,8 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-24 |
-| Revised       | 2026-06-27 (stack status, PR map, honest acceptance criteria, D-free PCS facade) |
-| Status        | in progress (Phases 1–3 partial; Phase 4 deferred) |
+| Revised       | 2026-06-27 (stack status, PR map, bounded generated mixed-D admission, D-free PCS facade) |
+| Status        | in progress (runtime-D cutover plus bounded generated mixed-D admission; DP search/catalog regen deferred) |
 | PR            | stacked on `#227`–`#241` (see Stack status) |
 | Supersedes    | partial supersession of `specs/akita-polyops-cutover.md` (storage half); coordinate PR order with `specs/protocol-field-geometry-cutover.md` (shared `PreparedFold` / `prove_suffix` surface) |
 | Superseded-by | |
@@ -13,17 +13,23 @@
 
 ## Stack status (2026-06-27)
 
-**Not complete.** Generated mixed-D planner tables do not exist yet. The hand-built
-mixed-D fixture (`mixed_d_per_level_e2e`, `mixed_d_geometry_crosscheck`) is a
-**regression gate**, not the finish line. Do not call cutover done until generated
-mixed-D schedules prove and verify through the intended D-free public/control-plane
-APIs.
+This PR is the full runtime ring-dimension cutover target for the current
+bounded model: one active `ring_d` per fold, with later folds allowed to use a
+smaller divisor of the setup envelope dimension. The hand-built mixed-D fixture
+(`mixed_d_per_level_e2e`, `mixed_d_geometry_crosscheck`) remains the E2E
+regression gate; generated schedule expansion now also admits compact rows whose
+`ring_d` is a nonzero divisor of the policy envelope `D`.
+
+Generated mixed-D **search** and production catalog regeneration do not exist
+yet. That means generated tables can now represent mixed-D rows, but the offline
+optimizer still does not choose them. Arbitrary unrelated per-fold Ds are out of
+scope for this cutover.
 
 ### Immediate target (current stack)
 
 - One active `ring_d` per fold; different folds may use different `D`s.
-- Setup envelope may be larger than active fold `D` (fixture uses `D128Full` envelope,
-  `D64` suffix views).
+- Setup envelope may be larger than active fold `D` when active `D` divides the
+  envelope dimension (fixture uses `D128Full` envelope, `D64` suffix views).
 - Proof verifies from schedule-bound runtime `D`.
 - `AkitaCommitmentScheme<Cfg>` is D-free on the scheme struct; per-preset macro impls
   expose D-free inherent setup/prove/verify methods while retaining internal
@@ -31,8 +37,8 @@ APIs.
 
 ### Later target (explicitly deferred)
 
-- Generated mixed-D planner/catalogs, `D_max` envelope sizing, relaxing
-  `gen_ring_dim == Cfg::D` at setup build.
+- DP search over `ring_d`, production generated mixed-D catalog regeneration,
+  and generalized `D_max` envelope sizing beyond the current divisor-envelope model.
 - Full public trait D-erasure (`CommitmentProver` / `CommitmentVerifier` without `D`).
 - Distinct per-block `d_a` / `d_b` / `d_d` inside one fold.
 - Prefix-sized NTT cache optimization; proof/perf benchmark CI gates.
@@ -53,7 +59,7 @@ APIs.
 | [#239](https://github.com/LayerZero-Labs/akita/pull/239) | `quang/runtime-ring-wave6-bulk` | `#236` | 6 | Fold storage demotion (bulk) | Restacked | — |
 | [#240](https://github.com/LayerZero-Labs/akita/pull/240) | `quang/runtime-ring-wave7` | `#239` | 7 | Hint demotion | Restacked | — |
 | [#241](https://github.com/LayerZero-Labs/akita/pull/241) | `quang/runtime-ring-wave7-mixed-d` | `#240` | 7 gate | PCS scheme demotion, mixed-D geometry gate, oracle refresh | Restacked; slow geometry test fixed | `CommitmentProver<F,D>` traits remain |
-| TBD | `quang/runtime-ring-dfree-pcs-api` | restacked `#241` tip | 7 follow-up | D-free inherent PCS facade for normal callers | In progress | Traits remain as internal const-generic adapters |
+| [#243](https://github.com/LayerZero-Labs/akita/pull/243) | `quang/runtime-ring-dfree-pcs-api` | restacked `#241` tip | final cutover | D-free inherent PCS facade for normal callers; bounded generated mixed-D admission; root-direct metadata errors fail loudly | In progress | DP search/catalog regen and generalized Dmax envelope sizing |
 
 ### Completed in code (current stack tip)
 
@@ -64,11 +70,14 @@ APIs.
 - Hand-built D128→D64 mixed-D fixture proves and verifies
 - `AkitaCommitmentScheme<Cfg>` struct demotion plus inherent D-free setup/prove/verify facade
   (trait impls still use literal root `D` internally)
+- Generated compact schedule expansion accepts a level-local `ring_d` when it is
+  nonzero and divides the policy envelope `D`; invalid root-direct commit metadata
+  now fails schedule resolution instead of being silently dropped.
 
 ### Incomplete or deferred
 
-- Generated planner mixed-D search; `expand_to_level_params` still rejects
-  `ring_d != policy.ring_dimension`
+- Generated planner mixed-D search and catalog regeneration; compact expansion
+  admission exists, but the optimizer still emits uniform-D schedules today.
 - `D_max` field-element envelope sizing; relaxing `gen_ring_dim == Cfg::D` at setup
 - Generated schedule catalogs with multiple `D`s per family
 - Full public trait deletion/replacement (`CommitmentProver<F, D>`,
@@ -513,10 +522,12 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
       regression on `dense_root_matvec_full_nv25_d32` and CRT matvec baselines
       (manual / release bench; not CI today).
 
-**Planner (Phase 4, separate PR)** — **not started; out of scope for current stack.**
+**Planner/catalog completion (deferred beyond this PR)**
 
-- [ ] DP searches `ring_d` per fold step; `expand_to_level_params` accepts
-      `ring_d != policy.ring_dimension` when policy allows.
+- [x] `expand_to_level_params` accepts `ring_d != policy.ring_dimension` when
+      `ring_d` is nonzero and divides the policy envelope dimension; root-direct
+      compact commit metadata errors propagate instead of being silently dropped.
+- [ ] DP searches `ring_d` per fold step.
 - [ ] Envelope sizing accumulates in field elements with `gen_ring_dim = D_max` (see
       Setup sizing today). Relax the `gen_ring_dim == Cfg::D` enforcement in
       `api/setup.rs` / `akita-setup/src/lib.rs` to `gen_ring_dim % levelD == 0`.
@@ -1561,14 +1572,17 @@ Five sub-steps; keep each compiling.
       until rustc can express `Cfg::D` in trait bounds without per-preset duplication.
 - [x] `switch_at_fold == 0` rejected in `mixed_d_per_level_schedule` (Bugbot); unit test
       `mixed_d_schedule_rejects_switch_at_fold_zero`.
-- [ ] Phase 4 planner mixed-D tables (DP `ring_d` search, `D_max` envelope, catalog regen;
-      separate follow-on PR per §Phase 4 below).
+- [x] Bounded generated mixed-D admission: compact table rows may carry a smaller
+      divisor `ring_d` than the policy envelope, and invalid root-direct compact
+      commit metadata fails resolution.
+- [ ] Planner/catalog completion (DP `ring_d` search, generalized `D_max` envelope,
+      catalog regen; deferred beyond this bounded cutover).
 - [ ] Grep inventory for all deleted symbols (see Inventory).
 - [ ] `docs/doc-blast-radius.json` regions; optional book stubs; `docs/compute-backends.md`.
 
-### Phase 4 — Planner (separate, follow-on PR; out of scope here)
+### Planner/catalog Completion (Deferred Beyond This PR)
 
-1. DP search over per-step `ring_d`; relax `expand_to_level_params` policy check.
+1. DP search over per-step `ring_d`.
 2. Field-element envelope sizing with `D_max`; relax enforced `gen_ring_dim == Cfg::D` in
    generation.
 3. Regenerate catalogs (`akita-schedules`, `gen_schedule_tables.rs`); evaluate preset

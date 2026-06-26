@@ -60,9 +60,9 @@ impl GeneratedFoldStep {
     ///
     /// # Errors
     ///
-    /// Returns an error when the stored ring dimension disagrees with the
-    /// policy, bucket/width resolution fails, or a shipped rank fails its SIS
-    /// audit against the (batched) width.
+    /// Returns an error when the stored ring dimension is not supported by the
+    /// policy envelope, bucket/width resolution fails, or a shipped rank fails
+    /// its SIS audit against the (batched) width.
     pub fn expand_to_level_params(
         &self,
         policy: &PlannerPolicy,
@@ -73,9 +73,14 @@ impl GeneratedFoldStep {
         num_claims: usize,
     ) -> Result<LevelParams, AkitaError> {
         let ring_d = self.ring_d as usize;
-        if ring_d == 0 || ring_d != policy.ring_dimension {
+        if ring_d == 0 {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated fold step ring dimension {ring_d} does not match policy D={}",
+                "generated fold step ring dimension {ring_d} must be nonzero"
+            )));
+        }
+        if ring_d > policy.ring_dimension || !policy.ring_dimension.is_multiple_of(ring_d) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated fold step ring dimension {ring_d} is not supported by policy envelope D={}",
                 policy.ring_dimension
             )));
         }

@@ -90,7 +90,8 @@ mod tests {
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
-    use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
+    use akita_pcs::{CanonicalField, Transcript};
+    use akita_prover::CommitmentProver;
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
