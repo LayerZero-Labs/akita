@@ -35,9 +35,9 @@ mod repeated_b;
 pub use akita_types::generate_y;
 pub use relation_quotient::compute_relation_quotient;
 
-type RingRelationProveOutput<F, const D: usize> = (
+type RingRelationProveOutput<F> = (
     RingRelationInstance<F>,
-    RingRelationWitness<F, D>,
+    RingRelationWitness<F>,
     FlatRingVec<F>,
 );
 
@@ -364,7 +364,7 @@ impl RingRelationProver {
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
-    ) -> Result<RingRelationProveOutput<F, D>, AkitaError>
+    ) -> Result<RingRelationProveOutput<F>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         PointF: Clone,
@@ -496,13 +496,13 @@ impl RingRelationProver {
             v,
         )?;
         instance.check_v_shape_for_level::<D>(&lp)?;
-        let witness = RingRelationWitness {
+        let witness = RingRelationWitness::from_typed(
             z_folded_rings,
             fold_grind_nonce,
             e_hat,
             e_folded,
-            hint: flattened_hint,
-        };
+            flattened_hint,
+        );
         Ok((instance, witness, commitment_flat))
     }
 
@@ -528,7 +528,7 @@ impl RingRelationProver {
         opening_batch: OpeningBatchShape,
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
-    ) -> Result<RingRelationProveOutput<F, D>, AkitaError>
+    ) -> Result<RingRelationProveOutput<F>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -649,13 +649,13 @@ impl RingRelationProver {
             v,
         )?;
         instance.check_v_shape_for_level::<D>(&lp)?;
-        let witness = RingRelationWitness {
+        let witness = RingRelationWitness::from_typed(
             z_folded_rings,
             fold_grind_nonce,
             e_hat,
             e_folded,
-            hint: flattened_hint,
-        };
+            flattened_hint,
+        );
         Ok((instance, witness, commitment))
     }
 }

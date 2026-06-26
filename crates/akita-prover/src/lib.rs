@@ -246,6 +246,93 @@ pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
     pub centered_inf_norm: u32,
 }
 
+/// Runtime ring-degree-erased [`DecomposeFoldWitness`] for fold relation storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErasedDecomposeFoldWitness<F: FieldCore> {
+    z_folded_ring_coeffs: Vec<F>,
+    centered_coeffs_flat: Vec<i32>,
+    centered_inf_norm: u32,
+    ring_dim: usize,
+    _marker: std::marker::PhantomData<F>,
+}
+
+impl<F: FieldCore> ErasedDecomposeFoldWitness<F> {
+    /// Flatten a typed decompose witness for D-free storage.
+    pub fn from_typed<const D: usize>(witness: DecomposeFoldWitness<F, D>) -> Self {
+        let mut z_folded_ring_coeffs =
+            Vec::with_capacity(witness.z_folded_rings.len().saturating_mul(D));
+        for ring in &witness.z_folded_rings {
+            z_folded_ring_coeffs.extend_from_slice(ring.coefficients());
+        }
+        let centered_coeffs_flat = witness
+            .centered_coeffs
+            .iter()
+            .flat_map(|row| row.iter().copied())
+            .collect();
+        Self {
+            z_folded_ring_coeffs,
+            centered_coeffs_flat,
+            centered_inf_norm: witness.centered_inf_norm,
+            ring_dim: D,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Reconstruct the typed decompose witness without recomputing fold math.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn to_typed<const D: usize>(&self) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "erased decompose witness ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if !self.centered_coeffs_flat.len().is_multiple_of(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.centered_coeffs_flat.len(),
+            });
+        }
+        if !self.z_folded_ring_coeffs.len().is_multiple_of(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.z_folded_ring_coeffs.len(),
+            });
+        }
+        let ring_count = self.z_folded_ring_coeffs.len() / D;
+        let row_count = self.centered_coeffs_flat.len() / D;
+        if ring_count != row_count {
+            return Err(AkitaError::InvalidInput(
+                "erased decompose witness ring row count mismatch".to_string(),
+            ));
+        }
+        let (z_chunks, z_rem) = self.z_folded_ring_coeffs.as_chunks::<D>();
+        debug_assert!(z_rem.is_empty());
+        let z_folded_rings = z_chunks
+            .iter()
+            .map(|coeffs| CyclotomicRing::from_coefficients(*coeffs))
+            .collect();
+        let (centered_chunks, centered_rem) = self.centered_coeffs_flat.as_chunks::<D>();
+        debug_assert!(centered_rem.is_empty());
+        let centered_coeffs = centered_chunks
+            .iter()
+            .map(|row| {
+                let mut out = [0i32; D];
+                out.copy_from_slice(row);
+                out
+            })
+            .collect();
+        Ok(DecomposeFoldWitness {
+            z_folded_rings,
+            centered_coeffs,
+            centered_inf_norm: self.centered_inf_norm,
+        })
+    }
+}
+
 /// Prover-side output of the inner Ajtai commit step.
 pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
     /// Recombined inner `A * s_i` rows, grouped by block.

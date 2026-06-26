@@ -32,7 +32,7 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
     instance: &RingRelationInstance<F>,
-    witness: RingRelationWitness<F, D>,
+    witness: RingRelationWitness<F>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
     retain_terminal_artifacts: bool,
@@ -46,15 +46,10 @@ where
         + AkitaSerialize,
     B: RingSwitchProveBackend<F, D>,
 {
-    let num_claims = instance.opening_batch().num_polynomials();
-    let RingRelationWitness {
-        z_folded_rings,
-        fold_grind_nonce: _,
-        e_hat,
-        e_folded,
-        mut hint,
-    } = witness;
+    let (z_folded_rings, _fold_grind_nonce, e_hat, e_folded, mut hint) =
+        witness.into_typed::<D>()?;
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+    let num_claims = instance.opening_batch().num_polynomials();
     hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
     let (decomposed_inner_rows, recomposed_inner_rows) = hint.into_flat_parts();
     let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {

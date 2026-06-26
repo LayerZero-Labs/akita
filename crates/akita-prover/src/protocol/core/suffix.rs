@@ -298,7 +298,7 @@ pub(in crate::protocol::core) fn prepare_suffix<F, L, T, C, O, TS, R, const D: u
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-) -> Result<PreparedFold<F, L, D>, AkitaError>
+) -> Result<PreparedFold<F, L>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
