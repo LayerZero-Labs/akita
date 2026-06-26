@@ -244,7 +244,7 @@ where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
-        ProverSetup = AkitaProverSetup<FField, D>,
+        ProverSetup = AkitaProverSetup<FField>,
         ExtField = Cfg::ExtField,
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,

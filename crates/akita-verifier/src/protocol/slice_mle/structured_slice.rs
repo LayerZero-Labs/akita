@@ -410,7 +410,7 @@ mod tests {
             num_blocks_per_claim: lp.num_blocks,
             num_claims,
         };
-        let instance = RingRelationInstance::<F, D>::new(
+        let instance = RingRelationInstance::<F, D>::new_from_rings(
             m_row_layout,
             challenges,
             opening_point,

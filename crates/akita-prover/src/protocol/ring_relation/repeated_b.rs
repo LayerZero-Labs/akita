@@ -163,9 +163,7 @@ mod tests {
             FlatMatrix::from_ring_slice::<D>(&setup_rows),
         );
         let setup = AkitaProverSetup::from_seed_validated_expanded(expanded).expect("valid setup");
-        let prepared = CpuBackend
-            .prepare_setup::<D>(&setup)
-            .expect("prepared setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
         let blocks: Vec<Vec<[i8; D]>> = (0..3)
             .map(|block| {
                 (0..block_width)

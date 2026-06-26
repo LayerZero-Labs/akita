@@ -269,8 +269,9 @@ mod tests {
     fn test_setup<const D: usize>(
         level_params: &LevelParams,
         n_prefix: usize,
-    ) -> AkitaProverSetup<F, D> {
-        AkitaProverSetup::<F, D>::generate_with_capacity(
+    ) -> AkitaProverSetup<F> {
+        AkitaProverSetup::<F>::generate_with_capacity(
+            D,
             8,
             1,
             SetupMatrixEnvelope {
@@ -329,7 +330,7 @@ mod tests {
         .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
-        let prepared = backend.prepare_setup::<D>(&setup).expect("prepared setup");
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let seed_digest = setup_seed_digest(setup.expanded.seed()).expect("digest");
         let slot = commit_setup_prefix::<F, D, _>(
             &setup.expanded,
@@ -373,7 +374,7 @@ mod tests {
         .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
-        let prepared = backend.prepare_setup::<D>(&setup).expect("prepared setup");
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let seed_digest = setup_seed_digest(setup.expanded.seed()).expect("digest");
         let slot = commit_setup_prefix::<F, D, _>(
             &setup.expanded,

@@ -168,7 +168,7 @@ where
         lp: root_lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed.to_vec(),
+        v: proof.fold_v_buf()?,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

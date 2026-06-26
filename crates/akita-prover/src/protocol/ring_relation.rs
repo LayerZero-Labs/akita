@@ -478,7 +478,7 @@ impl RingRelationProver {
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
 
-        let instance = RingRelationInstance::new(
+        let instance = RingRelationInstance::new_from_rings(
             m_row_layout,
             challenges,
             opening_point,
