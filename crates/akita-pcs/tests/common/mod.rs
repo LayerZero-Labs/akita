@@ -66,7 +66,7 @@ pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, cons
     point: &'a [FF],
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
-    hint: AkitaCommitmentHint<CommitF, D>,
+    hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningBatch<'a, FF, P, CommitF, D> {
     ProverOpeningBatch {
         point: point.into(),

@@ -38,7 +38,7 @@ fn prover_claims<'a, E: Clone, P, CommitF: FieldCore, const D: usize>(
     point: &'a [E],
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
-    hint: AkitaCommitmentHint<CommitF, D>,
+    hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningBatch<'a, E, P, CommitF, D> {
     ProverOpeningBatch {
         point: point.into(),
@@ -400,7 +400,7 @@ fn run_prove<
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
+            CommitHint = AkitaCommitmentHint<FF>,
         > + CommitmentVerifier<
             FF,
             D,
@@ -555,7 +555,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
+            CommitHint = AkitaCommitmentHint<FF>,
         > + CommitmentVerifier<
             FF,
             D,
@@ -662,7 +662,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
+            CommitHint = AkitaCommitmentHint<FF>,
         > + CommitmentVerifier<
             FF,
             D,
@@ -768,7 +768,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
+            CommitHint = AkitaCommitmentHint<FF>,
         > + CommitmentVerifier<
             FF,
             D,

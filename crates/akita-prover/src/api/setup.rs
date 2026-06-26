@@ -208,8 +208,8 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks, FlatRingVec,
-            SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+            AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec, SetupPrefixPublicCommitment,
+            SetupPrefixSlot, SetupPrefixSlotId,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
@@ -221,8 +221,8 @@ mod tests {
         .expect("generate setup");
         let decomposed = FlatDigitBlocks::from_blocks::<32>(vec![Vec::new()]);
         let recomposed = vec![Vec::new()];
-        let hint: AkitaCommitmentHint<Prime128Offset275, 32> =
-            AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
+        let hint =
+            AkitaCommitmentHint::from_batched_commit::<32>(vec![decomposed], vec![recomposed]);
         setup
             .prefix_slots
             .insert(SetupPrefixSlot {
@@ -238,7 +238,7 @@ mod tests {
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![FlatRingVec::from_coeffs(vec![Prime128Offset275::zero()])],
                 },
-                hint: ErasedCommitmentHint::from_typed::<32>(hint),
+                hint,
             })
             .expect("insert malformed slot");
 

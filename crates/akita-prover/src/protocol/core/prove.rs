@@ -56,7 +56,7 @@ where
 /// Returns an error if any polynomial cannot produce a direct root witness.
 pub fn prove_root_direct<F, L, const D: usize, P>(
     polys: &[&P],
-    hints: &[AkitaCommitmentHint<F, D>],
+    hints: &[AkitaCommitmentHint<F>],
 ) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
     F: FieldCore,

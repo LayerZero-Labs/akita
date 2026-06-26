@@ -52,7 +52,7 @@ fn prover_claims<'a, P, CommitF: FieldCore, const D: usize>(
     point: &'a [F],
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
-    hint: AkitaCommitmentHint<CommitF, D>,
+    hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningBatch<'a, F, P, CommitF, D> {
     ProverOpeningBatch {
         point: point.into(),
@@ -110,7 +110,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            CommitHint = AkitaCommitmentHint<F, D>,
+            CommitHint = AkitaCommitmentHint<F>,
             BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
@@ -277,7 +277,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            CommitHint = AkitaCommitmentHint<F, D>,
+            CommitHint = AkitaCommitmentHint<F>,
             BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,

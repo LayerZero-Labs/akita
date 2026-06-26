@@ -156,7 +156,7 @@ fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, const D: usize>
     point: &'a [FF],
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
-    hint: AkitaCommitmentHint<CommitF, D>,
+    hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningBatch<'a, FF, P, CommitF, D> {
     ProverOpeningBatch {
         point: point.into(),
@@ -248,7 +248,7 @@ where
         ExtField = Cfg::ExtField,
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
-        CommitHint = AkitaCommitmentHint<FField, D>,
+        CommitHint = AkitaCommitmentHint<FField>,
         BatchedProof = AkitaBatchedProof<FField, Cfg::ExtField>,
     >,
     <FField as HasWide>::Wide: From<FField> + ReduceTo<FField>,

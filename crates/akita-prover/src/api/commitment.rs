@@ -19,11 +19,11 @@ use akita_types::{
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
-pub type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F, D>);
+pub type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F>);
 
 /// Commitment group handle specialized to Akita's native commitment and hint types.
 pub type CommittedGroupWithHint<F, const D: usize> =
-    CommittedGroupHandle<RingCommitment<F, D>, AkitaCommitmentHint<F, D>>;
+    CommittedGroupHandle<RingCommitment<F, D>, AkitaCommitmentHint<F>>;
 
 /// Schedule metadata returned by a standalone commitment-group precommit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -380,7 +380,7 @@ fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
     params: &LevelParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
@@ -444,10 +444,8 @@ where
         }
         u
     };
-    let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
-        decomposed_inner_rows,
-        recomposed_inner_rows,
-    );
+    let hint =
+        AkitaCommitmentHint::from_batched_commit::<D>(decomposed_inner_rows, recomposed_inner_rows);
     Ok((RingCommitment { u }, hint))
 }
 
@@ -465,7 +463,7 @@ pub fn commit_with_params<F, const D: usize, P, B>(
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B>,
     params: &LevelParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
@@ -530,7 +528,7 @@ pub fn commit<Cfg, const D: usize, P, B>(
 ) -> Result<
     (
         RingCommitment<Cfg::Field, D>,
-        AkitaCommitmentHint<Cfg::Field, D>,
+        AkitaCommitmentHint<Cfg::Field>,
     ),
     AkitaError,
 >

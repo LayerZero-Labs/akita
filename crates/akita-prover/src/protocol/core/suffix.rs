@@ -12,7 +12,7 @@ use akita_field::AdditiveGroup;
 use akita_types::{
     padded_scalar_batch_num_vars, schedule_terminal_direct_witness_shape,
     terminal_golomb_grind_tail_t_vectors, validate_scalar_point_matches_poly_arity,
-    ErasedCommitmentHint, OpeningGroupShape, OpeningPoints, PointVariableSelection,
+    AkitaCommitmentHint, OpeningGroupShape, OpeningPoints, PointVariableSelection,
 };
 
 /// Prover state carried between suffix fold levels.
@@ -24,7 +24,7 @@ pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
     /// Current suffix witness commitment.
     pub commitment: FlatRingVec<F>,
     /// D-erased suffix commitment hint.
-    pub hint: ErasedCommitmentHint<F>,
+    pub hint: AkitaCommitmentHint<F>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next suffix opening point.
@@ -58,7 +58,7 @@ pub(in crate::protocol::core) struct SuffixFoldClaims<
     pub(in crate::protocol::core) point_vars: PointVariableSelection,
     pub(in crate::protocol::core) polynomials: &'a [&'a P],
     pub(in crate::protocol::core) commitment: FlatRingVec<F>,
-    pub(in crate::protocol::core) hint: ErasedCommitmentHint<F>,
+    pub(in crate::protocol::core) hint: AkitaCommitmentHint<F>,
 }
 
 impl<'a, PointF: Clone, P, F: FieldCore, const D: usize> SuffixFoldClaims<'a, PointF, P, F, D> {
@@ -68,7 +68,7 @@ impl<'a, PointF: Clone, P, F: FieldCore, const D: usize> SuffixFoldClaims<'a, Po
         recursive_num_vars: usize,
         polynomials: &'a [&'a P],
         commitment: FlatRingVec<F>,
-        hint: ErasedCommitmentHint<F>,
+        hint: AkitaCommitmentHint<F>,
     ) -> Result<Self, AkitaError>
     where
         PointF: FieldCore,
@@ -380,9 +380,7 @@ mod tests {
     use crate::protocol::core::fold::compute_trace_target;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{
-        AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks, RingOpeningPoint,
-    };
+    use akita_types::{AkitaCommitmentHint, FlatDigitBlocks, RingOpeningPoint};
 
     type TestF = Fp32<251>;
     const D: usize = 4;
@@ -391,10 +389,10 @@ mod tests {
     fn suffix_fold_claims_keeps_flat_commitment_without_opening_batch() {
         let commitment = FlatRingVec::from_coeffs(vec![TestF::one(); D]);
         let polys: &[&CyclotomicRing<TestF, D>] = &[];
-        let hint =
-            ErasedCommitmentHint::from_typed::<D>(AkitaCommitmentHint::<TestF, D>::singleton(
-                FlatDigitBlocks::zeroed::<D>(vec![1]).expect("digit blocks"),
-            ));
+        let hint = AkitaCommitmentHint::from_batched_commit::<D>(
+            vec![FlatDigitBlocks::zeroed::<D>(vec![1]).expect("digit blocks")],
+            Vec::new(),
+        );
         let claims = SuffixFoldClaims::<TestF, CyclotomicRing<TestF, D>, TestF, D> {
             point: vec![TestF::one()].into(),
             point_vars: PointVariableSelection::prefix(1, 1).expect("point vars"),

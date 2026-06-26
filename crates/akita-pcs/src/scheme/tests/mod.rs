@@ -225,7 +225,7 @@ fn prover_claims<'a, E: Clone, P, CommitF: FieldCore, const D: usize>(
     point: &'a [E],
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
-    hint: AkitaCommitmentHint<CommitF, D>,
+    hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningBatch<'a, E, P, CommitF, D> {
     ProverOpeningBatch {
         point: point.into(),

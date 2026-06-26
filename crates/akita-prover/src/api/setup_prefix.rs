@@ -12,7 +12,7 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     digest_level_params, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
-    ErasedCommitmentHint, FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
+    FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -150,9 +150,9 @@ where
         )));
     }
 
-    let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-        decomposed_inner_rows,
-        recomposed_inner_rows,
+    let hint = AkitaCommitmentHint::from_batched_commit::<D>(
+        vec![decomposed_inner_rows],
+        vec![recomposed_inner_rows],
     );
     let id = setup_prefix_slot_id(
         setup_seed_digest,
@@ -166,7 +166,7 @@ where
         natural_len,
         padded_len: n_prefix,
         commitment: RingCommitment { u }.into(),
-        hint: ErasedCommitmentHint::from_typed::<D>(hint),
+        hint,
     })
 }
 

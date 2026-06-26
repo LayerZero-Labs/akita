@@ -43,7 +43,7 @@ pub use direct_witness::{
     segment_typed_witness_shape, terminal_direct_witness_shape,
     terminal_direct_witness_shape_for_key, CleartextWitnessProof, CleartextWitnessShape,
 };
-pub use hints::{AkitaCommitmentHint, ErasedCommitmentHint};
+pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
@@ -112,7 +112,6 @@ use akita_sumcheck::{
 };
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 
 pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;
 

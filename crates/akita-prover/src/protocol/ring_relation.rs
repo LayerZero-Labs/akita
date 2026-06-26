@@ -19,8 +19,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, ErasedCommitmentHint, FlatDigitBlocks, FlatRingVec,
-    MRowLayout, OpeningBatchShape, RingBuf, RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, FlatRingVec, MRowLayout,
+    OpeningBatchShape, RingBuf, RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -79,44 +79,6 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
         }
     }
     Ok(e_hat)
-}
-
-fn flatten_commitment_hints_for_ring_relation<F, const D: usize>(
-    hints: Vec<AkitaCommitmentHint<F, D>>,
-    group_sizes: &[usize],
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<AkitaCommitmentHint<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if hints.len() != group_sizes.len() {
-        return Err(AkitaError::InvalidInput(
-            "prover hint group count does not match commitment groups".to_string(),
-        ));
-    }
-
-    let mut decomposed_inner_rows = Vec::new();
-    let mut t_rows_by_poly = Vec::new();
-    for (mut hint, &group_size) in hints.into_iter().zip(group_sizes.iter()) {
-        if hint.decomposed_inner_rows.len() != group_size {
-            return Err(AkitaError::InvalidInput(
-                "prover hint group sizes do not match polynomial groups".to_string(),
-            ));
-        }
-        hint.ensure_recomposed_inner_rows(num_digits_open, log_basis)?;
-        let (digits_by_poly, rows_by_poly) = hint.into_parts();
-        decomposed_inner_rows.extend(digits_by_poly);
-        let rows_by_poly = rows_by_poly.ok_or_else(|| {
-            AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
-        })?;
-        t_rows_by_poly.extend(rows_by_poly);
-    }
-
-    Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
-        decomposed_inner_rows,
-        t_rows_by_poly,
-    ))
 }
 
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
@@ -434,7 +396,7 @@ impl RingRelationProver {
             let _span = tracing::info_span!("decompose_batched_e_hat").entered();
             decompose_e_hat::<F, D>(&pre_folded_e_by_poly, lp.num_digits_open, lp.log_basis)?
         };
-        let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
+        let flattened_hint = AkitaCommitmentHint::merge_for_ring_relation::<D>(
             hints,
             &group_sizes,
             lp.num_digits_open,
@@ -489,7 +451,8 @@ impl RingRelationProver {
             lp.b_inner_rows_per_group(),
             lp.a_key.row_len(),
         )?;
-        let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
+        let e_folded: Vec<CyclotomicRing<F, D>> =
+            pre_folded_e_by_poly.into_iter().flatten().collect();
 
         let instance = RingRelationInstance::new_from_rings::<D>(
             m_row_layout,
@@ -503,11 +466,11 @@ impl RingRelationProver {
             v,
         )?;
         instance.check_v_shape_for_level::<D>(&lp)?;
-        let witness = RingRelationWitness::from_typed(
+        let witness = RingRelationWitness::new(
             z_folded_rings,
             fold_grind_nonce,
             e_hat,
-            e_folded,
+            RingBuf::from_ring_elems(&e_folded),
             flattened_hint,
         );
         Ok((instance, witness, commitment_flat))
@@ -526,7 +489,7 @@ impl RingRelationProver {
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F>,
         commitment: FlatRingVec<F>,
-        hint: ErasedCommitmentHint<F>,
+        hint: AkitaCommitmentHint<F>,
         polys: &[&'a P],
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
