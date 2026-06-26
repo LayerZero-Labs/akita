@@ -49,8 +49,8 @@ milestone; transparent path only):
 
 | PR | Scope | Status |
 |----|-------|--------|
-| 4a | Verifier ZK leaves + verify-side golden | Not started |
-| 4b | Verifier fold replay (→ `akita-verifier` = 0) | Not started |
+| 4a | Verifier blinding-recompute leaf + verify-side golden | In review |
+| 4b | Verifier fold replay + hiding verify (→ `akita-verifier` = 0) | Not started |
 | 4c | Prover orchestration + witness sizing (→ prover/config/planner/setup = 0) | Not started |
 | 4d | Proof schema unification (→ `akita-types`/`akita-sumcheck` = 0) | Not started |
 | 4e | Residual sweep + delete `zk` Cargo features + `akita-r1cs/` dir (→ global grep = 0) | Not started |
@@ -358,8 +358,8 @@ Ordering invariants (must hold regardless of how PRs are merged/split):
 
 | PR | Title | Crates driven to 0 cfg(zk) | Owns |
 |----|-------|----------------------------|------|
-| 4a | Verifier ZK leaves | (verifier non-fold) | `core/zk.rs`, `slice_mle/zk_blinding.rs`, slice_mle fixtures, `verify.rs` zk blocks, `stages/*` verify_zk, verifier `ring_switch.rs` blinding, `core.rs mod zk`. **+ add the verify-side golden** (Testing Strategy). |
-| 4b | Verifier fold replay | **akita-verifier (src) → 0** | `core/{fold,suffix,root_fold}.rs`; un-gate `extension_opening_reduction`; delete `akita-sumcheck` **`verify_zk`** driver. **I3 review focus.** |
+| 4a | Verifier blinding-recompute leaf | (self-contained; verifier still carries fold cfg) | `ring_switch.rs` B/D blinding + `ring_switch/tests.rs`; delete `slice_mle/zk_blinding.rs`; `slice_mle/{mod.rs,structured_slice.rs,test_fixtures.rs,setup_contribution/fixtures.rs}` blinding parts. **+ add the verify-side golden** (Testing Strategy). Chosen as the *only* verifier zk cluster with zero coupling to the fold signature chain → zero cross-PR dangling refs. |
+| 4b | Verifier fold replay + hiding verify | **akita-verifier (src) → 0** | `core/zk.rs` (`verify_zk_hiding_commitment`), `verify.rs` zk blocks + `zk_hiding_cursor` threading, `stages/*` verify_zk, `core.rs` `mod zk`/imports, `core/{fold,suffix,root_fold}.rs`; un-gate `extension_opening_reduction`; delete `akita-sumcheck` **`verify_zk`** driver. **I3 review focus.** |
 | 4c | Prover orchestration + witness sizing | **akita-prover, akita-config, akita-planner, akita-setup → 0** | `core.rs` `ZkHidingProverState`/`build_zk_hiding_context`/pads; `prove/fold/root_fold/suffix`; `ring_switch/{commit,evals}` blinding; `masking.rs`; `zk_hiding_commit.rs`; `hints` blinding digits + `AkitaCommitmentHint` arity cleanup; `akita-config` `proof_optimized` `zk_hiding_witness_len`; `akita-planner` `resolve`/`catalog_identity`; `akita-setup` sizing; delete `akita-sumcheck` **`prove_zk`** driver. **I3 review focus.** The planner `zk_hiding_witness_len` and prover `build_zk_hiding_context` are deleted *together* (the harmless drift vanishes here). |
 | 4d | Proof schema unification | **akita-types, akita-sumcheck → 0** | `proof/{wire,levels,containers,shapes,ring_relation,proof_size,hints}.rs`: drop `zk_hiding` field, `ZkHidingProof`, the `sumcheck_proof`↔`_masked` / `next_w_eval`↔`_masked` swaps; delete the masked **type definitions** (OI-2). By now these fields have no producer/consumer → pure mechanical deletion. |
 | 4e | Residual sweep + feature deletion | **global `rg` → 0** | All remaining `.rs` cfg(zk) in `akita-pcs` (tests + `src/scheme/tests` + `examples/profile/report.rs`), `akita-algebra`, `akita-challenges`; delete every `zk = [...]` in all 13 `Cargo.toml`; delete the orphaned `crates/akita-r1cs/` dir; docs (book feature-flags page, AGENTS.md); final grep gate. |

@@ -95,10 +95,6 @@ pub(crate) fn recursive_d32_prepared() -> RingSwitchDeferredRowEval<FixtureField
     )
     .expect("witness segment layout");
 
-    #[cfg(feature = "zk")]
-    let b_blinding_digit_planes_per_point =
-        akita_types::lhl_blinding::blinding_digit_plane_count::<FixtureField>(n_b, FIXTURE_D, log_basis);
-
     RingSwitchDeferredRowEval {
         c_alphas: PreparedChallengeEvals::Flat(
             (0..total_blocks)
@@ -114,14 +110,6 @@ pub(crate) fn recursive_d32_prepared() -> RingSwitchDeferredRowEval<FixtureField
         depth_open,
         depth_commit,
         depth_fold,
-        #[cfg(feature = "zk")]
-        d_blinding_segment_len: akita_types::lhl_blinding::blinding_digit_plane_count::<FixtureField>(
-            n_d, FIXTURE_D, log_basis,
-        ),
-        #[cfg(feature = "zk")]
-        b_blinding_digit_planes_per_point,
-        #[cfg(feature = "zk")]
-        b_blinding_segment_len: num_points * b_blinding_digit_planes_per_point,
         block_len,
         inner_width,
         log_basis,

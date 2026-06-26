@@ -18,6 +18,7 @@ use akita_field::FieldCore;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly};
 use akita_serialization::AkitaSerialize;
+use akita_verifier::CommitmentVerifier;
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode};
 use common::{dense_field_evals, opening_from_poly, OneHotCfg, F, ONEHOT_D, ONEHOT_K};
@@ -106,7 +107,7 @@ fn build_d64_full_nv15_proof_bytes() -> Vec<u8> {
         let evals = dense_field_evals(NV, POLY_SEED);
         let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
         let opening_point = fixed_opening_point(NV, POINT_SEED);
-        let _opening = opening_from_poly(&poly, &opening_point, &layout);
+        let opening = opening_from_poly(&poly, &opening_point, &layout);
 
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
@@ -139,6 +140,21 @@ fn build_d64_full_nv15_proof_bytes() -> Vec<u8> {
 
         assert_folded_not_root_direct::<Cfg>(NV, &proof);
 
+        // Verify-side golden (spec I1/4a): the transparent verifier must accept
+        // the pinned proof. Read-only, so the serialized bytes are unaffected.
+        let verifier_setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            common::verify_input(&opening_point[..], std::slice::from_ref(&opening), &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .expect("transparent verifier must accept the d64-full nv15 golden proof");
+
         let mut out = Vec::new();
         proof
             .serialize_compressed(&mut out)
@@ -168,7 +184,7 @@ fn build_d64_onehot_nv20_proof_bytes() -> Vec<u8> {
             .collect();
         let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly");
         let opening_point = fixed_opening_point(NV, POINT_SEED);
-        let _opening = opening_from_poly(&poly, &opening_point, &layout);
+        let opening = opening_from_poly(&poly, &opening_point, &layout);
 
         let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -206,6 +222,22 @@ fn build_d64_onehot_nv20_proof_bytes() -> Vec<u8> {
         .unwrap();
 
         assert_folded_not_root_direct::<OneHotCfg>(NV, &proof);
+
+        // Verify-side golden (spec I1/4a): read-only, bytes unaffected.
+        let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::setup_verifier(&setup);
+        let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
+        <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            common::verify_input(&opening_point[..], std::slice::from_ref(&opening), &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .expect("transparent verifier must accept the d64-onehot nv20 golden proof");
 
         let mut out = Vec::new();
         proof
