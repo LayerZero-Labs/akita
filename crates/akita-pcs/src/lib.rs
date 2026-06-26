@@ -62,12 +62,12 @@ pub use akita_prover::{
     CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan,
     DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, MultiChunkEntry, OneHotCommitBlocks,
     OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, ProveBackendFor,
-    ProverCommitmentGroup, ProverOpeningBatch, RecursiveProveBackend,
-    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    ProverCommitmentGroup, ProverOpeningBatch, RecursiveWitnessCommitRowsPlan,
+    RecursiveWitnessProveFlowBackend, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan, TensorBackendFor,
-    TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    RootOpeningSource, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
+    RootTensorSource, SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
+    TensorBackendFor, TieredProveStacks, UniformProverStack,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};

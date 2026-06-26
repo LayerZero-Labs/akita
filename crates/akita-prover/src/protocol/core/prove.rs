@@ -3,9 +3,10 @@ use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
-    RingSwitchProveBackend, RootPolyShape, RootProvePoly, SuffixDispatchOpeningProveBackendFor,
-    SuffixDispatchTensorProveBackendFor, SuffixRingSwitchProveBackend, TensorBackendFor,
+    RingSwitchProveBackend, RootPolyShape, RootProvePoly, SuffixOpeningProveBackend,
+    SuffixRingSwitchProveBackend, SuffixTensorProveBackend, TensorBackendFor,
 };
+use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
@@ -126,12 +127,14 @@ where
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
-        + SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
+        + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
-        + SuffixDispatchTensorProveBackendFor<Cfg::Field, Cfg::ExtField, D>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, Cfg::ExtField, D>
+        + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
         + SuffixRingSwitchProveBackend<Cfg::Field>
@@ -272,12 +275,14 @@ where
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
-        + SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
+        + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
-        + SuffixDispatchTensorProveBackendFor<Cfg::Field, Cfg::ExtField, D>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, Cfg::ExtField, D>
+        + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
         + SuffixRingSwitchProveBackend<Cfg::Field>

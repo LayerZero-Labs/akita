@@ -57,13 +57,11 @@ pub use plans::{
 
 pub use poly::{
     CommitBackendFor, DirectRootWitnessSource, OpeningProveBackendFor, ProjectBackendFor,
-    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend,
+    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, RecursiveWitnessProveFlowBackend,
     RingSwitchProveBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
     RootOpeningSource, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
-    RootTensorSource, SuffixDispatchOpeningProveBackendFor, SuffixDispatchTensorProveBackendFor,
-    SuffixRingSwitchProveBackend, SuffixRootTensorOpeningProveBackendFor,
-    SuffixRootTensorTensorProveBackendFor, SuffixWitnessOpeningProveBackendFor,
-    SuffixWitnessTensorProveBackendFor, TensorBackendFor, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    RootTensorSource, SuffixOpeningProveBackend, SuffixRingSwitchProveBackend,
+    SuffixTensorProveBackend, TensorBackendFor,
 };
 pub use stack::{
     LevelProveStacks, OperationCtx, ProverComputeStack, TieredProveStacks, UniformProverStack,

@@ -10,8 +10,8 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootCommitBackend, RootCommitPoly,
-    RootPolyShape, RootProvePoly,
+    OpeningFoldKernel, OpeningFoldPlan, RecursiveWitnessProveFlowBackend, RootCommitBackend,
+    RootCommitPoly, RootPolyShape, RootProveFlowBackend, RootProvePoly,
 };
 use akita_prover::{
     AkitaProverSetup, CommitmentProver, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
@@ -419,8 +419,9 @@ fn run_prove<
         + 'static,
     <FF as HasWide>::Wide: From<FF> + ReduceTo<FF> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<FF> + AkitaSerialize,
-    CpuBackend:
-        RootCommitBackend<FF, P, Cfg::ExtField, D> + RecursiveProveBackend<FF, P, Cfg::ExtField, D>,
+    CpuBackend: RootCommitBackend<FF, P, Cfg::ExtField, D>
+        + RootProveFlowBackend<FF, P, Cfg::ExtField, D>
+        + RecursiveWitnessProveFlowBackend<FF, Cfg::ExtField>,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
