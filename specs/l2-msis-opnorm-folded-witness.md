@@ -4,10 +4,18 @@
 |-------------|-------|
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-04 |
-| Status      | proposed, draft for iteration |
+| Status      | superseded |
 | PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from [#195](https://github.com/LayerZero-Labs/akita/pull/195)) |
+| Superseded-by | [`direct-linf-sis-cutover.md`](direct-linf-sis-cutover.md) |
 
 ## Summary
+
+> **Superseded (2026-06-26).** L2 MSIS table pricing and the planned folded-witness
+> L2 certificate are **cancelled**. Security pricing reverts to direct
+> coefficient-`L∞` SIS per [`direct-linf-sis-cutover.md`](direct-linf-sis-cutover.md).
+> **Still valid from this spec:** operator-norm challenge rejection (#207) and
+> cross-links to [`fold-linf-rejection.md`](fold-linf-rejection.md). **Cancelled:**
+> slices S6–S10, S13 (L2 certificate); delete [`four_square.rs`](../crates/akita-types/src/sis/four_square.rs) on cutover.
 
 Akita currently prices committed-fold weak binding through coefficient `L∞`
 collision buckets.

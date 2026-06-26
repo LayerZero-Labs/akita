@@ -1,4 +1,4 @@
-# Spec: Direct coefficient-L∞ SIS cutover for A-role binding
+# Spec: Direct coefficient-L∞ SIS cutover (full revert of L2 MSIS pricing)
 
 | Field         | Value |
 |---------------|-------|
@@ -6,204 +6,245 @@
 | Created       | 2026-06-26 |
 | Status        | active |
 | PR            | [#229](https://github.com/LayerZero-Labs/akita/pull/229) (groundwork); follow-up PRs TBD |
-| Supersedes    | partial correction of [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) A-role table path |
+| Supersedes    | [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) (L2 table + certificate path); [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) (L2 table regen) |
 | Book-chapter  | |
 
 ## Summary
 
-The L2 MSIS cutover ([`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md)) prices committed-fold A-role binding through a Euclidean SIS floor table after Lemma 7 and the inequality `‖v‖₂ ≤ √d · ‖v‖∞`.
-That L2 surrogate is sound as an upper bound on the collision vector, but it is not tight: planner geometry can satisfy the L2 table at rank `n_A` while direct coefficient-`L∞` SIS at the same `(B, width, d, q)` estimates well below 128 bits.
+[`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) cut Akita over to an **L2 / Euclidean MSIS floor table** (#155) and planned an in-protocol **folded-witness L2 certificate** (slices S6–S10).
+Investigation (2026-06-26) shows:
 
-PR [#229](https://github.com/LayerZero-Labs/akita/pull/229) fixes one independent sizing bug (A-role must use the verifier-public folded-witness cap, not raw `β_inf`) and adds diagnostics plus a partial fp32 D256 rescue path.
-This spec defines the remaining work for a **full cutover**: generated direct-`L∞` SIS floors become the sole authority for A-role rank, the hybrid `min(L2, direct-L∞)` selector is removed, and shipped schedule tables are regenerated once.
+- The **L2 certificate path was never implemented** in Rust (`fold_l2`, `B_l2`, `ell_hat`, `carry_hat` do not exist in the tree). Only the spec and the dormant [`four_square.rs`](../crates/akita-types/src/sis/four_square.rs) helper remain.
+- The **L2 MSIS table path is shipped** (`generated_sis_table/`, `min_secure_rank`, `collision_l2_sq` on `AjtaiKeyParams`) and is the current authority for A/B/D rank lookup via `collision_l2_sq_for_linf_envelope`.
+- That L2 surrogate can **under-price A-role rank** relative to direct coefficient-`L∞` SIS (concrete counterexample below).
 
-B-role and D-role opening-digit collisions may continue to enter the existing L2 table via `‖v‖₂² ≤ d · ‖v‖∞²`; only A-role rank selection changes security model.
+**Decision:** revert security pricing to **coefficient-`L∞` only**. Delete all L2-certificate planned work and retire the L2 MSIS table path after generated direct-`L∞` floors land. Do **not** implement the L2 certificate.
+
+PR [#229](https://github.com/LayerZero-Labs/akita/pull/229) already fixes an independent bug (A-role must use the verifier-public folded-witness cap) and adds probe tooling. This spec is the durable cutover plan.
+
+**Orthogonal shipped features (stay):**
+
+- **Folded-witness `‖z‖_∞` tail bound + grind** ([`fold-linf-rejection.md`](fold-linf-rejection.md), #189): sizes `δ_fold` from `min(β_inf, t*)` with Fiat–Shamir rerolls. This is digit/width tightening, not SIS table pricing.
+- **Operator-norm challenge rejection** (#207): prices A-role with `Γ` instead of `ω` when beneficial. Stays; only the **floor lookup norm** changes to direct `L∞`.
 
 ## Intent
 
 ### Goal
 
-Make direct coefficient-`L∞` SIS the authoritative security model for committed-fold A-role module rank across every shipped `(SisModulusFamily, d)` preset, with offline-generated floors checked into `akita-types` and planner expansion validating stored ranks against the same lookup.
+1. Make **direct coefficient-`L∞` SIS** the sole security model for **A-, B-, and D-role** module rank on every shipped `(SisModulusFamily, d)` preset.
+2. **Delete** the L2 MSIS table stack, L2-certificate planned slices, and all hybrid `min(L2, direct-L∞)` migration code.
+3. Keep **fold-linf grind** as a first-class **planner optimization lever** (tighter `δ_fold` when tail-bound policy applies; tunable grind acceptance with bounded prover rerolls).
+4. Generate tables offline from a **pinned estimator checkout on the `quangvdao` fork** until a single targeted upstream PR lands later.
 
 ### Invariants
 
-- **Verifier-public cap for A-role collision.** A-role weak binding sizes against `folded_witness_public_linf_cap` (tail/grind policy included), the same cap that bounds digit encoding and verifier acceptance of `z`. Implemented in [#229](https://github.com/LayerZero-Labs/akita/pull/229).
-- **Direct `L∞` authority for A-role rank.** After cutover, `choose_op_norm_rejection_for_a_role` and every planner DP path that prices `n_A` consult only the generated direct-`L∞` floor table (plus explicit audited stopgaps during migration, none in the final state).
-- **No hybrid rank selection.** Taking `min(rank_L2, rank_direct_L∞)` is forbidden once direct floors exist for the cell: the L2 surrogate may under-price rank (concrete counterexample below).
-- **Single generated artifact per norm.** Direct-`L∞` floors live in checked-in modules parallel to today's `generated_sis_table/` L2 modules, regenerated by an offline Sage script pinned to `third_party/lattice-estimator`.
-- **Schedule/table consistency.** Every `GeneratedFoldStep.n_a` in `akita-schedules` must match `min_secure_rank_linf(...)` at expansion time; `generated_tables` and `regen_diff` stay clean.
-- **Verifier no-panic contract.** New lookup paths return `Option`/`Result`; no verifier-reachable panics on malformed planner metadata.
+- **Verifier-public cap for fold collision.** A-role weak binding and `num_digits_fold` size against `folded_witness_public_linf_cap` (includes `min(β_inf, t*)` under [`FoldWitnessLinfCapPolicy::TailBoundWithGrind`](crates/akita-types/src/sis/norm_bound.rs)). Shipped in [#229](https://github.com/LayerZero-Labs/akita/pull/229).
+- **Direct `L∞` authority for all SIS ranks.** `min_secure_rank` (or successor) consults only generated direct-`L∞` floors keyed by coefficient collision `B` and ring-column width. No `‖v‖₂² ≤ d·‖v‖∞²` conversion into an L2 table.
+- **No L2 certificate.** No proof fields, sumchecks, or planner budgets for `B_l2`, slack limbs, or carry chains.
+- **Fold-linf grind consistency.** Planner scoring, stored schedule expansion, prover reroll, and verifier nonce validation share the same `FoldWitnessLinfCapConfig` (policy, `t*`, `p_grind`).
+- **Schedule/table consistency.** Stored `n_a` / `n_b` / `n_d` match recomputed direct-`L∞` floors at expansion; `generated_tables` and drift guards stay clean.
+- **Verifier no-panic contract** on all lookup paths.
 
-Protected by: `akita-types::sis` unit tests, `generated_tables`, planner catalog validation, `fp32_dense_planner_diag` (un-ignore when stable), profile-bench CI matrix for fp128 D64 rows.
+Protected by: `akita-types::sis` tests, `generated_tables`, `fold-linf-rejection` e2e/grind tests, profile-bench fp128 D64 matrix.
 
 ### Non-Goals
 
-- Replacing B/D role L2 table lookup (opening-digit `2^lb − 1` still converts through `collision_l2_sq_for_linf_envelope`).
-- Changing operator-norm challenge sampling, fold-linf tail-bound digit policy, or folded-witness L2 certificate machinery.
-- Tightening lattice-estimator modeling beyond the pinned ADPS16 / `norm=oo` / `red_shape_model=lgsa` / `zeta=0` regime used for the current L2 table unless estimator upstream changes land first.
-- Parallel legacy L2 A-role rank path or feature-flagged dual schedules after cutover.
+- In-protocol Euclidean norm certificates for the folded witness.
+- Parallel L2 and `L∞` floor tables or feature-flagged dual schedules.
+- Changing operator-norm predicate math (#207) or fold challenge sampling families.
+- Runtime Sage inside planner or verifier.
 
-## Background: what L2 cutover left behind
+## What is actually in the tree today
 
-[`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) moved **pricing** to an L2 MSIS table while keeping natural coefficient-`L∞` quantities for digit bounds and Lemma 7.
-For A-role, the pipeline is:
+### Shipped: L2 MSIS table (to remove)
 
-1. Compute raw coefficient-`L∞` collision `B_A` from Lemma 7 and the public fold cap.
-2. Map to L2 bucket via `collision_l2_sq_for_linf_envelope` (`d · ceil(B)²` derived keys or power-of-two ladder).
-3. Look up `min_secure_rank` against the Euclidean table.
+| Piece | Location |
+|-------|----------|
+| Euclidean floor modules | `crates/akita-types/src/sis/generated_sis_table/` |
+| L2 table generator | `scripts/gen_sis_table.py` (`norm=l2`, BDGL16) |
+| Rank lookup | `min_secure_rank`, `sis_max_widths` |
+| L2 bucket derivation | `collision_l2_sq_for_linf_envelope`, `derived_collision_l2_sq_key`, `ceil_supported_collision` |
+| A-role L2 collision | `committed_fold_collision_l2_sq` |
+| Stored key field | `AjtaiKeyParams.collision_l2_sq` |
+| Hybrid migration | `min(L2, direct-L∞)` in `op_norm_pricing.rs` |
+| fp32 stopgap rectangles | `min_secure_rank_linf_direct` |
 
-Step 3 can return a **smaller** rank than direct `L∞` SIS requires because the table was generated under `norm=l2` with `length_bound = √(width · collision_l2_sq)`, which is a different SIS instance than `‖x‖∞ ≤ B` with `m = width · d`.
+### Never shipped: L2 certificate (delete from specs + code)
 
-### Counterexample (fp128 D64 dense nv24, level 1)
+| Piece | Status |
+|-------|--------|
+| S6–S10, S13 in [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) | Spec-only; **cancelled** |
+| [`four_square.rs`](../crates/akita-types/src/sis/four_square.rs) | Dead helper for Lagrange slack; **delete on cutover** |
+| `l2_sq_from_linf` | Used only for L2 table bridge; **delete** |
 
-From local diagnostics ([`scripts/probe_linf_sis_table.py`](scripts/probe_linf_sis_table.py), estimator `13a8e68`, `zeta=0`):
+### Shipped: fold `‖z‖_∞` grind (keep + extend in planner)
 
-| Geometry | `B_A` | width | `n_A` (L2 path) | direct `L∞` bits @ that rank | `n_A` needed @ 128b |
-|----------|------:|------:|----------------:|-----------------------------:|--------------------:|
+From [`fold-linf-rejection.md`](fold-linf-rejection.md) and `norm_bound.rs`:
+
+| Mechanism | Behavior |
+|-----------|----------|
+| `FoldWitnessLinfCapPolicy::TailBoundWithGrind` | `cap = min(β_inf, t*)`; grind nonce allowed |
+| `FoldWitnessLinfCapPolicy::WorstCaseBetaOnly` | `cap = β_inf`; nonce must be 0 |
+| Families today | TailBound: `ExactShell` @ D=64, `Uniform` @ D=128/256; others worst-case |
+| `p_grind` | `FoldLinfProtocolBinding::grind_target_accept_prob()` → **1/8** shipped |
+| Prover | Reroll fold challenge until realized `‖z‖_∞ ≤ t*` (hard cap) |
+| Verifier | Range-check against `balanced_digit_max(lb, K)`; nonce replays FS only |
+| Planner DP | `FoldWitnessLinfCapConfig::for_fold_level_scoring` threads the same `p_grind` into `num_digits_fold` and A-role collision via `folded_witness_public_linf_cap` |
+| Schedule expand | `LevelParams::with_fold_linf_cap_config` recomputes policy at runtime |
+
+**Planner optimization lever (correctness-preserving):**
+
+- Tighter `t*` (via higher `p_grind` target in the union bound) → smaller `δ_fold` → narrower next-level width → lower proof bytes, at the cost of more expected grind rerolls.
+- Shipped `p_grind = 1/8` gives ≤ 8 expected rerolls per fold level; production targets ~zero observed retries while keeping a sound margin.
+- Cutover work should **document** grind expectations in planner diagnostics and allow **what-if scoring** over `p_grind` (env override already exists for op-norm sparse cap via `AKITA_OP_NORM_MAX_SPARSE_SAMPLES`; mirror for grind target in planner probes).
+- Optional follow-up: DP search over per-level `TailBoundWithGrind` vs `WorstCaseBetaOnly` when the family certificate exists (today policy is family-determined, not per-geometry).
+
+**Note:** `challenge_l2_sq_max` in the tail-bound formula is `max ‖c‖₂²` per block (concentration inequality input). It is **not** L2 MSIS pricing and **stays** after cutover.
+
+### Counterexample: why L2 table must go (fp128 D64 dense nv24, L1)
+
+Probe: [`scripts/probe_linf_sis_table.py`](../scripts/probe_linf_sis_table.py), `zeta=0`.
+
+| Geometry | `B_A` | width | `n_A` (L2 table) | direct `L∞` bits @ rank | rank for 128b |
+|----------|------:|------:|-----------------:|------------------------:|--------------:|
 | dense L1 | 997,248 | 3,790 | 4 | 124.976 | 5 (170.236 bits) |
 
-Pure direct-`L∞` DP raises total proof size for this CI shape by only **+392 B** (104,328 → 104,720); one-hot fp128 D64 rows are unchanged.
+Pure direct-`L∞` DP: **+392 B** total on this CI shape; one-hot fp128 D64 unchanged.
 
 ## Gaps fixed in PR #229 (groundwork)
 
-| Gap | Fix | Location |
-|-----|-----|----------|
-| A-role sized against raw `β_inf` instead of verifier-public cap | `folded_witness_public_linf_cap`; A-role collision and `num_digits_fold` use it | `crates/akita-types/src/sis/norm_bound.rs`, `decomposition_digits.rs` |
-| No raw coefficient-`L∞` collision helper for auditing | `committed_fold_collision_linf` | `norm_bound.rs` |
-| No offline direct-`L∞` estimator harness | `scripts/probe_linf_sis_table.py` | `scripts/` |
-| fp32 D256 dense root rescue points missed L2 table | Hand-picked `Q32_D256_DIRECT_LINF_FLOORS` + `min_secure_rank_linf_direct` | `ajtai_key.rs` |
-| Hybrid rank during migration | `min(L2, direct-L∞)` when both exist | `op_norm_pricing.rs` (**interim only**) |
-| Schedule drift under corrected cap | Regenerated `akita-schedules` tables | `gen_schedule_tables` |
-
-**Still open after #229:** production Q128/D64 (and remaining family/D) direct-`L∞` floors; removal of hybrid selector; deletion of hand-picked rescue rectangles; un-ignored planner diagnostics.
+| Gap | Fix |
+|-----|-----|
+| A-role sized against raw `β_inf` | `folded_witness_public_linf_cap` |
+| No audit helper for raw `B_A` | `committed_fold_collision_linf` |
+| No offline `L∞` probe | `scripts/probe_linf_sis_table.py` |
+| fp32 D256 dense root misses | interim `min_secure_rank_linf_direct` rectangles |
+| Hybrid migration | `min(L2, direct-L∞)` (**delete in cutover**) |
+| Schedule drift | regen under public cap |
 
 ## Evaluation
 
 ### Acceptance Criteria
 
-- [ ] `scripts/gen_sis_linf_table.py` (or extended `gen_sis_table.py` with `--norm oo`) generates direct-`L∞` max-width tables for all `(family, d)` in `supports_family_dimension`, with metadata pinning estimator SHA and modeling flags.
-- [ ] Checked-in `generated_sis_linf_table/` (name TBD) modules parallel L2 layout; `sis_max_widths_linf(family, d, collision_linf, rank)` returns the same width ladder semantics as today's L2 helper.
-- [ ] `min_secure_rank_linf(family, d, collision_linf, width)` replaces L2 lookup for A-role; `min_secure_rank` L2 path is not called from `op_norm_pricing` for A-role after cutover.
-- [ ] `min_secure_rank_linf_direct` hand rectangles and `exact_linf_from_l2_sq` fallback in `min_secure_rank` are deleted.
-- [ ] Hybrid `match (l2, direct_linf)` block removed from `choose_op_norm_rejection_for_a_role`.
-- [ ] All shipped schedule tables regenerated; `cargo test -p akita-config --test generated_tables` passes.
-- [ ] `fp32_dense_planner_diag` documents every printed A-role point and passes un-ignored (or is promoted to a checked golden subset).
-- [ ] fp128 D64 profile-bench CI rows match planner `total_bytes` within existing report tolerances.
-- [ ] `scripts/sis_golden/` extended with representative direct-`L∞` cells (or sibling golden package) replaying pinned estimator.
-- [ ] Upstream lattice-estimator PRs [malb/lattice-estimator#215](https://github.com/malb/lattice-estimator/pull/215) and [#216](https://github.com/malb/lattice-estimator/pull/216) merged or vendored SHA bumped with recorded provenance.
+**Delete L2 certificate + L2 table path**
+
+- [ ] Remove [`four_square.rs`](../crates/akita-types/src/sis/four_square.rs) and all exports/tests.
+- [ ] Remove `committed_fold_collision_l2_sq`, `l2_sq_from_linf`, `collision_l2_sq_for_linf_envelope`, `derived_collision_l2_sq_key`, and L2-only `ceil_supported_collision` ladder tied to `generated_sis_table/`.
+- [ ] Remove `crates/akita-types/src/sis/generated_sis_table/` and `scripts/gen_sis_table.py` L2 path (or replace script with `L∞`-only generator).
+- [ ] Rename `AjtaiKeyParams.collision_l2_sq` → `collision_linf` (full cutover, no alias).
+- [ ] Delete `min_secure_rank_linf_direct`, `exact_linf_from_l2_sq` fallback, hybrid `match (l2, direct_linf)`.
+- [ ] Mark [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) certificate slices S6–S10/S13 **cancelled**; set spec `Superseded-by:` this file.
+- [ ] Mark [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) `Superseded-by:` this file.
+
+**Direct `L∞` floors**
+
+- [ ] `scripts/gen_sis_linf_table.py` (+ stitcher) generates max-width tables for all `(family, d)` in `supports_family_dimension`.
+- [ ] Checked-in `generated_sis_linf_table/`; `min_secure_rank` looks up coefficient-`L∞` collision `B` directly.
+- [ ] Golden cells in `scripts/sis_golden/` (or sibling) for `norm=oo` replay.
+- [ ] Estimator pinned to **`quangvdao/lattice-estimator`** standalone branch; metadata records fork URL + SHA. One targeted upstream PR later; malb/lattice-estimator [#215](https://github.com/malb/lattice-estimator/pull/215) and [#216](https://github.com/malb/lattice-estimator/pull/216) are **closed without merge** (confirmed 2026-06-26).
+
+**Planner + schedules**
+
+- [ ] All roles (A/B/D) price through direct `L∞` floors.
+- [ ] Regenerate `akita-schedules`; `generated_tables` clean.
+- [ ] `fp32_dense_planner_diag` un-ignored or promoted to golden subset.
+- [ ] Fold-linf grind documented in planner diagnostics; what-if `p_grind` scoring hook for optimization studies.
+- [ ] fp128 D64 profile-bench rows match planner `total_bytes` within report tolerances.
 
 ### Testing Strategy
 
-- Relocate/add unit tests beside `ajtai_key.rs` for `min_secure_rank_linf` monotonicity (rank vs width), table miss → `None`, and fp128 D64 dense L1 counterexample rank 5.
-- Keep existing `akita-types::sis` L2 tests for B/D conversion paths unchanged.
-- Run `sage -python scripts/sis_golden/check.py` (extended) after table regen.
-- CI: `generated_tables`, schedule drift job, profile-bench fp128 D64 matrix, full `cargo test` / clippy / doc build.
+- Unit tests: `min_secure_rank` monotonicity, fp128 D64 dense L1 → rank 5, table miss → `None`.
+- Delete/update tests that assert L2 bucket derivation or `four_squares`.
+- Extend `scripts/sis_golden/check.py` for `L∞` cells.
+- Keep fold-grind e2e and nonce validation tests unchanged.
+- CI: clippy, doc build, `generated_tables`, profile-bench.
 
 ### Performance
 
-- Expect **small proof-size increases** on shapes where L2 under-priced `n_A` (dense fp128 D64 nv24: +392 B measured).
-- One-hot fp128 D64 CI presets: **no change** expected.
-- Setup size grows with larger `n_A`; profile report should be run for fp128 CI cases after regen.
+- Small proof-size **increases** where L2 under-ranked (dense fp128 D64 nv24: +392 B).
+- Fold-linf grind tuning trades prover reroll latency for smaller `δ_fold`; default `p_grind = 1/8` should keep retries rare.
 
 ## Design
 
-### Architecture
+### Architecture (target)
 
 ```
 fold challenge + witness norms
         │
         ▼
-folded_witness_public_linf_cap  ──► digit count (unchanged)
+fold_witness_linf_cap_policy ──► TailBoundWithGrind | WorstCaseBetaOnly
         │
         ▼
-committed_fold_collision_linf   ──► B_A  (coefficient L∞)
-        │
-        ├─ A-role rank ──► min_secure_rank_linf ──► generated_sis_linf_table/
-        │
-        └─ B/D rank ──► collision_l2_sq_for_linf_envelope ──► generated_sis_table/ (unchanged)
+folded_witness_public_linf_cap ──► δ_fold, Golomb cap, A-role B_A input
+        │                              (grind lever: t* from p_grind)
+        ▼
+role collision B (coefficient L∞) ──► min_secure_rank ──► generated_sis_linf_table/
+        ▲
+        ├─ A: committed_fold_collision_linf (Lemma 7 + public cap)
+        ├─ B: 2^lb − 1 opening digit diff
+        └─ D: 2^lb − 1 opening digit diff
 ```
-
-Planner touchpoints: `op_norm_pricing.rs` (A-role rank only), `ajtai_key.rs` (lookup API), `akita-planner` expansion validation in `generated/expand.rs`, offline `gen_schedule_tables`.
 
 ### Table generation
 
-Modeling (aligned with `probe_linf_sis_table.py` and hardened estimator):
-
 | Parameter | Value |
 |-----------|-------|
-| `norm` | `oo` (coefficient `L∞`) |
+| Estimator remote | `quangvdao/lattice-estimator` (standalone branch; not malb until targeted PR lands) |
+| `norm` | `oo` |
 | `red_cost_model` | ADPS16 |
 | `red_shape_model` | lgsa |
-| `zeta_candidates` | `(0,)` (explicit search once #216 lands) |
-| `length_bound` / collision | `B_A` per ring row; module width `m = width · d` |
+| `zeta_candidates` | `(0,)` (or explicit search once fork fix lands) |
+| Collision key | coefficient `B` per ring row; `m = width · d` |
 | `target_bits` | 128 |
-| `q` | family representative (`FAMILIES` in `gen_sis_table.py`) |
-
-Grid: reuse collision ladder from `COEFF_LINF_BUCKETS` and exact planner-probed points (dense roots, fold levels) for regression anchors.
-Binary-search max secure width per `(family, d, B_A, rank)` mirroring `gen_sis_table.py` structure.
-
-Regen entrypoint:
+| Grid | `COEFF_LINF_BUCKETS` + planner anchor points |
 
 ```bash
-sage -python scripts/stitch_generated_sis_linf_table.py --jobs 6
-# or unified stitcher with --norm oo
+sage -python scripts/stitch_generated_sis_linf_table.py --jobs 6 \
+  --estimator-path <quangvdao-lattice-estimator-checkout>
 ```
-
-Pin estimator HEAD in `scripts/sis_golden/metadata.json` (or sibling metadata).
 
 ### Cutover phases
 
-| Phase | Deliverable | Depends on |
-|-------|-------------|------------|
-| **0 — Groundwork** | Public cap, probe script, diagnostics, fp32 rescue | **#229** |
-| **1 — Estimator** | lattice-estimator #215/#216 merged; submodule SHA bumped | upstream |
-| **2 — Generator** | `gen_sis_linf_table.py` + stitcher; golden cells | Phase 1 |
-| **3 — Runtime tables** | `generated_sis_linf_table/` + `min_secure_rank_linf` | Phase 2 |
-| **4 — Planner wiring** | Remove hybrid; A-role calls `min_secure_rank_linf` only; delete stopgaps | Phase 3 |
-| **5 — Schedules** | `gen_schedule_tables`; proof-size/profile validation | Phase 4 |
-| **6 — Cleanup** | Remove interim probe-only hooks; fold spec sections into book security page | Phase 5 green |
+| Phase | Deliverable |
+|-------|-------------|
+| **0 — Groundwork** | #229 merged (public cap, probe, interim hybrid) |
+| **1 — Estimator fork** | `quangvdao/lattice-estimator` branch with targeted `L∞` fixes; pin submodule |
+| **2 — Generator + golden** | `gen_sis_linf_table.py`, stitcher, golden cells |
+| **3 — Runtime** | `generated_sis_linf_table/`, unified `min_secure_rank` on `B` |
+| **4 — Delete L2** | Remove L2 table, certificate artifacts, hybrid/stopgaps, supersede old specs |
+| **5 — Planner** | Wire all roles; fold-grind planner diagnostics / `p_grind` what-if |
+| **6 — Schedules** | Regen tables, profile validation, un-ignore diagnostics |
 
 ### Alternatives considered
 
 | Alternative | Why rejected |
 |-------------|--------------|
-| Keep `min(L2, direct-L∞)` | Unsafe when advertising direct-`L∞` A security; dense fp128 D64 L1 proves under-rank |
-| Tighten L2 table only (larger buckets) | Does not align estimator instance with `norm=oo`; still indirect |
-| Per-cell hand rectangles (fp128 probe) | Unmaintainable; expansion rejects stale `n_a` vs recomputed floor |
-| Runtime Sage in planner | Nondeterministic CI, violates offline-table contract |
+| Keep L2 table for B/D only | User mandate: `L∞` only; conversion is still wrong estimator instance |
+| Implement L2 certificate | Cancelled; `L∞` digit cap + grind already bound witness |
+| `min(L2, direct-L∞)` hybrid | Under-ranks A-role; interim only |
+| malb/lattice-estimator #215/#216 as-is | Closed without merge; use `quangvdao` fork |
 
 ## Documentation
 
-- This spec is the design record until a book security/SIS chapter exists.
-- Update `scripts/sis_golden/README.md` with direct-`L∞` regen instructions.
-- When cutover completes: set `Status: implemented`, add `Book-chapter:` stub, reference from `l2-msis-opnorm-folded-witness.md` header (`Superseded-by:` partial note for A-role table only).
+- This spec owns the cutover until a book security chapter exists.
+- Supersede [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) and [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) headers (`Superseded-by:` this file; certificate slices marked cancelled).
+- Keep [`fold-linf-rejection.md`](fold-linf-rejection.md) as the grind/tail-bound reference; cross-link planner lever section here.
+- Update `scripts/sis_golden/README.md` for `L∞` regen.
 
 ## Execution
 
-### Immediate next PR (after #229)
+### Next PRs (after #229)
 
-1. Land estimator submodule bump (#215/#216).
-2. Implement `gen_sis_linf_table.py` by forking the shard/binary-search loop from `gen_sis_table.py` with `norm=oo` and collision keyed by `B_A` not `collision_l2_sq`.
-3. Add `generated_sis_linf_table/` Rust modules (mirror `stitch_generated_sis_table.py` layout).
-4. Implement `min_secure_rank_linf`; switch `op_norm_pricing::rank_for_mass` to call it for A-role.
-5. Delete `min_secure_rank_linf_direct`, `exact_linf_from_l2_sq` fallback in `min_secure_rank`, and hybrid match arms.
-6. Regenerate schedules; run fp128 profile matrix; un-ignore `fp32_dense_planner_diag`.
-
-### Risk register
-
-| Risk | Mitigation |
-|------|------------|
-| Estimator `matzov` vs `lgsa` regime drift | Pin SHA; golden cells; print `linf_regime` in probe output |
-| Q128/D128 table cost | Generate D64 first (CI presets); D128 optional comparison rows |
-| Proof-size regression beyond CI envelope | Profile-bench gate; document expected deltas in spec PR |
-| Submodule modeling mismatch vs L2 table | Separate metadata file; never mix norms in one module |
+1. Open / pin `quangvdao/lattice-estimator` branch; one focused fix PR to malb when ready.
+2. Land `gen_sis_linf_table.py` + `generated_sis_linf_table/`.
+3. Switch all rank lookup to direct `B`; delete L2 table modules and `four_square.rs`.
+4. Regenerate schedules; profile fp128 D64; extend planner grind diagnostics.
 
 ## References
 
-- PR [#229](https://github.com/LayerZero-Labs/akita/pull/229) — groundwork
-- [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) — current L2 pricing spec
-- [`specs/weak-binding-norm-fix.md`](weak-binding-norm-fix.md) — public cap / Lemma 7 context
-- [`scripts/sis_golden/README.md`](../scripts/sis_golden/README.md) — L2 table regen
-- [`scripts/probe_linf_sis_table.py`](../scripts/probe_linf_sis_table.py) — diagnostic harness
-- malb/lattice-estimator [#215](https://github.com/malb/lattice-estimator/pull/215), [#216](https://github.com/malb/lattice-estimator/pull/216)
-- Local investigation (never commit): `FP128-LINF-PLANNER-REPORT-NEVER-COMMIT.md` in worktree
+- [#229](https://github.com/LayerZero-Labs/akita/pull/229) — groundwork
+- [`fold-linf-rejection.md`](fold-linf-rejection.md) — shipped grind/tail bound (#189)
+- [`weak-binding-norm-fix.md`](weak-binding-norm-fix.md) — Lemma 7 / public cap
+- [`scripts/probe_linf_sis_table.py`](../scripts/probe_linf_sis_table.py)
+- malb/lattice-estimator [#215](https://github.com/malb/lattice-estimator/pull/215), [#216](https://github.com/malb/lattice-estimator/pull/216) — **closed** (not merged)
+- Local probe report (never commit): `FP128-LINF-PLANNER-REPORT-NEVER-COMMIT.md`
