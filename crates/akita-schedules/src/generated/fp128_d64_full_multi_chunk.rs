@@ -89,7 +89,7 @@ pub(crate) static FP128_D64_FULL_MULTI_CHUNK_SCHEDULES: &[GeneratedScheduleTable
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 19, num_polynomials: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 5, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 11, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 10, r_vars: 7, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 12, r_vars: 5, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),

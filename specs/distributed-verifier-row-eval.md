@@ -70,6 +70,7 @@ setup-contribution planner consume the same definitions):
   /// `num_activated_levels` controls for how many protocol levels the
   /// multi-chunk layout is active; ignored when `num_chunks = 1`.
   /// `num_chunks` must be a power of two.
+  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
   pub struct ChunkedWitnessCfg {
       pub num_chunks: usize,
       pub num_activated_levels: usize,
@@ -81,7 +82,8 @@ setup-contribution planner consume the same definitions):
       }
   }
   ```
-  `num_chunks = 1` is the single-chunk (previously `ComponentMajor`) case.
+  (`Hash` is required: the planner embeds `ChunkedWitnessCfg` in the generated-table
+  catalog identity.) `num_chunks = 1` is the single-chunk (previously `ComponentMajor`) case.
   `num_chunks = W` is the multi-chunk (previously `ChunkGrouped(W)`) case.
 - **`WitnessChunkLengths` / `WitnessChunkLayout` / `WitnessLayout`** (new): the
   resolved, layout-agnostic description the evaluators consume. Lengths and
@@ -576,6 +578,18 @@ as today; the dispatch depends on `block_len`, not on the chunk, so the chunk
 loop sits **outside** the case split. Both cases combine additively:
 `z_contribution = Σ_chunk Z_eval(chunk.offset_z)`.
 
+> **New evaluator input: nonzero `offset_z`.** Single-chunk always places `z`
+> first (`offset_z = 0`), so today's `ZStructuredPow2SlicesEvaluator` /
+> `ZDenseSlicesEvaluator` are only ever called at `offset_z = 0`. Under chunking,
+> chunk `j>0` has `offset_z = j·stride` (and `stride` is **not** a multiple of
+> `block_len`, since it includes `e`/`t` lengths), so `z_lo = offset_z mod
+> block_len ≠ 0` is exercised for the first time. The "body unchanged" claim
+> therefore requires confirming the pow2 evaluator already handles a nonzero
+> in-block shift and high-index base from its `offset_z` input; a dedicated
+> `z_only` test at `W ∈ {2,4,8}` (Stage 4) must cover this rather than relying on
+> the aggregate materialized test. (The dense evaluator already takes an explicit
+> `offset_z`.)
+
 - **Case 1 — `block_len` a power of two (root).** Peel the `block_len` window per
 chunk; build the two-bucket in-block summary with `z_lo = z_offset mod block_len` (the `eq_low_z` table is built once and shared — it depends only on
 `r_col`'s low bits and the window size, never on the offset), evaluate with
@@ -746,6 +760,7 @@ Expected code shape:
 /// `num_activated_levels` controls for how many protocol levels the
 /// multi-chunk layout is active; ignored when `num_chunks = 1`.
 /// `num_chunks` must be a power of two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkedWitnessCfg {
     pub num_chunks: usize,
     pub num_activated_levels: usize,

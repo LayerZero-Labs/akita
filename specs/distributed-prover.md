@@ -17,13 +17,19 @@ prove a **modified per-level relation**. The original relation carries one folde
 response $\mathbf z$ over a single contiguous witness
 $[\,\mathbf z \mid \widehat{\mathbf e} \mid \widehat{\mathbf t}\,]\,\|\,
 \widehat{\mathbf r}$. The modified relation splits the block index set into
-$M$ contiguous windows and carries **one folded response per window**, laying the
-next-level witness out as $M$ chunks
+$W$ contiguous windows and carries **one folded response per window**, laying the
+next-level witness out as $W$ chunks
 $[\,\mathbf z_i \mid \widehat{\mathbf e}_i \mid \widehat{\mathbf t}_i\,]$ (z-first
 per chunk) followed by a single shared quotient tail $\widehat{\mathbf r}$. The
-chunk count $M$ for each fold level is a public parameter the
+chunk count $W$ for each fold level is a public parameter the
 [planner](distributed-planner.md) already stamps on every level
 (`LevelParams.witness_chunk.num_chunks`) and prices.
+
+> **Notation.** $W := \texttt{num\_chunks}$ denotes the **chunk count** (the book's
+> machine count $\mathcal M$); the verifier spec uses the same $W$. We reserve
+> $\mathbf M$ for the relation matrix and $M = 2^m$ (as in the book) for the
+> **block inner dimension** appearing in the gadget $\mathbf G_{b,M}$ — these are
+> not the chunk count. With $W = 1$ the modified relation is exactly the original.
 
 **Motivation (the only place another prover is mentioned).** We support this
 modified relation so that a verifier can be built and validated against real
@@ -38,7 +44,7 @@ the modified relation.
 The change is confined to **relation/witness construction**. The commitment
 matvec (`A·s`, `B·t̂`, `D·ê`), the ring-switch quotient lift, and the sum-check
 provers (`AkitaStage{1,2,3}Prover`) are unchanged — they are generic over the
-witness and run over the modified witness/relation as-is. With $M = 1$ the
+witness and run over the modified witness/relation as-is. With $W = 1$ the
 modified relation is exactly the original relation, byte-for-byte.
 
 ## Background: the original relation vs. the modified relation
@@ -66,11 +72,11 @@ $\widehat{\mathbf e},\widehat{\mathbf t}$ are the per-block opening / inner-comm
 digits over all $B = \texttt{num\_blocks}$ blocks, and $\widehat{\mathbf r}$ is the
 $(X^d+1)$ quotient. (See `crates/akita-types/src/proof/ring_relation.rs`.)
 
-### The modified relation, parameterized by `num_chunks = M`
+### The modified relation, parameterized by `num_chunks = W`
 
-Partition the block index set $[B]$ into $M$ contiguous windows
+Partition the block index set $[B]$ into $W$ contiguous windows
 $\mathcal I_i = [\,iB_{\mathsf{loc}},(i{+}1)B_{\mathsf{loc}})$ with
-$B_{\mathsf{loc}} = B/M$ (require $M \mid B$ and $M$ a power of two, so each window
+$B_{\mathsf{loc}} = B/W$ (require $W \mid B$ and $W$ a power of two, so each window
 is a clean power-of-two block range). Window $i$ gets its **own** sub-witness
 $\mathbf w_i = (\widehat{\mathbf e}_i,\widehat{\mathbf t}_i,\mathbf z_i)$ where:
 
@@ -80,11 +86,11 @@ $\mathbf w_i = (\widehat{\mathbf e}_i,\widehat{\mathbf t}_i,\mathbf z_i)$ where:
   **partitioned**);
 - $\mathbf z_i = \sum_{j\in\mathcal I_i} c_j\,\mathbf s_j$ is a folded response
   summing only over window $i$'s blocks, but living in the **full** ambient fold
-  space (size `inner_width`, the same as the single global fold) — so the $M$
+  space (size `inner_width`, the same as the single global fold) — so the $W$
   responses are full-size copies, **replicated**.
 
 The relation is the horizontal concatenation
-$\mathbf M = [\,\mathbf M_0 \mid \dots \mid \mathbf M_{M-1}\,]$, where $\mathbf M_i$
+$\mathbf M = [\,\mathbf M_0 \mid \dots \mid \mathbf M_{W-1}\,]$, where $\mathbf M_i$
 is the original relation block restricted to window $i$ (its $\mathbf D_i,\mathbf B_i$
 column slices, its challenge slice $\mathbf c^{(i)} = \{c_j : j\in\mathcal I_i\}$,
 the shared $\mathbf A$ and $\mathbf a^{\top}\mathbf G$). The public output is
@@ -93,15 +99,15 @@ $\mathbf v = \sum_i \mathbf D_i\widehat{\mathbf e}_i$ and
 $\mathbf u = \sum_i \mathbf B_i\widehat{\mathbf t}_i$, and
 
 $$
-\mathbf M\,\mathbf w = \sum_{i=0}^{M-1}\mathbf M_i\,\mathbf w_i = \mathbf h,
-\qquad \mathbf w = (\mathbf w_0,\dots,\mathbf w_{M-1}).
+\mathbf M\,\mathbf w = \sum_{i=0}^{W-1}\mathbf M_i\,\mathbf w_i = \mathbf h,
+\qquad \mathbf w = (\mathbf w_0,\dots,\mathbf w_{W-1}).
 $$
 
 The next-level witness is the concatenation of the per-window blocks, z-first
 within each window, with the single shared quotient appended:
 
 ```text
-[ z_0 | e_0 | t_0 ][ z_1 | e_1 | t_1 ] … [ z_{M-1} | e_{M-1} | t_{M-1} ] [ r̂ ]
+[ z_0 | e_0 | t_0 ][ z_1 | e_1 | t_1 ] … [ z_{W-1} | e_{W-1} | t_{W-1} ] [ r̂ ]
 ```
 
 This is the layout the [planner](distributed-planner.md) prices
@@ -113,23 +119,27 @@ This is the layout the [planner](distributed-planner.md) prices
 - `e_len_i = num_digits_open · num_claims · blocks_per_chunk` (partitioned),
 - `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_per_chunk` (partitioned),
 - per-window stride `L = z_len_i + e_len_i + t_len_i`,
-- one shared `r̂` tail of `num_rows · r_decomp_levels(log_basis)` after window $M-1$.
+- one shared `r̂` tail of `num_rows · r_decomp_levels(log_basis)` after window $W-1$,
+  where `num_rows` is the **single-machine** relation row count (the windows stack
+  horizontally — same rows, partitioned columns — and the partial quotients sum,
+  $\widehat{\mathbf r} = \sum_i \widehat{\mathbf r}_i$, so the tail does **not**
+  scale with $W$).
 
-`M = 1` makes every window the whole block set, one `z`, and recovers the original
+`W = 1` makes every window the whole block set, one `z`, and recovers the original
 witness exactly.
 
 ### Why the relation grows, and where the cost lands
 
 Replicating the fold response is the only growth: the next-level witness gains
-$(M-1)\cdot \texttt{z\_len}_i$ extra columns versus the original, lifting its
-variable count by at most $\log_2 M$. The partitioned $\widehat{\mathbf e},
+$(W-1)\cdot \texttt{z\_len}_i$ extra columns versus the original, lifting its
+variable count by at most $\log_2 W$. The partitioned $\widehat{\mathbf e},
 \widehat{\mathbf t}$ do not grow (the windows tile the same blocks), the quotient
 is unchanged (below), and the commit/sum-check machinery is identical. The planner
 already accounts for this growth in the schedule's proof-byte total.
 
 ## Design: how the single prover proves the modified relation
 
-The prover reads $M$ off the level it is proving and builds the modified relation
+The prover reads $W$ off the level it is proving and builds the modified relation
 in three steps (fold → witness layout → relation MLE); everything else is reused.
 
 ### Per-level entry and the block partition
@@ -138,7 +148,7 @@ In `prove_fold` (`crates/akita-prover/src/protocol/core/fold.rs`), read the chun
 count the planner stamped and derive the windows:
 
 ```rust
-let num_chunks = lp.witness_chunk.num_chunks;        // M; 1 on non-modified levels
+let num_chunks = lp.witness_chunk.num_chunks;        // W; 1 on non-modified levels
 let blocks_per_chunk = lp.num_blocks / num_chunks;   // B_loc, power of two
 // window i owns global blocks [ i*B_loc, (i+1)*B_loc )
 ```
@@ -157,22 +167,22 @@ Validate at this boundary, before any witness math (no-panic contract):
 witness yet; reject rather than mis-shape. This matches the planner entry guard and
 the verifier spec's Stage 0.)
 
-### Step 1 — compute the $M$ folded responses
+### Step 1 — compute the $W$ folded responses
 
 The original prover computes one fold $\mathbf z = \sum_j c_j\mathbf s_j$ in
 `build_point_decompose_fold_witness` (`protocol/ring_relation.rs`), via the
 block-parallel decompose-fold (`backend/poly_helpers/decompose_fold_partitioned.rs`)
 that already accumulates a per-block contribution before reducing. For the modified
-relation, group that accumulation into the $M$ windows and **emit one response per
+relation, group that accumulation into the $W$ windows and **emit one response per
 window without the cross-window reduction**:
 
 ```text
-for i in 0..M:
+for i in 0..W:
     z_i = Σ_{j ∈ I_i} c_j · s_j            // full inner_width vector
 ```
 
 Each $\mathbf z_i$ is the same full `inner_width` size as the single fold (it is a
-partial sum, not a $1/M$ slice) and is decomposed by `num_digits_fold` exactly as
+partial sum, not a $1/W$ slice) and is decomposed by `num_digits_fold` exactly as
 today. The fold challenge $\mathbf c$ is the **same single transcript-sampled
 vector**; window $i$ uses the slice $c_j, j\in\mathcal I_i$ indexed by the
 **global** block (so the verifier reads $c_\alpha$ at global block
@@ -180,8 +190,8 @@ $iB_{\mathsf{loc}}+\text{block\_local}$). The fold-grind L∞ cap is unchanged: 
 $\mathbf z_i$ is a sub-sum of the global fold under the same challenge, so it
 respects the same per-fold cap the planner sized.
 
-Output: `z_folded_rings_per_chunk: Vec<Vec<CyclotomicRing<F,D>>>` of length $M$
-(the $M = 1$ case is a one-element vector = today's single `z_folded_rings`).
+Output: `z_folded_rings_per_chunk: Vec<Vec<CyclotomicRing<F,D>>>` of length $W$
+(the $W = 1$ case is a one-element vector = today's single `z_folded_rings`).
 
 ### Step 2 — assemble the chunked witness (`build_w_coeffs`)
 
@@ -189,7 +199,7 @@ Output: `z_folded_rings_per_chunk: Vec<Vec<CyclotomicRing<F,D>>>` of length $M$
 z-first, then the shared quotient:
 
 ```text
-for i in 0..M:
+for i in 0..W:
     emit z_i        # full inner_width fold response for window i (emit_z_folded_block_inner)
     emit e_i        # e_hat blocks in I_i  (windowed slice of the block-major e_hat)
     emit t_i        # inner A digits for blocks in I_i
@@ -205,8 +215,9 @@ emit r̂              # decomposed shared quotient (after the last window)
   `base = i·L`. These must equal the verifier's `WitnessChunkLayout`.
 - The emitted flat length must equal the planner's `next_w_len` for this level
   (`w_ring_element_count_for_chunks(..., num_chunks)`); assert and reject on
-  mismatch.
-- `M = 1` reduces to today's single
+  mismatch. (The shared `r̂` tail keeps its single-machine row count, so this is
+  consistent with the value-identical quotient below.)
+- `W = 1` reduces to today's single
   $\mathbf z \,\|\, \widehat{\mathbf e} \,\|\, \widehat{\mathbf t} \,\|\,
   \widehat{\mathbf r}$ emission.
 
@@ -219,7 +230,7 @@ emit r̂              # decomposed shared quotient (after the last window)
 
 The relation-check sum-check links the committed witness MLE
 $\widetilde{\mathbf w}$ to the relation MLE $\widetilde{\mathbf M}$. Because the
-relation matrix is now $\mathbf M = [\mathbf M_0\mid\dots\mid\mathbf M_{M-1}]$, the
+relation matrix is now $\mathbf M = [\mathbf M_0\mid\dots\mid\mathbf M_{W-1}]$, the
 prover-internal column evaluation `compute_m_evals_x`
 (`protocol/ring_switch/evals.rs`) must evaluate the **chunked** column layout:
 
@@ -255,37 +266,40 @@ consume `m_evals_x` and `w_evals_compact` exactly as before.
   are unchanged.
 - **Sum-check.** `ring_switch_finalize` builds `w_evals_compact` from the chunked
   flat witness; `AkitaStage{1,2,3}Prover` run unchanged, emitting the
-  $\le \log_2 M$ extra round polynomials the planner already priced.
+  $\le \log_2 W$ extra round polynomials the planner already priced.
 
-### Levels with `M = 1`
+### Levels with `W = 1`
 
 Levels the planner did not modify carry `num_chunks = 1`; Steps 1–3 collapse to the
 original single-`z` relation and emit byte-identical output. A level whose input
-witness was chunked by the previous level but which is itself `M = 1` simply folds
+witness was chunked by the previous level but which is itself `W = 1` simply folds
 the (larger) input as an ordinary flat witness — no special handling, because the
 prover reads `num_chunks` per level and the chunked construction is inert for
-`M = 1`.
+`W = 1`.
 
 ### Terminal level
 
 The terminal direct witness (`build_segment_typed_witness`, z-first
 `SegmentTypedWitness`) is reached after the witness has shrunk. If a terminal
-predecessor is itself a modified (`M > 1`) level, the planner already prices the
-chunked terminal (`num_segments = num_chunks` in `tail_segment_layout`); the prover
-emits the per-window terminal segments accordingly. Otherwise the terminal is the
+predecessor is itself a modified (`W > 1`) level, the planner prices the chunked
+terminal **as an upper bound** via the chunked ring count
+(`w_ring_element_count_for_chunks(.., WithoutDBlock, num_chunks)`) — its first
+landing does not yet add a per-chunk `num_segments` to `tail_segment_layout`
+(see [`distributed-planner.md`](distributed-planner.md) Step 5). The prover emits
+the per-window terminal segments matching that count. Otherwise the terminal is the
 ordinary single-segment witness.
 
 ### Prover flow
 
 ```text
-            LevelParams.witness_chunk.num_chunks = M
+            LevelParams.witness_chunk.num_chunks = W
                               │
         prove_fold(level)     ▼
                 ┌──────────────────────────────────────────────┐
-   step 1 ────► │ fold → M responses  z_i = Σ_{j∈I_i} c_j s_j   │  (full inner_width each)
+   step 1 ────► │ fold → W responses  z_i = Σ_{j∈I_i} c_j s_j   │  (full inner_width each)
                 ├──────────────────────────────────────────────┤
    step 2 ────► │ build_w_coeffs:                               │
-                │   [z_0|e_0|t_0]…[z_{M-1}|e_{M-1}|t_{M-1}] | r̂ │  (len == planner next_w_len)
+                │   [z_0|e_0|t_0]…[z_{W-1}|e_{W-1}|t_{W-1}] | r̂ │  (len == planner next_w_len)
                 ├──────────────────────────────────────────────┤
    step 3 ────► │ compute_m_evals_x over the chunked columns    │
                 └───────────────────────┬──────────────────────┘
@@ -295,7 +309,7 @@ ordinary single-segment witness.
 
 ## Invariants
 
-- **`M = 1` byte-identical.** With `witness_chunk = ChunkedWitnessCfg::default()`,
+- **`W = 1` byte-identical.** With `witness_chunk = ChunkedWitnessCfg::default()`,
   Steps 1–3 reduce to today's path and produce a byte-identical
   `AkitaBatchedProof` for every existing preset/key.
 - **Layout equals the verifier's.** The prover's per-window offsets and lengths
@@ -303,12 +317,14 @@ ordinary single-segment witness.
   (shared offset helper); the emitted flat length equals the planner's
   `next_w_len`.
 - **Fold-response identity.** $\sum_i\mathbf z_i$ equals the single global fold,
-  and each $\mathbf z_i$ is full `inner_width`. (The witness keeps the $M$ responses
+  and each $\mathbf z_i$ is full `inner_width`. (The witness keeps the $W$ responses
   separate; the identity is a correctness check on Step 1.)
 - **Global fold challenge.** $\mathbf c$ is the same single transcript-sampled
   vector; window $i$ uses its global-block-indexed slice.
 - **Quotient unchanged.** $\widehat{\mathbf r}$ is identical to the original
-  relation's quotient (shared tail, computed once).
+  relation's quotient — one shared tail with the **single-machine** row count,
+  computed once ($\widehat{\mathbf r} = \sum_i\widehat{\mathbf r}_i$, not scaled
+  by $W$).
 - **Commit / quotient / sum-check provers untouched.** No change to the matvec
   commit kernels, `compute_relation_quotient`, or the `AkitaStage{1,2,3}Prover`
   bodies; they consume the modified witness/relation.
@@ -316,17 +332,17 @@ ordinary single-segment witness.
   the replicated-`z` capacity are validated from public `LevelParams` before any
   witness math; malformed shapes reject with `AkitaError`, never panic. Same inputs
   → same proof bytes.
-- **Tiered and ZK rejected.** `M > 1` with `tier_split > 1`, and `M > 1` under
+- **Tiered and ZK rejected.** `W > 1` with `tier_split > 1`, and `W > 1` under
   `zk`, reject with `AkitaError`.
 
 ## Implementation Stages
 
 Small, reviewable stages; each has an invariant and tests.
 
-### S0 — Read `witness_chunk`; `M = 1` inert
+### S0 — Read `witness_chunk`; `W = 1` inert
 
 Read `lp.witness_chunk` in `prove_fold`; add the boundary validation; keep every
-chunked branch a no-op for `M = 1`.
+chunked branch a no-op for `W = 1`.
 
 - **Invariant:** zero behavior change for existing presets.
 - **Tests:** existing prover + `akita-pcs` tests pass; boundary rejections return
@@ -340,17 +356,17 @@ validated before the kernel change.
 
 - **Invariant:** emitted length == planner `next_w_len`; per-window offsets ==
   verifier `segment_layout`.
-- **Tests:** `witness_layout_matches_segment_layout` (`M ∈ {1,2,4,8}`); `M = 1`
+- **Tests:** `witness_layout_matches_segment_layout` (`W ∈ {1,2,4,8}`); `W = 1`
   byte-identical.
 
-### S2 — $M$ folded responses
+### S2 — $W$ folded responses
 
-Produce $M$ full-ambient responses in the decompose-fold path; wire
+Produce $W$ full-ambient responses in the decompose-fold path; wire
 `z_folded_rings_per_chunk` into `build_w_coeffs`.
 
 - **Invariant:** $\sum_i z_i$ == single global fold; each `z_i` full
   `inner_width`; L∞ cap satisfied per window.
-- **Tests:** `fold_responses_sum_to_global_fold` (`M ∈ {2,4,8}`).
+- **Tests:** `fold_responses_sum_to_global_fold` (`W ∈ {2,4,8}`).
 
 ### S3 — Modified relation MLE (`compute_m_evals_x`)
 
@@ -359,25 +375,25 @@ where shared). Sum-check provers unchanged.
 
 - **Invariant:** the prover's relation MLE matches the verifier's chunked row-MLE
   for the same `witness_chunk`.
-- **Tests:** `relation_mle_matches_verifier_row_mle` (`M ∈ {1,2,4,8}`).
+- **Tests:** `relation_mle_matches_verifier_row_mle` (`W ∈ {1,2,4,8}`).
 
 ### S4 — Proof-size parity and cutover
 
 Confirm commit + sum-check run over the modified witness and the produced proof
-size equals the planner schedule; confirm `M = 1` levels resume the original
+size equals the planner schedule; confirm `W = 1` levels resume the original
 relation.
 
 - **Invariant:** `total_bytes` == planner `Schedule.total_bytes` for the D64
-  multi-chunk presets; `M = 1` levels are single-`z`.
+  multi-chunk presets; `W = 1` levels are single-`z`.
 - **Tests:** `proof_size_matches_planner_schedule` (`nv ∈ {32,43}`,
-  `num_polys ∈ {1,4}`); `m_one_resumes_original_relation`.
+  `num_polys ∈ {1,4}`); `single_chunk_resumes_original_relation`.
 
 ### S5 — End-to-end prove → verify
 
 With the chunked verifier landed, prove with a multi-chunk preset and verify with
-the same preset for `M ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recursive).
+the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recursive).
 
-- **Invariant:** the modified-relation proof verifies; `M = 1` matches the legacy
+- **Invariant:** the modified-relation proof verifies; `W = 1` matches the legacy
   proof.
 - **Tests:** `chunked_prove_verify_roundtrip` (gated on verifier landing);
   `single_chunk_roundtrip_is_legacy`.
@@ -386,38 +402,39 @@ the same preset for `M ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
 
 ### Acceptance Criteria
 
-- [ ] `M = 1` produces a byte-identical `AkitaBatchedProof` to today.
-- [ ] Emitted witness layout equals `segment_layout` for `M ∈ {1,2,4,8}`.
+- [ ] `W = 1` produces a byte-identical `AkitaBatchedProof` to today.
+- [ ] Emitted witness layout equals `segment_layout` for `W ∈ {1,2,4,8}`.
 - [ ] $\sum_i z_i$ equals the single global fold; each `z_i` full `inner_width`.
 - [ ] The prover's relation MLE matches the verifier's chunked row-MLE.
 - [ ] Produced proof size equals the planner `Schedule.total_bytes` for the D64
-  multi-chunk presets.
+  multi-chunk presets (shared `r̂` tail keeps its single-machine row count).
 - [ ] The modified-relation proof verifies under the chunked verifier for
-  `M ∈ {2,4,8}` (pow2 and dense `block_len`); `M = 1` matches the legacy proof.
+  `W ∈ {2,4,8}` (pow2 and dense `block_len`); `W = 1` matches the legacy proof.
 - [ ] No change to the matvec commit kernels, `compute_relation_quotient`, or the
   `AkitaStage{1,2,3}Prover` bodies (review assertion).
-- [ ] `M > 1` with `tier_split > 1` and `M > 1` under `zk` reject with
+- [ ] `W > 1` with `tier_split > 1` and `W > 1` under `zk` reject with
   `AkitaError` (no panic).
 - [ ] `cargo fmt`, `cargo clippy --all -- -D warnings`, `cargo test` pass.
 
 ### Testing Strategy
 
-1. **Layout cross-check** against `segment_layout` (`M ∈ {1,2,4,8}`).
+1. **Layout cross-check** against `segment_layout` (`W ∈ {1,2,4,8}`).
 2. **Fold-response unit:** `fold_responses_sum_to_global_fold`.
 3. **Relation-MLE unit:** prover `compute_m_evals_x` vs the verifier-materialized
    chunked relation row.
 4. **Proof-size parity** vs the planner schedule.
 5. **End-to-end roundtrip** (gated on verifier landing).
-6. **Determinism** and **no-panic negatives** (bad `M`, `M ∤ num_blocks`,
-   tiered+chunked, zk+chunked).
+6. **Determinism** and **no-panic negatives** (bad `num_chunks`,
+   `num_chunks ∤ num_blocks`, tiered+chunked, zk+chunked).
 
 ### Performance
 
-The modified relation's witness is larger by $(M-1)\cdot\texttt{z\_len}_i$ per
-chunked level, so the prover does more work (more commit columns, $\le\log_2 M$
+The modified relation's witness is larger by $(W-1)\cdot\texttt{z\_len}_i$ per
+chunked level, so the prover does more work (more commit columns, $\le\log_2 W$
 extra sum-check rounds) and the proof grows by the planner-priced ~4–6% (D64).
-That growth is the intrinsic cost of the replicated fold response; the verifier's
-dominant cost is unchanged (verifier spec).
+That growth is the intrinsic cost of the replicated fold response (the partitioned
+$\widehat{\mathbf e},\widehat{\mathbf t}$ and the shared $\widehat{\mathbf r}$ tail
+do not grow); the verifier's dominant cost is unchanged (verifier spec).
 
 ## References
 

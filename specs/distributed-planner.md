@@ -186,10 +186,19 @@ with (matching the verifier spec's per-chunk segment ordering and lengths):
 - $\widehat z^j$ is **full** `inner_width · num_digits_fold` (replicated per chunk,
   *not* divided by `num_chunks`)
 - $\widehat u$ is empty (non-tiered) and so omitted
-- $r$ is **shared** (one tail), with row count priced by passing `num_chunks` as
-  the `num_commitments` argument to
-  [`m_row_count_for`](../crates/akita-types/src/layout/params.rs) (virtually
-  shared horizontal concatenation of $\mathbf M_j$)
+- $r$ is **shared** (one summed quotient $\mathbf r = \sum_j \mathbf r_j$, a single
+  tail) and keeps the **single-machine shape**. The per-node relations stack
+  *horizontally* ($\mathbf M = [\mathbf M_0 \mid \dots \mid \mathbf M_{num\_chunks-1}]$),
+  so they **share the same row blocks** — concatenation adds columns, not rows —
+  and the partial commitments $\mathbf u_j$ are summed into one $\mathbf u$ (one
+  COMMIT block, not `num_chunks`). Its row count is therefore priced with
+  `num_commitments = 1`, i.e. **unchanged from the single-chunk layout** (see the
+  [distributed-prover book chapter](book/src/how/proving/distributed-prover.md):
+  the summed quotient $\widehat{\mathbf r} = \mathbf G_{b,n}^{-1}(\mathbf r)$
+  "recovers the same ring-switch witness shape as the single-machine protocol",
+  $n = n_A + n_B + n_D + 1$; and the
+  [verifier theory](book/src/how/verifying/distributed-relation-verifier.md):
+  "the row axis is unchanged", `r_tail` delta `none`).
 
 Closed form for total ring elements at an intermediate fold (non-zk, non-tiered):
 
@@ -198,7 +207,7 @@ e_chunk = num_polynomials · blocks_per_chunk · δ_open
 t_chunk = num_polynomials · blocks_per_chunk · n_a · δ_open
 z_chunk = inner_width · δ_fold                         // full fold width, not / num_chunks
 body    = e_chunk + t_chunk + z_chunk                  // u_concat = 0 for non-tiered
-r_rows  = m_row_count_for(num_commitments = num_chunks, 0, layout)
+r_rows  = m_row_count_for(num_commitments = 1, 0, layout)  // summed quotient: single-machine shape, UNCHANGED
 rings   = num_chunks · body + r_rows · r_decomp_levels
 ```
 
@@ -206,12 +215,15 @@ Note `num_chunks · e_chunk` and `num_chunks · t_chunk` equal the single-chunk
 $\widehat e$ / $\widehat t$ totals exactly (the block window is merely
 partitioned), so those segments do not grow.
 
-**Growth vs today.** The dominant extra cost is
+**Growth vs today.** The **only** extra cost is
 $(\texttt{num\_chunks} - 1) · z_chunk$ ring elements per multi-chunk level — the
-witness-width cost of avoiding cross-node $\widehat z$ all-reduce in the
-distributed prover. The shared $r$-tail also grows because `m_row_count_for`
-scales its COMMIT rows by `num_chunks`; this is second-order to the $\widehat z$
-replication.
+witness-width cost of avoiding the cross-node $\widehat z$ all-reduce in the
+distributed prover. The partitioned $\widehat e$ / $\widehat t$ tile the same
+blocks and the shared $r$-tail keeps the single-machine row count
+(`num_commitments = 1`), so neither grows. Pricing the $r$-tail with `num_chunks`
+commitments would **over-count** it by $(\texttt{num\_chunks} - 1)\cdot n_B\cdot
+\texttt{r\_decomp\_levels}$ rings and break the prover's
+`emitted == next_w_len` and the verifier's single-machine `r_len` cross-checks.
 
 ### Cutover to single-chunk
 
@@ -248,6 +260,18 @@ carry replicated $\widehat z$; the divisibility constraint
 
 If the optimal schedule has fewer than `R` folds, only the executed prefix uses
 chunked pricing; the remaining configured activated levels are a no-op.
+
+**Feasibility floor on chunked levels.** Because `num_chunks` and `num_blocks` are
+both powers of two, `num_blocks % num_chunks == 0` is equivalent to
+`r_vars(L) ≥ log₂(num_chunks)` at every chunked level `L < R`. The DP therefore
+only considers `r`-splits with at least `log₂(num_chunks)` block bits on the
+leading `R` folds; a cost-optimal split with fewer blocks is unavailable there.
+If **no** candidate survives at a leading level (e.g. the witness has already
+shrunk below `num_chunks` blocks), the DP finds no chunked schedule for that
+`(key, policy)` and returns the usual "no schedule found" `AkitaError` rather than
+silently falling back to single-chunk mid-prefix — keeping `chunks_at_level(L)`
+and the stamped `witness_chunk` consistent. Presets pick `num_activated_levels`
+so the leading folds always have `≥ num_chunks` blocks (the root is the largest).
 
 ## Design
 
@@ -471,10 +495,13 @@ Behavior:
 - `num_chunks == 1` → delegate to
   `w_ring_element_count_with_counts_for_layout_bits` with `num_public_rows = 1`
   (byte-identical to today).
-- `num_chunks > 1` → implement the closed form in **Background** (passing
-  `num_chunks` as the `num_commitments` argument to `m_row_count_for` for the
-  $r$-tail row count); first validate `num_chunks.is_power_of_two()` and
-  `lp.num_blocks % num_chunks == 0`, else `AkitaError::InvalidSetup`.
+- `num_chunks > 1` → implement the closed form in **Background**. The $r$-tail row
+  count uses `num_commitments = 1` (the summed quotient keeps the single-machine
+  shape — the horizontal $\mathbf M_j$ stacking adds columns, not rows — so the
+  tail is byte-identical to the single-chunk delegate); only $\widehat z$ grows,
+  by $(\texttt{num\_chunks}-1)\cdot z_chunk$. First validate
+  `num_chunks.is_power_of_two()` and `lp.num_blocks % num_chunks == 0`, else
+  `AkitaError::InvalidSetup`.
 
 To keep the single-source-of-truth invariant, the `num_chunks > 1` branch must
 mirror **every** segment of the delegate that is non-zero for the non-tiered

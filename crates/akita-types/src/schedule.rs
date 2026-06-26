@@ -259,15 +259,19 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
 ///
 /// `num_chunks > 1` prices the multi-chunk witness layout used by the distributed
 /// prover: `num_chunks` chunks each holding a partitioned slice of `ê`/`t̂` plus a
-/// **replicated full-width** `ẑ`, followed by a single shared `r`-tail whose row
-/// count is priced with `num_chunks` virtual commitments (the horizontal
-/// concatenation of the per-node `M_j`). The dominant extra cost over the
-/// single-chunk layout is `(num_chunks - 1) · z_chunk` ring elements.
+/// **replicated full-width** `ẑ`, followed by a single shared `r`-tail. The
+/// per-node relations stack *horizontally* (`M = [M_0 | … | M_{num_chunks-1}]`),
+/// sharing the same row blocks (concatenation adds columns, not rows) and summing
+/// the partial commitments `u_j` into one `u`, so the quotient `r = Σ_j r_j` keeps
+/// the **single-machine shape** — its row count is priced with `num_commitments =
+/// 1`, unchanged from the single-chunk layout. The **only** extra cost over the
+/// single-chunk layout is `(num_chunks - 1) · z_chunk` ring elements (the
+/// replicated `ẑ`).
 ///
 /// The `ê`/`t̂` block window is partitioned (`blocks_per_chunk = num_blocks /
 /// num_chunks`), so `num_chunks · e_chunk` and `num_chunks · t_chunk` equal the
-/// single-chunk totals; only `ẑ` (replicated) and the shared `r`-tail (priced
-/// with `num_chunks` commitments) grow.
+/// single-chunk totals; neither those segments nor the shared `r`-tail grow — only
+/// the replicated `ẑ` does.
 ///
 /// # Errors
 ///
@@ -338,9 +342,15 @@ pub fn w_ring_element_count_for_chunks(
         .checked_add(t_chunk)
         .and_then(|n| n.checked_add(z_chunk))
         .ok_or_else(overflow)?;
-    // Shared r-tail: one tail for all chunks, priced with num_chunks virtual
-    // commitments (the public-output M rows bind via the fused trace term).
-    let r_rows = lp.m_row_count_for(num_chunks, 0, layout)?;
+    // Shared r-tail: one summed quotient (r = Σ_j r_j) for all chunks. The
+    // per-node relations stack horizontally (M = [M_0 | … | M_{num_chunks-1}]),
+    // sharing the same row blocks — concatenation adds columns, not rows — and
+    // the partial commitments u_j are summed into one u. So the quotient keeps the
+    // single-machine shape (priced with `num_commitments = 1`, UNCHANGED from the
+    // single-chunk layout); only the replicated ẑ grows. Pricing it with
+    // `num_chunks` here would over-count the tail and break the prover's
+    // `emitted == next_w_len` and the verifier's single-machine `r_len`.
+    let r_rows = lp.m_row_count_for(1, 0, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -692,19 +702,15 @@ mod tests {
             );
 
             let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
-            let delta_r = crate::sis::compute_num_digits_full_field(field_bits, lp.log_basis);
-            let r_single = lp.m_row_count_for(1, 0, layout).unwrap() * delta_r;
             for num_chunks in [2usize, 4, 8] {
                 let chunked =
                     w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, num_chunks)
                         .unwrap();
-                let r_chunk = lp.m_row_count_for(num_chunks, 0, layout).unwrap() * delta_r;
-                // ê/t̂ totals are unchanged (partitioned); only ẑ replicates and
-                // the shared r-tail grows with the virtual commitment count.
-                assert_eq!(
-                    chunked,
-                    single + (num_chunks - 1) * z_pre + (r_chunk - r_single)
-                );
+                // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
+                // a single summed quotient that keeps the single-machine row count
+                // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
+                // (num_chunks - 1) full-width copies.
+                assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
                 assert!(chunked > single, "chunked layout must grow vs single chunk");
             }
         }
