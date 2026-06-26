@@ -56,13 +56,6 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
 ]
-zk = [
-  "akita-config/zk",
-  "akita-prover/zk",
-  "akita-setup/zk",
-  "akita-types/zk",
-  "akita-verifier/zk",
-]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }

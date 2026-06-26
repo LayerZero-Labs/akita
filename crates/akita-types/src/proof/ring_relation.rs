@@ -24,10 +24,6 @@ pub struct RingRelationSegmentLayout {
     pub offset_u: usize,
     pub offset_z: usize,
     pub offset_r: usize,
-    #[cfg(feature = "zk")]
-    pub b_blinding_offset: usize,
-    #[cfg(feature = "zk")]
-    pub d_blinding_offset: usize,
 }
 
 /// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
@@ -37,10 +33,6 @@ pub struct RingRelationSegmentLengths {
     pub e_len: usize,
     pub t_len: usize,
     pub u_len: usize,
-    #[cfg(feature = "zk")]
-    pub b_blinding_len: usize,
-    #[cfg(feature = "zk")]
-    pub d_blinding_len: usize,
 }
 
 /// Opening-batch counts that determine witness segment widths.
@@ -51,11 +43,10 @@ pub struct RingRelationOpeningCounts {
 }
 
 /// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
-#[cfg_attr(not(feature = "zk"), allow(unused_variables))]
 pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usize>(
     lp: &LevelParams,
     opening_counts: RingRelationOpeningCounts,
-    m_row_layout: MRowLayout,
+    _m_row_layout: MRowLayout,
 ) -> Result<RingRelationSegmentLengths, AkitaError> {
     let num_blocks = lp.num_blocks;
     if num_blocks == 0 || !num_blocks.is_power_of_two() {
@@ -94,19 +85,6 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usi
         .and_then(|len| len.checked_mul(lp.block_len))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
-    #[cfg(feature = "zk")]
-    let d_blinding_len = match m_row_layout {
-        MRowLayout::WithDBlock => crate::lhl_blinding::blinding_digit_plane_count::<F>(
-            lp.d_key.row_len(),
-            D,
-            lp.log_basis,
-        ),
-        MRowLayout::WithoutDBlock => 0,
-    };
-    #[cfg(feature = "zk")]
-    let b_blinding_len =
-        crate::lhl_blinding::blinding_digit_plane_count::<F>(lp.b_key.row_len(), D, lp.log_basis);
-
     let u_len = lp.u_concat_ring_len_per_group();
 
     Ok(RingRelationSegmentLengths {
@@ -114,10 +92,6 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usi
         e_len,
         t_len,
         u_len,
-        #[cfg(feature = "zk")]
-        b_blinding_len,
-        #[cfg(feature = "zk")]
-        d_blinding_len,
     })
 }
 
@@ -256,10 +230,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             e_len,
             t_len,
             u_len,
-            #[cfg(feature = "zk")]
-            b_blinding_len,
-            #[cfg(feature = "zk")]
-            d_blinding_len,
         } = lens;
 
         let offset_z = 0;
@@ -270,19 +240,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         let offset_u = offset_t
             .checked_add(t_len)
             .ok_or_else(|| AkitaError::InvalidSetup("U offset overflow".to_string()))?;
-        #[cfg(feature = "zk")]
-        let b_blinding_offset = offset_u
-            .checked_add(u_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("B blinding offset overflow".to_string()))?;
-        #[cfg(feature = "zk")]
-        let d_blinding_offset = b_blinding_offset
-            .checked_add(b_blinding_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("D blinding offset overflow".to_string()))?;
-        #[cfg(feature = "zk")]
-        let offset_r = d_blinding_offset
-            .checked_add(d_blinding_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
-        #[cfg(not(feature = "zk"))]
         let offset_r = offset_u
             .checked_add(u_len)
             .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
@@ -293,10 +250,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             offset_u,
             offset_z,
             offset_r,
-            #[cfg(feature = "zk")]
-            b_blinding_offset,
-            #[cfg(feature = "zk")]
-            d_blinding_offset,
         })
     }
 }
@@ -403,7 +356,6 @@ mod tests {
         assert_eq!(layout.offset_z, 0);
         assert_eq!(layout.offset_e, lens.z_len);
         assert_eq!(layout.offset_t, lens.z_len + lens.e_len);
-        #[cfg(not(feature = "zk"))]
         assert_eq!(
             layout.offset_r,
             lens.z_len + lens.e_len + lens.t_len + lens.u_len

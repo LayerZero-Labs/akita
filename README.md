@@ -16,7 +16,6 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - `akita-setup` owns config-backed setup construction and optional setup cache persistence.
 - `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches `akita-planner` transitively, so the schedule-search DP is verifier-reachable.
 - `akita-prover` owns commitment, proving, setup expansion, recursive/ring-switch witness construction, and polynomial backends.
-- `akita-r1cs` owns the deferred R1CS relations used only by the zero-knowledge (`zk`) path; it is not on the transparent prove/verify path.
 - `akita-pcs` is the umbrella package: it owns the end-to-end `AkitaCommitmentScheme` orchestration, re-exports the broad public surface, and hosts examples, benches, and integration tests. (There is no separate `akita-scheme` crate.)
 
 Verifier-only consumers should prefer the slim role crates directly:

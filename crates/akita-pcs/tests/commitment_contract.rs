@@ -7,7 +7,6 @@
 //! crate).
 
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;

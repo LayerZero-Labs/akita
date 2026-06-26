@@ -30,3 +30,16 @@ Prover and verifier share one helper:
 - `crates/akita-types/src/instance_descriptor.rs` — descriptor shape and serialization
 
 Paper reference: §3.5 (`sec:akita-one-step`, transcript binding).
+
+### Integrator note (Jolt / recursion hosts)
+
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` stays at **`1`** during active protocol
+development. Field additions inside the setup section (for example
+`FoldLinfProtocolBinding` extensions) do **not** bump this constant. There is
+no backward-compatibility guarantee across arbitrary crate revisions: pin an
+exact Akita git revision and re-run prove/verify e2e checks when upgrading.
+
+After the zk-strip cutover, `SetupSection.protocol_features.zk` is always
+`false` on the wire. Transparent proof bytes for the pinned regression cases
+(`transparent_proof_golden` in `akita-pcs`) are the authoritative wire-format
+tripwire for recursion integrators.

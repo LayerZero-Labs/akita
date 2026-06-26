@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-#![cfg(all(feature = "logging-transcript", not(feature = "zk")))]
+#![cfg(feature = "logging-transcript")]
 
 mod common;
 

@@ -627,16 +627,8 @@ mod tests {
                 max_num_batched_polys: 8,
                 gen_ring_dim: 1,
                 max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
                 public_matrix_seed: [0u8; 32],
             },
-            FlatMatrix::from_flat_data(vec![F::zero()], 1),
-            #[cfg(feature = "zk")]
-            FlatMatrix::from_flat_data(vec![F::zero()], 1),
-            #[cfg(feature = "zk")]
             FlatMatrix::from_flat_data(vec![F::zero()], 1),
         )
     }

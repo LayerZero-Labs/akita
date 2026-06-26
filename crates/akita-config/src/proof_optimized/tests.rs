@@ -44,7 +44,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
         }),
         Step::Direct(DirectStep {
             current_w_len: 1 << 4,
-            witness_shape: CleartextWitnessShape::PackedDigits((16, 3)),
+            witness_shape: CleartextWitnessShape::FieldElements(16),
             direct_bytes: 0,
             params: None,
         }),

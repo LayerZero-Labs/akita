@@ -5,9 +5,11 @@
 //! Cases exercise the main shipped presets on non-root-direct schedules:
 //! - `fp128::D64Full` at nv = 15
 //! - `fp128::D64OneHot` at nv = 20
+//!
+//! Verify-side golden (spec 4a): each digest test deserializes the pinned proof bytes and
+//! runs `batched_verify` on the decoded `AkitaBatchedProof`, not the in-memory prover object.
 
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 mod common;
 
@@ -17,9 +19,12 @@ use akita_field::CanonicalField;
 use akita_field::FieldCore;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly};
-use akita_serialization::AkitaSerialize;
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::{AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode};
+use akita_types::{
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaScheduleLookupKey, AkitaVerifierSetup,
+    BasisMode, RingCommitment,
+};
 use akita_verifier::CommitmentVerifier;
 use common::{dense_field_evals, opening_from_poly, OneHotCfg, F, ONEHOT_D, ONEHOT_K};
 use rand::rngs::StdRng;
@@ -27,9 +32,19 @@ use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 
 const GOLDEN_D64_FULL_NV15_SHA256: &str =
-    "c99fcc1867742d10ac4b9c1bc0aa62081085ef5abd37a6f813ec59563b767072";
+    "f96dd98684d77329971ad0c4b3020439f7e5d8c35b7225dca9c1282bfae83517";
 const GOLDEN_D64_ONEHOT_NV20_SHA256: &str =
-    "4849bef9b51c9327e39044960abb6c477756ff5a2fa8f0e3d00a8db1cd0daf1b";
+    "480a6bc99a4f7408015c89dfd91fe33097201e7f838298b38db8d9edb569ed2e";
+
+struct TransparentGoldenFixture<const D: usize> {
+    bytes: Vec<u8>,
+    shape: AkitaBatchedProofShape,
+    opening_point: Vec<F>,
+    opening: F,
+    commitment: RingCommitment<F, D>,
+    verifier_setup: AkitaVerifierSetup<F>,
+    transcript_label: &'static [u8],
+}
 
 fn fixed_opening_point(nv: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -81,16 +96,77 @@ fn assert_folded_not_root_direct<Cfg: CommitmentConfig>(
     );
 }
 
-fn prove_on_large_stack(build: impl FnOnce() -> Vec<u8> + Send + 'static) -> Vec<u8> {
+fn prove_on_large_stack<T: Send + 'static>(build: impl FnOnce() -> T + Send + 'static) -> T {
     common::init_rayon_pool();
     let (tx, rx) = std::sync::mpsc::channel();
     common::run_on_large_stack(move || {
-        tx.send(build()).expect("send golden bytes");
+        tx.send(build()).expect("send golden fixture");
     });
-    rx.recv().expect("receive golden bytes")
+    rx.recv().expect("receive golden fixture")
 }
 
-fn build_d64_full_nv15_proof_bytes() -> Vec<u8> {
+fn verify_deserialized_d64_full_nv15(fixture: &TransparentGoldenFixture<{ fp128::D64Full::D }>) {
+    type Cfg = fp128::D64Full;
+    const D: usize = Cfg::D;
+    const CASE: &str = "fp128 D64Full nv15";
+
+    let proof =
+        AkitaBatchedProof::<F, F>::deserialize_compressed(&fixture.bytes[..], &fixture.shape)
+            .unwrap_or_else(|e| panic!("{CASE}: deserialize pinned proof bytes: {e}"));
+    let mut verifier_transcript = AkitaTranscript::<F>::new(fixture.transcript_label);
+    <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        &proof,
+        &fixture.verifier_setup,
+        &mut verifier_transcript,
+        common::verify_input(
+            &fixture.opening_point[..],
+            std::slice::from_ref(&fixture.opening),
+            &fixture.commitment,
+        ),
+        BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
+    )
+    .unwrap_or_else(|e| {
+        panic!("{CASE}: transparent verifier must accept deserialized golden proof: {e}")
+    });
+}
+
+fn verify_deserialized_d64_onehot_nv20(fixture: &TransparentGoldenFixture<ONEHOT_D>) {
+    const CASE: &str = "fp128 D64OneHot nv20";
+
+    let proof =
+        AkitaBatchedProof::<F, F>::deserialize_compressed(&fixture.bytes[..], &fixture.shape)
+            .unwrap_or_else(|e| panic!("{CASE}: deserialize pinned proof bytes: {e}"));
+    let mut verifier_transcript = AkitaTranscript::<F>::new(fixture.transcript_label);
+    <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+        &proof,
+        &fixture.verifier_setup,
+        &mut verifier_transcript,
+        common::verify_input(
+            &fixture.opening_point[..],
+            std::slice::from_ref(&fixture.opening),
+            &fixture.commitment,
+        ),
+        BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
+    )
+    .unwrap_or_else(|e| {
+        panic!("{CASE}: transparent verifier must accept deserialized golden proof: {e}")
+    });
+}
+
+fn assert_pinned_digest(bytes: &[u8], expected_digest: &str, case_name: &str) {
+    let digest = hex::encode(Sha256::digest(bytes));
+    if expected_digest == "PLACEHOLDER" {
+        panic!("pin {case_name} digest: {digest} ({} bytes)", bytes.len());
+    }
+    assert_eq!(
+        digest, expected_digest,
+        "{case_name} proof bytes changed — re-pin after intentional wire-format updates"
+    );
+}
+
+fn build_d64_full_nv15_fixture() -> TransparentGoldenFixture<{ fp128::D64Full::D }> {
     type Cfg = fp128::D64Full;
     const D: usize = Cfg::D;
     const NV: usize = 15;
@@ -125,7 +201,7 @@ fn build_d64_full_nv15_proof_bytes() -> Vec<u8> {
         )
         .unwrap();
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let commitments = [commitment];
+        let commitments = [commitment.clone()];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
@@ -140,34 +216,26 @@ fn build_d64_full_nv15_proof_bytes() -> Vec<u8> {
 
         assert_folded_not_root_direct::<Cfg>(NV, &proof);
 
-        // Verify-side golden (spec I1/4a): the transparent verifier must accept
-        // the pinned proof. Read-only, so the serialized bytes are unaffected.
-        let verifier_setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            common::verify_input(
-                &opening_point[..],
-                std::slice::from_ref(&opening),
-                &commitments[0],
-            ),
-            BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
-        )
-        .expect("transparent verifier must accept the d64-full nv15 golden proof");
-
-        let mut out = Vec::new();
+        let shape = proof.shape();
+        let mut bytes = Vec::new();
         proof
-            .serialize_compressed(&mut out)
+            .serialize_compressed(&mut bytes)
             .expect("serialize golden proof");
-        out
+
+        TransparentGoldenFixture {
+            bytes,
+            shape,
+            opening_point,
+            opening,
+            commitment: commitments[0].clone(),
+            verifier_setup:
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup),
+            transcript_label: TRANSCRIPT_LABEL,
+        }
     })
 }
 
-fn build_d64_onehot_nv20_proof_bytes() -> Vec<u8> {
+fn build_d64_onehot_nv20_fixture() -> TransparentGoldenFixture<ONEHOT_D> {
     const NV: usize = 20;
     const POLY_SEED: u64 = 0xdead_beef_0000 + NV as u64;
     const POINT_SEED: u64 = 0xcafe_0000 + NV as u64;
@@ -204,7 +272,7 @@ fn build_d64_onehot_nv20_proof_bytes() -> Vec<u8> {
         >>::commit(&setup, std::slice::from_ref(&poly), &stack)
         .unwrap();
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
-        let commitments = [commitment];
+        let commitments = [commitment.clone()];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
@@ -227,73 +295,60 @@ fn build_d64_onehot_nv20_proof_bytes() -> Vec<u8> {
 
         assert_folded_not_root_direct::<OneHotCfg>(NV, &proof);
 
-        // Verify-side golden (spec I1/4a): read-only, bytes unaffected.
-        let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-            F,
-            ONEHOT_D,
-        >>::setup_verifier(&setup);
-        let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-        <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            common::verify_input(&opening_point[..], std::slice::from_ref(&opening), &commitments[0]),
-            BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
-        )
-        .expect("transparent verifier must accept the d64-onehot nv20 golden proof");
-
-        let mut out = Vec::new();
+        let shape = proof.shape();
+        let mut bytes = Vec::new();
         proof
-            .serialize_compressed(&mut out)
+            .serialize_compressed(&mut bytes)
             .expect("serialize golden proof");
-        out
+
+        TransparentGoldenFixture {
+            bytes,
+            shape,
+            opening_point,
+            opening,
+            commitment: commitments[0].clone(),
+            verifier_setup: <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+                F,
+                ONEHOT_D,
+            >>::setup_verifier(&setup),
+            transcript_label: TRANSCRIPT_LABEL,
+        }
     })
 }
 
 #[test]
 fn transparent_proof_golden_d64_full_nv15_digest() {
-    let bytes = build_d64_full_nv15_proof_bytes();
-    let digest = hex::encode(Sha256::digest(&bytes));
-    if GOLDEN_D64_FULL_NV15_SHA256 == "PLACEHOLDER" {
-        panic!(
-            "pin GOLDEN_D64_FULL_NV15_SHA256: {digest} ({} bytes)",
-            bytes.len()
-        );
-    }
-    assert_eq!(
-        digest, GOLDEN_D64_FULL_NV15_SHA256,
-        "fp128 D64Full nv15 proof bytes changed — re-pin after intentional wire-format updates"
+    let fixture = build_d64_full_nv15_fixture();
+    assert_pinned_digest(
+        &fixture.bytes,
+        GOLDEN_D64_FULL_NV15_SHA256,
+        "fp128 D64Full nv15",
     );
+    verify_deserialized_d64_full_nv15(&fixture);
 }
 
 #[test]
 fn transparent_proof_golden_d64_onehot_nv20_digest() {
-    let bytes = build_d64_onehot_nv20_proof_bytes();
-    let digest = hex::encode(Sha256::digest(&bytes));
-    if GOLDEN_D64_ONEHOT_NV20_SHA256 == "PLACEHOLDER" {
-        panic!(
-            "pin GOLDEN_D64_ONEHOT_NV20_SHA256: {digest} ({} bytes)",
-            bytes.len()
-        );
-    }
-    assert_eq!(
-        digest, GOLDEN_D64_ONEHOT_NV20_SHA256,
-        "fp128 D64OneHot nv20 proof bytes changed — re-pin after intentional wire-format updates"
+    let fixture = build_d64_onehot_nv20_fixture();
+    assert_pinned_digest(
+        &fixture.bytes,
+        GOLDEN_D64_ONEHOT_NV20_SHA256,
+        "fp128 D64OneHot nv20",
     );
+    verify_deserialized_d64_onehot_nv20(&fixture);
 }
 
 #[test]
 fn transparent_proof_bytes_are_deterministic() {
-    let full_a = build_d64_full_nv15_proof_bytes();
-    let full_b = build_d64_full_nv15_proof_bytes();
+    let full_a = build_d64_full_nv15_fixture().bytes;
+    let full_b = build_d64_full_nv15_fixture().bytes;
     assert_eq!(
         full_a, full_b,
         "D64Full nv15 serialization must be deterministic"
     );
 
-    let onehot_a = build_d64_onehot_nv20_proof_bytes();
-    let onehot_b = build_d64_onehot_nv20_proof_bytes();
+    let onehot_a = build_d64_onehot_nv20_fixture().bytes;
+    let onehot_b = build_d64_onehot_nv20_fixture().bytes;
     assert_eq!(
         onehot_a, onehot_b,
         "D64OneHot nv20 serialization must be deterministic"

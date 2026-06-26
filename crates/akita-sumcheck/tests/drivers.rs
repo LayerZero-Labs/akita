@@ -1,5 +1,4 @@
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::AkitaError;

@@ -28,8 +28,9 @@ opening of the masked response. Modulus switching runs only in the suffix.
 **Sources to fold in**
 
 - Paper §6 `sec:zk-pipeline`, `fig:zk-pipeline`, `sec:zk-joint-sigma`.
-- `crates/akita-r1cs/src/lib.rs` (deferred R1CS instance), `crates/akita-pcs/tests/zk.rs`.
-- `specs/akita-zk-sumcheck-hiding-plain.md` (plain-opening implementation vs seam).
+- Archived prefix-only implementation notes:
+  `specs/archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md` (preserved on branch
+  `zk-wip` / tag `zk-prefix-snapshot-2026-06`).
 
 ## Masking strategies (prefix detail)
 
@@ -41,5 +42,6 @@ toolkit.
 **Sources to fold in**
 
 - Paper §6 ("Two load-bearing ideas", §6.3 `sec:zk-sumcheck-mask` committed-pad masking).
-- `crates/akita-prover/src/protocol/masking.rs`, `zk_hiding_commit.rs`.
-- `specs/akita-zk-commitment-hiding.md`, `akita-zk-v-hiding.md`.
+- Archived design records on `zk-wip`:
+  `specs/archive/2026-Q2/akita-zk-commitment-hiding.md`,
+  `specs/archive/2026-Q2/akita-zk-v-hiding.md`.

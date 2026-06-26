@@ -17,7 +17,7 @@ zero-knowledge today** — enabling it produces sound, verifying proofs, not ZK
 proofs (the `sec:zk-joint-sigma` seam and suffix modulus switching are
 unimplemented; the tail is discharged by a plain opening). See
 [`book/src/roadmap/zero-knowledge.md`](../book/src/roadmap/zero-knowledge.md) and
-[`specs/akita-zk-sumcheck-hiding-plain.md`](akita-zk-sumcheck-hiding-plain.md).
+[`specs/archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md`](archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md).
 
 For the upcoming audit we want the transparent protocol to be the product under
 review, with **zero ZK in the auditor's reading path** — the ~1,200
@@ -29,8 +29,10 @@ throw the ZK work away: it will be finished after the audit.
 This spec removes all ZK from `main` into a preserved `zk-wip` branch + tag
 ("strip-to-branch"), keeps the one genuinely generic, pure-arithmetic helper
 (LHL sizing math) always-on as `lhl_blinding`, and sequences the removal into
-verifiable slices that **provably do not change transparent proof bytes,
-transcript bytes, or verification behavior**.
+verifiable slices. **Slices 0–4d** preserve transparent proof bytes, transcript
+bytes (except the instance-descriptor preamble, see 4e), and verification
+behavior; **4e** lands one reviewed descriptor-v1 preamble re-pin, then **4f**
+retires the proof-byte golden tripwire.
 
 ### Implementation status (PR #218)
 
@@ -49,11 +51,9 @@ milestone; transparent path only):
 
 | PR | Scope | Status |
 |----|-------|--------|
-| 4a | Verifier blinding-recompute leaf + verify-side golden | In review |
-| 4b | Verifier fold replay + hiding verify (→ `akita-verifier` = 0) | In review |
-| 4c | Prover blinding/compute leaf (→ prover compute/kernels/ring_switch/ring_relation = 0) | In review |
-| 4d | Prover fold-replay + witness sizing (→ prover/config/planner/setup/sumcheck = 0) | Done |
-| 4e | Schema unification + residual sweep + delete `zk` Cargo features + `akita-r1cs/` (→ global grep = 0) | Not started |
+| 4a–4d | Verifier + prover ZK path removal (consolidated in #220) | In review |
+| 4e | Schema unification + residual sweep + delete `zk` Cargo features + `akita-r1cs/` (→ global grep = 0) | In review |
+| 4f | Retire Slice-0 / verify-side proof-byte golden (post-strip only) | In review |
 
 As of `c998034f`, `main` still carries ~940 `feature = "zk"` lines across
 `crates/**/src` (verifier ~204, prover ~435, types ~275, sumcheck ~29, config ~39,
@@ -104,8 +104,8 @@ Affected surfaces:
 
 | # | Invariant | Why it holds | Protected by |
 |---|-----------|--------------|--------------|
-| I1 | Transparent (default-build) proof bytes are unchanged. | The default build never compiled any `#[cfg(feature="zk")]` line; every paired site keeps the existing `not(zk)` arm verbatim. | **New** golden-byte test (Slice 0); existing serde roundtrips `akita_e2e.rs` |
-| I2 | Transparent transcript bytes/labels are unchanged. | The only zk absorb (`ABSORB_ZK_HIDING_COMMITMENT`) is itself zk-gated; the masked next-w-eval feeds the *same* single `append_serde(ABSORB_STAGE2_NEXT_W_EVAL, …)` whose value on the non-zk path is the genuine unmasked `w_eval` ([`fold.rs:873-877`](../crates/akita-prover/src/protocol/core/fold.rs)). Labels never enter the sponge (`labels.rs`, `sponge.rs` ignores the label arg). | `transcript_is_deterministic_for_identical_schedule`; sponge `labels_do_not_enter_production_sponge` |
+| I1 | Transparent (default-build) proof bytes are unchanged through slice 4d; 4e lands descriptor v1 at version 1 without bumping. | The default build never compiled any `#[cfg(feature="zk")]` line; 4e preserves schedule witness-shape descriptor tags and re-pins golden once for the v1 preamble. | Slice-0 golden (slices 0–4e); retired in 4f; then serde roundtrips + `akita_e2e.rs` |
+| I2 | Transparent transcript bytes/labels are unchanged through 4d; 4e's sole transcript change is the instance-descriptor preamble (v1, no version bump). | The only zk absorb (`ABSORB_ZK_HIDING_COMMITMENT`) is itself zk-gated; the masked next-w-eval feeds the *same* single `append_serde(ABSORB_STAGE2_NEXT_W_EVAL, …)` whose value on the non-zk path is the genuine unmasked `w_eval` ([`fold.rs:873-877`](../crates/akita-prover/src/protocol/core/fold.rs)). Labels never enter the sponge (`labels.rs`, `sponge.rs` ignores the label arg). Fold-chain absorbs are unchanged. | `transcript_is_deterministic_for_identical_schedule`; sponge `labels_do_not_enter_production_sponge` |
 | I3 | Transparent sumcheck claim absorbs (`ABSORB_SUMCHECK_CLAIM`) stay unchanged; zk-only sumcheck drivers (`prove_zk`/`verify_zk`, masked round polys, zk EOR replay in `fold.rs`) are deleted wholesale and must not be folded into transparent `prove`/`verify` or orchestration. | Transparent paths already emit one claim absorb per sumcheck (standard/eq-factored drivers, batched stage-3, EOR verifier); zk drivers are cfg-swapped siblings using the same label. Slice 4 must drop zk arms verbatim without changing which transparent caller absorbs which claim value. | I2 transcript test; code review |
 | I4 | Setup serialization for the transparent path is unchanged. | `zk_b_matrix`/`zk_d_matrix` are serialized strictly *after* shared fields, only under cfg; no `not(zk)` padding counterpart. | Setup serialize→deserialize roundtrip (`setup.rs` tests) |
 | I5 | The non-zk path is the live production path (no orphaned stubs). | Stub sweep found zero `todo!`/`unimplemented!` in any `not(zk)` branch. | `cargo check` default build |
@@ -120,7 +120,7 @@ Affected surfaces:
 - **No in-tree `protocol/zk/` submodule relocation.** It leaves cfg-gated
   parameters/fields/branches visible in `fold.rs`/`wire.rs`/`levels.rs` — does not
   meet "zero ZK in the auditor's path."
-- **No change to transparent proof format, transcript, or planner output.**
+- **No change to transparent proof format, fold-chain transcript, or planner output through 4d.** 4e's reviewed descriptor-v1 preamble re-pin is the sole intentional wire change in slice 4.
 - **No attempt to keep `--features zk` building on `main`** after the strip.
 - **No fix of the planner↔prover `zk_hiding_witness_len` drift** — it is
   confirmed harmless (conservative `≥` headroom) and is deleted with both
@@ -133,20 +133,22 @@ Affected surfaces:
 ### Acceptance Criteria
 
 - [ ] `rg -n 'feature *= *"zk"' crates/ -g '*.rs'` returns **0** matches on `main`.
+      The audit-clean gate is **crate code only** (`crates/**/*.rs`). Historical specs
+      under `specs/archive/` and pre-strip umbrella specs may retain `zk` references
+      until a separate doc archive pass.
 - [ ] No crate's `Cargo.toml` defines a `zk` feature; `akita-r1cs` is removed from
       `[workspace] members` and from all `optional`/`dep:` references.
 - [x] `cargo check --workspace --no-default-features --features parallel,disk-persistence`
       succeeds (transparent merge gate; #218).
 - [ ] `cargo clippy --all --all-targets -- -D warnings` and the `--no-default-features` variant both pass without any `zk` feature in existence.
-- [x] The Slice-0 golden-byte digests (transparent folded proofs for fixed
-      instances + fixed seeds) are **byte-identical** across all slices. The
-      **source of truth is the test constants in
-      `crates/akita-pcs/tests/transparent_proof_golden.rs`** (currently
-      `fp128::D64Full` nv=15 → `c99fcc18…b767072`; `fp128::D64OneHot` nv=20 →
-      `4849bef9…cd0daf1b`). **These constants must NOT be edited during slices
-      4–5** — a changed digest means a slice altered transparent bytes (an I1
-      violation), not a re-pin. Re-pinning is allowed *only* for a deliberate,
-      reviewed wire-format change, which the strip is not.
+- [x] The Slice-0 golden-byte digests are **byte-identical across slices 0–4d**
+      (`fp128::D64Full` nv=15 → `c99fcc18…b767072`; `fp128::D64OneHot` nv=20 →
+      `4849bef9…cd0daf1b`). **PR 4e** keeps `AKITA_INSTANCE_DESCRIPTOR_VERSION`
+      at **`1`** (no bump) and restores schedule witness-shape descriptor tags
+      (reserved `PackedDigits` tag `0`, `FieldElements` tag `1`, `SegmentTyped`
+      tag `2`) so the only transcript change is the intentional v1 descriptor
+      preamble, not accidental tag renumbering. Golden re-pins once at the 4e
+      head (`f96dd986…` / `480a6bc9…`). **PR 4f** retires the tripwire.
 - [x] `lhl_blinding` compiles in the default build, its unit tests pass, and it is
       no longer behind any `cfg`.
 - [x] A `zk-wip` branch and an annotated tag (`zk-prefix-snapshot-2026-06`)
@@ -392,16 +394,17 @@ deleting the proof-type fields while a producer/consumer still references them
 reintroduces the dangling-reference window OI-2 avoids.
 
 After 4e: `cargo check --features zk` **errors** (the feature is gone) and
-`rg 'feature = "zk"' crates/` returns nothing — the audit-clean end state.
+`rg 'feature = "zk"' crates/` returns nothing in crate code — the audit-clean
+end state for the transparent product. Pre-strip umbrella specs may still mention
+retired `zk` paths until archived separately.
 
 #### Survives-complete (un-gate only, no completion work)
 
 The tiered/recursive setup engine and the SegmentTyped terminal witness stack are
 gated on **runtime** ring-dimension/`tier_split`, *orthogonal* to `zk`; the
-`fp32`/`fp128` non-zk arms are the live path. `PackedDigits` becomes dead
-production type after the prover fold-replay PR (4d, which removes the
-`terminal_direct_witness_shape` selector) — leave it and flag a follow-up.
-`schedule_terminal_direct_witness_shape` is already unconditional.
+`fp32`/`fp128` non-zk arms are the live path. `PackedDigits` is removed in 4e
+(schema unification). `schedule_terminal_direct_witness_shape` is unconditional
+`SegmentTyped`.
 
 ### Alternatives Considered
 
@@ -449,9 +452,9 @@ production type after the prover fold-replay PR (4d, which removes the
 - Update [`book/src/usage/feature-flags.md`](../book/src/usage/feature-flags.md):
   remove the `zk` feature row.
 - Set `Status: superseded` (or add a banner) on the prefix-ZK design specs
-  [`akita-zk-sumcheck-hiding-plain.md`](akita-zk-sumcheck-hiding-plain.md),
-  [`akita-zk-commitment-hiding.md`](akita-zk-commitment-hiding.md),
-  [`akita-zk-v-hiding.md`](akita-zk-v-hiding.md): mark them out of audit scope,
+  [`archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md`](archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md),
+  [`archive/2026-Q2/akita-zk-commitment-hiding.md`](archive/2026-Q2/akita-zk-commitment-hiding.md),
+  [`archive/2026-Q2/akita-zk-v-hiding.md`](archive/2026-Q2/akita-zk-v-hiding.md): mark them out of audit scope,
   retained as the design record for the `zk-wip` work.
 - Add an audit-contract note: the transparent path is the product under review;
   `zk` is not built, `akita-r1cs` is absent, and `ProtocolFeatureSet.zk == false`.
@@ -463,9 +466,9 @@ production type after the prover fold-replay PR (4d, which removes the
   (lhl_blinding, kept), Phase 2 (`akita-zk-prefix` crate, rejected here).
 - Roadmap: [`book/src/roadmap/zero-knowledge.md`](../book/src/roadmap/zero-knowledge.md)
   — seam + suffix modulus switching are the remaining real-ZK steps.
-- Design record: [`specs/akita-zk-sumcheck-hiding-plain.md`](akita-zk-sumcheck-hiding-plain.md),
-  [`specs/akita-zk-commitment-hiding.md`](akita-zk-commitment-hiding.md),
-  [`specs/akita-zk-v-hiding.md`](akita-zk-v-hiding.md).
+- Design record: [`archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md`](archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md),
+  [`archive/2026-Q2/akita-zk-commitment-hiding.md`](archive/2026-Q2/akita-zk-commitment-hiding.md),
+  [`archive/2026-Q2/akita-zk-v-hiding.md`](archive/2026-Q2/akita-zk-v-hiding.md).
 - Key anchors: `crates/akita-types/src/proof/{levels.rs:1117,wire.rs,setup.rs}`,
   `crates/akita-prover/src/protocol/core/{fold.rs:99,fold.rs:830,fold.rs:873,prove.rs:337}`,
   `crates/akita-verifier/src/protocol/core/{verify.rs:632,fold.rs,zk.rs}`,

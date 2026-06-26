@@ -1,7 +1,7 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 mod decomposition;
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests;
 mod traits;
 mod wide;
@@ -18,7 +18,7 @@ use std::io::{Read, Write};
 use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) use decomposition::center_for_decomposition;
 pub use decomposition::{
     decompose_centering_threshold, peel_first_balanced_digit, BalancedDecomposePow2I8Params,
