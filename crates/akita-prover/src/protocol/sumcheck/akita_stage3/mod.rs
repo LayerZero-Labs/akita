@@ -17,7 +17,7 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot, setup_required_for_shape,
+    gadget_row_scalars, select_setup_prefix_slot, setup_active_ring_elems_for_fold,
     stage3_offload_natural_field_len, AkitaExpandedSetup, FpExtEncoding, LevelParams,
     RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SetupPrefixRegistry,
     SetupRelationShape, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
@@ -255,7 +255,10 @@ where
         prepare_setup_sumcheck_terms::<F, E, D>(expanded, lp, relation, tau1, alpha, x_challenges)?;
 
     let natural_field_len = stage3_offload_natural_field_len(required, SETUP_OFFLOAD_D_SETUP)?;
-    let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+    let fold_ring_d = lp.ring_dimension;
+    let setup_len = expanded
+        .shared_matrix()
+        .total_ring_elements_at_dyn(fold_ring_d)?;
     let setup_prefix_selection = select_setup_prefix_slot(
         expanded.seed(),
         setup_len,
@@ -368,11 +371,11 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
-    let alpha_pows = scalar_powers(alpha, D);
+    let fold_ring_d = lp.ring_dimension;
+    let alpha_pows = scalar_powers(alpha, fold_ring_d);
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
     let relation_shape = SetupRelationShape::from(&inputs);
-    let required = setup_required_for_shape(&relation_shape)?;
-    ensure_setup_envelope(expanded, required, D)?;
+    let required = setup_active_ring_elems_for_fold(expanded, &relation_shape, fold_ring_d)?;
     let num_t_vectors = relation.opening_batch().num_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
         lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
@@ -392,7 +395,11 @@ where
         None,
         None,
     )?;
-    let required = plan.required();
+    if plan.required() != required {
+        return Err(AkitaError::InvalidSetup(
+            "setup contribution plan disagrees with geometry required rows".into(),
+        ));
+    }
     let bar_omega = plan.materialize_bar_omega();
     Ok((required, bar_omega, alpha_pows.to_vec()))
 }
