@@ -441,7 +441,7 @@ pub fn w_ring_element_count_for_chunks(
         )));
     }
     // Multi-chunk + tiered is unsupported (the chunked closed form assumes a
-    // non-tiered, empty û segment). Reject rather than silently mis-price.
+    // non-tiered, empty û segment). Reject rather than silently misprice.
     if lp.f_key.is_some() || lp.tier_split != 1 {
         return Err(AkitaError::InvalidSetup(
             "w_ring_element_count_for_chunks: multi-chunk layout does not support tiered commitments"

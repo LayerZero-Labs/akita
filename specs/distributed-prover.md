@@ -164,7 +164,7 @@ Validate at this boundary, before any witness math (no-panic contract):
 | `num_chunks > 1` under `feature = "zk"` | `InvalidSetup` |
 
 (`tier_split > 1` and the `zk` blinding segments are not specified for the chunked
-witness yet; reject rather than mis-shape. This matches the planner entry guard and
+witness yet; reject rather than emit a malformed shape. This matches the planner entry guard and
 the verifier spec's Stage 0.)
 
 ### Step 1 — compute the $W$ folded responses
