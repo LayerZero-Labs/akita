@@ -73,7 +73,7 @@ where
     #[cfg(feature = "disk-persistence")]
     {
         match load_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys) {
-            Ok(setup) => {
+            Ok(mut setup) => {
                 // A cached setup is acceptable only if its physical backing
                 // covers the packed setup envelope for the current request.
                 let cached_total = setup
@@ -82,6 +82,9 @@ where
                     .total_ring_elements_at::<D>()?;
                 let cached_shape_covers_request = cached_total >= max_setup_len;
                 if cached_shape_covers_request {
+                    // Direct setup must not carry recursion-only prefix slots that
+                    // may have been persisted by `new_prover_setup_recursion`.
+                    setup.prefix_slots = SetupPrefixRegistry::new();
                     tracing::info!("Loaded setup from disk; backend preparation is explicit");
                     return Ok(setup);
                 }

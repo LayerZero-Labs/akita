@@ -369,7 +369,7 @@ pub fn stage3_offload_natural_field_len(
 ///
 /// Used by [`RingDimPlan::context_at`](crate::RingDimPlan::context_at) and schedule
 /// validation. Stage-3 prove/verify should derive `required` from
-/// [`SetupContributionPlan::prepare`] and call [`ensure_setup_envelope`] separately.
+/// [`crate::SetupContributionPlan::prepare`] and call [`ensure_setup_envelope`] separately.
 ///
 /// # Errors
 ///
@@ -417,7 +417,6 @@ fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, Akit
 mod tests {
     use super::*;
     use crate::{gadget_row_scalars, MRowLayout, SetupContributionPlan};
-    use akita_algebra::eq_poly::EqPolynomial;
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
