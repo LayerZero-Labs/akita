@@ -175,6 +175,8 @@ where
     .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(&flat_polys, root_commit_params)?;
 
+    validate_ring_dim_plan_at_entry(&schedule, expanded.seed())?;
+
     bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         expanded.as_ref(),
         &opening_batch,
@@ -287,7 +289,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    let _ring_plan = RingDimPlan::from_schedule(schedule, expanded.seed())?;
+    let _ring_plan = validate_ring_dim_plan_at_entry(schedule, expanded.seed())?;
 
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {

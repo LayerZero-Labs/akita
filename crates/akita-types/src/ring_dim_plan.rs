@@ -195,6 +195,17 @@ impl RingDimPlan {
     }
 }
 
+/// Prove or verify entry validation (wave 5a): schedule ring geometry only, no NTT warming.
+///
+/// Call once the effective schedule is fixed at `batched_prove` / `batched_verify` or the
+/// inner `prove` / `verify` orchestration entry.
+pub fn validate_ring_dim_plan_at_entry(
+    schedule: &Schedule,
+    seed: &AkitaSetupSeed,
+) -> Result<RingDimPlan, AkitaError> {
+    RingDimPlan::from_schedule(schedule, seed)
+}
+
 fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
     for d in [dims.inner, dims.outer, dims.opening] {
         if !SUPPORTED_RING_DIMS.contains(&d) {
