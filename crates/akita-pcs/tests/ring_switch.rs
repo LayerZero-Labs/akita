@@ -241,7 +241,7 @@ mod tests {
     fn nonconstant_ring_multiplier_point<F, const D: usize>(
         block_len: usize,
         num_blocks: usize,
-    ) -> RingMultiplierOpeningPoint<F, D>
+    ) -> RingMultiplierOpeningPoint<F>
     where
         F: FieldCore + FromPrimitiveInt,
     {
@@ -324,10 +324,10 @@ mod tests {
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars: ring_multiplier_point
-                    .b_rings()
+                    .b_rings::<D>()
                     .expect("nonconstant test point has ring b weights"),
                 fold_scalars: ring_multiplier_point
-                    .a_rings()
+                    .a_rings::<D>()
                     .expect("nonconstant test point has ring a weights"),
                 block_len: lp.block_len,
             },

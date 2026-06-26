@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn non_zk_eor_mismatch_is_rejected() {
-        let prepared_point: PreparedOpeningPoint<TestF, TestF, D> = PreparedOpeningPoint {
+        let prepared_point: PreparedOpeningPoint<TestF, TestF> = PreparedOpeningPoint {
             padded_point: Vec::new(),
             ring_opening_point: RingOpeningPoint {
                 a: vec![TestF::one()],
@@ -334,7 +334,7 @@ mod tests {
                 a: vec![TestF::one()],
                 b: vec![TestF::one()],
             }),
-            packed_inner_point: CyclotomicRing::<TestF, D>::zero(),
+            packed_inner_point: RingBuf::from_single(&CyclotomicRing::<TestF, D>::zero()),
         };
         let folded_rings = [CyclotomicRing::<TestF, D>::zero()];
         let reduction = Some(ExtensionOpeningReduction {

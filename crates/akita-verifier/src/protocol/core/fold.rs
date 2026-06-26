@@ -3,7 +3,7 @@
 use super::*;
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
-    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, C, D>>,
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, C>>,
     pub(in crate::protocol::core) reduction_challenges: Option<Vec<C>>,
     pub(in crate::protocol::core) final_relation: Option<(C, Vec<C>)>,
 }
@@ -188,14 +188,14 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
         VerifierOpeningBatch<'a, E, &'a [CyclotomicRing<F, D>]>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) ring_opening_point: RingOpeningPoint<F>,
-    pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+    pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F>,
     pub(in crate::protocol::core) w_len: usize,
     pub(in crate::protocol::core) stage1: Option<&'a AkitaStage1Proof<E>>,
     pub(in crate::protocol::core) stage2: &'a AkitaStage2Proof<F, E>,
     pub(in crate::protocol::core) next_w_commitment: Option<&'a FlatRingVec<F>>,
     pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
     pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E, D>>,
+    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) trace_block_opening: Option<Vec<E>>,
     pub(in crate::protocol::core) trace_eval_target: E,
     pub(in crate::protocol::core) trace_eval_scale: E,
@@ -277,7 +277,7 @@ fn verify_stage2<F, E, T, const D: usize>(
     num_segments: usize,
     setup_claim: Option<E>,
     ring_opening_point: &RingOpeningPoint<F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     trace: Option<TraceClaim<F, E, D>>,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -412,7 +412,7 @@ where
         prepared.fold_grind_nonce,
     )?;
     let (gamma, row_coefficient_rings) =
-        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<E>(
+        RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
             &prepared.row_coefficients,
         )?;
     let n_d_active = match prepared.m_row_layout {
@@ -431,7 +431,7 @@ where
         prepared.lp.b_inner_rows_per_group(),
         prepared.lp.a_key.row_len(),
     )?);
-    let relation_instance = RingRelationInstance::new(
+    let relation_instance = RingRelationInstance::new::<D>(
         prepared.m_row_layout,
         stage1_challenges,
         prepared.ring_opening_point,
@@ -492,7 +492,7 @@ where
     let trace_wire = if prepared.trace_prepared_point.is_none() {
         None
     } else if prepared.trace_block_opening.is_none() {
-        let segment = relation_instance.segment_layout(prepared.lp)?;
+        let segment = relation_instance.segment_layout::<D>(prepared.lp)?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
             &segment,
@@ -516,7 +516,7 @@ where
             )?,
         })
     } else {
-        let segment = relation_instance.segment_layout(prepared.lp)?;
+        let segment = relation_instance.segment_layout::<D>(prepared.lp)?;
         let num_trace_blocks = relation_instance
             .opening_batch()
             .num_polynomials()

@@ -31,7 +31,7 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     witness: RingRelationWitness<F, D>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,

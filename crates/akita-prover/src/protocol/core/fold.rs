@@ -15,12 +15,12 @@ use akita_types::CleartextWitnessShape;
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
 ) -> Result<(RingRelationSegmentLayout, akita_types::TraceWeightLayout), AkitaError> {
-    let segment = instance.segment_layout(lp)?;
+    let segment = instance.segment_layout::<D>(lp)?;
     let layout =
         trace_weight_layout_from_segment(lp, &segment, col_bits, ring_bits, num_trace_blocks)?;
     Ok((segment, layout))
@@ -29,8 +29,8 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
 #[allow(clippy::too_many_arguments)]
 fn build_recursive_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
-    prepared: &PreparedOpeningPoint<F, E, D>,
+    instance: &RingRelationInstance<F>,
+    prepared: &PreparedOpeningPoint<F, E>,
     trace_scale: E,
     output_scale: E,
     col_bits: usize,
@@ -41,7 +41,8 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
+    let (_, layout) =
+        trace_layout_for_instance::<F, D>(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
     let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
     build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
@@ -49,8 +50,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn build_root_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    instance: &RingRelationInstance<F>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
     trace_claim_scales: Option<&[E]>,
     output_scale: E,
@@ -68,7 +69,7 @@ where
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
-        trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
+        trace_layout_for_instance::<F, D>(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
     let public_weights = trace_public_weights_root_terms::<F, E, D>(
         lp,
         instance.opening_batch(),
@@ -87,24 +88,24 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
     pub(in crate::protocol::core) commitment: RingBuf<F>,
-    pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
+    pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
     pub(in crate::protocol::core) trace_eval_target: L,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L, D>>,
+    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L>>,
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
     pub(in crate::protocol::core) trace_scale: L,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<L>>,
 }
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
-    point: &RingMultiplierOpeningPoint<F, D>,
+    point: &RingMultiplierOpeningPoint<F>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let b = point.b_rings().ok_or_else(|| {
+    let b = point.b_rings::<D>().ok_or_else(|| {
         AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
     })?;
-    let a = point.a_rings().ok_or_else(|| {
+    let a = point.a_rings::<D>().ok_or_else(|| {
         AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
     })?;
     Ok((b, a))
@@ -114,7 +115,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     poly: &Q,
-    point: &RingMultiplierOpeningPoint<F, D>,
+    point: &RingMultiplierOpeningPoint<F>,
     block_len: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
@@ -145,7 +146,7 @@ pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, Q, B, c
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
-    prepared_point: &PreparedOpeningPoint<F, C, D>,
+    prepared_point: &PreparedOpeningPoint<F, C>,
     block_len: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
@@ -175,7 +176,7 @@ where
 pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     folded_rings: &[CyclotomicRing<F, D>],
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     protocol_point: &[E],
     alpha_bits: usize,
     basis: BasisMode,
@@ -978,7 +979,7 @@ pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
     prefix_slots: &SetupPrefixRegistry<F>,
     lp: &LevelParams,
     next_level_params: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     tau1: &[L],
     alpha: L,
     sumcheck_challenges: &[L],

@@ -141,7 +141,7 @@ fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
 }
 
 fn cyclic_consistency_z_product<F, const D: usize>(
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     z_folded_centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
@@ -179,12 +179,12 @@ where
                 let z_idx = block_idx * depth_commit + digit_idx;
                 z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
             }
-            if let Some(scalar) = ring_multiplier_point.a_constant_coeff(block_idx) {
+            if let Some(scalar) = ring_multiplier_point.a_constant_coeff::<D>(block_idx) {
                 add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
                 reduced += z_block.scale(&scalar);
             } else {
                 let a_rings = ring_multiplier_point
-                    .a_rings()
+                    .a_rings::<D>()
                     .ok_or(AkitaError::InvalidProof)?;
                 let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
                 add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
@@ -215,7 +215,7 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     t_hat: &FlatDigitBlocks<D>,
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     e_folded: &[CyclotomicRing<F, D>],
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     row_coefficient_rings: &[CyclotomicRing<F, D>],
     z_folded_centered: &[[i32; D]],
     z_folded_centered_inf_norm: u32,
@@ -429,7 +429,7 @@ where
     } else {
         None
     };
-    let constant_opening_multipliers = ring_multiplier_point.is_constant();
+    let constant_opening_multipliers = ring_multiplier_point.is_constant::<D>();
     let consistency_z_quotient = if constant_opening_multipliers {
         // Degree-one openings embed scalar weights as constant rings. Cyclic
         // and negacyclic multiplication by a constant agree, so the quotient

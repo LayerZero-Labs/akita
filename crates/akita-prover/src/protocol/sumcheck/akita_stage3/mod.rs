@@ -70,7 +70,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         prefix_slots: &SetupPrefixRegistry<F>,
         lp: &LevelParams,
         next_fold_level_params: &LevelParams,
-        relation: &RingRelationInstance<F, D>,
+        relation: &RingRelationInstance<F>,
         tau1: &[E],
         alpha: E,
         stage2_challenges: &[E],
@@ -240,7 +240,7 @@ fn build_setup_product_term<F, E, T, const D: usize>(
     prefix_slots: &SetupPrefixRegistry<F>,
     lp: &LevelParams,
     next_fold_level_params: &LevelParams,
-    relation: &RingRelationInstance<F, D>,
+    relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
@@ -362,7 +362,7 @@ where
 fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     lp: &LevelParams,
-    relation: &RingRelationInstance<F, D>,
+    relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
@@ -381,7 +381,7 @@ where
         lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
         lp.log_basis,
     );
-    let layout = relation.segment_layout(lp)?;
+    let layout = relation.segment_layout::<D>(lp)?;
     let plan = SetupContributionPlan::prepare(
         &inputs,
         x_challenges,
@@ -406,7 +406,7 @@ where
 
 /// Build the setup-contribution artifact from prover-owned relation data.
 fn create_setup_contribution_inputs<F, E, const D: usize>(
-    relation: &RingRelationInstance<F, D>,
+    relation: &RingRelationInstance<F>,
     lp: &LevelParams,
     tau1: &[E],
 ) -> Result<SetupContributionPlanInputs<E>, AkitaError>

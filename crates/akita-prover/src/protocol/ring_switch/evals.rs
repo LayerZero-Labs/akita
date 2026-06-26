@@ -54,7 +54,7 @@ pub fn build_w_evals_compact(
 pub fn compute_m_evals_x<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     challenges: &Challenges,
     alpha: E,
     alpha_pows: &[E],
@@ -390,7 +390,7 @@ where
             let local_k = k;
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
-            let a_eval = ring_multiplier_point.eval_a_at::<E>(block_idx, alpha_pows)?;
+            let a_eval = ring_multiplier_point.eval_a_at::<D, E>(block_idx, alpha_pows)?;
             let mut acc = consistency_weight * a_eval * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {

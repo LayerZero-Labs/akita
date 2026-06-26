@@ -1305,6 +1305,9 @@ Phase 4 (planner DP, field-element envelope sizing) is a **separate** PR, out of
   never means a kernel loses it.
 - When in doubt about a count or a length, prefer the **shared function**
   (`setup_geometry_at` / `setup_active_ring_elems_at`) over re-deriving inline.
+- **Performance contract (Wave 6+):** demoting `const D` off storage types must not add hot-path
+  shape checks or allocations. Validate once at construction or verifier boundary; use trusted
+  `RingBuf` borrows in prover loops. Full rules: [`docs/runtime-ring-perf-contract.md`](../docs/runtime-ring-perf-contract.md).
 
 ### PR decomposition (review scoping)
 

@@ -199,29 +199,52 @@ impl<F: FieldCore> FlatRingVec<F> {
             .collect())
     }
 
+    /// Hot-path borrow after construction or schedule dispatch has fixed `D`.
+    ///
+    /// Debug-asserts `ring_dim == D` (or compact mode with divisible length).
+    /// Release builds perform no shape checks.
+    #[inline]
+    pub fn as_ring_slice_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
+        debug_assert!(D > 0);
+        debug_assert!(self.ring_dim == 0 || self.ring_dim == D);
+        debug_assert!(self.coeffs.len().is_multiple_of(D));
+        let ring_count = self.coeffs.len() / D;
+        // SAFETY: `CyclotomicRing<F, D>` is `#[repr(transparent)]` over `[F; D]`.
+        unsafe {
+            std::slice::from_raw_parts(
+                self.coeffs.as_ptr() as *const CyclotomicRing<F, D>,
+                ring_count,
+            )
+        }
+    }
+
+    /// Hot-path borrow of a single ring element after construction fixed `D`.
+    #[inline]
+    pub fn as_single_ring_trusted<const D: usize>(&self) -> &CyclotomicRing<F, D> {
+        debug_assert_eq!(self.coeffs.len(), D);
+        debug_assert!(self.ring_dim == 0 || self.ring_dim == D);
+        // SAFETY: one `D`-sized coefficient block is one ring element.
+        unsafe { &*(self.coeffs.as_ptr() as *const CyclotomicRing<F, D>) }
+    }
+
     /// Borrow the stored coefficients as a slice of ring elements.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
+    #[inline]
     pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        if self.ring_dim == D {
+            return Ok(self.as_ring_slice_trusted::<D>());
+        }
         if D == 0
             || (self.ring_dim > 0 && self.ring_dim != D)
             || !self.coeffs.len().is_multiple_of(D)
         {
             return Err(AkitaError::InvalidProof);
         }
-        let ring_count = self.coeffs.len() / D;
-        // SAFETY: `CyclotomicRing<F, D>` is `#[repr(transparent)]` over
-        // `[F; D]`, so a contiguous coefficient buffer with length divisible by
-        // `D` can be borrowed as contiguous ring elements.
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                self.coeffs.as_ptr() as *const CyclotomicRing<F, D>,
-                ring_count,
-            )
-        })
+        Ok(self.as_ring_slice_trusted::<D>())
     }
 
     /// Borrow the stored coefficients as a single typed ring element.
@@ -232,6 +255,9 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// well-formed for ring dimension `D`, or if it contains more than one
     /// element.
     pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, AkitaError> {
+        if self.ring_dim == D && self.coeffs.len() == D {
+            return Ok(self.as_single_ring_trusted::<D>());
+        }
         let rings = self.as_ring_slice::<D>()?;
         match rings {
             [ring] => Ok(ring),

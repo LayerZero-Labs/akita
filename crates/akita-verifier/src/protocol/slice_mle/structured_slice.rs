@@ -421,7 +421,7 @@ mod tests {
             vec![CyclotomicRing::<F, D>::zero(); num_claims],
             Vec::new(),
         )?;
-        instance.segment_layout(lp)
+        instance.segment_layout::<D>(lp)
     }
 
     fn fixture() -> StructuredFixture {
