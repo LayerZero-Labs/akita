@@ -493,7 +493,7 @@ where
 pub fn commit<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
-    stack: &UniformProverStack<'_, Cfg::Field, B, D>,
+    stack: &UniformProverStack<'_, Cfg::Field, B>,
 ) -> Result<
     (
         RingCommitment<Cfg::Field, D>,
@@ -598,7 +598,7 @@ where
 pub fn batched_commit<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
-    stack: &UniformProverStack<'_, Cfg::Field, B, D>,
+    stack: &UniformProverStack<'_, Cfg::Field, B>,
 ) -> Result<CommitmentWithHint<Cfg::Field, D>, AkitaError>
 where
     Cfg: CommitmentConfig,
