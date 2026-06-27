@@ -112,10 +112,10 @@ pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
     schedule_terminal_direct_witness_shape, scheduled_next_level_params, w_ring_element_count,
-    w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, DirectStep,
-    ExecutionSchedule, FoldStep, GroupBatchAkitaScheduleLookupKey, Schedule, Step,
+    w_ring_element_count_with_counts, w_ring_element_count_with_counts_for_layout,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CommitmentGroupLayout, DirectStep, ExecutionSchedule, FoldStep,
+    GroupBatchAkitaScheduleLookupKey, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};

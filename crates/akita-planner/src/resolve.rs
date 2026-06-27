@@ -10,10 +10,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape_for_key, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, GroupBatchAkitaScheduleLookupKey, LevelParams,
-    MRowLayout, Schedule, Step,
+    terminal_direct_witness_shape_for_key, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
+    GroupBatchAkitaScheduleLookupKey, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::catalog_identity::validate_catalog_identity;
@@ -207,11 +206,12 @@ pub fn schedule_from_entry(
                     terminal_witness_field_len = Some(len);
                     (len, None, MRowLayout::WithoutDBlock)
                 } else {
-                    let ring = w_ring_element_count_with_counts_bits(
+                    let ring = w_ring_element_count_with_counts_for_layout_bits(
                         field_bits,
                         &lp,
                         num_polynomials,
                         num_public_rows,
+                        MRowLayout::WithDBlock,
                     )?;
                     let len = mul_d(ring)?;
                     let GeneratedStep::Fold(next_level) = next else {

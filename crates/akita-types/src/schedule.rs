@@ -320,23 +320,6 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     )
 }
 
-/// Non-generic variant of [`w_ring_element_count_with_counts`] for callers
-/// that already know the effective field bit width.
-pub fn w_ring_element_count_with_counts_bits(
-    field_bits: u32,
-    lp: &LevelParams,
-    num_polynomials: usize,
-    num_public_rows: usize,
-) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts_for_layout_bits(
-        field_bits,
-        lp,
-        num_polynomials,
-        num_public_rows,
-        crate::layout::MRowLayout::WithDBlock,
-    )
-}
-
 /// Non-generic variant of [`w_ring_element_count_with_counts_for_layout`] for
 /// callers that already know the effective field bit width. The planner
 /// search uses this to keep its API free of a base-field type parameter.
