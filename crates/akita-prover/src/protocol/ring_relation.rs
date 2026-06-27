@@ -8,7 +8,8 @@ use crate::compute::{
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{
-    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningBatch,
+    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
+    TypedProverOpeningBatch,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
@@ -326,7 +327,7 @@ impl RingRelationProver {
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F>,
-        fold_claims: ProverOpeningBatch<'a, PointF, P, F, D>,
+        fold_claims: TypedProverOpeningBatch<'a, PointF, P, F, D>,
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
         transcript: &mut T,

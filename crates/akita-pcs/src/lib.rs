@@ -58,7 +58,7 @@ pub use akita_field::{
     PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use akita_prover::{
-    CommitmentComputeBackend, CommitmentProver, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
+    CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
     CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan,
     DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, MultiChunkEntry, OneHotCommitBlocks,
     OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, ProveBackendFor,
@@ -72,7 +72,7 @@ pub use akita_prover::{
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
 pub use akita_types::{
-    BasisMode, BlockOrder, CommitmentGroup, OpeningBatchShape, PointVariableSelection,
+    BasisMode, BlockOrder, CommitmentGroup, FlatRingVec, OpeningBatchShape, PointVariableSelection,
     VerifierOpeningBatch,
 };
 pub use scheme::AkitaCommitmentScheme;

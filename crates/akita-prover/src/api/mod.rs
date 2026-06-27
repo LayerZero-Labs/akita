@@ -10,6 +10,6 @@ pub use commitment::{
     prepare_batched_commit_inputs, prepare_commit_inputs, CommitmentWithHint, CommittedGroupHandle,
     CommittedGroupScheduleMeta, CommittedGroupWithHint,
 };
-pub use scheme::CommitmentProver;
+pub use scheme::TypedCommitmentProver;
 pub use setup::AkitaProverSetup;
 pub use setup_prefix::commit_setup_prefix;

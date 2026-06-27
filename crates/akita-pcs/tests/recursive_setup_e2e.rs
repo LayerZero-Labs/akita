@@ -23,13 +23,11 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid as _};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, SetupContributionMode,
 };
-use akita_verifier::CommitmentVerifier;
 use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"recursive_setup_e2e/onehot";
@@ -74,7 +72,7 @@ struct OnehotProof {
     verifier_setup: akita_types::AkitaVerifierSetup<F>,
     point: Vec<F>,
     opening: F,
-    commitment: akita_types::RingCommitment<F, ONEHOT_D>,
+    commitment: akita_types::FlatRingVec<F>,
 }
 
 /// Commit + prove a single one-hot polynomial under the requested setup mode,
@@ -103,13 +101,9 @@ fn prove_onehot_with_setup_mode(
     let opening = opening_from_poly(&poly, &point, &layout);
 
     let setup = match setup_mode {
-        SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(nv, 1)
-        }
+        SetupContributionMode::Direct => AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1),
         SetupContributionMode::Recursive => {
-            <AkitaCommitmentScheme<OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover_recursion(
-                nv, 1,
-            )
+            AkitaCommitmentScheme::<OneHotCfg>::setup_prover_recursion(nv, 1)
         }
     }
     .unwrap();
@@ -117,21 +111,15 @@ fn prove_onehot_with_setup_mode(
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        <AkitaCommitmentScheme<OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
     let commit_input = std::slice::from_ref(&poly);
     let (commitment, hint) =
-        <AkitaCommitmentScheme<OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::commit(
-            &setup,
-            commit_input,
-            &stack,
-        )
-        .expect("commit");
+        AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack).expect("commit");
 
     let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let proof = <AkitaCommitmentScheme<OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+    let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
         &setup,
         prove_input(&point[..], &poly_refs[..], &commitment, hint),
         &stack,
@@ -167,7 +155,7 @@ fn verify_onehot(
 ) -> Result<(), akita_field::AkitaError> {
     let openings = [fixture.opening];
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    <AkitaCommitmentScheme<OneHotCfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+    AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
         &fixture.proof,
         &fixture.verifier_setup,
         &mut verifier_transcript,

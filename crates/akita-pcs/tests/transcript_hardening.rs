@@ -7,7 +7,6 @@ mod common;
 
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{
     ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
@@ -52,7 +51,7 @@ fn event_stream_equality_small() {
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).unwrap();
+        let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -60,13 +59,9 @@ fn event_stream_equality_small() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .expect("commit");
+        let verifier_setup = Scheme::setup_verifier(&setup);
+        let (commitment, hint) =
+            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -75,7 +70,7 @@ fn event_stream_equality_small() {
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
-        let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+        let proof = Scheme::batched_prove(
             &setup,
             prove_input(
                 &point,
@@ -94,7 +89,7 @@ fn event_stream_equality_small() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
-        <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+        Scheme::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -289,7 +284,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).unwrap();
+        let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -297,13 +292,9 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .expect("commit");
+        let verifier_setup = Scheme::setup_verifier(&setup);
+        let (commitment, hint) =
+            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -311,7 +302,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
-        let mut proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+        let mut proof = Scheme::batched_prove(
             &setup,
             prove_input(
                 &point,
@@ -331,7 +322,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         tamper.apply(final_witness_mut(&mut proof), terminal_layout);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
-        <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+        Scheme::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -391,7 +382,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
 
-        let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).unwrap();
+        let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -399,16 +390,12 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .expect("commit");
+        let (commitment, hint) =
+            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
-        let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+        let proof = Scheme::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitment, hint),
             &stack,

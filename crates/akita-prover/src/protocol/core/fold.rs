@@ -260,7 +260,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
 >(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     needs_extension_reduction: bool,
-    fold_claims: ProverOpeningBatch<'a, E, P, F, D>,
+    fold_claims: TypedProverOpeningBatch<'a, E, P, F, D>,
     eor_polys: &[&P],
     eor_opening_batch: &VerifierOpeningBatch<'_, E>,
     pad_base_evals: bool,
@@ -413,7 +413,7 @@ where
     R: ComputeBackendSetup<F>,
 {
     stack: &'a ProverComputeStack<'a, F, C, O, TS, R>,
-    fold_claims: ProverOpeningBatch<'a, E, Q, F, D>,
+    fold_claims: TypedProverOpeningBatch<'a, E, Q, F, D>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,

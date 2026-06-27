@@ -106,8 +106,8 @@ pub use proof::{
     SetupPrefixPublicCommitment, SetupPrefixRegistry, SetupPrefixSlot, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
     SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape,
-    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, VerifierOpeningBatch,
-    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, TypedCommitmentVerifier,
+    VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
     GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
     SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };

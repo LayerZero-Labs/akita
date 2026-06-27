@@ -12,11 +12,13 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
 use akita_prover::AkitaProverSetup;
-use akita_prover::{commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly};
+use akita_prover::{
+    commit_with_params, OneHotPoly, RootTensorProjectionPoly, TypedCommitmentProver,
+};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, RingCommitment};
 use akita_types::{FpExtEncoding, OpeningBatchShape};
-use akita_verifier::CommitmentVerifier;
+use akita_verifier::TypedCommitmentVerifier;
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
@@ -107,7 +109,7 @@ where
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize,
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F>,
@@ -116,7 +118,7 @@ where
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F>,
             BatchedProof = AkitaBatchedProof<F, Cfg::ExtField>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
@@ -146,7 +148,7 @@ where
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup =
-        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys).unwrap();
+        <Scheme<D, Cfg> as TypedCommitmentProver<F, D>>::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -213,7 +215,7 @@ where
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
                 let committed =
-                    <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
+                    <Scheme<D, Cfg> as TypedCommitmentProver<F, D>>::commit(&setup, &polys, &stack)
                         .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);

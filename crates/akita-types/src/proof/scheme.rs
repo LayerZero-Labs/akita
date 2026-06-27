@@ -8,22 +8,22 @@ use std::borrow::Cow;
 /// Opening-point coordinates used by batched verification inputs.
 pub type OpeningPoints<'a, F> = Cow<'a, [F]>;
 
-/// Verifier-side commitment-scheme interface used by Akita protocol code.
+/// Verifier-side commitment-scheme interface.
 ///
-/// Generic over base field `F` and root cyclotomic degree `D` (`Cfg::D` on the
-/// PCS scheme type). Suffix levels dispatch via the resolved schedule.
+/// Generic over base field `F`; ring dimension is carried by the verifier setup,
+/// schedule, and flat commitment storage rather than by this public trait.
 ///
 /// This surface is intentionally proof/claim/setup oriented. It does not name
 /// prover polynomial backends or prover-side hints, so verifier-only crates can
 /// depend on it without importing commitment/proving machinery.
-pub trait CommitmentVerifier<F, const D: usize>: Clone + Send + Sync + 'static
+pub trait CommitmentVerifier<F>: Clone + Send + Sync + 'static
 where
     F: FieldCore + CanonicalField,
 {
     /// Verifier setup parameters.
     type VerifierSetup: Clone + Send + Sync;
     /// Commitment object.
-    type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
+    type Commitment: Clone + PartialEq + Send + Sync;
     /// Public opening point, claimed-evaluation, and proof scalar field.
     type ExtField: ExtField<F>;
     /// Batched single-point evaluation/opening proof object.
@@ -36,6 +36,40 @@ where
     ///
     /// The root layout and Fiat-Shamir batching are derived from the normalized
     /// [`VerifierOpeningBatch`] built from `claims` (single shared point, no multipoint).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when verification fails.
+    #[allow(clippy::too_many_arguments)]
+    fn batched_verify<T: Transcript<F>>(
+        proof: &Self::BatchedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        claims: VerifierOpeningBatch<'_, Self::ExtField, &Self::Commitment>,
+        basis: BasisMode,
+        setup_contribution_mode: SetupContributionMode,
+    ) -> Result<(), AkitaError>;
+
+    /// Protocol identifier.
+    fn protocol_name() -> &'static [u8];
+}
+
+/// Typed verifier dispatch interface used below the public PCS boundary.
+#[doc(hidden)]
+pub trait TypedCommitmentVerifier<F, const D: usize>: Clone + Send + Sync + 'static
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Verifier setup parameters.
+    type VerifierSetup: Clone + Send + Sync;
+    /// Commitment object.
+    type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
+    /// Public opening point, claimed-evaluation, and proof scalar field.
+    type ExtField: ExtField<F>;
+    /// Batched single-point evaluation/opening proof object.
+    type BatchedProof: Clone + Send + Sync;
+
+    /// Verify a fused batched opening proof at one shared opening point.
     ///
     /// # Errors
     ///

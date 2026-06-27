@@ -8,15 +8,15 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    AkitaProverSetup, CommitmentProver, DensePoly, OneHotPoly, ProverCommitmentGroup,
-    ProverOpeningBatch,
+    AkitaProverSetup, DensePoly, OneHotPoly, TypedCommitmentProver, TypedProverCommitmentGroup,
+    TypedProverOpeningBatch,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommitmentGroup,
     PointVariableSelection, RingCommitment, SetupContributionMode, VerifierOpeningBatch,
 };
-use akita_verifier::CommitmentVerifier;
+use akita_verifier::TypedCommitmentVerifier;
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use rand::rngs::StdRng;
@@ -53,10 +53,10 @@ fn prover_claims<'a, P, CommitF: FieldCore, const D: usize>(
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
     hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningBatch<'a, F, P, CommitF, D> {
-    ProverOpeningBatch {
+) -> TypedProverOpeningBatch<'a, F, P, CommitF, D> {
+    TypedProverOpeningBatch {
         point: point.into(),
-        groups: vec![ProverCommitmentGroup {
+        groups: vec![TypedProverCommitmentGroup {
             point_vars: PointVariableSelection::prefix(point.len(), point.len())
                 .expect("full-point prover group"),
             polynomials,
@@ -103,7 +103,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     label: &str,
     nv: usize,
 ) where
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F>,
@@ -112,7 +112,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F>,
             BatchedProof = AkitaBatchedProof<F, F>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
@@ -132,7 +132,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     group.bench_function("setup", |b| {
         b.iter(|| {
             black_box(
-                <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::setup_prover(
+                <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::setup_prover(
                     black_box(nv),
                     black_box(1),
                 )
@@ -142,7 +142,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     });
 
     let setup =
-        <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
+        <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -151,7 +151,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     group.bench_function("commit", |b| {
         b.iter(|| {
             black_box(
-                <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::commit(
+                <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::commit(
                     &setup,
                     black_box(std::slice::from_ref(&poly)),
                     &stack,
@@ -161,7 +161,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         })
     });
 
-    let (commitment, hint) = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::commit(
+    let (commitment, hint) = <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::commit(
         &setup,
         std::slice::from_ref(&poly),
         &stack,
@@ -173,7 +173,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let openings = [opening];
 
     let verifier_setup =
-        <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::setup_verifier(&setup);
 
     for (mode, mode_label) in setup_contribution_modes() {
         group.bench_function(format!("prove/{mode_label}"), |b| {
@@ -182,7 +182,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 |h| {
                     let mut transcript = AkitaTranscript::<F>::new(b"bench");
                     black_box(
-                        <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::batched_prove(
+                        <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::batched_prove(
                             &setup,
                             prover_claims(
                                 &pt[..],
@@ -203,7 +203,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         });
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
-        let proof = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::batched_prove(
+        let proof = <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::batched_prove(
             &setup,
             prover_claims(&pt[..], &poly_refs[..], &commitments[0], hint.clone()),
             &stack,
@@ -216,7 +216,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         group.bench_function(format!("verify/{mode_label}"), |b| {
             b.iter(|| {
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
-                <AkitaCommitmentScheme<Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                <AkitaCommitmentScheme<Cfg> as TypedCommitmentVerifier<F, D>>::batched_verify(
                     black_box(&proof),
                     black_box(&verifier_setup),
                     &mut transcript,
@@ -230,7 +230,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
 
         group.bench_function(format!("e2e/{mode_label}"), |b| {
             b.iter(|| {
-                let (cm, h) = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::commit(
+                let (cm, h) = <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::commit(
                     &setup,
                     std::slice::from_ref(&poly),
                     &stack,
@@ -238,17 +238,18 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 .unwrap();
                 let cms = [cm];
                 let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
-                let pf = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::batched_prove(
-                    &setup,
-                    prover_claims(&pt[..], &poly_refs[..], &cms[0], h),
-                    &stack,
-                    &mut pt_tr,
-                    BasisMode::Lagrange,
-                    mode,
-                )
-                .unwrap();
+                let pf =
+                    <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::batched_prove(
+                        &setup,
+                        prover_claims(&pt[..], &poly_refs[..], &cms[0], h),
+                        &stack,
+                        &mut pt_tr,
+                        BasisMode::Lagrange,
+                        mode,
+                    )
+                    .unwrap();
                 let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
-                <AkitaCommitmentScheme<Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                <AkitaCommitmentScheme<Cfg> as TypedCommitmentVerifier<F, D>>::batched_verify(
                     &pf,
                     &verifier_setup,
                     &mut vt_tr,
@@ -270,7 +271,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     label: &str,
     nv: usize,
 ) where
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F>,
@@ -279,7 +280,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F>,
             BatchedProof = AkitaBatchedProof<F, F>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
@@ -315,7 +316,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
     let setup =
-        <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
+        <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -327,7 +328,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     group.bench_function("commit_onehot", |b| {
         b.iter(|| {
             black_box(
-                <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::commit(
+                <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::commit(
                     &setup,
                     black_box(std::slice::from_ref(&onehot_poly)),
                     &stack,
@@ -337,7 +338,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         })
     });
 
-    let (commitment, hint) = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::commit(
+    let (commitment, hint) = <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::commit(
         &setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
@@ -349,7 +350,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let openings = [opening];
 
     let verifier_setup =
-        <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::setup_verifier(&setup);
 
     for (mode, mode_label) in setup_contribution_modes() {
         group.bench_function(format!("prove/{mode_label}"), |b| {
@@ -358,7 +359,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                 |h| {
                     let mut transcript = AkitaTranscript::<F>::new(b"bench");
                     black_box(
-                        <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::batched_prove(
+                        <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::batched_prove(
                             &setup,
                             prover_claims(
                                 &pt[..],
@@ -379,7 +380,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         });
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
-        let proof = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::batched_prove(
+        let proof = <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::batched_prove(
             &setup,
             prover_claims(&pt[..], &poly_refs[..], &commitments[0], hint.clone()),
             &stack,
@@ -392,7 +393,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         group.bench_function(format!("verify/{mode_label}"), |b| {
             b.iter(|| {
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
-                <AkitaCommitmentScheme<Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                <AkitaCommitmentScheme<Cfg> as TypedCommitmentVerifier<F, D>>::batched_verify(
                     black_box(&proof),
                     black_box(&verifier_setup),
                     &mut transcript,
@@ -406,7 +407,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
 
         group.bench_function(format!("e2e/{mode_label}"), |b| {
             b.iter(|| {
-                let (cm, h) = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::commit(
+                let (cm, h) = <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::commit(
                     &setup,
                     std::slice::from_ref(&onehot_poly),
                     &stack,
@@ -414,17 +415,18 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                 .unwrap();
                 let cms = [cm];
                 let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
-                let pf = <AkitaCommitmentScheme<Cfg> as CommitmentProver<F, D>>::batched_prove(
-                    &setup,
-                    prover_claims(&pt[..], &poly_refs[..], &cms[0], h),
-                    &stack,
-                    &mut pt_tr,
-                    BasisMode::Lagrange,
-                    mode,
-                )
-                .unwrap();
+                let pf =
+                    <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<F, D>>::batched_prove(
+                        &setup,
+                        prover_claims(&pt[..], &poly_refs[..], &cms[0], h),
+                        &stack,
+                        &mut pt_tr,
+                        BasisMode::Lagrange,
+                        mode,
+                    )
+                    .unwrap();
                 let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
-                <AkitaCommitmentScheme<Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                <AkitaCommitmentScheme<Cfg> as TypedCommitmentVerifier<F, D>>::batched_verify(
                     &pf,
                     &verifier_setup,
                     &mut vt_tr,

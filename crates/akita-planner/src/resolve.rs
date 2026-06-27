@@ -280,7 +280,7 @@ pub fn schedule_from_entry(
                                 }),
                                 key.num_polynomials,
                             )
-                            .ok(),
+                            .map(Some)?,
                         None => None,
                     };
                     (
@@ -352,6 +352,10 @@ pub fn estimate_proof_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generated::{
+        GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTableEntry,
+        GeneratedStep,
+    };
     use akita_types::{DecompositionParams, SisModulusFamily};
 
     fn flat_policy() -> PlannerPolicy {
@@ -403,5 +407,130 @@ mod tests {
             .expect_err("zero-arity key must be rejected");
 
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    fn generated_step_from_level_params(lp: &LevelParams) -> GeneratedFoldStep {
+        GeneratedFoldStep {
+            ring_d: lp.ring_dimension as u32,
+            log_basis: lp.log_basis,
+            m_vars: lp.m_vars as u32,
+            r_vars: lp.r_vars as u32,
+            n_a: lp.a_key.row_len() as u32,
+            n_b: lp.b_key.row_len() as u32,
+            n_d: lp.d_key.row_len() as u32,
+            tier_split: (lp.tier_split > 1).then_some(lp.tier_split as u32),
+            n_f: lp.f_key.as_ref().map(|fk| fk.row_len() as u32),
+        }
+    }
+
+    #[test]
+    fn generated_step_accepts_smaller_ring_dimension_inside_policy_envelope() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("schedule");
+        let root = schedule
+            .fold_steps()
+            .next()
+            .expect("test key should produce a folded schedule");
+        let generated = generated_step_from_level_params(&root.params);
+        assert_eq!(generated.ring_d, 64);
+
+        let envelope_policy = PlannerPolicy {
+            ring_dimension: 128,
+            ..policy
+        };
+        let expanded = generated
+            .expand_to_level_params(
+                &envelope_policy,
+                ring_challenge_config,
+                0,
+                1usize << key.num_vars,
+                TensorChallengeShape::Flat,
+                1,
+            )
+            .expect("D64 generated step should expand under D128 policy envelope");
+
+        assert_eq!(expanded.ring_dimension, 64);
+    }
+
+    #[test]
+    fn generated_step_rejects_ring_dimension_that_does_not_divide_policy_envelope() {
+        let policy = flat_policy();
+        let bad_generated = GeneratedFoldStep {
+            ring_d: 64,
+            log_basis: 3,
+            m_vars: 1,
+            r_vars: 1,
+            n_a: 1,
+            n_b: 1,
+            n_d: 1,
+            tier_split: None,
+            n_f: None,
+        };
+        let incompatible_policy = PlannerPolicy {
+            ring_dimension: 96,
+            ..policy
+        };
+
+        let err = bad_generated
+            .expand_to_level_params(
+                &incompatible_policy,
+                ring_challenge_config,
+                0,
+                1usize << 20,
+                TensorChallengeShape::Flat,
+                1,
+            )
+            .expect_err("non-divisor ring dimension must be rejected before layout expansion");
+
+        assert!(
+            err.to_string()
+                .contains("is not supported by policy envelope"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn root_direct_commit_expansion_error_is_not_silently_dropped() {
+        static STEPS: [GeneratedStep; 1] = [GeneratedStep::Direct(GeneratedDirectStep {
+            commit: Some(GeneratedFoldStep {
+                ring_d: 64,
+                log_basis: 3,
+                m_vars: 1,
+                r_vars: 1,
+                n_a: 1,
+                n_b: 1,
+                n_d: 1,
+                tier_split: None,
+                n_f: None,
+            }),
+        })];
+        let entry = GeneratedScheduleTableEntry {
+            key: GeneratedScheduleKey {
+                num_vars: 20,
+                num_polynomials: 1,
+            },
+            steps: &STEPS,
+        };
+        let incompatible_policy = PlannerPolicy {
+            ring_dimension: 96,
+            ..flat_policy()
+        };
+
+        let err = schedule_from_entry(
+            &entry,
+            AkitaScheduleLookupKey::new(20, 1),
+            &incompatible_policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect_err("invalid root-direct commit metadata must fail resolution");
+
+        assert!(
+            err.to_string()
+                .contains("is not supported by policy envelope"),
+            "{err}"
+        );
     }
 }

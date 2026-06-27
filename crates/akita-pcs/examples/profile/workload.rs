@@ -14,8 +14,8 @@ use akita_prover::compute::{
     RootCommitPoly, RootPolyShape, RootProveFlowBackend, RootProvePoly,
 };
 use akita_prover::{
-    AkitaProverSetup, CommitmentProver, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
-    ProverCommitmentGroup, ProverOpeningBatch,
+    AkitaProverSetup, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
+    TypedCommitmentProver, TypedProverCommitmentGroup, TypedProverOpeningBatch,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
@@ -27,7 +27,7 @@ use akita_types::{
     CommitmentGroup, FpExtEncoding, LevelParams, OpeningBatchShape, PointVariableSelection,
     RingCommitment, Schedule, SetupContributionMode, Step, VerifierOpeningBatch,
 };
-use akita_verifier::CommitmentVerifier;
+use akita_verifier::TypedCommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
@@ -39,10 +39,10 @@ fn prover_claims<'a, E: Clone, P, CommitF: FieldCore, const D: usize>(
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
     hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningBatch<'a, E, P, CommitF, D> {
-    ProverOpeningBatch {
+) -> TypedProverOpeningBatch<'a, E, P, CommitF, D> {
+    TypedProverOpeningBatch {
         point: point.into(),
-        groups: vec![ProverCommitmentGroup {
+        groups: vec![TypedProverCommitmentGroup {
             point_vars: PointVariableSelection::prefix(point.len(), point.len())
                 .expect("full-point prover group"),
             polynomials,
@@ -385,14 +385,14 @@ fn run_prove<
     P: RootCommitPoly<FF, D> + RootProvePoly<FF, D>,
 >(
     label: &str,
-    setup: &<AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::ProverSetup,
+    setup: &<AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<FF, D>>::ProverSetup,
     stack: &akita_prover::UniformProverStack<'_, FF, CpuBackend>,
     poly: &P,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
     plan: Option<&Schedule>,
 ) where
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -401,7 +401,7 @@ fn run_prove<
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             FF,
             D,
             VerifierSetup = AkitaVerifierSetup<FF>,
@@ -426,7 +426,7 @@ fn run_prove<
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<Cfg>;
 
     let t0 = Instant::now();
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
+    let (commitment, hint) = <Scheme<D, Cfg> as TypedCommitmentProver<FF, D>>::commit(
         setup,
         std::slice::from_ref(poly),
         stack,
@@ -448,7 +448,7 @@ fn run_prove<
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let _grind_observer = FoldGrindObserverGuard::install();
-    let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
+    let proof = <Scheme<D, Cfg> as TypedCommitmentProver<FF, D>>::batched_prove(
         setup,
         prover_claims(pt, &poly_refs[..], &commitments[0], hint),
         stack,
@@ -513,9 +513,9 @@ fn run_prove<
     }
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(setup);
+    let verifier_setup = <Scheme<D, Cfg> as TypedCommitmentProver<FF, D>>::setup_verifier(setup);
     let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-    match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
+    match <Scheme<D, Cfg> as TypedCommitmentVerifier<FF, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -547,7 +547,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -556,7 +556,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             FF,
             D,
             VerifierSetup = AkitaVerifierSetup<FF>,
@@ -595,14 +595,12 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         };
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
-        SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::setup_prover(
-                RootPolyShape::num_vars(&poly),
-                1,
-            )
-        }
+        SetupContributionMode::Direct => <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<
+            FF,
+            D,
+        >>::setup_prover(RootPolyShape::num_vars(&poly), 1),
         SetupContributionMode::Recursive => {
-            <AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(
+            <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<FF, D>>::setup_prover_recursion(
                 RootPolyShape::num_vars(&poly),
                 1,
             )
@@ -656,7 +654,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -665,7 +663,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             FF,
             D,
             VerifierSetup = AkitaVerifierSetup<FF>,
@@ -706,11 +704,12 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1)
+            <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<FF, D>>::setup_prover(nv, 1)
         }
-        SetupContributionMode::Recursive => {
-            <AkitaCommitmentScheme<Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(nv, 1)
-        }
+        SetupContributionMode::Recursive => <AkitaCommitmentScheme<Cfg> as TypedCommitmentProver<
+            FF,
+            D,
+        >>::setup_prover_recursion(nv, 1),
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -761,7 +760,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -770,7 +769,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             FF,
             D,
             VerifierSetup = AkitaVerifierSetup<FF>,
@@ -830,10 +829,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup_contribution_mode = profile_setup_contribution_mode();
     let setup = match setup_contribution_mode {
         SetupContributionMode::Direct => {
-            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys)
+            <Scheme<D, Cfg> as TypedCommitmentProver<FF, D>>::setup_prover(nv, num_polys)
         }
         SetupContributionMode::Recursive => {
-            <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover_recursion(nv, num_polys)
+            <Scheme<D, Cfg> as TypedCommitmentProver<FF, D>>::setup_prover_recursion(nv, num_polys)
         }
     }
     .unwrap();
@@ -860,7 +859,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&setup, &polys, &stack).unwrap();
+        <Scheme<D, Cfg> as TypedCommitmentProver<FF, D>>::commit(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -874,7 +873,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let _grind_observer = FoldGrindObserverGuard::install();
-    let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
+    let proof = <Scheme<D, Cfg> as TypedCommitmentProver<FF, D>>::batched_prove(
         &setup,
         prover_claims(
             &pt[..],
@@ -964,9 +963,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     }
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(&setup);
+    let verifier_setup = <Scheme<D, Cfg> as TypedCommitmentProver<FF, D>>::setup_verifier(&setup);
     let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-    match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
+    match <Scheme<D, Cfg> as TypedCommitmentVerifier<FF, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,

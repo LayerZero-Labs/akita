@@ -15,15 +15,25 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, Rando
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
     AkitaExpandedSetup, AkitaScheduleLookupKey, CommitmentGroupLayout, FlatDigitBlocks,
-    FpExtEncoding, LevelParams, OpeningBatchShape, RingCommitment, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    FlatRingVec, FpExtEncoding, LevelParams, OpeningBatchShape, RingCommitment,
+    GROUPED_ROOT_DENSE_UNSUPPORTED,
 };
 
-/// Commitment output plus prover-side hint for one committed polynomial bundle.
-pub type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F>);
+/// Typed commitment output plus prover-side hint at an internal dispatch site.
+#[doc(hidden)]
+pub type TypedCommitmentWithHint<F, const D: usize> =
+    (RingCommitment<F, D>, AkitaCommitmentHint<F>);
 
-/// Commitment group handle specialized to Akita's native commitment and hint types.
-pub type CommittedGroupWithHint<F, const D: usize> =
+/// Commitment output plus prover-side hint for one committed polynomial bundle.
+pub type CommitmentWithHint<F> = (FlatRingVec<F>, AkitaCommitmentHint<F>);
+
+/// Typed commitment group handle at an internal dispatch site.
+#[doc(hidden)]
+pub type TypedCommittedGroupWithHint<F, const D: usize> =
     CommittedGroupHandle<RingCommitment<F, D>, AkitaCommitmentHint<F>>;
+
+/// Commitment group handle specialized to Akita's native hint type.
+pub type CommittedGroupWithHint<F> = CommittedGroupHandle<FlatRingVec<F>, AkitaCommitmentHint<F>>;
 
 /// Schedule metadata returned by a standalone commitment-group precommit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -650,7 +660,7 @@ pub fn commit_group<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-) -> Result<CommittedGroupWithHint<Cfg::Field, D>, AkitaError>
+) -> Result<TypedCommittedGroupWithHint<Cfg::Field, D>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -707,7 +717,7 @@ pub fn batched_commit<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-) -> Result<CommitmentWithHint<Cfg::Field, D>, AkitaError>
+) -> Result<TypedCommitmentWithHint<Cfg::Field, D>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -759,7 +769,7 @@ pub fn batched_commit_with_params<F, const D: usize, P, B>(
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B>,
     params: &LevelParams,
-) -> Result<CommitmentWithHint<F, D>, AkitaError>
+) -> Result<TypedCommitmentWithHint<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
