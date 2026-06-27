@@ -26,7 +26,10 @@ pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, ring_challenge_config_digest,
     validate_catalog_identity,
 };
-pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
+pub use emit::{
+    refresh_generated_wiring, run_regen_fmt, write_family_module, write_group_batch_family_module,
+    EmitSpec,
+};
 pub use generated::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub use group_batch::find_group_batch_schedule;
 pub use resolve::{

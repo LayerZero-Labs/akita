@@ -62,8 +62,14 @@ pub struct GeneratedPrecommittedGroupKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedGroupBatchScheduleKey {
     /// Main group shape for the final commitment.
-    pub main: akita_types::AkitaScheduleLookupKey,
+    pub main: GeneratedScheduleKey,
     pub precommitteds: &'static [GeneratedPrecommittedGroupKey],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedGroupBatchScheduleTableEntry {
+    pub key: GeneratedGroupBatchScheduleKey,
+    pub steps: &'static [GeneratedStep],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +100,7 @@ pub struct GeneratedScheduleCatalogIdentity {
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedScheduleTable {
     pub entries: &'static [GeneratedScheduleTableEntry],
+    pub group_batch_entries: &'static [GeneratedGroupBatchScheduleTableEntry],
     pub identity: GeneratedScheduleCatalogIdentity,
 }
 
@@ -105,4 +112,47 @@ pub fn table_entry(
     key: GeneratedScheduleKey,
 ) -> Option<&'static GeneratedScheduleTableEntry> {
     table.entries.iter().find(|entry| entry.key == key)
+}
+
+pub fn group_batch_table_entry(
+    table: GeneratedScheduleTable,
+    key: &akita_types::GroupBatchAkitaScheduleLookupKey,
+) -> Option<&'static GeneratedGroupBatchScheduleTableEntry> {
+    table
+        .group_batch_entries
+        .iter()
+        .find(|entry| group_batch_key_eq(&entry.key, key))
+}
+
+fn group_batch_key_eq(
+    generated: &GeneratedGroupBatchScheduleKey,
+    key: &akita_types::GroupBatchAkitaScheduleLookupKey,
+) -> bool {
+    generated.main
+        == GeneratedScheduleKey {
+            num_vars: key.main.num_vars,
+            num_polynomials: key.main.num_polynomials,
+        }
+        && generated.precommitteds.len() == key.precommitteds.len()
+        && generated
+            .precommitteds
+            .iter()
+            .zip(&key.precommitteds)
+            .all(|(generated, layout)| precommitted_group_key_eq(generated, layout))
+}
+
+fn precommitted_group_key_eq(
+    generated: &GeneratedPrecommittedGroupKey,
+    layout: &akita_types::CommitmentGroupLayout,
+) -> bool {
+    generated.key
+        == GeneratedScheduleKey {
+            num_vars: layout.key.num_vars,
+            num_polynomials: layout.key.num_polynomials,
+        }
+        && generated.m_vars == layout.m_vars
+        && generated.r_vars == layout.r_vars
+        && generated.log_basis == layout.log_basis
+        && generated.n_a == layout.n_a
+        && generated.conservative_n_b == layout.conservative_n_b
 }

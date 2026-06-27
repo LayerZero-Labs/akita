@@ -756,6 +756,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     root_fold_shape: TensorChallengeShape::Flat,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 3196710215151138162,
-    key_count: 100,
-    key_digest: 11052894408920940133,
+    key_count: 240,
+    key_digest: 13301374338089589188,
 };

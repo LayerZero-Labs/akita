@@ -246,14 +246,27 @@ impl GroupBatchAkitaScheduleLookupKey {
         self.precommitteds.len() + 1
     }
 
+    /// Total number of polynomials across the main and precommitted groups.
+    pub fn num_polynomials(&self) -> Result<usize, AkitaError> {
+        let mut total = self.main.num_polynomials;
+        for layout in &self.precommitteds {
+            total = total
+                .checked_add(layout.key.num_polynomials)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("grouped root polynomial count overflow".to_string())
+                })?;
+        }
+        Ok(total)
+    }
+
     /// Validate per-group metadata.
     pub fn validate(&self) -> Result<(), AkitaError> {
         self.main.validate()?;
         for layout in &self.precommitteds {
             layout.validate()?;
-            if layout.key.num_vars != self.main.num_vars {
+            if layout.key.num_vars > self.main.num_vars {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root requires all commitment groups to share the same num_vars"
+                    "grouped root requires precommitted groups to have at most the main num_vars"
                         .to_string(),
                 ));
             }

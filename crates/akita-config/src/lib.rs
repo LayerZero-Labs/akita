@@ -20,12 +20,16 @@ use akita_types::{
     SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
+pub mod conservative_commitment;
 pub mod generated_families;
+pub mod multi_group_batch;
 pub mod proof_optimized;
 pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+pub use conservative_commitment::ConservativeCommitmentConfig;
+pub use multi_group_batch::MultiGroupBatchConfig;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_grouped_opening_batch_for_shape,

@@ -10,7 +10,8 @@ use akita_field::AkitaError;
 use akita_types::AkitaScheduleInputs;
 
 use crate::generated::{
-    GeneratedDirectStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
+    GeneratedDirectStep, GeneratedGroupBatchScheduleKey, GeneratedGroupBatchScheduleTableEntry,
+    GeneratedPrecommittedGroupKey, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
@@ -81,11 +82,13 @@ fn catalog_identity_expectation(
     family_name: &'static str,
     policy: &PlannerPolicy,
     entries: &[GeneratedScheduleTableEntry],
+    group_batch_entries: &[GeneratedGroupBatchScheduleTableEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<CatalogIdentityExpectation, AkitaError> {
-    let root_fold_shape = root_fold_shape_for_entries(entries, &fold_challenge_shape_at_level)?;
-    let ring_dimensions = collect_ring_dimensions(entries);
+    let root_fold_shape =
+        root_fold_shape_for_entries(entries, group_batch_entries, &fold_challenge_shape_at_level)?;
+    let ring_dimensions = collect_ring_dimensions(entries, group_batch_entries);
     let ring_challenge_config_digest =
         ring_challenge_config_digest(&ring_dimensions, &ring_challenge_config)?;
     let keys: Vec<GeneratedScheduleKey> = entries.iter().map(|e| e.key).collect();
@@ -103,8 +106,8 @@ fn catalog_identity_expectation(
         root_fold_shape,
         ring_dimensions,
         ring_challenge_config_digest,
-        key_count: keys.len(),
-        key_digest: key_digest(&keys),
+        key_count: keys.len() + group_batch_entries.len(),
+        key_digest: combined_key_digest(&keys, group_batch_entries),
     })
 }
 
@@ -114,6 +117,7 @@ pub fn expected_catalog_identity(
     family_name: &'static str,
     policy: &PlannerPolicy,
     entries: &[GeneratedScheduleTableEntry],
+    group_batch_entries: &[GeneratedGroupBatchScheduleTableEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedScheduleCatalogIdentity, AkitaError> {
@@ -121,6 +125,7 @@ pub fn expected_catalog_identity(
         family_name,
         policy,
         entries,
+        group_batch_entries,
         ring_challenge_config,
         fold_challenge_shape_at_level,
     )?;
@@ -155,6 +160,7 @@ pub fn validate_catalog_identity(
         embedded.family_name,
         policy,
         catalog.entries,
+        catalog.group_batch_entries,
         ring_challenge_config,
         fold_challenge_shape_at_level,
     )?;
@@ -214,11 +220,13 @@ fn root_fold_shape_for_key(
 
 fn root_fold_shape_for_entries(
     entries: &[GeneratedScheduleTableEntry],
+    group_batch_entries: &[GeneratedGroupBatchScheduleTableEntry],
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<TensorChallengeShape, AkitaError> {
     let first = entries
         .first()
         .map(|e| e.key)
+        .or_else(|| group_batch_entries.first().map(|e| e.key.main))
         .ok_or_else(|| AkitaError::InvalidSetup("empty schedule catalog".to_string()))?;
     let expected = root_fold_shape_for_key(first, fold_challenge_shape_at_level)?;
     for entry in entries.iter().skip(1) {
@@ -230,24 +238,43 @@ fn root_fold_shape_for_entries(
             )));
         }
     }
+    for entry in group_batch_entries {
+        let actual = root_fold_shape_for_key(entry.key.main, fold_challenge_shape_at_level)?;
+        if actual != expected {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule catalog family has mixed root fold shapes: first key {:?} uses {:?}, grouped key {:?} uses {:?}",
+                first, expected, entry.key.main, actual
+            )));
+        }
+    }
     Ok(expected)
 }
 
-fn collect_ring_dimensions(entries: &[GeneratedScheduleTableEntry]) -> Vec<usize> {
+fn collect_ring_dimensions(
+    entries: &[GeneratedScheduleTableEntry],
+    group_batch_entries: &[GeneratedGroupBatchScheduleTableEntry],
+) -> Vec<usize> {
     let mut dims = Vec::new();
     for entry in entries {
-        for step in entry.steps {
-            match step {
-                GeneratedStep::Fold(f) => push_unique(&mut dims, f.ring_d as usize),
-                GeneratedStep::Direct(GeneratedDirectStep { commit: Some(c) }) => {
-                    push_unique(&mut dims, c.ring_d as usize);
-                }
-                GeneratedStep::Direct(GeneratedDirectStep { commit: None }) => {}
-            }
-        }
+        collect_step_ring_dimensions(entry.steps, &mut dims);
+    }
+    for entry in group_batch_entries {
+        collect_step_ring_dimensions(entry.steps, &mut dims);
     }
     dims.sort_unstable();
     dims
+}
+
+fn collect_step_ring_dimensions(steps: &[GeneratedStep], dims: &mut Vec<usize>) {
+    for step in steps {
+        match step {
+            GeneratedStep::Fold(f) => push_unique(dims, f.ring_d as usize),
+            GeneratedStep::Direct(GeneratedDirectStep { commit: Some(c) }) => {
+                push_unique(dims, c.ring_d as usize);
+            }
+            GeneratedStep::Direct(GeneratedDirectStep { commit: None }) => {}
+        }
+    }
 }
 
 fn push_unique(dims: &mut Vec<usize>, d: usize) {
@@ -265,6 +292,77 @@ pub fn key_digest(keys: &[GeneratedScheduleKey]) -> u64 {
         h.write_u64(k.num_polynomials as u64);
     }
     h.finish()
+}
+
+fn combined_key_digest(
+    keys: &[GeneratedScheduleKey],
+    group_batch_entries: &[GeneratedGroupBatchScheduleTableEntry],
+) -> u64 {
+    let mut scalar = keys.to_vec();
+    scalar.sort_by_key(|k| (k.num_vars, k.num_polynomials));
+    let mut grouped: Vec<GeneratedGroupBatchScheduleKey> =
+        group_batch_entries.iter().map(|entry| entry.key).collect();
+    grouped.sort_by(group_batch_key_cmp);
+
+    let mut h = Fnv64::new();
+    for k in scalar {
+        h.write_u64(0);
+        write_generated_schedule_key(&mut h, k);
+    }
+    for k in grouped {
+        h.write_u64(1);
+        write_generated_schedule_key(&mut h, k.main);
+        h.write_u64(k.precommitteds.len() as u64);
+        for group in k.precommitteds {
+            write_generated_precommitted_group_key(&mut h, group);
+        }
+    }
+    h.finish()
+}
+
+fn group_batch_key_cmp(
+    left: &GeneratedGroupBatchScheduleKey,
+    right: &GeneratedGroupBatchScheduleKey,
+) -> std::cmp::Ordering {
+    let left_main = (left.main.num_vars, left.main.num_polynomials);
+    let right_main = (right.main.num_vars, right.main.num_polynomials);
+    left_main
+        .cmp(&right_main)
+        .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
+        .then_with(|| {
+            left.precommitteds
+                .iter()
+                .map(precommitted_group_sort_key)
+                .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
+        })
+}
+
+fn precommitted_group_sort_key(
+    key: &GeneratedPrecommittedGroupKey,
+) -> (usize, usize, usize, usize, u32, usize, usize) {
+    (
+        key.key.num_vars,
+        key.key.num_polynomials,
+        key.m_vars,
+        key.r_vars,
+        key.log_basis,
+        key.n_a,
+        key.conservative_n_b,
+    )
+}
+
+fn write_generated_schedule_key(h: &mut Fnv64, key: GeneratedScheduleKey) {
+    h.write_u64(key.num_vars as u64);
+    h.write_u64(key.num_polynomials as u64);
+}
+
+fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &GeneratedPrecommittedGroupKey) {
+    write_generated_schedule_key(h, key.key);
+    h.write_u64(key.m_vars as u64);
+    h.write_u64(key.r_vars as u64);
+    h.write_u64(u64::from(key.log_basis));
+    h.write_u64(key.n_a as u64);
+    h.write_u64(key.conservative_n_b as u64);
 }
 
 pub fn ring_challenge_config_digest(
@@ -367,6 +465,10 @@ mod tests {
         Box::leak(Box::new([sample_entry()]))
     }
 
+    fn sample_group_batch_entries() -> &'static [GeneratedGroupBatchScheduleTableEntry] {
+        &[]
+    }
+
     fn sample_ring_challenge_config(_: usize) -> Result<SparseChallengeConfig, AkitaError> {
         Ok(SparseChallengeConfig::Uniform {
             weight: 1,
@@ -382,6 +484,7 @@ mod tests {
             "fp128_d64_onehot",
             policy,
             entries,
+            sample_group_batch_entries(),
             sample_ring_challenge_config,
             flat_fold,
         )
@@ -397,6 +500,7 @@ mod tests {
         wrong.ring_dimension = 128;
         let catalog = GeneratedScheduleTable {
             entries,
+            group_batch_entries: sample_group_batch_entries(),
             identity: wrong,
         };
         let err =
@@ -413,6 +517,7 @@ mod tests {
         wrong.ring_challenge_config_digest ^= 1;
         let catalog = GeneratedScheduleTable {
             entries,
+            group_batch_entries: sample_group_batch_entries(),
             identity: wrong,
         };
         let err =
@@ -429,6 +534,7 @@ mod tests {
         wrong.key_digest ^= 1;
         let catalog = GeneratedScheduleTable {
             entries,
+            group_batch_entries: sample_group_batch_entries(),
             identity: wrong,
         };
         let err =
@@ -455,6 +561,7 @@ mod tests {
             "fp128_d64_onehot",
             &policy,
             entries,
+            sample_group_batch_entries(),
             sample_ring_challenge_config,
             fold_shape,
         )
