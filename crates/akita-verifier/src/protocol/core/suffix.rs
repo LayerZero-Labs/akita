@@ -54,7 +54,7 @@ where
     }
     current_state
         .commitment
-        .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
+        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
     let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
