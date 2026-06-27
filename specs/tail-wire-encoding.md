@@ -194,7 +194,7 @@ The legacy `RingRelationInstance::segment_layout` plane counts (`crates/akita-ty
 z_coords       = num_public_rows * block_len * num_digits_commit * D   (Golomb integers; one per base-field slot in folded z)
 e_field_elems  = num_blocks * num_w_vectors * D                       (RawField; one ring element per block → D coeffs)
 t_field_elems  = n_a * num_blocks * num_t_vectors * D                   (RawField)
-r_field_elems  = m_row_count(WithoutDBlock) * D                       (RawField; until PR #141 r-drop)
+r_field_elems  = m_row_count_for(WithoutDBlock) * D                   (RawField; until PR #141 r-drop)
 ```
 
 `z_coords` is the Golomb element count. `e_field_elems`, `t_field_elems`, and `r_field_elems` are base-field coefficient counts for `RawField` serialization.
