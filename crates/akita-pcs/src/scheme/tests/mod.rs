@@ -11,9 +11,9 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
-use akita_types::w_ring_element_count;
 use akita_types::BlockOrder;
 use akita_types::ExtensionOpeningReductionProof;
+use akita_types::MRowLayout;
 use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
@@ -160,8 +160,14 @@ fn expected_same_point_batched_shape(
             .expect("scheduled recursive fold current witness length");
         let level_params = scheduled.params;
         let next_level_params = scheduled.next_params;
-        let next_w_len =
-            w_ring_element_count::<OneHotF>(&level_params).unwrap() * level_params.ring_dimension;
+        let next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
+            &level_params,
+            1,
+            1,
+            MRowLayout::WithDBlock,
+        )
+        .unwrap()
+            * level_params.ring_dimension;
         let rounds = batched_shape_rounds(level_params.ring_dimension, next_w_len);
         step_shapes.push(AkitaProofStepShape::Intermediate(LevelProofShape {
             extension_opening_reduction: None,
@@ -189,7 +195,7 @@ fn expected_same_point_batched_shape(
     // The terminal recursive fold ships its `w` in cleartext under
     // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
-    // count instead of the intermediate-layout `w_ring_element_count`.
+    // count instead of the intermediate `WithDBlock` layout.
     let terminal_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
         &terminal_params,
         1,
