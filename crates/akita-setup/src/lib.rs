@@ -456,10 +456,6 @@ mod tests {
             }
         }
 
-        fn cleanup_setup_file(max_num_vars: usize) {
-            cleanup_setup_file_shape(max_num_vars, 1);
-        }
-
         fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
             let _guard = DISK_TEST_ENV_LOCK.lock().unwrap();
             let cache_root = std::env::temp_dir().join(format!("akita-disk-tests-{test_name}"));
@@ -480,14 +476,14 @@ mod tests {
             with_test_cache_dir("roundtrip", || {
                 const MAX_VARS: usize = 12;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
                 let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 assert_eq!(loaded.expanded, prover_setup.expanded);
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -502,7 +498,7 @@ mod tests {
 
                 const MAX_VARS: usize = 13;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let mut setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 let id = SetupPrefixSlotId {
@@ -534,7 +530,7 @@ mod tests {
                 let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 assert_eq!(loaded.prefix_slots, setup.prefix_slots);
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -543,7 +539,7 @@ mod tests {
             with_test_cache_dir("second-call", || {
                 const MAX_VARS: usize = 13;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let first = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
@@ -551,7 +547,7 @@ mod tests {
 
                 assert_eq!(first.expanded, second.expanded);
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -562,7 +558,7 @@ mod tests {
 
                 const MAX_VARS: usize = 13;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 let total = prover_setup.expanded.shared_matrix().total_ring_elements();
@@ -582,7 +578,7 @@ mod tests {
                     .to_string()
                     .contains("setup shared_matrix does not match public matrix seed"));
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -593,7 +589,7 @@ mod tests {
 
                 const MAX_VARS: usize = 13;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 let path = get_storage_path::<Cfg>(MAX_VARS, 1).unwrap();
@@ -604,7 +600,7 @@ mod tests {
                     .expect_err("cache with trailing bytes must be rejected");
                 assert!(err.to_string().contains("trailing bytes"));
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -651,7 +647,7 @@ mod tests {
 
                 const MAX_VARS: usize = 14;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let fresh_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
@@ -691,7 +687,7 @@ mod tests {
 
                 assert_eq!(fresh_u, disk_u);
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
     }
