@@ -95,10 +95,6 @@ fn stage2_norm_claim_from_full_grid(full_grid: [F; 9], corner_weights: [F; 4]) -
         })
 }
 
-fn stage2_relation_claim_from_full_grid(full_grid: [F; 9]) -> F {
-    stage2_norm_claim_from_full_grid(full_grid, [F::one(); 4])
-}
-
 fn stage2_norm_round_values_from_full_grid(full_grid: [F; 9], tau0: F, tau1: F, r0: F) -> Vec<F> {
     let l0_at = |x: PrefixPoint<F>| match x {
         PrefixPoint::Finite(x) => tau0 * x + (F::one() - tau0) * (F::one() - x),
@@ -1187,8 +1183,10 @@ fn stage2_relation_8_point_reconstruction_matches_full_grid_and_round_messages()
                                         let full_grid = stage2_full_grid_values(|x, y| {
                                             stage2_local_relation_eval(w_quad, m_quad, alpha, x, y)
                                         });
-                                        let relation_claim =
-                                            stage2_relation_claim_from_full_grid(full_grid);
+                                        let relation_claim = stage2_norm_claim_from_full_grid(
+                                            full_grid,
+                                            [F::one(); 4],
+                                        );
                                         let compressed = Stage2CompressedGrid::from_full_grid(
                                             full_grid,
                                             BooleanCorner::DEFAULT_STAGE2_RELATION,
