@@ -1102,7 +1102,7 @@ fn stage2_norm_8_point_reconstruction_matches_full_grid_and_round_messages() {
                             let omitted_corner = default_stage2_norm_omitted_corner(corner_weights);
                             let compressed =
                                 Stage2CompressedGrid::from_full_grid(full_grid, omitted_corner);
-                            let recovered = recover_stage2_norm_grid_from_claim(
+                            let recovered = recover_stage2_grid_from_corner_claim(
                                 &compressed,
                                 corner_weights,
                                 norm_claim,
