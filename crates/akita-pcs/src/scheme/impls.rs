@@ -1,4 +1,4 @@
-//! Per-preset `CommitmentProver` / `CommitmentVerifier` impls for [`super::AkitaCommitmentScheme`].
+//! Per-preset D-free PCS methods plus typed dispatch impls for [`super::AkitaCommitmentScheme`].
 //!
 //! Rust cannot use `Cfg::D` in const-generic positions on a single blanket impl, so each
 //! shipped `CommitmentConfig` preset gets a macro-expanded impl with a literal root `D`.
@@ -35,7 +35,7 @@ macro_rules! impl_akita_commitment_scheme {
                 max_num_vars: usize,
                 max_num_polys_per_commitment_group: usize,
             ) -> Result<akita_prover::AkitaProverSetup<$field>, akita_field::AkitaError> {
-                <Self as akita_prover::CommitmentProver<$field, $d>>::setup_prover(
+                <Self as akita_prover::TypedCommitmentProver<$field, $d>>::setup_prover(
                     max_num_vars,
                     max_num_polys_per_commitment_group,
                 )
@@ -50,7 +50,7 @@ macro_rules! impl_akita_commitment_scheme {
                 max_num_vars: usize,
                 max_num_polys_per_commitment_group: usize,
             ) -> Result<akita_prover::AkitaProverSetup<$field>, akita_field::AkitaError> {
-                <Self as akita_prover::CommitmentProver<$field, $d>>::setup_prover_recursion(
+                <Self as akita_prover::TypedCommitmentProver<$field, $d>>::setup_prover_recursion(
                     max_num_vars,
                     max_num_polys_per_commitment_group,
                 )
@@ -61,7 +61,7 @@ macro_rules! impl_akita_commitment_scheme {
             pub fn setup_verifier(
                 setup: &akita_prover::AkitaProverSetup<$field>,
             ) -> akita_types::AkitaVerifierSetup<$field> {
-                <Self as akita_prover::CommitmentProver<$field, $d>>::setup_verifier(setup)
+                <Self as akita_prover::TypedCommitmentProver<$field, $d>>::setup_verifier(setup)
             }
 
             /// Commit a single opening-point bundle without caller-visible root `D`.
@@ -75,7 +75,7 @@ macro_rules! impl_akita_commitment_scheme {
                 stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
             ) -> Result<
                 (
-                    akita_types::RingCommitment<$field, $d>,
+                    akita_types::FlatRingVec<$field>,
                     akita_types::AkitaCommitmentHint<$field>,
                 ),
                 akita_field::AkitaError,
@@ -91,7 +91,11 @@ macro_rules! impl_akita_commitment_scheme {
                 P: akita_prover::compute::RootCommitPoly<$field, $d>,
                 B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
             {
-                <Self as akita_prover::CommitmentProver<$field, $d>>::commit(setup, polys, stack)
+                let (commitment, hint) = <Self as akita_prover::TypedCommitmentProver<
+                    $field,
+                    $d,
+                >>::commit(setup, polys, stack)?;
+                Ok((akita_types::FlatRingVec::from_commitment(&commitment), hint))
             }
 
             /// Commit the polynomial bundle used by a batched prove without caller-visible root `D`.
@@ -105,7 +109,7 @@ macro_rules! impl_akita_commitment_scheme {
                 stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
             ) -> Result<
                 (
-                    akita_types::RingCommitment<$field, $d>,
+                    akita_types::FlatRingVec<$field>,
                     akita_types::AkitaCommitmentHint<$field>,
                 ),
                 akita_field::AkitaError,
@@ -121,9 +125,11 @@ macro_rules! impl_akita_commitment_scheme {
                 P: akita_prover::compute::RootCommitPoly<$field, $d>,
                 B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
             {
-                <Self as akita_prover::CommitmentProver<$field, $d>>::batched_commit(
-                    setup, polys, stack,
-                )
+                let (commitment, hint) = <Self as akita_prover::TypedCommitmentProver<
+                    $field,
+                    $d,
+                >>::batched_commit(setup, polys, stack)?;
+                Ok((akita_types::FlatRingVec::from_commitment(&commitment), hint))
             }
 
             /// Commit one standalone one-hot commitment group without caller-visible root `D`.
@@ -137,7 +143,7 @@ macro_rules! impl_akita_commitment_scheme {
                 stack: &akita_prover::compute::UniformProverStack<'_, $field, B>,
             ) -> Result<
                 akita_prover::CommittedGroupHandle<
-                    akita_types::RingCommitment<$field, $d>,
+                    akita_types::FlatRingVec<$field>,
                     akita_types::AkitaCommitmentHint<$field>,
                 >,
                 akita_field::AkitaError,
@@ -152,9 +158,15 @@ macro_rules! impl_akita_commitment_scheme {
                 P: akita_prover::compute::RootCommitPoly<$field, $d>,
                 B: akita_prover::compute::RootCommitBackend<$field, P, $ext_field, $d>,
             {
-                <Self as akita_prover::CommitmentProver<$field, $d>>::commit_group(
-                    setup, polys, stack,
-                )
+                let group =
+                    <Self as akita_prover::TypedCommitmentProver<$field, $d>>::commit_group(
+                        setup, polys, stack,
+                    )?;
+                Ok(akita_prover::CommittedGroupHandle {
+                    schedule: group.schedule,
+                    commitment: akita_types::FlatRingVec::from_commitment(&group.commitment),
+                    hint: group.hint,
+                })
             }
 
             /// Produce a fused batched opening proof without caller-visible root `D`.
@@ -165,7 +177,7 @@ macro_rules! impl_akita_commitment_scheme {
             #[allow(clippy::too_many_arguments)]
             pub fn batched_prove<'a, T, P, B>(
                 setup: &akita_prover::AkitaProverSetup<$field>,
-                claims: akita_prover::ProverOpeningBatch<'a, $ext_field, P, $field, $d>,
+                claims: akita_prover::ProverOpeningBatch<'a, $ext_field, P, $field>,
                 stacks: &'a impl akita_prover::compute::LevelProveStacks<
                     'a,
                     $field,
@@ -195,7 +207,8 @@ macro_rules! impl_akita_commitment_scheme {
                     + 'a,
                 <B as akita_prover::compute::ComputeBackendSetup<$field>>::PreparedSetup: 'a,
             {
-                <Self as akita_prover::CommitmentProver<$field, $d>>::batched_prove(
+                let claims = claims.into_typed::<$d>()?;
+                <Self as akita_prover::TypedCommitmentProver<$field, $d>>::batched_prove(
                     setup,
                     claims,
                     stacks,
@@ -217,16 +230,35 @@ macro_rules! impl_akita_commitment_scheme {
                 claims: akita_types::VerifierOpeningBatch<
                     '_,
                     $ext_field,
-                    &akita_types::RingCommitment<$field, $d>,
+                    &akita_types::FlatRingVec<$field>,
                 >,
                 basis: akita_types::BasisMode,
                 setup_contribution_mode: akita_types::SetupContributionMode,
             ) -> Result<(), akita_field::AkitaError> {
-                <Self as akita_verifier::CommitmentVerifier<$field, $d>>::batched_verify(
+                let typed_commitments = claims
+                    .groups
+                    .iter()
+                    .map(|group| group.commitment.try_to_ring_commitment::<$d>())
+                    .collect::<Result<Vec<_>, akita_field::AkitaError>>()?;
+                let typed_groups = claims
+                    .groups
+                    .iter()
+                    .zip(typed_commitments.iter())
+                    .map(|(group, commitment)| akita_types::CommitmentGroup {
+                        claims: group.claims.clone(),
+                        commitment,
+                    })
+                    .collect::<Vec<_>>();
+                let typed_claims = akita_types::VerifierOpeningBatch::from_shape_and_groups(
+                    claims.point.clone(),
+                    claims.shape.clone(),
+                    typed_groups,
+                )?;
+                <Self as akita_verifier::TypedCommitmentVerifier<$field, $d>>::batched_verify(
                     proof,
                     setup,
                     transcript,
-                    claims,
+                    typed_claims,
                     basis,
                     setup_contribution_mode,
                 )
@@ -235,11 +267,11 @@ macro_rules! impl_akita_commitment_scheme {
             /// Protocol identifier.
             #[must_use]
             pub fn protocol_name() -> &'static [u8] {
-                <Self as akita_verifier::CommitmentVerifier<$field, $d>>::protocol_name()
+                <Self as akita_verifier::TypedCommitmentVerifier<$field, $d>>::protocol_name()
             }
         }
 
-        impl akita_prover::CommitmentProver<$field, $d>
+        impl akita_prover::TypedCommitmentProver<$field, $d>
             for $crate::scheme::AkitaCommitmentScheme<$cfg>
         where
             $cfg: akita_config::CommitmentConfig<Field = $field, ExtField = $ext_field>,
@@ -369,7 +401,7 @@ macro_rules! impl_akita_commitment_scheme {
             #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
             fn batched_prove<'a, T, P, B>(
                 setup: &Self::ProverSetup,
-                claims: akita_prover::ProverOpeningBatch<'a, Self::ExtField, P, $field, $d>,
+                claims: akita_prover::TypedProverOpeningBatch<'a, Self::ExtField, P, $field, $d>,
                 stacks: &'a impl akita_prover::compute::LevelProveStacks<
                     'a,
                     $field,
@@ -424,7 +456,54 @@ macro_rules! impl_akita_commitment_scheme {
             }
         }
 
-        impl akita_verifier::CommitmentVerifier<$field, $d>
+        impl akita_verifier::CommitmentVerifier<$field>
+            for $crate::scheme::AkitaCommitmentScheme<$cfg>
+        where
+            $cfg: akita_config::CommitmentConfig<Field = $field, ExtField = $ext_field>,
+            $field: akita_field::FieldCore
+                + akita_field::CanonicalField
+                + akita_field::RandomSampling
+                + akita_field::unreduced::HasWide
+                + akita_field::HalvingField
+                + akita_field::FromPrimitiveInt
+                + akita_field::PseudoMersenneField
+                + akita_serialization::Valid
+                + akita_serialization::AkitaSerialize,
+            $ext_field: akita_types::FpExtEncoding<$field>,
+            $ext_field: akita_field::FrobeniusExtField<$field>
+                + akita_field::FromPrimitiveInt
+                + akita_serialization::AkitaSerialize,
+        {
+            type VerifierSetup = akita_types::AkitaVerifierSetup<$field>;
+            type Commitment = akita_types::FlatRingVec<$field>;
+            type ExtField = $ext_field;
+            type BatchedProof = akita_types::AkitaBatchedProof<$field, $ext_field>;
+
+            #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
+            fn batched_verify<T: akita_transcript::Transcript<$field>>(
+                proof: &Self::BatchedProof,
+                setup: &Self::VerifierSetup,
+                transcript: &mut T,
+                claims: akita_types::VerifierOpeningBatch<'_, Self::ExtField, &Self::Commitment>,
+                basis: akita_types::BasisMode,
+                setup_contribution_mode: akita_types::SetupContributionMode,
+            ) -> Result<(), akita_field::AkitaError> {
+                $crate::scheme::AkitaCommitmentScheme::<$cfg>::batched_verify(
+                    proof,
+                    setup,
+                    transcript,
+                    claims,
+                    basis,
+                    setup_contribution_mode,
+                )
+            }
+
+            fn protocol_name() -> &'static [u8] {
+                b"Akita"
+            }
+        }
+
+        impl akita_verifier::TypedCommitmentVerifier<$field, $d>
             for $crate::scheme::AkitaCommitmentScheme<$cfg>
         where
             $cfg: akita_config::CommitmentConfig<Field = $field, ExtField = $ext_field>,

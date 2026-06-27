@@ -72,7 +72,7 @@ pub use akita_prover::{
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
 pub use akita_types::{
-    BasisMode, BlockOrder, CommitmentGroup, OpeningBatchShape, PointVariableSelection,
+    BasisMode, BlockOrder, CommitmentGroup, FlatRingVec, OpeningBatchShape, PointVariableSelection,
     VerifierOpeningBatch,
 };
 pub use scheme::AkitaCommitmentScheme;

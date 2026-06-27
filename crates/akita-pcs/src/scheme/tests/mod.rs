@@ -20,7 +20,7 @@ use akita_types::{
 use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitmentHint, AkitaProofStepShape,
-    AkitaVerifierSetup, FlatRingVec, LevelProofShape, RingCommitment, TerminalLevelProofShape,
+    AkitaVerifierSetup, FlatRingVec, LevelProofShape, TerminalLevelProofShape,
 };
 use akita_types::{
     CommitmentGroup, OpeningBatchShape, PointVariableSelection, VerifierOpeningBatch,
@@ -218,12 +218,12 @@ fn expected_same_point_batched_shape(
     shape
 }
 
-fn prover_claims<'a, E: Clone, P, CommitF: FieldCore, const D: usize>(
+fn prover_claims<'a, E: Clone, P, CommitF: FieldCore>(
     point: &'a [E],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
+    commitment: &'a FlatRingVec<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningBatch<'a, E, P, CommitF, D> {
+) -> ProverOpeningBatch<'a, E, P, CommitF> {
     ProverOpeningBatch {
         point: point.into(),
         groups: vec![ProverCommitmentGroup {
@@ -264,7 +264,7 @@ fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> LevelParams {
 
 type VerifyFixture = (
     AkitaVerifierSetup<F>,
-    RingCommitment<F, D>,
+    FlatRingVec<F>,
     AkitaBatchedProof<F, F>,
     Vec<F>,
     F,

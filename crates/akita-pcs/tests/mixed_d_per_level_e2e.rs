@@ -12,9 +12,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::test_support::mixed_d_per_level_schedule;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{
-    prove, CommitmentProver, ComputeBackendSetup, CpuBackend, DensePoly, UniformProverStack,
-};
+use akita_prover::{prove, ComputeBackendSetup, CpuBackend, DensePoly, UniformProverStack};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -75,14 +73,17 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
         let point = random_point(NUM_VARS, 0xcede_0002);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, 1).expect("setup");
+        let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
         let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
         let verifier_setup = setup.verifier_setup().expect("verifier setup");
-        let (commitment, hint) =
-            <Scheme as CommitmentProver<F, D>>::commit(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commit");
+        let (commitment, hint) = <Scheme as akita_prover::TypedCommitmentProver<F, D>>::commit(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commit");
 
         // switch past last fold => identical to shipped D128Full table schedule
         let schedule = mixed_d_per_level_schedule::<Cfg, SuffixCfg>(NUM_VARS, 1, 4)
@@ -91,7 +92,7 @@ fn hand_built_schedule_uniform_d128_oracle_baseline() {
         let opening_batch =
             akita_types::OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
         let poly_refs = [&poly];
-        let claims = prove_input(&point, &poly_refs, &commitment, hint);
+        let claims = typed_prove_input(&point, &poly_refs, &commitment, hint);
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"test/mixed_d_uniform_baseline");
         bind_transcript_instance_descriptor::<F, _, Cfg>(
@@ -173,16 +174,19 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
         let point = random_point(NUM_VARS, 0xcede_0002);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, 1).expect("setup");
+        let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
         assert_eq!(setup.expanded.seed().gen_ring_dim, 128);
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
         let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
         let verifier_setup = setup.verifier_setup().expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            <Scheme as CommitmentProver<F, D>>::commit(&setup, commit_input, &stack)
-                .expect("commit");
+        let (commitment, hint) = <Scheme as akita_prover::TypedCommitmentProver<F, D>>::commit(
+            &setup,
+            commit_input,
+            &stack,
+        )
+        .expect("commit");
 
         let schedule =
             mixed_d_per_level_schedule::<Cfg, SuffixCfg>(NUM_VARS, 1, MIXED_D_SWITCH_FOLD)
@@ -199,7 +203,7 @@ fn mixed_d_per_level_prove_verify_and_transcript_replay() {
         let opening_batch =
             akita_types::OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
         let poly_refs = [&poly];
-        let claims = prove_input(&point, &poly_refs, &commitment, hint);
+        let claims = typed_prove_input(&point, &poly_refs, &commitment, hint);
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"test/mixed_d_per_level_e2e");
         bind_transcript_instance_descriptor::<F, _, Cfg>(

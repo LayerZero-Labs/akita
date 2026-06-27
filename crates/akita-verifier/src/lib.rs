@@ -30,7 +30,7 @@ mod stages;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
-pub use akita_types::CommitmentVerifier;
+pub use akita_types::{CommitmentVerifier, TypedCommitmentVerifier};
 pub use proof::cleartext_witness_opening_matches;
 pub use protocol::{
     batched_verify, prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay,

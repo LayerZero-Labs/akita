@@ -4,7 +4,6 @@
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::CommitmentProver;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
 use akita_types::OpeningBatchShape;
@@ -40,21 +39,19 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         .map(|poly| opening_from_poly_with_basis(poly, &opening_point, &layout, basis_mode))
         .collect();
 
-    let setup =
-        <Scheme as CommitmentProver<F, DENSE_D>>::setup_prover(num_vars, total_claims).unwrap();
+    let setup = Scheme::setup_prover(num_vars, total_claims).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup);
 
     let (commitment, hint) =
-        <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(&setup, &polys, &stack)
-            .expect("batched commit");
+        Scheme::batched_commit(&setup, &polys, &stack).expect("batched commit");
 
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    let proof = <Scheme as CommitmentProver<F, DENSE_D>>::batched_prove(
+    let proof = Scheme::batched_prove(
         &setup,
         prove_input(&opening_point, &polys, &commitment, hint),
         &stack,
@@ -66,7 +63,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let mut verifier_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+    Scheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,

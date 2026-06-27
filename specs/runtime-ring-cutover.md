@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-24 |
-| Revised       | 2026-06-27 (stack status, PR map, bounded generated mixed-D admission, D-free PCS facade) |
+| Revised       | 2026-06-27 (stack status, PR map, bounded generated mixed-D admission, D-free PCS API surface) |
 | Status        | in progress (runtime-D cutover plus bounded generated mixed-D admission; DP search/catalog regen deferred) |
 | PR            | stacked on `#227`–`#241` (see Stack status) |
 | Supersedes    | partial supersession of `specs/akita-polyops-cutover.md` (storage half); coordinate PR order with `specs/protocol-field-geometry-cutover.md` (shared `PreparedFold` / `prove_suffix` surface) |
@@ -31,15 +31,14 @@ scope for this cutover.
 - Setup envelope may be larger than active fold `D` when active `D` divides the
   envelope dimension (fixture uses `D128Full` envelope, `D64` suffix views).
 - Proof verifies from schedule-bound runtime `D`.
-- `AkitaCommitmentScheme<Cfg>` is D-free on the scheme struct; per-preset macro impls
-  expose D-free inherent setup/prove/verify methods while retaining internal
-  `CommitmentProver<F, D>` / `CommitmentVerifier<F, D>` adapter impls.
+- `AkitaCommitmentScheme<Cfg>` and the normal PCS claim/verify surface are D-free;
+  typed dispatch traits are explicitly named `TypedCommitmentProver<F, D>` /
+  `TypedCommitmentVerifier<F, D>` and remain internal bridge points to const-generic kernels.
 
 ### Later target (explicitly deferred)
 
 - DP search over `ring_d`, production generated mixed-D catalog regeneration,
   and generalized `D_max` envelope sizing beyond the current divisor-envelope model.
-- Full public trait D-erasure (`CommitmentProver` / `CommitmentVerifier` without `D`).
 - Distinct per-block `d_a` / `d_b` / `d_d` inside one fold.
 - Prefix-sized NTT cache optimization; proof/perf benchmark CI gates.
 
@@ -59,7 +58,7 @@ scope for this cutover.
 | [#239](https://github.com/LayerZero-Labs/akita/pull/239) | `quang/runtime-ring-wave6-bulk` | `#236` | 6 | Fold storage demotion (bulk) | Restacked | — |
 | [#240](https://github.com/LayerZero-Labs/akita/pull/240) | `quang/runtime-ring-wave7` | `#239` | 7 | Hint demotion | Restacked | — |
 | [#241](https://github.com/LayerZero-Labs/akita/pull/241) | `quang/runtime-ring-wave7-mixed-d` | `#240` | 7 gate | PCS scheme demotion, mixed-D geometry gate, oracle refresh | Restacked; slow geometry test fixed | `CommitmentProver<F,D>` traits remain |
-| [#243](https://github.com/LayerZero-Labs/akita/pull/243) | `quang/runtime-ring-dfree-pcs-api` | restacked `#241` tip | final cutover | D-free inherent PCS facade for normal callers; bounded generated mixed-D admission; root-direct metadata errors fail loudly | In progress | DP search/catalog regen and generalized Dmax envelope sizing |
+| [#243](https://github.com/LayerZero-Labs/akita/pull/243) | `quang/runtime-ring-dfree-pcs-api` | restacked `#241` tip | final cutover | D-free PCS API surface and claim carriers; typed dispatch traits renamed; bounded generated mixed-D admission; root-direct metadata errors fail loudly | In progress | DP search/catalog regen and generalized Dmax envelope sizing |
 
 ### Completed in code (current stack tip)
 
@@ -68,8 +67,9 @@ scope for this cutover.
 - Prove-time ring plan validation; uniform suffix loop (no stack-rebuild branch)
 - Fold/hint storage demotion to `RingBuf` / flat storage
 - Hand-built D128→D64 mixed-D fixture proves and verifies
-- `AkitaCommitmentScheme<Cfg>` struct demotion plus inherent D-free setup/prove/verify facade
-  (trait impls still use literal root `D` internally)
+- `AkitaCommitmentScheme<Cfg>` struct demotion plus D-free setup/prove/verify,
+  flat commitment carriers, D-free public verifier trait, and explicitly typed
+  internal prover/verifier dispatch traits.
 - Generated compact schedule expansion accepts a level-local `ring_d` when it is
   nonzero and divides the policy envelope `D`; invalid root-direct commit metadata
   now fails schedule resolution instead of being silently dropped.
@@ -80,8 +80,8 @@ scope for this cutover.
   admission exists, but the optimizer still emits uniform-D schedules today.
 - `D_max` field-element envelope sizing; relaxing `gen_ring_dim == Cfg::D` at setup
 - Generated schedule catalogs with multiple `D`s per family
-- Full public trait deletion/replacement (`CommitmentProver<F, D>`,
-  `CommitmentVerifier<F, D>` still exist as adapter traits)
+- Root polynomial/backend capability traits remain const-generic at typed dispatch
+  sites (`RootCommitPoly<F, D>`, `RootProvePoly<F, D>`, NTT/kernel paths).
 - Per-role / per-block `d_a`, `d_b`, `d_d` execution inside one fold
 - Prefix-sized NTT caches; full verifier no-panic audit on D-erased proof storage APIs
 - Proof-byte golden pins and bench regression gates beyond smoke/profile
@@ -485,9 +485,10 @@ Make ring dimension a **schedule-driven runtime parameter** end to end:
 - [x] Delete `Suffix*ProveBackendFor`, `RECURSIVE_SUFFIX_RING_DIMENSIONS`,
       six-bound `RecursiveProveBackend` supertrait lattice.
 - [x] `AkitaCommitmentScheme<Cfg>` without `const D` on the scheme struct (per-preset
-      macro impls in `akita-pcs/src/scheme/impls.rs`). `CommitmentProver<F, D>` /
-      `CommitmentVerifier<F, D>` traits still carry `D` at call sites: rustc cannot use
-      `Cfg::D` in const-generic trait bounds on a single blanket impl.
+      macro impls in `akita-pcs/src/scheme/impls.rs`). Public PCS methods and
+      verifier trait use D-free flat commitments; typed prover/verifier dispatch
+      traits are explicitly named `Typed...` because rustc cannot use `Cfg::D`
+      in const-generic trait bounds on a single blanket impl.
 - [x] Grep gate: no `dispatch_ring_dim_result!` in `protocol/core/suffix.rs` or
       verifier `protocol/core/suffix.rs`.
 
@@ -1184,7 +1185,7 @@ Document the forward-looking relabeling in `specs/transcript-hardening.md`.
 | Today | After |
 |-------|-------|
 | `CommitmentConfig::D` | **Setup envelope default** (`gen_ring_dim`) and root-commit layout; not suffix authority |
-| `AkitaCommitmentScheme<const D, Cfg>` | `AkitaCommitmentScheme<Cfg>` (**done**; traits still `CommitmentProver<F, D>`) |
+| `AkitaCommitmentScheme<const D, Cfg>` | `AkitaCommitmentScheme<Cfg>` (**done**; normal public PCS surface is D-free, typed dispatch traits are `Typed...`) |
 | `AkitaProverSetup<F, const D>` | `AkitaProverSetup<F>` (envelope degree read from `seed.gen_ring_dim`; relax the setup `gen_ring_dim != D` checks to compare against the seed itself) |
 | `batched_prove` (D from scheme struct) | `batched_prove` builds `RingDimPlan` from resolved schedule + seed |
 | `ring_challenge_config(d)` | called with `plan.dim_at(ℓ)` per fold |
@@ -1245,8 +1246,8 @@ Phased migration for PCS and compute surfaces (full cutover, no shims):
 | Phase | `AkitaCommitmentScheme` | `CommitmentProver` / `Verifier` | `RingCommitment` / hints | `PreparedSetup` | Caller-visible `D` |
 |-------|-------------------------|----------------------------------|--------------------------|-----------------|-------------------|
 | 1 | `<const D, Cfg>` unchanged | `<F, D>` unchanged | `<F, D>` | D-free internal on `CpuBackend` | type param + schedule |
-| 2 | `<Cfg>` (**shipped**) | `<F, D>` (rustc: no blanket `Cfg::D` bound) | `<F, D>` root only | D-free | root: `Cfg::D`; prove: `RingDimPlan` |
-| 3 | `<Cfg>` | `<F>` | `RingBuf` / D-free where applicable | D-free | `RingDimPlan` only at PCS boundary |
+| 2 | `<Cfg>` (**shipped**) | typed dispatch only (`Typed...<F, D>`) | flat public commitments, typed internals | D-free | root dispatch: `Cfg::D`; prove: `RingDimPlan` |
+| 3 | `<Cfg>` | public verifier `<F>`; no public prover trait | `RingBuf` / D-free where applicable | D-free | `RingDimPlan` only at PCS boundary |
 
 **End-state integrator snippet (Phase 2+):**
 
@@ -1564,12 +1565,12 @@ Five sub-steps; keep each compiling.
       byte-identical to the Wave-0 oracle (`mixed_d_per_level_e2e`).
 - [x] Prover≡verifier setup-geometry cross-check (`mixed_d_geometry_crosscheck`).
 - [x] PCS public API: `AkitaCommitmentScheme<Cfg>` without redundant struct `const D`
-      (`akita-pcs/src/scheme/impls.rs` per-preset macro impls; D-free inherent
+      (`akita-pcs/src/scheme/impls.rs` per-preset macro impls; D-free
       `setup_prover`, `setup_prover_recursion`, `setup_verifier`, `commit`,
-      `batched_commit`, `commit_group`, `batched_prove`, and `batched_verify` facade;
-      `ensure_root_ring_dim` on `batched_verify`). Traits remain
-      `CommitmentProver<F, D>` / `CommitmentVerifier<F, D>` as internal adapter surfaces
-      until rustc can express `Cfg::D` in trait bounds without per-preset duplication.
+      `batched_commit`, `commit_group`, `batched_prove`, and `batched_verify`;
+      `ensure_root_ring_dim` on `batched_verify`). Normal public commitment and
+      claim carriers are flat; typed bridge traits are explicitly named
+      `TypedCommitmentProver<F, D>` / `TypedCommitmentVerifier<F, D>`.
 - [x] `switch_at_fold == 0` rejected in `mixed_d_per_level_schedule` (Bugbot); unit test
       `mixed_d_schedule_rejects_switch_at_fold_zero`.
 - [x] Bounded generated mixed-D admission: compact table rows may carry a smaller

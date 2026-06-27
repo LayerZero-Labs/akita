@@ -12,13 +12,13 @@ use akita_field::{
     RandomSampling,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{AkitaProverSetup, CommitmentProver};
+use akita_prover::{AkitaProverSetup, TypedCommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup,
     FpExtEncoding, LevelParams, RingCommitment,
 };
-use akita_verifier::CommitmentVerifier;
+use akita_verifier::TypedCommitmentVerifier;
 
 type F = fp128::Field;
 
@@ -36,7 +36,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     title: &str,
     nv: usize,
 ) where
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F>,
@@ -45,7 +45,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,
             CommitHint = AkitaCommitmentHint<F>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
@@ -75,7 +75,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -84,7 +84,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             FF,
             D,
             VerifierSetup = AkitaVerifierSetup<FF>,
@@ -120,7 +120,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + HasWide
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             FF,
             D,
             ProverSetup = AkitaProverSetup<FF>,
@@ -129,7 +129,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             FF,
             D,
             VerifierSetup = AkitaVerifierSetup<FF>,
@@ -187,7 +187,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F
     nv: usize,
     num_polys: usize,
 ) where
-    AkitaCommitmentScheme<Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<Cfg>: TypedCommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F>,
@@ -196,7 +196,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,
             CommitHint = AkitaCommitmentHint<F>,
-        > + CommitmentVerifier<
+        > + TypedCommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,

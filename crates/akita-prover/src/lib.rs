@@ -23,8 +23,8 @@ use akita_types::{
 pub use api::{
     batched_commit, batched_commit_with_params, commit, commit_group, commit_setup_prefix,
     commit_with_params, prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup,
-    CommitmentProver, CommitmentWithHint, CommittedGroupHandle, CommittedGroupScheduleMeta,
-    CommittedGroupWithHint,
+    CommitmentWithHint, CommittedGroupHandle, CommittedGroupScheduleMeta, CommittedGroupWithHint,
+    TypedCommitmentProver,
 };
 
 pub use backend::{
@@ -62,41 +62,64 @@ pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness
 /// `commitment` is the corresponding commitment output plus prover-side hint
 /// for that bundle.
 #[derive(Debug, Clone)]
-pub struct ProverCommitmentGroup<'a, P, F: FieldCore, const D: usize> {
+#[doc(hidden)]
+pub struct TypedProverCommitmentGroup<'a, P, F: FieldCore, const D: usize> {
     /// Coordinates of [`ProverOpeningBatch::point`] used by every polynomial in this group.
     pub point_vars: PointVariableSelection,
     /// Polynomials addressable by claim `poly_idx` values at this point.
     pub polynomials: &'a [&'a P],
     /// Commitment output for `polynomials`.
-    pub commitment: CommitmentWithHint<F, D>,
+    pub commitment: api::commitment::TypedCommitmentWithHint<F, D>,
 }
 
 /// Batched prover input: one shared opening point plus prover commitment groups.
 #[derive(Debug, Clone)]
-pub struct ProverOpeningBatch<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize> {
+#[doc(hidden)]
+pub struct TypedProverOpeningBatch<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize> {
     /// Padded/shared opening point.
     pub point: OpeningPoints<'a, PointF>,
     /// Commitment groups in transcript order.
-    pub groups: Vec<ProverCommitmentGroup<'a, P, CommitF, D>>,
+    pub groups: Vec<TypedProverCommitmentGroup<'a, P, CommitF, D>>,
 }
 
-impl<'a, P, F: FieldCore, const D: usize> ProverCommitmentGroup<'a, P, F, D> {
+/// Prover commitment group and the polynomials it bundles.
+///
+/// Internal proving code converts this to [`TypedProverCommitmentGroup`] after the
+/// A scheme preset fixes the root ring dimension only inside typed dispatch code.
+#[derive(Debug, Clone)]
+pub struct ProverCommitmentGroup<'a, P, F: FieldCore> {
+    /// Coordinates of [`ProverOpeningBatch::point`] used by every polynomial in this group.
+    pub point_vars: PointVariableSelection,
+    /// Polynomials addressable by claim `poly_idx` values at this point.
+    pub polynomials: &'a [&'a P],
+    /// Commitment output for `polynomials`.
+    pub commitment: CommitmentWithHint<F>,
+}
+
+/// Batched prover input: one shared opening point plus prover commitment groups.
+#[derive(Debug, Clone)]
+pub struct ProverOpeningBatch<'a, PointF: Clone, P, CommitF: FieldCore> {
+    /// Padded/shared opening point.
+    pub point: OpeningPoints<'a, PointF>,
+    /// Commitment groups in transcript order.
+    pub groups: Vec<ProverCommitmentGroup<'a, P, CommitF>>,
+}
+
+impl<'a, P, F: FieldCore> ProverCommitmentGroup<'a, P, F> {
     /// Number of polynomials addressable by opening-batch claims at this point.
     pub fn poly_count(&self) -> usize {
         self.polynomials.len()
     }
 }
 
-impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
-    ProverOpeningBatch<'a, PointF, P, CommitF, D>
-{
+impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningBatch<'a, PointF, P, CommitF> {
     /// Shared opening point.
     pub fn point(&self) -> &[PointF] {
         self.point.as_ref()
     }
 
     /// Commitment groups in transcript order.
-    pub fn groups(&self) -> &[ProverCommitmentGroup<'a, P, CommitF, D>] {
+    pub fn groups(&self) -> &[ProverCommitmentGroup<'a, P, CommitF>] {
         &self.groups
     }
 
@@ -105,6 +128,61 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         self.groups
             .iter()
             .map(ProverCommitmentGroup::poly_count)
+            .collect()
+    }
+
+    /// Convert this batch into the typed root batch consumed by kernels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any commitment cannot be decoded at `D`.
+    pub fn into_typed<const D: usize>(
+        self,
+    ) -> Result<TypedProverOpeningBatch<'a, PointF, P, CommitF, D>, AkitaError> {
+        let ProverOpeningBatch { point, groups } = self;
+        let typed_groups = groups
+            .into_iter()
+            .map(|group| {
+                let (commitment, hint) = group.commitment;
+                Ok(TypedProverCommitmentGroup {
+                    point_vars: group.point_vars,
+                    polynomials: group.polynomials,
+                    commitment: (commitment.try_to_ring_commitment::<D>()?, hint),
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        Ok(TypedProverOpeningBatch {
+            point,
+            groups: typed_groups,
+        })
+    }
+}
+
+impl<'a, P, F: FieldCore, const D: usize> TypedProverCommitmentGroup<'a, P, F, D> {
+    /// Number of polynomials addressable by opening-batch claims at this point.
+    pub fn poly_count(&self) -> usize {
+        self.polynomials.len()
+    }
+}
+
+impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
+    TypedProverOpeningBatch<'a, PointF, P, CommitF, D>
+{
+    /// Shared opening point.
+    pub fn point(&self) -> &[PointF] {
+        self.point.as_ref()
+    }
+
+    /// Commitment groups in transcript order.
+    pub fn groups(&self) -> &[TypedProverCommitmentGroup<'a, P, CommitF, D>] {
+        &self.groups
+    }
+
+    /// Number of polynomials in each commitment group.
+    pub fn group_sizes(&self) -> Vec<usize> {
+        self.groups
+            .iter()
+            .map(TypedProverCommitmentGroup::poly_count)
             .collect()
     }
 
@@ -174,12 +252,12 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     }
 
     /// Return the only group when the current implementation's single-group path applies.
-    pub fn single_group(&self) -> Option<&ProverCommitmentGroup<'a, P, CommitF, D>> {
+    pub fn single_group(&self) -> Option<&TypedProverCommitmentGroup<'a, P, CommitF, D>> {
         self.groups.first().filter(|_| self.groups.len() == 1)
     }
 
     /// Consume the batch and return its only group when the current single-group path applies.
-    pub fn into_single_group(self) -> Option<ProverCommitmentGroup<'a, P, CommitF, D>> {
+    pub fn into_single_group(self) -> Option<TypedProverCommitmentGroup<'a, P, CommitF, D>> {
         let Self { mut groups, .. } = self;
         if groups.len() != 1 {
             return None;
@@ -199,11 +277,11 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     pub(crate) fn regroup_polynomial_refs<'b, Q>(
         self,
         polynomials: &'b [&'b Q],
-    ) -> Result<ProverOpeningBatch<'b, PointF, Q, CommitF, D>, AkitaError>
+    ) -> Result<TypedProverOpeningBatch<'b, PointF, Q, CommitF, D>, AkitaError>
     where
         'a: 'b,
     {
-        let ProverOpeningBatch { point, groups } = self;
+        let TypedProverOpeningBatch { point, groups } = self;
         let mut input_offset = 0usize;
         let mut regrouped = Vec::with_capacity(groups.len());
         for group in groups {
@@ -215,7 +293,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
                 polynomials.get(input_offset..input_end).ok_or_else(|| {
                     AkitaError::InvalidInput("fold input group shape mismatch".to_string())
                 })?;
-            regrouped.push(ProverCommitmentGroup {
+            regrouped.push(TypedProverCommitmentGroup {
                 point_vars: group.point_vars,
                 polynomials: replacement_polynomials,
                 commitment: group.commitment,
@@ -227,7 +305,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
                 "fold input group coverage mismatch".to_string(),
             ));
         }
-        Ok(ProverOpeningBatch {
+        Ok(TypedProverOpeningBatch {
             point,
             groups: regrouped,
         })

@@ -62,7 +62,7 @@ pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLayout, RingRelationSegmentLengths,
 };
-pub use scheme::{CommitmentVerifier, OpeningPoints};
+pub use scheme::{CommitmentVerifier, OpeningPoints, TypedCommitmentVerifier};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,

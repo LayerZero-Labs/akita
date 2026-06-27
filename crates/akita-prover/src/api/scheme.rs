@@ -5,9 +5,8 @@ use crate::compute::{
     LevelProveStacks, RecursiveWitnessProveFlowBackend, RootCommitBackend, RootCommitPoly,
     RootProveFlowBackend, RootProvePoly, UniformProverStack,
 };
-use crate::CommittedGroupHandle;
-use crate::ProverOpeningBatch;
 use crate::ProverTranscriptGrind;
+use crate::TypedProverOpeningBatch;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
@@ -16,16 +15,18 @@ use akita_field::{
 use akita_transcript::Transcript;
 use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
 
-/// Prover-side commitment-scheme interface used by Akita protocol code.
+/// Typed prover-side commitment-scheme dispatch interface used by Akita protocol code.
 ///
-/// Generic over base field `F` and root cyclotomic degree `D` (`Cfg::D` on
-/// `AkitaCommitmentScheme<Cfg>` in `akita-pcs`). Suffix levels dispatch via the resolved schedule.
+/// Generic over base field `F` and root cyclotomic degree `D`. This is not the
+/// public PCS API surface; public callers use the D-free inherent methods on
+/// `AkitaCommitmentScheme<Cfg>`.
 /// Caller-provided root polynomials are source-typed and must satisfy the
 /// prover-facing root polynomial traits (`RootProvePoly` and related capability
 /// traits).
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
-pub trait CommitmentProver<F, const D: usize>
+#[doc(hidden)]
+pub trait TypedCommitmentProver<F, const D: usize>
 where
     F: FieldCore + CanonicalField,
 {
@@ -124,7 +125,7 @@ where
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
-    ) -> Result<CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
+    ) -> Result<crate::CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -144,7 +145,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        claims: ProverOpeningBatch<'a, Self::ExtField, P, F, D>,
+        claims: TypedProverOpeningBatch<'a, Self::ExtField, P, F, D>,
         stacks: &'a impl LevelProveStacks<'a, F, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,

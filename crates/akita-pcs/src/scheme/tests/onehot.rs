@@ -30,7 +30,7 @@ fn commit_group_returns_frozen_conservative_layout() {
         layout.b_key.row_len()
     );
     assert_eq!(
-        handle.commitment.u.len(),
+        handle.commitment.count(),
         handle.schedule.layout.conservative_n_b
     );
 }
