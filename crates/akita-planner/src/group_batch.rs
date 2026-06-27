@@ -21,7 +21,7 @@ use crate::schedule_params::{
 };
 use crate::PlannerPolicy;
 
-fn group_root_params_from_layout(
+pub(crate) fn group_root_params_from_layout(
     layout: &CommitmentGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
@@ -228,7 +228,7 @@ fn grouped_root_direct_cost_score(
     Ok(total)
 }
 
-fn grouped_root_direct_witness_len(
+pub(crate) fn grouped_root_direct_witness_len(
     key: &GroupBatchAkitaScheduleLookupKey,
 ) -> Result<usize, AkitaError> {
     let group_len = |num_polys: usize, num_vars: usize| -> Result<usize, AkitaError> {
@@ -250,7 +250,7 @@ fn grouped_root_direct_witness_len(
     Ok(total)
 }
 
-fn grouped_root_precommitted_groups(
+pub(crate) fn grouped_root_precommitted_groups(
     key: &GroupBatchAkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
@@ -341,7 +341,7 @@ fn grouped_root_m_row_count(params: &LevelParams, layout: MRowLayout) -> Result<
     Ok(rows)
 }
 
-fn grouped_root_next_w_len(
+pub(crate) fn grouped_root_next_w_len(
     field_bits: u32,
     params: &LevelParams,
     main_num_polys: usize,

@@ -264,9 +264,9 @@ impl GroupBatchAkitaScheduleLookupKey {
         self.main.validate()?;
         for layout in &self.precommitteds {
             layout.validate()?;
-            if layout.key.num_vars != self.main.num_vars {
+            if layout.key.num_vars > self.main.num_vars {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root requires all commitment groups to share the same num_vars"
+                    "grouped root requires precommitted groups to have at most the main num_vars"
                         .to_string(),
                 ));
             }
