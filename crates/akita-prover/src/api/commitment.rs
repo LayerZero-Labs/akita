@@ -248,20 +248,17 @@ where
     P: RootPolyShape<F, D>,
 {
     let expected = params.onehot_chunk_size;
-    if expected == 0 {
+    if expected <= 1 {
         return Ok(());
     }
     for (poly_idx, poly) in polys.iter().enumerate() {
-        let Some(actual) = poly.onehot_chunk_size() else {
-            return Err(AkitaError::InvalidInput(format!(
-                "commitment layout requires one-hot polynomial {poly_idx} with onehot_k={expected}"
-            )));
-        };
-        if actual != expected {
-            return Err(AkitaError::InvalidInput(format!(
-                "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
-                 config/layout requires onehot_k={expected}"
-            )));
+        if let Some(actual) = poly.onehot_chunk_size() {
+            if actual != expected {
+                return Err(AkitaError::InvalidInput(format!(
+                    "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
+                     config/layout requires onehot_k={expected}"
+                )));
+            }
         }
     }
     Ok(())
@@ -276,20 +273,17 @@ where
     P: RootPolyShape<F, D>,
 {
     let expected = params.onehot_chunk_size;
-    if expected == 0 {
+    if expected <= 1 {
         return Ok(());
     }
     for (poly_idx, poly) in polys.iter().enumerate() {
-        let Some(actual) = poly.onehot_chunk_size() else {
-            return Err(AkitaError::InvalidInput(format!(
-                "commitment layout requires one-hot polynomial {poly_idx} with onehot_k={expected}"
-            )));
-        };
-        if actual != expected {
-            return Err(AkitaError::InvalidInput(format!(
-                "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
-                 config/layout requires onehot_k={expected}"
-            )));
+        if let Some(actual) = poly.onehot_chunk_size() {
+            if actual != expected {
+                return Err(AkitaError::InvalidInput(format!(
+                    "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
+                     config/layout requires onehot_k={expected}"
+                )));
+            }
         }
     }
     Ok(())
