@@ -199,22 +199,10 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         return Ok(None);
     };
 
-    let mut envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, opening_batch)?;
-    if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
-        // Standalone conservative `commit_group` layouts are included here.
-        // Final grouped-root schedules from `get_group_batch_schedule` are not
-        // scanned yet; Phase 2 must extend this envelope before grouped opening
-        // prove paths rely on setup capacity.
-        let group_key =
-            AkitaScheduleLookupKey::new(opening_batch.num_vars(), opening_batch.num_polynomials());
-        if let Ok(group_params) = Cfg::get_params_for_group_commit(&group_key) {
-            accumulate_matrix_envelope_for_level::<Cfg>(
-                &group_params,
-                &mut envelope.max_setup_len,
-            )?;
-        }
-    }
-    Ok(Some(envelope))
+    Ok(Some(matrix_envelope_for_schedule::<Cfg>(
+        &schedule,
+        opening_batch,
+    )?))
 }
 
 /// Extract setup-level params from a runtime `Schedule`.

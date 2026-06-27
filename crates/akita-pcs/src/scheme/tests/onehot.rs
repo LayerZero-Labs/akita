@@ -1,41 +1,43 @@
 use super::*;
 
+type ConservativeCommitter = ConservativeOneHotScheme;
+type MultiGroupCommitter = MultiGroupOneHotScheme;
+type RegularCommitter = OneHotScheme;
+
 #[test]
-fn commit_group_returns_frozen_conservative_layout() {
+fn conservative_config_commit_returns_frozen_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::AkitaScheduleLookupKey::new(NV, GROUP_SIZE);
-    let layout = OneHotCfg::get_params_for_group_commit(&key).expect("group commit layout");
+    let opening_batch = OpeningBatchShape::new(NV, GROUP_SIZE).expect("opening batch");
+    let layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&opening_batch)
+        .expect("conservative commit layout");
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, GROUP_SIZE)
-        .expect("setup");
+    let setup = MultiGroupCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let handle =
-        <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(&setup, &polys, &stack)
-            .expect("commit group");
+    let (commitment, _hint) =
+        ConservativeCommitter::commit(&setup, &polys, &stack).expect("conservative commit");
+    let frozen_layout = akita_types::CommitmentGroupLayout::from_params(key, &layout);
 
-    assert_eq!(handle.schedule.layout.key, key);
-    assert_eq!(handle.schedule.layout.m_vars, layout.m_vars);
-    assert_eq!(handle.schedule.layout.r_vars, layout.r_vars);
-    assert_eq!(handle.schedule.layout.log_basis, OneHotCfg::basis_range().0);
-    assert_eq!(handle.schedule.layout.n_a, layout.a_key.row_len());
+    assert_eq!(frozen_layout.key, key);
+    assert_eq!(frozen_layout.m_vars, layout.m_vars);
+    assert_eq!(frozen_layout.r_vars, layout.r_vars);
     assert_eq!(
-        handle.schedule.layout.conservative_n_b,
-        layout.b_key.row_len()
+        frozen_layout.log_basis,
+        ConservativeOneHotCfg::basis_range().0
     );
-    assert_eq!(
-        handle.commitment.u.len(),
-        handle.schedule.layout.conservative_n_b
-    );
+    assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
+    assert_eq!(frozen_layout.conservative_n_b, layout.b_key.row_len());
+    assert_eq!(commitment.u.len(), frozen_layout.conservative_n_b);
 }
 
 fn grouped_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
@@ -45,7 +47,7 @@ fn grouped_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
     }
 }
 
-fn with_group_commit_stack<R>(
+fn with_conservative_commit_stack<R>(
     max_num_vars: usize,
     max_num_polys: usize,
     run: impl FnOnce(
@@ -53,11 +55,7 @@ fn with_group_commit_stack<R>(
         &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend, ONEHOT_D>,
     ) -> R,
 ) -> R {
-    let setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(
-        max_num_vars,
-        max_num_polys,
-    )
-    .expect("setup");
+    let setup = MultiGroupCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -66,48 +64,42 @@ fn with_group_commit_stack<R>(
 }
 
 #[test]
-fn commit_group_allows_independent_precommitted_groups() {
+fn conservative_config_allows_independent_precommitted_groups() {
     const NV: usize = 16;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 2;
 
     let pre_a_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_A_SIZE);
     let pre_b_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_B_SIZE);
+    let pre_a_opening_batch = OpeningBatchShape::new(NV, PRE_A_SIZE).expect("precommit A batch");
+    let pre_b_opening_batch = OpeningBatchShape::new(NV, PRE_B_SIZE).expect("precommit B batch");
     let pre_a_layout =
-        OneHotCfg::get_params_for_group_commit(&pre_a_key).expect("precommit A layout");
+        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
+            .expect("precommit A layout");
     let pre_b_layout =
-        OneHotCfg::get_params_for_group_commit(&pre_b_key).expect("precommit B layout");
+        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
+            .expect("precommit B layout");
     let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_1001)];
     let pre_b_polys = [
         debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_2001),
         debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_2002),
     ];
 
-    with_group_commit_stack(NV, PRE_A_SIZE + PRE_B_SIZE, |setup, stack| {
-        let pre_a = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(
-            setup,
-            &pre_a_polys,
-            stack,
-        )
-        .expect("precommit A");
-        let pre_b = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(
-            setup,
-            &pre_b_polys,
-            stack,
-        )
-        .expect("precommit B");
+    with_conservative_commit_stack(NV, PRE_A_SIZE + PRE_B_SIZE, |setup, stack| {
+        let (pre_a_commitment, _pre_a_hint) =
+            ConservativeCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
+        let (pre_b_commitment, _pre_b_hint) =
+            ConservativeCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
+        let pre_a_frozen =
+            akita_types::CommitmentGroupLayout::from_params(pre_a_key, &pre_a_layout);
+        let pre_b_frozen =
+            akita_types::CommitmentGroupLayout::from_params(pre_b_key, &pre_b_layout);
 
-        assert_eq!(pre_a.schedule.layout.key, pre_a_key);
-        assert_eq!(pre_b.schedule.layout.key, pre_b_key);
-        assert_eq!(
-            pre_a.commitment.u.len(),
-            pre_a.schedule.layout.conservative_n_b
-        );
-        assert_eq!(
-            pre_b.commitment.u.len(),
-            pre_b.schedule.layout.conservative_n_b
-        );
-        assert_ne!(pre_a.schedule.layout.key, pre_b.schedule.layout.key);
+        assert_eq!(pre_a_frozen.key, pre_a_key);
+        assert_eq!(pre_b_frozen.key, pre_b_key);
+        assert_eq!(pre_a_commitment.u.len(), pre_a_frozen.conservative_n_b);
+        assert_eq!(pre_b_commitment.u.len(), pre_b_frozen.conservative_n_b);
+        assert_ne!(pre_a_frozen.key, pre_b_frozen.key);
     });
 }
 
@@ -120,36 +112,37 @@ fn group_batch_schedule_preserves_precommitted_order() {
 
     let pre_a_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_A_SIZE);
     let pre_b_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_B_SIZE);
+    let pre_a_opening_batch = OpeningBatchShape::new(NV, PRE_A_SIZE).expect("precommit A batch");
+    let pre_b_opening_batch = OpeningBatchShape::new(NV, PRE_B_SIZE).expect("precommit B batch");
     let pre_a_layout =
-        OneHotCfg::get_params_for_group_commit(&pre_a_key).expect("precommit A layout");
+        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
+            .expect("precommit A layout");
     let pre_b_layout =
-        OneHotCfg::get_params_for_group_commit(&pre_b_key).expect("precommit B layout");
+        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
+            .expect("precommit B layout");
     let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_3001)];
     let pre_b_polys = [
         debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4001),
         debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4002),
     ];
 
-    with_group_commit_stack(NV, PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE, |setup, stack| {
-        let pre_a = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(
-            setup,
-            &pre_a_polys,
-            stack,
-        )
-        .expect("precommit A");
-        let pre_b = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(
-            setup,
-            &pre_b_polys,
-            stack,
-        )
-        .expect("precommit B");
+    with_conservative_commit_stack(NV, PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE, |setup, stack| {
+        ConservativeCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
+        ConservativeCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
+        let pre_a_frozen =
+            akita_types::CommitmentGroupLayout::from_params(pre_a_key, &pre_a_layout);
+        let pre_b_frozen =
+            akita_types::CommitmentGroupLayout::from_params(pre_b_key, &pre_b_layout);
         let grouped_key = akita_types::GroupBatchAkitaScheduleLookupKey {
             main: akita_types::AkitaScheduleLookupKey::new(NV, MAIN_SIZE),
-            precommitteds: vec![pre_a.schedule.layout.clone(), pre_b.schedule.layout.clone()],
+            precommitteds: vec![pre_a_frozen.clone(), pre_b_frozen.clone()],
         };
 
-        let schedule = OneHotCfg::get_group_batch_schedule(&grouped_key).expect("grouped schedule");
+        let schedule =
+            MultiGroupOneHotCfg::runtime_schedule(&grouped_key).expect("grouped runtime schedule");
         let root = grouped_root_params(&schedule);
+        let main_params = MultiGroupOneHotCfg::get_params_for_batched_commitment(&grouped_key)
+            .expect("main grouped commit params");
 
         assert_eq!(grouped_key.num_commitment_groups(), 3);
         assert_eq!(
@@ -158,9 +151,10 @@ fn group_batch_schedule_preserves_precommitted_order() {
                 .expect("grouped polynomial count"),
             PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE
         );
+        assert_eq!(main_params, *root);
         assert_eq!(root.precommitted_groups.len(), 2);
-        assert_eq!(root.precommitted_groups[0].layout, pre_a.schedule.layout);
-        assert_eq!(root.precommitted_groups[1].layout, pre_b.schedule.layout);
+        assert_eq!(root.precommitted_groups[0].layout, pre_a_frozen);
+        assert_eq!(root.precommitted_groups[1].layout, pre_b_frozen);
     });
 }
 
@@ -191,22 +185,19 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .map(|poly| opening_from_poly(poly, &point, &layout))
         .collect();
 
-    let setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE)
-        .unwrap();
+    let setup = RegularCommitter::setup_prover(NV, BATCH_SIZE).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
+    let verifier_setup = RegularCommitter::setup_verifier(&setup);
     let (commitment, hint) =
-        <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(&setup, &polys, &stack)
-            .expect("batched onehot commit");
+        RegularCommitter::commit(&setup, &polys, &stack).expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-    let proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
+    let proof = RegularCommitter::batched_prove(
         &setup,
         prover_claims(
             &point[..],
@@ -308,7 +299,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     assert_eq!(decoded, proof);
 
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-    <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
+    RegularCommitter::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,

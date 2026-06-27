@@ -152,13 +152,13 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
 }
 
 #[test]
-fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
+fn setup_matrix_envelope_uses_runtime_schedule_shape() {
     use akita_types::{CleartextWitnessShape, DecompositionParams, DirectStep, Schedule, Step};
 
     #[derive(Clone)]
-    struct GroupLayoutRejectCfg;
+    struct RuntimeOnlyCfg;
 
-    impl CommitmentConfig for GroupLayoutRejectCfg {
+    impl CommitmentConfig for RuntimeOnlyCfg {
         type Field = akita_field::Fp32<251>;
         type ExtField = akita_field::Fp32<251>;
         const D: usize = 8;
@@ -206,19 +206,11 @@ fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
                 total_bytes: 0,
             })
         }
-
-        fn get_params_for_group_commit(
-            _key: &AkitaScheduleLookupKey,
-        ) -> Result<LevelParams, AkitaError> {
-            Err(AkitaError::InvalidSetup(
-                "synthetic group layout miss".to_string(),
-            ))
-        }
     }
 
     let opening_batch = OpeningBatchShape::new(8, 1).expect("singleton opening batch");
-    let envelope = setup_matrix_envelope_for_shape::<GroupLayoutRejectCfg>(&opening_batch)
-        .expect("runtime setup envelope should not abort on optional group layout miss")
+    let envelope = setup_matrix_envelope_for_shape::<RuntimeOnlyCfg>(&opening_batch)
+        .expect("runtime setup envelope should not abort")
         .expect("runtime schedule is supported");
     assert_eq!(envelope.max_setup_len, 1);
 }

@@ -13,19 +13,21 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams,
-    GroupBatchAkitaScheduleLookupKey, LevelParams, OpeningBatchShape, Schedule,
-    SetupMatrixEnvelope, SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
+    OpeningBatchShape, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
+pub mod conservative_commitment;
 pub mod generated_families;
+pub mod multi_group_batch;
 pub mod proof_optimized;
 pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+pub use conservative_commitment::ConservativeCommitmentConfig;
+pub use multi_group_batch::MultiGroupBatchConfig;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_grouped_opening_batch_for_shape,
@@ -220,124 +222,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// verifier-reachable.
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
         akita_planner::resolve_schedule(
-            key,
-            &policy_of::<Self>(),
-            Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
-            Self::schedule_catalog(),
-        )
-    }
-
-    /// Schedule used to derive the standalone conservative layout for `commit_group`.
-    ///
-    /// The group layout is planned at the minimum configured root basis, then
-    /// its B rank is widened separately by [`Self::get_params_for_group_commit`].
-    ///
-    /// # Errors
-    ///
-    /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
-    /// or unsupported SIS buckets.
-    fn group_commit_schedule(key: &AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-        if Self::TIERED_COMMITMENT {
-            return Err(AkitaError::InvalidSetup(
-                "tiered standalone commitment groups are not supported; see specs/multi-group-batching.md"
-                    .to_string(),
-            ));
-        }
-        if Self::decomposition().log_commit_bound != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "standalone commitment groups require a one-hot config".to_string(),
-            ));
-        }
-        if key.num_polynomials == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "standalone commitment group key must contain at least one polynomial".to_string(),
-            ));
-        }
-        key.validate()?;
-
-        let (min_basis, _) = Self::basis_range();
-        let mut policy = policy_of::<Self>();
-        policy.basis_range = (min_basis, min_basis);
-        policy.decomposition.log_basis = min_basis;
-        akita_planner::find_schedule(
-            *key,
-            &policy,
-            Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
-        )
-    }
-
-    /// Standalone conservative layout used by `commit_group`.
-    ///
-    /// The group layout is planned at the minimum configured root basis, then
-    /// its B rank is widened for the maximum configured root basis.
-    ///
-    /// # Errors
-    ///
-    /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
-    /// unsupported SIS buckets, or schedules without root commit params.
-    fn get_params_for_group_commit(
-        key: &AkitaScheduleLookupKey,
-    ) -> Result<LevelParams, AkitaError> {
-        let (min_basis, max_basis) = Self::basis_range();
-        let mut params =
-            Self::group_commit_schedule(key).and_then(|schedule| match schedule.steps.first() {
-                Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-                Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "root-direct group schedule is missing commit params".to_string(),
-                    )
-                }),
-                None => Err(AkitaError::InvalidSetup(
-                    "group commit schedule has no steps".to_string(),
-                )),
-            })?;
-        if params.log_basis != min_basis {
-            return Err(AkitaError::InvalidSetup(
-                "group commit planner did not use the minimum configured log_basis".to_string(),
-            ));
-        }
-
-        let conservative_norm =
-            rounded_up_collision_norm_t(Self::sis_modulus_family(), Self::D, max_basis)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "no conservative B-role norm for standalone commitment group".to_string(),
-                    )
-                })?;
-        let conservative_n_b = min_secure_rank(
-            Self::sis_modulus_family(),
-            Self::D as u32,
-            conservative_norm,
-            params.b_key.col_len() as u64,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "no conservative B-role rank for standalone commitment group".to_string(),
-            )
-        })?;
-        params.b_key = AjtaiKeyParams::try_new(
-            Self::sis_modulus_family(),
-            conservative_n_b,
-            params.b_key.col_len(),
-            conservative_norm,
-            Self::D,
-        )?;
-        Ok(params)
-    }
-
-    /// Resolve the final grouped root schedule key without scalar-key aliasing.
-    ///
-    /// Phase 1 only exposes planning. Proving a grouped root remains guarded by
-    /// the prover/verifier entry points until the opening phase lands. Setup
-    /// envelope scans do not yet size grouped final schedules; callers must not
-    /// treat setup capacity as covering `get_group_batch_schedule` output until
-    /// Phase 2 extends `proof_optimized` envelope construction.
-    fn get_group_batch_schedule(
-        key: &GroupBatchAkitaScheduleLookupKey,
-    ) -> Result<Schedule, AkitaError> {
-        akita_planner::resolve_group_batch_schedule(
             key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,

@@ -213,7 +213,7 @@ impl CommitmentGroupLayout {
         Ok(())
     }
 
-    /// Validate metadata frozen by standalone `commit_group` at precommit time.
+    /// Validate metadata frozen by a conservative standalone commit.
     pub fn validate_frozen_precommit(
         &self,
         ring_dimension: usize,

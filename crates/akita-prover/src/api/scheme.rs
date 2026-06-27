@@ -5,7 +5,6 @@ use crate::compute::{
     LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
     UniformProverStack,
 };
-use crate::CommittedGroupHandle;
 use crate::ProverOpeningBatch;
 use crate::ProverTranscriptGrind;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -100,28 +99,6 @@ where
         polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
-    where
-        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-        Self::ExtField: FpExtEncoding<F>,
-        P: RootCommitPoly<F, D>,
-        B: RootCommitBackend<F, P, Self::ExtField, D>;
-
-    /// Commit one standalone one-hot commitment group with conservative B rank.
-    ///
-    /// The returned metadata freezes the group layout for a later grouped final
-    /// plan. Grouped opening proofs remain unsupported until the next rollout
-    /// phase.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the group is empty, dense, exceeds setup capacity, or
-    /// cannot be conservatively planned.
-    fn commit_group<P, B>(
-        setup: &Self::ProverSetup,
-        polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
-    ) -> Result<CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,

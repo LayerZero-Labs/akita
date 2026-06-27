@@ -1170,10 +1170,10 @@ fn batched_onehot_same_point_round_trip() {
         .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let commit_group = [poly_a.clone(), poly_b.clone()];
+        let commit_bundle = [poly_a.clone(), poly_b.clone()];
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
-            &commit_group,
+            &commit_bundle,
             &stack,
         )
         .unwrap();

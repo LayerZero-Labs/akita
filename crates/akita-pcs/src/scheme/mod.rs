@@ -113,22 +113,6 @@ where
         akita_prover::batched_commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_group")]
-    fn commit_group<P, B>(
-        setup: &Self::ProverSetup,
-        polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
-    ) -> Result<akita_prover::CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
-    where
-        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-        Self::ExtField: FpExtEncoding<F>,
-        P: RootCommitPoly<F, D>,
-        B: RootCommitBackend<F, P, Self::ExtField, D>,
-    {
-        akita_prover::commit_group::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
-    }
-
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,

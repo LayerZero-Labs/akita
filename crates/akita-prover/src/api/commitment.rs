@@ -14,35 +14,12 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaScheduleLookupKey, CommitmentGroupLayout, FlatDigitBlocks,
-    FpExtEncoding, LevelParams, OpeningBatchShape, RingCommitment, Step,
-    GROUPED_ROOT_DENSE_UNSUPPORTED,
+    AkitaExpandedSetup, FlatDigitBlocks, FpExtEncoding, LevelParams, OpeningBatchShape,
+    RingCommitment,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
 pub type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F, D>);
-
-/// Commitment group handle specialized to Akita's native commitment and hint types.
-pub type CommittedGroupWithHint<F, const D: usize> =
-    CommittedGroupHandle<RingCommitment<F, D>, AkitaCommitmentHint<F, D>>;
-
-/// Schedule metadata returned by a standalone commitment-group precommit.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommittedGroupScheduleMeta {
-    /// Frozen group layout used to commit this group.
-    pub layout: CommitmentGroupLayout,
-}
-
-/// Standalone committed group plus the metadata needed by the final grouped plan.
-#[derive(Debug, Clone)]
-pub struct CommittedGroupHandle<C, H> {
-    /// Frozen schedule metadata for this commitment group.
-    pub schedule: CommittedGroupScheduleMeta,
-    /// Commitment rows for this group.
-    pub commitment: C,
-    /// Prover-side hint for opening this group later.
-    pub hint: H,
-}
 
 pub(crate) fn commit_inner_block_digit_count(
     n_a: usize,
@@ -271,17 +248,20 @@ where
     P: RootPolyShape<F, D>,
 {
     let expected = params.onehot_chunk_size;
-    if expected <= 1 {
+    if expected == 0 {
         return Ok(());
     }
     for (poly_idx, poly) in polys.iter().enumerate() {
-        if let Some(actual) = poly.onehot_chunk_size() {
-            if actual != expected {
-                return Err(AkitaError::InvalidInput(format!(
-                    "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
-                     config/layout requires onehot_k={expected}"
-                )));
-            }
+        let Some(actual) = poly.onehot_chunk_size() else {
+            return Err(AkitaError::InvalidInput(format!(
+                "commitment layout requires one-hot polynomial {poly_idx} with onehot_k={expected}"
+            )));
+        };
+        if actual != expected {
+            return Err(AkitaError::InvalidInput(format!(
+                "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
+                 config/layout requires onehot_k={expected}"
+            )));
         }
     }
     Ok(())
@@ -296,17 +276,20 @@ where
     P: RootPolyShape<F, D>,
 {
     let expected = params.onehot_chunk_size;
-    if expected <= 1 {
+    if expected == 0 {
         return Ok(());
     }
     for (poly_idx, poly) in polys.iter().enumerate() {
-        if let Some(actual) = poly.onehot_chunk_size() {
-            if actual != expected {
-                return Err(AkitaError::InvalidInput(format!(
-                    "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
-                     config/layout requires onehot_k={expected}"
-                )));
-            }
+        let Some(actual) = poly.onehot_chunk_size() else {
+            return Err(AkitaError::InvalidInput(format!(
+                "commitment layout requires one-hot polynomial {poly_idx} with onehot_k={expected}"
+            )));
+        };
+        if actual != expected {
+            return Err(AkitaError::InvalidInput(format!(
+                "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
+                 config/layout requires onehot_k={expected}"
+            )));
         }
     }
     Ok(())
@@ -502,21 +485,6 @@ where
     Ok(schedule_root_fold_step(&schedule).is_some())
 }
 
-fn should_transform_group_commitment<Cfg, const D: usize>(
-    key: &AkitaScheduleLookupKey,
-) -> Result<bool, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(key.num_vars) {
-        return Ok(false);
-    }
-    Ok(matches!(
-        Cfg::group_commit_schedule(key)?.steps.first(),
-        Some(Step::Fold(_))
-    ))
-}
-
 /// Commit a group of polynomials under config `Cfg`.
 ///
 /// The prover crate owns input validation, the root tensor-projection
@@ -621,83 +589,6 @@ where
     }
 
     OpeningBatchShape::new(padded_num_vars, polys.len())
-}
-
-fn validate_group_commit_inputs<F, const D: usize, P>(
-    polys: &[P],
-    setup: &AkitaExpandedSetup<F>,
-) -> Result<AkitaScheduleLookupKey, AkitaError>
-where
-    F: FieldCore,
-    P: RootPolyShape<F, D>,
-{
-    let opening_batch = prepare_commit_inputs::<F, D, P>(polys, setup)?;
-    if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
-        return Err(AkitaError::InvalidInput(
-            GROUPED_ROOT_DENSE_UNSUPPORTED.to_string(),
-        ));
-    }
-    Ok(AkitaScheduleLookupKey::new(
-        opening_batch.num_vars(),
-        opening_batch.num_polynomials(),
-    ))
-}
-
-/// Commit one standalone one-hot commitment group with conservative B rank.
-///
-/// Grouped proving is still guarded until the opening phase lands; this API only
-/// produces the precommit metadata and commitment object required by that later
-/// finalization path.
-///
-/// # Errors
-///
-/// Returns an error if the group is empty, dense, unsupported by the setup, or
-/// cannot be planned under the conservative-rank policy.
-pub fn commit_group<Cfg, const D: usize, P, B>(
-    polys: &[P],
-    expanded: &AkitaExpandedSetup<Cfg::Field>,
-    stack: &UniformProverStack<'_, Cfg::Field, B, D>,
-) -> Result<CommittedGroupWithHint<Cfg::Field, D>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    P: RootCommitPoly<Cfg::Field, D>,
-    B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
-{
-    let commit_ctx = stack.commit();
-    let tensor_ctx = stack.tensor();
-    let key = validate_group_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
-    let params = Cfg::get_params_for_group_commit(&key)?;
-    validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-    validate_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
-    let (commitment, hint) = if should_transform_group_commitment::<Cfg, D>(&key)? {
-        let transformed = polys
-            .iter()
-            .map(|poly| {
-                tensor_root_projection::<Cfg::Field, P, Cfg::ExtField, B, D>(
-                    tensor_ctx.backend(),
-                    Some(tensor_ctx.prepared()),
-                    poly,
-                )
-            })
-            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
-        commit_with_validated_params::<Cfg::Field, D, RootTensorProjectionPoly<Cfg::Field, D>, B>(
-            &transformed,
-            commit_ctx,
-            &params,
-        )?
-    } else {
-        commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)?
-    };
-    Ok(CommittedGroupHandle {
-        schedule: CommittedGroupScheduleMeta {
-            layout: CommitmentGroupLayout::from_params(key, &params),
-        },
-        commitment,
-        hint,
-    })
 }
 
 /// Commit one polynomial bundle under config `Cfg`.
