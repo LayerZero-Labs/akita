@@ -268,21 +268,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Whether `commit_group`'s own min-basis schedule starts with a root fold.
-    ///
-    /// This is deliberately derived from [`Self::group_commit_schedule`], not the
-    /// normal prove schedule, because standalone precommit may be valid for a
-    /// conservative layout even when the runtime prove schedule has a different
-    /// shape or is unavailable.
-    fn group_commit_schedule_starts_with_fold(
-        key: &AkitaScheduleLookupKey,
-    ) -> Result<bool, AkitaError> {
-        Ok(matches!(
-            Self::group_commit_schedule(key)?.steps.first(),
-            Some(Step::Fold(_))
-        ))
-    }
-
     /// Standalone conservative layout used by `commit_group`.
     ///
     /// The group layout is planned at the minimum configured root basis, then

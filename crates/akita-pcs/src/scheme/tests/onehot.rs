@@ -38,6 +38,132 @@ fn commit_group_returns_frozen_conservative_layout() {
     );
 }
 
+fn grouped_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
+    match schedule.steps.first().expect("grouped schedule step") {
+        Step::Direct(direct) => direct.params.as_ref().expect("grouped root params"),
+        Step::Fold(fold) => &fold.params,
+    }
+}
+
+fn with_group_commit_stack<R>(
+    max_num_vars: usize,
+    max_num_polys: usize,
+    run: impl FnOnce(
+        &akita_prover::AkitaProverSetup<OneHotF, ONEHOT_D>,
+        &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend, ONEHOT_D>,
+    ) -> R,
+) -> R {
+    let setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(
+        max_num_vars,
+        max_num_polys,
+    )
+    .expect("setup");
+    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("stack");
+    run(&setup, &stack)
+}
+
+#[test]
+fn commit_group_allows_independent_precommitted_groups() {
+    const NV: usize = 16;
+    const PRE_A_SIZE: usize = 1;
+    const PRE_B_SIZE: usize = 2;
+
+    let pre_a_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_A_SIZE);
+    let pre_b_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_B_SIZE);
+    let pre_a_layout =
+        OneHotCfg::get_params_for_group_commit(&pre_a_key).expect("precommit A layout");
+    let pre_b_layout =
+        OneHotCfg::get_params_for_group_commit(&pre_b_key).expect("precommit B layout");
+    let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_1001)];
+    let pre_b_polys = [
+        debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_2001),
+        debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_2002),
+    ];
+
+    with_group_commit_stack(NV, PRE_A_SIZE + PRE_B_SIZE, |setup, stack| {
+        let pre_a = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(
+            setup,
+            &pre_a_polys,
+            stack,
+        )
+        .expect("precommit A");
+        let pre_b = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(
+            setup,
+            &pre_b_polys,
+            stack,
+        )
+        .expect("precommit B");
+
+        assert_eq!(pre_a.schedule.layout.key, pre_a_key);
+        assert_eq!(pre_b.schedule.layout.key, pre_b_key);
+        assert_eq!(
+            pre_a.commitment.u.len(),
+            pre_a.schedule.layout.conservative_n_b
+        );
+        assert_eq!(
+            pre_b.commitment.u.len(),
+            pre_b.schedule.layout.conservative_n_b
+        );
+        assert_ne!(pre_a.schedule.layout.key, pre_b.schedule.layout.key);
+    });
+}
+
+#[test]
+fn group_batch_schedule_preserves_precommitted_order() {
+    const NV: usize = 16;
+    const PRE_A_SIZE: usize = 1;
+    const PRE_B_SIZE: usize = 2;
+    const MAIN_SIZE: usize = 3;
+
+    let pre_a_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_A_SIZE);
+    let pre_b_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_B_SIZE);
+    let pre_a_layout =
+        OneHotCfg::get_params_for_group_commit(&pre_a_key).expect("precommit A layout");
+    let pre_b_layout =
+        OneHotCfg::get_params_for_group_commit(&pre_b_key).expect("precommit B layout");
+    let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_3001)];
+    let pre_b_polys = [
+        debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4001),
+        debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4002),
+    ];
+
+    with_group_commit_stack(NV, PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE, |setup, stack| {
+        let pre_a = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(
+            setup,
+            &pre_a_polys,
+            stack,
+        )
+        .expect("precommit A");
+        let pre_b = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit_group(
+            setup,
+            &pre_b_polys,
+            stack,
+        )
+        .expect("precommit B");
+        let grouped_key = akita_types::GroupBatchAkitaScheduleLookupKey {
+            main: akita_types::AkitaScheduleLookupKey::new(NV, MAIN_SIZE),
+            precommitteds: vec![pre_a.schedule.layout.clone(), pre_b.schedule.layout.clone()],
+        };
+
+        let schedule = OneHotCfg::get_group_batch_schedule(&grouped_key).expect("grouped schedule");
+        let root = grouped_root_params(&schedule);
+
+        assert_eq!(grouped_key.num_commitment_groups(), 3);
+        assert_eq!(
+            grouped_key
+                .num_polynomials()
+                .expect("grouped polynomial count"),
+            PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE
+        );
+        assert_eq!(root.precommitted_groups.len(), 2);
+        assert_eq!(root.precommitted_groups[0].layout, pre_a.schedule.layout);
+        assert_eq!(root.precommitted_groups[1].layout, pre_b.schedule.layout);
+    });
+}
+
 #[test]
 fn batched_onehot_roundtrip_matches_public_shape_context() {
     // NV chosen large enough that the runtime schedule yields at least two

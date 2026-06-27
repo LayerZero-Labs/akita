@@ -313,7 +313,7 @@ fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
     Ok(padded.trailing_zeros() as usize)
 }
 
-fn extension_opening_reduction_level_bytes(
+pub(crate) fn extension_opening_reduction_level_bytes(
     policy: &PlannerPolicy,
     key: AkitaScheduleLookupKey,
     fold_level: usize,
@@ -342,18 +342,18 @@ fn extension_opening_reduction_level_bytes(
 /// (`first_fold_params`), so the suffix carries it directly instead of
 /// re-matching `steps[0]`.
 #[derive(Clone)]
-struct FoldSuffix {
-    total_bytes: usize,
-    first_fold_params: LevelParams,
-    steps: Vec<Step>,
+pub(crate) struct FoldSuffix {
+    pub(crate) total_bytes: usize,
+    pub(crate) first_fold_params: LevelParams,
+    pub(crate) steps: Vec<Step>,
 }
 
 /// Best direct suffix at one DP state: witness length only. The terminal
 /// `DirectStep` is materialized at stitch time from the predecessor fold's
 /// committed `LevelParams`.
 #[derive(Clone, Copy)]
-struct DirectSuffix {
-    current_w_len: usize,
+pub(crate) struct DirectSuffix {
+    pub(crate) current_w_len: usize,
 }
 
 /// Result of the suffix DP at one state. Both shape options are reported
@@ -365,13 +365,13 @@ struct DirectSuffix {
 /// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
 ///   `log_basis`.
 #[derive(Clone)]
-struct SuffixResult {
-    best_direct: Option<DirectSuffix>,
-    best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
+pub(crate) struct SuffixResult {
+    pub(crate) best_direct: Option<DirectSuffix>,
+    pub(crate) best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
 }
 
 impl SuffixResult {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.best_direct.is_none() && self.best_fold_per_lb.is_empty()
     }
 }
@@ -399,7 +399,7 @@ fn make_terminal_direct_step(
     })
 }
 
-fn terminal_direct_suffix_cost(
+pub(crate) fn terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
@@ -424,7 +424,7 @@ fn terminal_direct_suffix_cost(
     Ok((direct, direct_bytes))
 }
 
-type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
+pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 
 /// DP-invariant inputs for the suffix search.
 ///
@@ -432,11 +432,11 @@ type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 /// recursion, so they are carried in one context value rather than as
 /// per-call arguments (keeps the recursive signature small).
 #[derive(Clone, Copy)]
-struct SuffixCtx<'a> {
-    policy: &'a PlannerPolicy,
-    ring_challenge_config: RingChallengeConfigFn<'a>,
-    num_vars: usize,
-    key: AkitaScheduleLookupKey,
+pub(crate) struct SuffixCtx<'a> {
+    pub(crate) policy: &'a PlannerPolicy,
+    pub(crate) ring_challenge_config: RingChallengeConfigFn<'a>,
+    pub(crate) num_vars: usize,
+    pub(crate) key: AkitaScheduleLookupKey,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -451,7 +451,7 @@ struct SuffixCtx<'a> {
 /// At each state: `best_direct` ships the witness directly (Terminal, no
 /// SIS audit, always present); `best_fold` keeps one fold candidate per
 /// `log_basis` (from [`derive_candidate_level_params`]).
-fn derive_optimal_suffix_schedule(
+pub(crate) fn derive_optimal_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     level: usize,
