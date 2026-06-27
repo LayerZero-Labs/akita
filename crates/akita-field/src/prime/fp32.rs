@@ -20,6 +20,7 @@ use std::io::{Read, Write};
 /// The fold point `k` and offset `c = 2^k − p` are computed at compile time
 /// from the const-generic `P`.  Instantiating with a modulus that does not
 /// satisfy the prime Solinas conditions is a compile-time error.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Fp32<const P: u32>(pub(crate) u32);
 

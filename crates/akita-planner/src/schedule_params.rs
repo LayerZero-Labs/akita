@@ -20,7 +20,7 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
+    segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
     DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
@@ -381,14 +381,14 @@ fn make_terminal_direct_step(
     terminal_lp: &LevelParams,
     field_bits: u32,
     num_polynomials: usize,
-    terminal_log_basis: u32,
 ) -> Result<DirectStep, AkitaError> {
-    let witness_shape = terminal_direct_witness_shape(
+    let witness_shape = segment_typed_witness_shape(
         terminal_lp,
         field_bits,
-        current_w_len,
-        terminal_log_basis,
         num_polynomials,
+        num_polynomials,
+        1,
+        1,
     )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {
@@ -405,7 +405,6 @@ pub(crate) fn terminal_direct_suffix_cost(
     field_bits: u32,
     key: AkitaScheduleLookupKey,
     terminal_fold_level: usize,
-    terminal_log_basis: u32,
 ) -> Result<(DirectStep, usize), AkitaError> {
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
     let num_polynomials = if terminal_fold_level == 0 {
@@ -413,13 +412,8 @@ pub(crate) fn terminal_direct_suffix_cost(
     } else {
         1
     };
-    let direct = make_terminal_direct_step(
-        current_w_len,
-        terminal_lp,
-        field_bits,
-        num_polynomials,
-        terminal_log_basis,
-    )?;
+    let direct =
+        make_terminal_direct_step(current_w_len, terminal_lp, field_bits, num_polynomials)?;
     let direct_bytes = direct.direct_bytes;
     Ok((direct, direct_bytes))
 }
@@ -548,7 +542,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 field_bits,
                 key,
                 level,
-                lb,
             )?;
             let level_proof_size = level_proof_bytes(
                 field_bits,
@@ -1060,7 +1053,6 @@ fn find_schedule_inner(
                     field_bits,
                     key,
                     0,
-                    candidate_log_basis,
                 )?;
                 let root_proof_size = level_proof_bytes(
                     field_bits,

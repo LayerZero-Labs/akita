@@ -271,7 +271,7 @@ blinding = num_commitment_groups * blinding_cols(...)
 The main current shape carriers are:
 
 - `AkitaScheduleLookupKey` and `GeneratedScheduleKey`.
-- `w_ring_element_count_with_counts`.
+- `w_ring_element_count_with_counts_for_layout`.
 - `root_w_ring_element_count` in `crates/akita-planner/src/schedule_params.rs`.
 - `find_optimal_schedule`.
 - `gen_schedule_tables.rs`, which emits generated schedule entries keyed by the

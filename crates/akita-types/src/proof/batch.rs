@@ -182,17 +182,6 @@ fn ring_is_constant<F: FieldCore, const D: usize>(ring: &CyclotomicRing<F, D>) -
     ring.coefficients()[1..].iter().all(|coeff| coeff.is_zero())
 }
 
-fn ring_subfield_scalar_to_ring<F, E, const D: usize>(
-    value: E,
-    error: AkitaError,
-) -> Result<CyclotomicRing<F, D>, AkitaError>
-where
-    F: FieldCore + akita_field::FromPrimitiveInt,
-    E: FpExtEncoding<F>,
-{
-    embed_ring_subfield_scalar::<F, E, D>(value, error)
-}
-
 fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
     opening_point: &[E],
     r_vars: usize,
@@ -229,11 +218,11 @@ where
     );
     let a = a_weights
         .into_iter()
-        .map(|weight| ring_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
+        .map(|weight| embed_ring_subfield_scalar::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     let b = b_weights
         .into_iter()
-        .map(|weight| ring_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
+        .map(|weight| embed_ring_subfield_scalar::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RingMultiplierOpeningPoint::from_ring(a, b))
 }

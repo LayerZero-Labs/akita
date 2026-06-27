@@ -54,7 +54,7 @@ where
     }
     current_state
         .commitment
-        .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
+        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
     let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
@@ -88,9 +88,14 @@ where
 
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
-        None => w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims)?
-            .checked_mul(D)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        None => w_ring_element_count_with_counts_for_layout::<F>(
+            lp,
+            num_claims,
+            num_claims,
+            MRowLayout::WithDBlock,
+        )?
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
     };
     let terminal_replay = if proof.final_w_len().is_some() {
         let layout =
@@ -218,11 +223,16 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let computed_next_w_len = w_ring_element_count_with_counts::<F>(current_lp, 1, 1)?
-                    .checked_mul(level_d)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("next witness length overflow".to_string())
-                    })?;
+                let computed_next_w_len = w_ring_element_count_with_counts_for_layout::<F>(
+                    current_lp,
+                    1,
+                    1,
+                    MRowLayout::WithDBlock,
+                )?
+                .checked_mul(level_d)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("next witness length overflow".to_string())
+                })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
                 current_state = SuffixVerifierState {
                     opening_point: challenges,

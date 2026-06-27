@@ -10,10 +10,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape_for_key, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, GroupBatchAkitaScheduleLookupKey, LevelParams,
-    MRowLayout, Schedule, Step,
+    segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
+    GroupBatchAkitaScheduleLookupKey, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::catalog_identity::validate_catalog_identity;
@@ -208,7 +207,13 @@ pub(crate) fn schedule_from_group_batch_entry(
                             MRowLayout::WithDBlock,
                         )?
                     } else {
-                        let ring = w_ring_element_count_with_counts_bits(field_bits, &lp, 1, 1)?;
+                        let ring = w_ring_element_count_with_counts_for_layout_bits(
+                            field_bits,
+                            &lp,
+                            1,
+                            1,
+                            MRowLayout::WithDBlock,
+                        )?;
                         mul_d(ring, &lp)?
                     };
                     let GeneratedStep::Fold(next_level) = next else {
@@ -300,21 +305,13 @@ pub(crate) fn schedule_from_group_batch_entry(
                             "terminal direct step missing precomputed witness length".to_string(),
                         )
                     })?;
-                    let terminal_fold_level = fold_level.saturating_sub(1);
                     let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
                         AkitaError::InvalidSetup(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    let terminal_log_basis = terminal_lp.log_basis;
-                    let witness_shape = terminal_direct_witness_shape_for_key(
-                        terminal_lp,
-                        field_bits,
-                        AkitaScheduleLookupKey::singleton(key.main.num_vars),
-                        terminal_fold_level,
-                        len,
-                        terminal_log_basis,
-                    )?;
+                    let witness_shape =
+                        segment_typed_witness_shape(terminal_lp, field_bits, 1, 1, 1, 1)?;
                     (witness_shape, len, None)
                 };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
@@ -444,11 +441,12 @@ pub fn schedule_from_entry(
                     terminal_witness_field_len = Some(len);
                     (len, None, MRowLayout::WithoutDBlock)
                 } else {
-                    let ring = w_ring_element_count_with_counts_bits(
+                    let ring = w_ring_element_count_with_counts_for_layout_bits(
                         field_bits,
                         &lp,
                         num_polynomials,
                         num_public_rows,
+                        MRowLayout::WithDBlock,
                     )?;
                     let len = mul_d(ring)?;
                     let GeneratedStep::Fold(next_level) = next else {
@@ -537,14 +535,18 @@ pub fn schedule_from_entry(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    let terminal_log_basis = terminal_lp.log_basis;
-                    let witness_shape = terminal_direct_witness_shape_for_key(
+                    let num_polynomials = if terminal_fold_level == 0 {
+                        key.num_polynomials
+                    } else {
+                        1
+                    };
+                    let witness_shape = segment_typed_witness_shape(
                         terminal_lp,
                         field_bits,
-                        key,
-                        terminal_fold_level,
-                        len,
-                        terminal_log_basis,
+                        num_polynomials,
+                        num_polynomials,
+                        1,
+                        1,
                     )?;
                     (witness_shape, len, None)
                 };

@@ -83,6 +83,19 @@ jobs:
       - name: Check unused dependencies
         run: cargo machete --with-metadata
 
+  jolt-compat:
+    name: Jolt compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        with:
+          components: clippy
+      - name: Clippy akita-field jolt-compat
+        run: cargo clippy -p akita-field --all-targets --features jolt-compat -- -D warnings
+      - name: Test akita-field jolt-compat
+        run: cargo test --release -p akita-field --features jolt-compat
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest

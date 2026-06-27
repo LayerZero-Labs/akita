@@ -24,11 +24,6 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         }
     }
 
-    /// Construct a singleton batched hint from one polynomial's digit stream.
-    pub fn singleton(decomposed_inner_rows: FlatDigitBlocks<D>) -> Self {
-        Self::new(vec![decomposed_inner_rows])
-    }
-
     /// Construct a batched hint that also preserves recomposed inner rows.
     pub fn with_recomposed_inner_rows(
         decomposed_inner_rows: Vec<FlatDigitBlocks<D>>,

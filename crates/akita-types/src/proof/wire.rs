@@ -66,14 +66,6 @@ where
     Ok(Some(ExtensionOpeningReductionProof { partials, sumcheck }))
 }
 
-fn serialize_fold_grind_nonce<W: Write>(
-    writer: W,
-    fold_grind_nonce: u32,
-    compress: Compress,
-) -> Result<(), SerializationError> {
-    fold_grind_nonce.serialize_with_mode(writer, compress)
-}
-
 fn deserialize_fold_grind_nonce<R: Read>(
     reader: R,
     compress: Compress,
@@ -100,7 +92,7 @@ where
 {
     serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
     v.serialize_with_mode(&mut writer, compress)?;
-    serialize_fold_grind_nonce(writer, fold_grind_nonce, compress)
+    fold_grind_nonce.serialize_with_mode(writer, compress)
 }
 
 fn intermediate_fold_wire_prefix_serialized_size<F, L>(
@@ -153,7 +145,7 @@ where
     W: Write,
 {
     serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
-    serialize_fold_grind_nonce(writer, fold_grind_nonce, compress)
+    fold_grind_nonce.serialize_with_mode(writer, compress)
 }
 
 fn terminal_fold_wire_prefix_serialized_size<L>(
