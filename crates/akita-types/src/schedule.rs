@@ -276,29 +276,6 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
     (-F::one()).to_canonical_u128() + 1
 }
 
-/// Total ring elements in the recursive witness polynomial.
-///
-pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts::<F>(lp, 1, 1)
-}
-
-/// Total ring elements in a recursive witness polynomial for an explicit batch.
-///
-/// The scalar same-point batch opens one claim per polynomial, so a single
-/// `num_polynomials` drives both the `e`/`t` witness widths.
-pub fn w_ring_element_count_with_counts<F: CanonicalField>(
-    lp: &LevelParams,
-    num_polynomials: usize,
-    num_public_rows: usize,
-) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts_for_layout::<F>(
-        lp,
-        num_polynomials,
-        num_public_rows,
-        crate::layout::MRowLayout::WithDBlock,
-    )
-}
-
 /// Total ring elements in a recursive witness polynomial for an explicit
 /// M-row layout. The terminal layout drops the D-block from the M-matrix,
 /// which shrinks the per-row `r` quotients by `n_d * r_decomp_levels` ring
@@ -317,23 +294,6 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
         num_polynomials,
         num_public_rows,
         layout,
-    )
-}
-
-/// Non-generic variant of [`w_ring_element_count_with_counts`] for callers
-/// that already know the effective field bit width.
-pub fn w_ring_element_count_with_counts_bits(
-    field_bits: u32,
-    lp: &LevelParams,
-    num_polynomials: usize,
-    num_public_rows: usize,
-) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts_for_layout_bits(
-        field_bits,
-        lp,
-        num_polynomials,
-        num_public_rows,
-        crate::layout::MRowLayout::WithDBlock,
     )
 }
 

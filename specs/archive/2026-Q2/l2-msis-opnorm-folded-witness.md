@@ -1,11 +1,21 @@
 # Spec: L2 MSIS Cutover, Operator-Norm Challenges, and Folded-Witness L2 Certificates
 
-| Field       | Value |
-|-------------|-------|
-| Author(s)   | Quang Dao, Cursor agent draft |
-| Created     | 2026-06-04 |
-| Status      | proposed, draft for iteration |
-| PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from [#195](https://github.com/LayerZero-Labs/akita/pull/195)) |
+| Field         | Value |
+|---------------|-------|
+| Author(s)     | Quang Dao, Cursor agent draft |
+| Created       | 2026-06-04 |
+| Status        | historical |
+| PR            | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from [#195](https://github.com/LayerZero-Labs/akita/pull/195)) |
+| Superseded-by | — |
+| Book-chapter  | — |
+
+> **Archive note (2026-06).** The folded-witness L2 certificate path (S6–S13,
+> four-square slack, grouped-carry sumchecks) is cancelled and will not ship.
+> Op-norm rejection and L2 MSIS table pricing remain **interim** shipped code
+> until a follow-up PR cuts the planner over to **L∞-only** sizing (no op-norm
+> rejection/grind, collision indexed by inf norm). Interim live references:
+> [`specs/fold-linf-rejection.md`](../../fold-linf-rejection.md),
+> [`specs/sis-euclidean-estimator.md`](../../sis-euclidean-estimator.md).
 
 ## Summary
 

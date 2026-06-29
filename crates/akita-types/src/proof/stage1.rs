@@ -123,7 +123,8 @@ fn stage1_leaf_factor_count(b: usize) -> usize {
     b / 8
 }
 
-fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<AkitaStage1StageShape> {
+/// Return the wire shapes for all stage-1 tree subproofs.
+pub fn stage1_tree_stage_shapes(rounds: usize, b: usize) -> Vec<AkitaStage1StageShape> {
     debug_assert!(b >= 4 && b.is_power_of_two());
     if b <= 8 {
         return vec![AkitaStage1StageShape {
@@ -150,14 +151,9 @@ fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<AkitaStage1Sta
     out
 }
 
-/// Return the wire shapes for all stage-1 tree subproofs.
-pub fn stage1_tree_stage_shapes(rounds: usize, b: usize) -> Vec<AkitaStage1StageShape> {
-    stage1_tree_stage_shape_from_b(rounds, b)
-}
-
 /// Return the number of stage-1 tree subproofs for basis `b`.
 pub fn stage1_stage_count(b: usize) -> usize {
-    stage1_tree_stage_shape_from_b(0, b).len()
+    stage1_tree_stage_shapes(0, b).len()
 }
 
 /// Return powers of an interstage batching challenge.

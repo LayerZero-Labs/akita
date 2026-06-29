@@ -10,7 +10,7 @@
 ## Summary
 
 Akita's sumchecks are hard to read, hard to audit, and hard to extend.
-The per-stage math is hand-inlined separately on the prover and verifier, the prover fuses several sumchecks over one witness inside a bespoke inner loop, and every new sumcheck (the y-ring trace term, the L2 certificate sumchecks, the setup-offloading product sumcheck) is added by editing a monolithic stage driver.
+The per-stage math is hand-inlined separately on the prover and verifier, the prover fuses several sumchecks over one witness inside a bespoke inner loop, and every new sumcheck (the y-ring trace term, the setup-offloading product sumcheck) is added by editing a monolithic stage driver.
 The result is a cartesian product of modes (`two_round_prefix` x prefix-x x prefix-y x sparse x compact/full x fuse-next-round) interleaved with fold logic, three different batching implementations, and a real correctness/perf hazard: adding the trace term disables the `two_round_prefix` prover optimization wholesale (`crates/akita-prover/src/protocol/sumcheck/akita_stage2/lifecycle.rs` in the y-ring worktree).
 
 This spec unifies Akita's sumchecks behind one declarative descriptor that both the prover and verifier consume, modeled on the idealized modular Jolt design.
@@ -72,8 +72,8 @@ Each names the test, benchmark, or protocol relation that protects it.
 
 - Not changing the soundness, equations, or proof semantics of any existing Akita protocol.
   This is a structural refactor; the pilot reproduces stage 2 exactly.
-- Not inventing new protocol semantics for L2 certificate sumchecks or setup-claim offloading in this spec.
-  The pilot reproduces current `main` stage 2 exactly, including the fused trace term from y-ring internalization (already merged); the protocol-plan abstraction forward-maps L2/offload, but those remain separate PRs.
+- Not inventing new protocol semantics for setup-claim offloading in this spec.
+  The pilot reproduces current `main` stage 2 exactly, including the fused trace term from y-ring internalization (already merged); the protocol-plan abstraction forward-maps offload, but that remains a separate PR.
 - Not implementing the polyops/witness-source cutover.
   This spec consumes whatever witness/polynomial sources exist; the descriptor's openings resolve through them.
 - Not migrating stage 1 (range tree, eq-factored), the extension-opening reduction, or the setup product sumcheck in the pilot.
@@ -99,7 +99,7 @@ Each names the test, benchmark, or protocol relation that protects it.
 - [ ] Proof bytes for stage 2 are identical to `main` on deterministic fixtures.
 - [ ] `logging-transcript` event-stream equality holds for the unified stage-2 prover and verifier.
 - [ ] The protocol plan derives the stage-2 instance list and transcript schedule from `LevelParams` + gates, and the same function is called by prover and verifier.
-- [ ] A written forward-design section shows how the y-ring trace term, the folded-witness L2 certificate (`specs/l2-msis-opnorm-folded-witness.md` grouped-carry realization, gated by `l2_certificate`), and setup-offloading Stage-3 eligibility map onto the plan, including central gamma-power batching allocation.
+- [ ] A written forward-design section shows how the y-ring trace term and setup-offloading Stage-3 eligibility map onto the plan, including central gamma-power batching allocation.
 - [ ] Stage-2 prover wall time within noise of `main` on the canonical profile workload.
 
 ### Testing Strategy
@@ -341,7 +341,7 @@ The ring dimension is a `const D`, not a runtime parameter: `plan_level` validat
 Stage-2 round counts come from `next_w_len` (the next folded-witness length) via `akita_types::sumcheck_rounds(D, next_w_len)`, the same source the stage-1/2 provers and verifiers use, rather than from `LevelParams::outer_vars()`.
 
 Both prover and verifier call `plan_level` with the same inputs and obtain the same schedule, so Fiat-Shamir ordering, batching, and per-instance proof format are identical by construction.
-`ProtocolGates` carries the feature switches: trace on/off, L2 certificate mode, setup-offload eligibility, ZK.
+`ProtocolGates` carries the feature switches: trace on/off, setup-offload eligibility, ZK.
 
 The plan also resolves the instance-kind/proof-format interaction from the previous section: a `StagePlan` with a single eq-factored instance keeps the eq-factored format; any `StagePlan` that batches an eq-factored instance with others demotes it to the regular format (the prover keeps Gruen split-eq compute).
 `BatchingScheme` therefore allocates gamma powers only over instances that are actually batched together, and a standalone eq-factored stage carries no batching coefficient.
@@ -358,18 +358,11 @@ How the in-flight features map onto the plan (forward design, not implemented he
   No new instance, no new rounds.
   The gate `trace=true` selects the extended summand (the virtual, relation, and trace sub-claims at intermediate levels).
 
-- L2 certificate sumchecks.
-  An `l2_certificate` gate selects whether a level emits the folded-witness L2 certificate of `specs/l2-msis-opnorm-folded-witness.md`.
-  That spec's grouped-carry design picks a per-level realization (`field-fitting` / `grouped-carry` / `deterministic-fallback`), proves one squared-sum sumcheck `sum_x Z_alpha(x)^2 = V`, and on grouped-carry levels adds an extra `alpha` squeeze, a masked claimed sum `V`, a committed `carry_hat` segment, and a folded carry linear claim.
-  The F-l2 node owns that realization taxonomy and the per-realization proof shape and defines them when it wires this gate, so the plan does not encode the claim lists itself.
-  The plan's role is to host the gate and the realization marker the descriptor binds, to add the extra transcript events (the `alpha` squeeze) to the schedule, and to allocate the certificate instances' gamma powers centrally so they cannot collide with the trace or offload instances.
-  The carry claim and limb/carry virtualization land as `SumcheckInstanceDescriptor`s / structured linear claims in the relevant `StagePlan`, with the `InstanceKind`-plus-batching choice from section 2 selected by the plan and distinct from prover optimizations.
-
 - Setup-claim offloading.
   Eligibility (`D == D_setup`, `N_prefix >= N_min`, presence of a next recursive fold; `STACK.md`) gates whether a Stage-3 setup product-sumcheck instance is appended and whether `carried_openings` is a singleton or a list.
   The relation-shift variant (`STACK.md` Slice 03B/04) is a different `plan_level` output for the same level, chosen by gates.
 
-The plan is the single place gamma-power batching is allocated, so trace, L2, and offloading cannot collide on the same power.
+The plan is the single place gamma-power batching is allocated, so trace and offloading cannot collide on the same power.
 
 #### 6. Crate boundaries
 
@@ -488,7 +481,6 @@ Risks to resolve first:
   - `crates/akita-verifier/src/stages/stage2.rs`.
 - Related specs and worktrees:
   - `specs/y-ring-trace-internalization.md` (worktree `akita-y-ring-trace-internalization`): fused trace term.
-  - `specs/l2-msis-opnorm-folded-witness.md` (worktree `akita-l2-msis-cutover`): the folded-witness L2 certificate (grouped-carry realization), operator-norm challenge rejection, and L2 SIS pricing the `l2_certificate` gate targets. Supersedes the earlier `l2-folded-witness-sumchecks.md` / `l2_certificate.rs` (PR-158) binary `Deterministic`/`Realized` claim-list shape.
   - `specs/akita-polyops-cutover.md` (worktree `akita-polyops-cutover-spec`): witness/polynomial source boundary.
   - `STACK.md`, `specs/setup-layout-repack.md`: setup-claim offloading and conditional protocol shape.
 - Profiling: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`.

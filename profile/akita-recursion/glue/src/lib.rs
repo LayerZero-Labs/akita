@@ -240,10 +240,6 @@ where
         Ok(len)
     }
 
-    fn decode_num_vars(rest: &mut &[u8]) -> Result<usize, SerializationError> {
-        Self::decode_capped_len(rest, MAX_BLOB_NUM_VARS)
-    }
-
     fn ensure_remaining(
         rest: &[u8],
         len: usize,
@@ -392,7 +388,7 @@ where
             MAX_TRANSCRIPT_DOMAIN_BYTES,
             "akita-jolt transcript domain",
         )?;
-        let num_vars = Self::decode_num_vars(&mut rest)?;
+        let num_vars = Self::decode_capped_len(&mut rest, MAX_BLOB_NUM_VARS)?;
         let setup_mode_byte =
             u8::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
         let setup_contribution_mode = setup_mode_from_u8(setup_mode_byte)?;

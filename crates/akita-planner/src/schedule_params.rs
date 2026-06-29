@@ -20,7 +20,7 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
+    segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
     AkitaScheduleLookupKey, ChunkedWitnessCfg, CleartextWitnessShape, DecompositionParams,
     DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
@@ -421,14 +421,20 @@ fn make_terminal_direct_step(
     terminal_lp: &LevelParams,
     field_bits: u32,
     num_polynomials: usize,
-    terminal_log_basis: u32,
 ) -> Result<DirectStep, AkitaError> {
-    let witness_shape = terminal_direct_witness_shape(
+    // Chunked terminal: `ê`/`t̂` partitioned (totals unchanged), `ẑ` replicated
+    // and shared `r`-tail priced with `num_chunks` commitments — modeled via the
+    // segment/public-row multiplicity. `num_chunks == 1` is byte-identical to the
+    // single-chunk shape, so non-chunked levels are unaffected. Must match the
+    // table-walk terminal pricing in `resolve.rs`.
+    let terminal_num_chunks = terminal_lp.witness_chunk.num_chunks.max(1);
+    let witness_shape = segment_typed_witness_shape(
         terminal_lp,
         field_bits,
-        current_w_len,
-        terminal_log_basis,
         num_polynomials,
+        num_polynomials,
+        terminal_num_chunks,
+        terminal_num_chunks,
     )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {
@@ -445,7 +451,6 @@ fn terminal_direct_suffix_cost(
     field_bits: u32,
     key: AkitaScheduleLookupKey,
     terminal_fold_level: usize,
-    terminal_log_basis: u32,
 ) -> Result<(DirectStep, usize), AkitaError> {
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
     let num_polynomials = if terminal_fold_level == 0 {
@@ -453,13 +458,8 @@ fn terminal_direct_suffix_cost(
     } else {
         1
     };
-    let direct = make_terminal_direct_step(
-        current_w_len,
-        terminal_lp,
-        field_bits,
-        num_polynomials,
-        terminal_log_basis,
-    )?;
+    let direct =
+        make_terminal_direct_step(current_w_len, terminal_lp, field_bits, num_polynomials)?;
     let direct_bytes = direct.direct_bytes;
     Ok((direct, direct_bytes))
 }
@@ -595,7 +595,6 @@ fn derive_optimal_suffix_schedule(
                 field_bits,
                 key,
                 level,
-                lb,
             )?;
             let level_proof_size = level_proof_bytes(
                 field_bits,
@@ -1119,7 +1118,6 @@ fn find_schedule_inner(
                     field_bits,
                     key,
                     0,
-                    candidate_log_basis,
                 )?;
                 let root_proof_size = level_proof_bytes(
                     field_bits,

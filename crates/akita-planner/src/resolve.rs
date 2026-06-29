@@ -10,7 +10,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    terminal_direct_witness_shape_for_key, w_ring_element_count_for_chunks, AkitaScheduleInputs,
+    segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
     GroupBatchAkitaScheduleLookupKey, LevelParams, MRowLayout, Schedule, Step,
 };
@@ -309,14 +309,23 @@ pub fn schedule_from_entry(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    let terminal_log_basis = terminal_lp.log_basis;
-                    let witness_shape = terminal_direct_witness_shape_for_key(
+                    let num_polynomials = if terminal_fold_level == 0 {
+                        key.num_polynomials
+                    } else {
+                        1
+                    };
+                    // Chunked terminal: `ê`/`t̂` partitioned (totals unchanged),
+                    // `ẑ` replicated and shared `r`-tail priced with `num_chunks`
+                    // commitments — modeled via the segment/public-row multiplicity.
+                    // `num_chunks == 1` is byte-identical to the single-chunk shape.
+                    let terminal_num_chunks = terminal_lp.witness_chunk.num_chunks.max(1);
+                    let witness_shape = segment_typed_witness_shape(
                         terminal_lp,
                         field_bits,
-                        key,
-                        terminal_fold_level,
-                        len,
-                        terminal_log_basis,
+                        num_polynomials,
+                        num_polynomials,
+                        terminal_num_chunks,
+                        terminal_num_chunks,
                     )?;
                     (witness_shape, len, None)
                 };

@@ -138,8 +138,8 @@ The key surfaces modified by this spec are:
 
 - [x] `AkitaProverSetup<F, D>` no longer stores `ntt_shared:
       NttSlotCache<D>` or any other backend-prepared cache.
-- [x] `AkitaProverSetup::generate_with_capacity` and
-      `AkitaProverSetup::from_expanded` do not build CPU NTT caches. CPU caches
+- [x] `AkitaProverSetup::generate_with_capacity` and validated expanded-setup
+      constructors do not build CPU NTT caches. CPU caches
       are prepared lazily by `CpuBackend` from `AkitaExpandedSetup`.
 - [x] `CommitmentProver::commit`, `CommitmentProver::batched_commit`, and
       `CommitmentProver::batched_prove` require an explicit backend plus that
@@ -229,7 +229,7 @@ CPU cutover tests:
 
 New focused tests:
 
-- `AkitaProverSetup::from_expanded` does not build CPU NTT state.
+- Validated expanded-setup constructors do not build CPU NTT state.
 - `CpuBackend::prepare_setup` builds typed CPU prepared state with the same NTT
   data that `AkitaProverSetup` used to build.
 - No `NttSlotCache` import in `akita-pcs` scheme orchestration.
@@ -451,8 +451,8 @@ out CPU internals. `CpuPreparedSetup` may own `NttSlotCache<D>` and the expanded
 setup, but its raw matrix and NTT slot are not the abstraction. The abstraction
 is the backend operation methods that consume representation-aware plan data.
 
-`AkitaProverSetup::generate_with_capacity` and `from_expanded` construct or
-wrap expanded setup only. Disk-persistence or setup-cache paths must not
+`AkitaProverSetup::generate_with_capacity` and validated expanded-setup
+constructors construct or wrap expanded setup only. Disk-persistence or setup-cache paths must not
 eagerly rebuild CPU NTT state outside the explicit compute-preparation path.
 
 ### Compute Operations
@@ -802,8 +802,8 @@ Scope:
   prepared-setup accessor boundary;
 - move NTT cache construction from `AkitaProverSetup` into
   `CpuBackend::prepare_setup`;
-- make `AkitaProverSetup::generate_with_capacity` and `from_expanded`
-  expanded-setup-only with respect to CPU NTT state;
+- make `AkitaProverSetup::generate_with_capacity` and validated expanded-setup
+  constructors expanded-setup-only with respect to CPU NTT state;
 - change `CommitmentProver` entrypoints to require explicit setup metadata,
   an explicit backend, and that backend's typed prepared context;
 - update all in-repo tests, benches, examples, `akita-scheme`, and aggregate
