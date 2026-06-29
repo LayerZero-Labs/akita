@@ -390,25 +390,6 @@ fn exact_shell_sampling_handles_weight_above_sign_stack_chunk() {
     }
 }
 
-/// f64 reference for the negacyclic operator norm `gamma_D(c) = max_k |c(zeta_k)|`,
-/// used only to confirm the certified integer predicate actually bounds the
-/// accepted challenges in the end-to-end sampling path.
-fn gamma_f64<const D: usize>(c: &SparseChallenge) -> f64 {
-    use std::f64::consts::PI;
-    let mut max_sq = 0.0f64;
-    for k in 0..D {
-        let base = (2 * k + 1) as f64 * PI / D as f64;
-        let (mut re, mut im) = (0.0f64, 0.0f64);
-        for (&pos, &coeff) in c.positions.iter().zip(c.coeffs.iter()) {
-            let theta = base * pos as f64;
-            re += coeff as f64 * theta.cos();
-            im += coeff as f64 * theta.sin();
-        }
-        max_sq = max_sq.max(re * re + im * im);
-    }
-    max_sq.sqrt()
-}
-
 #[test]
 fn tensor_product_matches_dense_ring_product() {
     const TD: usize = 8;
