@@ -264,9 +264,9 @@ impl GroupBatchAkitaScheduleLookupKey {
         self.main.validate()?;
         for layout in &self.precommitteds {
             layout.validate()?;
-            if layout.key.num_vars > self.main.num_vars {
+            if layout.key.num_vars > self.main.num_vars / 2 {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root requires precommitted groups to have at most the main num_vars"
+                    "grouped root requires precommitted groups to have at most half the main num_vars"
                         .to_string(),
                 ));
             }
@@ -998,7 +998,7 @@ mod tests {
     }
 
     #[test]
-    fn group_batch_key_rejects_mixed_num_vars() {
+    fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
         let pre = CommitmentGroupLayout {
             key: AkitaScheduleLookupKey::new(12, 1),
             m_vars: 4,
@@ -1014,14 +1014,34 @@ mod tests {
 
         let err = grouped
             .validate()
-            .expect_err("heterogeneous num_vars must be rejected");
+            .expect_err("precommitted groups above half the main num_vars must be rejected");
         assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn group_batch_key_allows_precommitted_num_vars_at_half_main() {
+        let pre_small = CommitmentGroupLayout {
+            key: AkitaScheduleLookupKey::new(10, 1),
+            m_vars: 4,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let grouped = GroupBatchAkitaScheduleLookupKey {
+            main: AkitaScheduleLookupKey::new(20, 3),
+            precommitteds: vec![pre_small],
+        };
+
+        grouped
+            .validate()
+            .expect("precommitted groups may use dimensions at half the main key");
     }
 
     #[test]
     fn group_batch_key_allows_mixed_polynomial_counts() {
         let pre = CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(20, 1),
+            key: AkitaScheduleLookupKey::new(10, 1),
             m_vars: 12,
             r_vars: 2,
             log_basis: 2,
@@ -1035,7 +1055,7 @@ mod tests {
 
         grouped
             .validate()
-            .expect("unequal K_g at a shared num_vars is allowed");
+            .expect("unequal K_g is allowed for a supported precommitted dimension");
         assert_eq!(grouped.num_commitment_groups(), 2);
     }
 
