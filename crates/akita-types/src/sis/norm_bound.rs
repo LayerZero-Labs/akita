@@ -137,9 +137,7 @@ impl FoldWitnessNorms {
 /// A-role committed-level per-ring-row squared Euclidean collision bucket.
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L2 MSIS table. Lemma 7
-/// gives `‖z_A‖_2 ≤ 8 · op_norm(c) · ‖z‖_2 · ν` on the extracted kernel (production
-/// uses challenge L1 mass `ω = ‖c‖_1`, not a certified Γ cap). The
-/// production contract uses the deterministic envelope `‖z‖_inf ≤ β_inf` with
+/// bounds the extracted kernel by challenge mass; the production contract uses `‖z‖_inf ≤ β_inf` with
 /// `β_inf =` [`fold_witness_beta`], then `‖z‖_2 ≤ √d · β_inf`. MSIS accounting
 /// converts the resulting L∞ collision
 /// via `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:

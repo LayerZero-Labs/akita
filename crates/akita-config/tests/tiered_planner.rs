@@ -73,10 +73,9 @@ fn tiered_preset_tiers_a_batched_root() {
 
 #[test]
 fn tiered_envelope_shrinks_for_large_batched_roots() {
-    // Regenerated schedules under ω-only collision pricing: tiered is not <=
-    // plain at every batch in this sweep (plain can win at intermediate batch
-    // factors, e.g. batch=128). The tiered preset still strictly shrinks the
-    // shared-matrix envelope at the largest batched roots.
+    // Tiered is not <= plain at every batch in this sweep (plain can win at
+    // intermediate batch factors, e.g. batch=128). The tiered preset still strictly
+    // shrinks the shared-matrix envelope at the largest batched roots.
     let nv = 22;
     let mut saw_strict_shrink = false;
     for batch in [64usize, 128, 256, 512, 1024] {

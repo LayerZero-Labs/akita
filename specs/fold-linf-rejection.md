@@ -40,9 +40,9 @@ only replays the accepted Fiat–Shamir challenge stream.
 | `WorstCaseBetaOnly` | `FoldWitnessLinfCapPolicy` variant: `cap = β_inf` only, nonce must be 0 |
 
 This is orthogonal to the L2-MSIS cutover (#155): that stack prices the **A-role
-binding rank** (challenge L1 mass `ω` + Euclidean MSIS on this branch; operator-norm
-rejection removed); this spec tightens the **fold digit count** that sizes the
-**next-level width**. The two never touch the same quantity.
+binding rank** (challenge L1 mass `ω` + Euclidean MSIS); this spec tightens the
+**fold digit count** that sizes the **next-level width**. The two never touch the
+same quantity.
 
 The sub-Gaussian tail argument for the approved flat-family cutover is reproduced in
 the Design section below. This spec is self-contained and consistent with the
@@ -135,10 +135,7 @@ The feature introduces or modifies:
   documented second-moment assumption (see Alternatives).
 - **Not** a change to the challenge *sampler* distribution. The reroll is an outer
   loop over fold-challenge derivation; the per-attempt distribution is unchanged.
-- **Not** operator-norm rejection (`LevelParams.op_norm_rejection`, Γ collision pricing):
-  removed in [#248](https://github.com/LayerZero-Labs/akita/pull/248); folding challenges price collision from `ω`
-  (`‖c‖_1`) only. Historical product scope:
-  [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md) § Product scope.
+- **Not** operator-norm rejection or Γ-based collision pricing (out of scope).
 - **No tensor or `BoundedL1Norm` threshold cutover in the first implementation.**
   Both continue to size `K` from `β_inf`; their tighter thresholds require a
   separate proof of the accepted-challenge tail bound and descriptor policy.
@@ -174,9 +171,8 @@ The feature introduces or modifies:
 - [x] Net proof-size improvement at the affected modes, reported by the profile
   command (direction: smaller next-level width at wide folds).
 - [x] D64 production `ExactShell { count_mag1: 31, count_mag2: 10 }` (ω = 51,
-  `challenge_l2_sq_max` = 71). A-role collision priced from L1 mass `ω` only;
-  `fp128_d64_*` schedule tables regenerated; `generated_schedule_tables_match_find_schedule`
-  passes.
+  `challenge_l2_sq_max` = 71); `fp128_d64_*` schedule tables regenerated;
+  `generated_schedule_tables_match_find_schedule` passes.
 
 ### Testing Strategy
 
@@ -212,8 +208,8 @@ Expected direction: **smaller proofs**, no prover slowdown of note.
   challenge derivation + one fold pass), a small constant overhead, only on
   levels where `t* < β_inf` crosses a digit boundary.
 - No verifier cost beyond consuming one extra nonce per fold level.
-- A-role rank and setup size are unchanged by this spec (collision pricing is ω-only
-  and orthogonal; see `committed_fold_a_role_rank` in `norm_bound.rs`).
+- A-role rank and setup size are unchanged by this spec (collision pricing is a
+  separate concern in `norm_bound.rs`).
 
 ## Design
 
@@ -385,8 +381,7 @@ and a union bound over the `num_fold_coeffs` coordinates:
 Pr[‖z‖_inf > t]  ≤  2·num_fold_coeffs·exp(-t²/2V).                    (T)
 ```
 
-With operator-norm rejection removed (`p_opnorm = 1`), conditioning on
-accepted blocks gives
+Conditioning on accepted blocks gives
 
 ```text
 Pr[‖z‖_inf > t | all num_fold_blocks accepted] ≤ (2·num_fold_coeffs)·exp(-t²/2V),
@@ -601,8 +596,6 @@ F10  e2e tamper / termination / ZK parity tests             (all)               
 F11  transcript-seeded grind probe order in ZK prover paths [akita-prover]      landed
      (`FoldLinfProtocolBinding::grind_probe_order`; no wire change)
 F12  fold grind probe-count observer for profile metrics    [akita-prover]      landed
-F13  D64 operator-norm rejection (historical)              [#207]              retired
-     Removed by [#248](https://github.com/LayerZero-Labs/akita/pull/248); production shell `(31, 10)`, ω-only pricing
 ```
 
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic

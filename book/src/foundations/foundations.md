@@ -20,7 +20,6 @@ Reading map (paper section → page):
 - §2.4 → [Equality-factored sum-check](./eq-factored-sumcheck.md)
 - §2.5 → [Extension-opening reduction](./extension-opening-reduction.md)
 - §2.6 → [Polynomial commitments and binding](./pcs-and-binding.md)
-- App C → (removed: operator-norm rejection sampling cut over to L1-mass pricing only)
 - §6 → [Zero-knowledge background](./zero-knowledge.md)
 
 Plus reference material: [glossary and notation](./glossary.md), the
