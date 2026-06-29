@@ -132,4 +132,7 @@ pub use trace_weight::{
     TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
-pub use witness::ChunkedWitnessCfg;
+pub use witness::{
+    witness_chunk_lengths, ChunkedWitnessCfg, WitnessChunkLayout, WitnessChunkLengths,
+    WitnessLayout,
+};

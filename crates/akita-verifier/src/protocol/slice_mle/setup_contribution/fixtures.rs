@@ -7,8 +7,8 @@ use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout,
-    RingRelationSegmentLayout,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix,
+    MRowLayout, RingRelationSegmentLayout, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
@@ -221,6 +221,25 @@ impl SetupContributionFixture {
         let eq_tau1: Vec<TestField> = (0..rows.next_power_of_two())
             .map(|idx| test_scalar(11 + idx as u128))
             .collect();
+        let chunk_lengths = WitnessChunkLengths {
+            z_chunk_len: 0,
+            e_chunk_len: z_len,
+            t_chunk_len: z_len + e_len,
+            u_chunk_len: z_len + e_len + t_len,
+            r_chunk_len: rows * r_decomp_levels::<TestField>(shape.log_basis),
+        };
+        let witness_layout = WitnessLayout {
+            blocks_per_chunk: shape.num_blocks,
+            chunks: vec![WitnessChunkLayout {
+                global_block_base: 0,
+                offset_e,
+                offset_t,
+                offset_u: Some(offset_u),
+                offset_z,
+                offset_r: Some(offset_r),
+            }],
+            chunk_lengths,
+        };
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -245,13 +264,7 @@ impl SetupContributionFixture {
             n_f: shape.n_f,
             rows,
             num_polys: shape.num_polys_per_segment.iter().sum(),
-            witness_segment_layout: RingRelationSegmentLayout {
-                offset_e,
-                offset_t,
-                offset_u,
-                offset_z,
-                offset_r,
-            },
+            witness_layout,
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)
@@ -285,6 +298,8 @@ impl SetupContributionFixture {
 
     pub fn compute_contribution(&self) -> TestField {
         let setup_contribution = self.prepared.create_setup_contribution_inputs();
+        // TODO: remove this unwrap after the legacy layout is deprecated and we support tiered commitment in multi-chunk layout.
+        let offset_u = self.prepared.witness_layout.chunks[0].offset_u.unwrap();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -295,7 +310,7 @@ impl SetupContributionFixture {
             self.offset_e,
             self.offset_t,
             self.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
+            offset_u,
             None,
             None,
         );
@@ -312,6 +327,8 @@ impl SetupContributionFixture {
 
     pub fn recursive_contribution(&self) -> TestField {
         let setup_contribution = self.prepared.create_setup_contribution_inputs();
+        // TODO: remove this unwrap after the legacy layout is deprecated and we support tiered commitment in multi-chunk layout.
+        let offset_u = self.prepared.witness_layout.chunks[0].offset_u.unwrap();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -322,7 +339,7 @@ impl SetupContributionFixture {
             self.offset_e,
             self.offset_t,
             self.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
+            offset_u,
             None,
             None,
         );
@@ -352,6 +369,8 @@ impl SetupContributionFixture {
     /// including the tiered `B'`/`F` blocks.
     pub fn assert_eq_eval_matches_materialized(&self) {
         let setup_contribution = self.prepared.create_setup_contribution_inputs();
+        // TODO: remove this unwrap after the legacy layout is deprecated and we support tiered commitment in multi-chunk layout.
+        let offset_u = self.prepared.witness_layout.chunks[0].offset_u.unwrap();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -362,7 +381,7 @@ impl SetupContributionFixture {
             self.offset_e,
             self.offset_t,
             self.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
+            offset_u,
             None,
             None,
         );

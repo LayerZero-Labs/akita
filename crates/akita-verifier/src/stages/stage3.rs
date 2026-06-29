@@ -50,7 +50,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     {
         let alpha_pows = scalar_powers(alpha, D);
         let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
-        let layout = prepared.segment_layout()?;
+        let layout = prepared.witness_layout()?;
+        // TODO: remove this unwrap after the legacy layout is deprecated.
+        let layout = layout.to_legacy_segment_layout();
         let setup_contribution_inputs = prepared.create_setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
             &setup_contribution_inputs,
