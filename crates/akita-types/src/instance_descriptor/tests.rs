@@ -135,7 +135,6 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
         SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,
-            operator_norm_threshold: 0,
         },
     )
     .with_decomp(4, 2, 2, 2, 0)

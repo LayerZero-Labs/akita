@@ -4,16 +4,20 @@
 |---------------|-------|
 | Author(s)     | Quang Dao, Cursor agent draft |
 | Created       | 2026-06-04 |
-| Status        | historical |
-| PR            | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from [#195](https://github.com/LayerZero-Labs/akita/pull/195)) |
+| Status        | historical (cert cancelled #247; op-norm rejection removed `remove/op-norm-rejection`) |
+| PR            | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (L2 MSIS tables); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from [#195](https://github.com/LayerZero-Labs/akita/pull/195)); [#247](https://github.com/LayerZero-Labs/akita/pull/247) (L2 cert removal) |
 | Superseded-by | — |
 | Book-chapter  | — |
 
-> **Archive note (2026-06).** The folded-witness L2 certificate path (S6–S13,
-> four-square slack, grouped-carry sumchecks) is cancelled and will not ship.
-> Op-norm rejection and L2 MSIS table pricing remain **interim** shipped code
-> until a follow-up PR cuts the planner over to **L∞-only** sizing (no op-norm
-> rejection/grind, collision indexed by inf norm). Interim live references:
+> **Ground truth (2026-06-29).** The folded-witness L2 certificate path (S6–S13,
+> four-square slack, grouped-carry sumchecks) is cancelled and removed on main in
+> [#247](https://github.com/LayerZero-Labs/akita/pull/247) (`four_square.rs`,
+> grouped-carry verifier replay, certificate proof shape).
+> **This branch (`remove/op-norm-rejection`)** additionally removes operator-norm
+> rejection sampling and Γ-based collision pricing; production collision uses
+> challenge L1 mass `ω` only (`committed_fold_collision_l2_sq` in `norm_bound.rs`).
+> Treat certificate and op-norm sections below as historical design unless marked
+> shipped. Interim live references:
 > [`specs/fold-linf-rejection.md`](../../fold-linf-rejection.md),
 > [`specs/sis-euclidean-estimator.md`](../../sis-euclidean-estimator.md).
 
@@ -65,7 +69,10 @@ The primary protocol surfaces are:
 - `akita-config` / `akita-planner`: schedule search, shipped-table selection,
   generated table representation, and proof-size accounting under the L2 MSIS
   model.
-### Product scope (operator-norm rejection)
+### Product scope (operator-norm rejection) — **removed this branch**
+
+> Historical: this section described per-level `op_norm_rejection` shipped in #207.
+> `remove/op-norm-rejection` deletes the sampler, planner flag, and Γ collision path.
 
 Per-level `op_norm_rejection` on `LevelParams` is ring-dimension-agnostic
 infrastructure: the planner may enable it only when Γ collision pricing

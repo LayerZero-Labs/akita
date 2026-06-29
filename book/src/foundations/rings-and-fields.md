@@ -63,10 +63,10 @@ differences.
 \\( \Gamma(c) = \lVert M_c \rVert_{2\to2} = \max_k |c(\zeta_k)| \\), the largest
 singular value of the negacyclic multiplication matrix; it is submultiplicative
 and controls Euclidean folding \\( \lVert c\,u \rVert_2 \le \Gamma(c)\lVert u \rVert_2 \\).
-Certifying the cap \\( \Gamma(c) \le \Gamma \\) deterministically is its own
-topic: see [Operator-norm certification](./operator-norm-certification.md).
+Certifying the cap \\( \Gamma(c) \le \Gamma \\) via rejection sampling was removed;
+production A-role sizing uses challenge L1 mass `ω` only.
 
 **Sources to fold in**
 
 - Paper §2.1 ("Operator norm of a ring element").
-- `crates/akita-challenges/src/sampler/op_norm.rs`.
+- `crates/akita-types/src/sis/norm_bound.rs`.

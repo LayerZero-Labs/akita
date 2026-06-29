@@ -42,7 +42,6 @@
   - [Equality-factored sum-check](./foundations/eq-factored-sumcheck.md)
   - [Extension-opening reduction](./foundations/extension-opening-reduction.md)
   - [Polynomial commitments and binding](./foundations/pcs-and-binding.md)
-  - [Operator-norm certification](./foundations/operator-norm-certification.md)
   - [Zero-knowledge background](./foundations/zero-knowledge.md)
   - [Glossary and notation](./foundations/glossary.md)
   - [Spec index](./foundations/spec-index.md)
