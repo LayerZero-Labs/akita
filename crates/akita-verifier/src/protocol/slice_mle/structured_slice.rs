@@ -350,7 +350,7 @@ mod tests {
     use akita_types::{
         gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningBatchShape,
         RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-        RingRelationSegmentLayout, SisModulusFamily,
+        RingRelationSegmentLayout, SisModulusFamily, WitnessLayout,
     };
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
@@ -474,6 +474,12 @@ mod tests {
             depth_open,
             depth_commit,
             depth_fold,
+            #[cfg(feature = "zk")]
+            d_blinding_segment_len: 0,
+            #[cfg(feature = "zk")]
+            b_blinding_digit_planes_per_point: 0,
+            #[cfg(feature = "zk")]
+            b_blinding_segment_len: 0,
             block_len,
             inner_width,
             log_basis,
@@ -485,7 +491,7 @@ mod tests {
             n_f: 0,
             rows,
             num_polys: num_claims,
-            witness_segment_layout,
+            witness_layout: WitnessLayout::from_legacy_segment_layout(witness_segment_layout),
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);

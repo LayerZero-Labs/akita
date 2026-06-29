@@ -15,6 +15,7 @@ use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
     LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
     RingRelationSegmentLayout, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
+    WitnessLayout,
 };
 
 use super::slice_mle::{
@@ -122,7 +123,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_f: usize,
     pub(crate) rows: usize,
     pub(crate) num_polys: usize,
-    pub(crate) witness_segment_layout: RingRelationSegmentLayout,
+    pub(crate) witness_layout: WitnessLayout,
 }
 
 pub(crate) type RingSwitchSegmentLayout = RingRelationSegmentLayout;
@@ -295,7 +296,7 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
-    let witness_segment_layout = relation.segment_layout(lp)?;
+    let witness_layout = relation.witness_layout(lp)?;
     let opening_batch = relation.opening_batch();
     prepare_ring_switch_row_eval_inner::<F, E, D>(
         &relation.challenges,
@@ -305,7 +306,7 @@ where
         opening_batch.num_polynomials(),
         replay.row_coefficients,
         relation.m_row_layout(),
-        witness_segment_layout,
+        witness_layout,
     )
 }
 
@@ -318,7 +319,7 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     num_polys: usize,
     gamma: &[E],
     m_row_layout: MRowLayout,
-    witness_segment_layout: RingRelationSegmentLayout,
+    witness_layout: WitnessLayout,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -470,7 +471,7 @@ where
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         rows,
         num_polys,
-        witness_segment_layout,
+        witness_layout,
     })
 }
 
@@ -492,8 +493,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
     }
 
-    pub(crate) fn segment_layout(&self) -> Result<RingSwitchSegmentLayout, AkitaError> {
-        Ok(self.witness_segment_layout)
+    pub(crate) fn witness_layout(&self) -> Result<&WitnessLayout, AkitaError> {
+        Ok(&self.witness_layout)
     }
 
     pub(crate) fn create_setup_contribution_inputs(&self) -> SetupContributionPlanInputs<E> {
@@ -542,7 +543,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;
         // ----- Witness-layout offsets ----------------------------------------
-        let layout = self.segment_layout()?;
+        let layout = self.witness_layout()?;
+        let layout = layout.to_legacy_segment_layout();
         validate_log_basis(self.log_basis)?;
         if opening_point.b.len() != self.num_blocks || opening_point.a.len() < self.block_len {
             return Err(AkitaError::InvalidProof);

@@ -13,7 +13,10 @@
 
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
-use crate::{LevelParams, MRowLayout, RingRelationOpeningCounts, w_ring_element_count_for_chunks};
+use crate::{
+    w_ring_element_count_for_chunks, LevelParams, MRowLayout, RingRelationOpeningCounts,
+    RingRelationSegmentLayout,
+};
 
 /// Chunk-based witness layout parameters.
 ///
@@ -68,11 +71,50 @@ pub struct WitnessLayout {
 }
 
 impl WitnessLayout {
+    /// Convert to the legacy segment layout for the single-chunk layout.
+    ///
+    /// TODO: remove this method after the legacy layout is deprecated.
+    pub fn to_legacy_segment_layout(&self) -> RingRelationSegmentLayout {
+        if self.chunks.len() != 1 {
+            panic!("witness layout: multi-chunk layout is not supported");
+        }
+        let last = &self.chunks[0];
+        RingRelationSegmentLayout {
+            offset_e: last.offset_e,
+            offset_t: last.offset_t,
+            offset_u: last.offset_u.unwrap(),
+            offset_z: last.offset_z,
+            offset_r: last.offset_r.unwrap(),
+        }
+    }
+
+    /// Convert from the legacy segment layout to the witness layout.
+    ///
+    /// TODO: remove this method after the legacy layout is deprecated.
+    pub fn from_legacy_segment_layout(layout: RingRelationSegmentLayout) -> WitnessLayout {
+        WitnessLayout {
+            blocks_per_chunk: 0,
+            chunks: vec![WitnessChunkLayout {
+                global_block_base: 0,
+                offset_e: layout.offset_e,
+                offset_t: layout.offset_t,
+                offset_u: Some(layout.offset_u),
+                offset_z: layout.offset_z,
+                offset_r: Some(layout.offset_r),
+            }],
+            chunk_lengths: WitnessChunkLengths {
+                z_chunk_len: 0,
+                e_chunk_len: 0,
+                t_chunk_len: 0,
+                u_chunk_len: 0,
+                r_chunk_len: 0,
+            },
+        }
+    }
+
     /// Layout span in ring columns: last chunk `offset_r + r_len`.
     pub fn witness_ring_len(&self) -> Result<usize, AkitaError> {
-        let overflow = || {
-            AkitaError::InvalidSetup("witness layout: capacity overflow".to_string())
-        };
+        let overflow = || AkitaError::InvalidSetup("witness layout: capacity overflow".to_string());
         let last = self.chunks.last().ok_or_else(|| {
             AkitaError::InvalidSetup("witness layout: missing chunk table".to_string())
         })?;
