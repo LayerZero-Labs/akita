@@ -50,4 +50,4 @@ nonnegativity certificate → union bound) discharges it; worked for the
 
 - Paper App C `sec:opnorm-support`, `sec:opnorm-moment-method` (`thm:opnorm-floor`), `sec:opnorm-worked`.
 - `experiments/operator-norm-acceptance/` (ancillary certificate + checker, in the paper repo).
-- `specs/l2-msis-opnorm-folded-witness.md` (the consuming cutover).
+- `specs/fold-linf-rejection.md` (interim op-norm rejection product scope).

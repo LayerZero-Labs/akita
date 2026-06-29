@@ -164,18 +164,6 @@ impl<F: FieldCore> AkitaProverSetup<F> {
             prefix_slots: SetupPrefixRegistry::new(),
         })
     }
-
-    /// Wrap a pre-built [`AkitaExpandedSetup`] in a prover setup.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the expanded setup is not valid for this field.
-    pub fn from_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
-    where
-        F: CanonicalField + RandomSampling + Valid,
-    {
-        Self::from_validated_expanded(expanded)
-    }
 }
 
 impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {

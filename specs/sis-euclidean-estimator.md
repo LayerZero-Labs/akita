@@ -10,7 +10,8 @@
 
 ## Summary
 
-Akita's L2 MSIS cutover ([`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md))
+Akita's L2 MSIS table regen (archived parent:
+[`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md))
 needs regenerated `generated_sis_table/` rows: for each representative modulus family,
 ring dimension, squared-Euclidean collision bucket, and module rank, the maximum commitment
 width that still yields at least 128-bit security under a fixed lattice-reduction cost model.
@@ -366,7 +367,7 @@ Historical baseline before reliability work: `2bfb768`.
 
 ## References
 
-- Parent: [`specs/l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md)
+- Parent (archived): [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md)
 - [`scripts/gen_sis_table.py`](../scripts/gen_sis_table.py)
 - [`crates/akita-types/src/sis/ajtai_key.rs`](../crates/akita-types/src/sis/ajtai_key.rs)
 - lattice-estimator: `malb/lattice-estimator` — `estimator/sis_lattice.py`

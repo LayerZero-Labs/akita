@@ -8,7 +8,7 @@ use akita_field::AkitaError;
 use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
 use akita_planner::generated_schedule_lookup_key;
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, terminal_direct_witness_shape_for_key,
+    direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
     DirectStep, FoldStep, LevelParams, MRowLayout, OpeningBatchShape, Schedule, Step,
 };
@@ -285,13 +285,18 @@ where
         let terminal_lp = &terminal_fold.params;
         let terminal_fold_level = mixed_folds.len() - 1;
         let field_bits = SuffixCfg::decomposition().field_bits();
-        let witness_shape = terminal_direct_witness_shape_for_key(
+        let terminal_num_polynomials = if terminal_fold_level == 0 {
+            lookup_key.num_polynomials
+        } else {
+            1
+        };
+        let witness_shape = segment_typed_witness_shape(
             terminal_lp,
             field_bits,
-            lookup_key,
-            terminal_fold_level,
-            terminal_current_w_len,
-            terminal_lp.log_basis,
+            terminal_num_polynomials,
+            terminal_num_polynomials,
+            1,
+            1,
         )?;
         let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
         DirectStep {

@@ -447,13 +447,9 @@ fn run_profile_onehot_fp128_d128(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp32_d64(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp32_d64_with_label("onehot_fp32_d64", nv, num_polys);
-}
-
-fn run_profile_onehot_fp32_d64_with_label(label: &str, nv: usize, num_polys: usize) {
     type Cfg = fp32::D64OneHot;
     let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
-    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
+    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d64", &title, nv, num_polys);
 }
 
 fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
@@ -471,13 +467,9 @@ fn run_profile_dense_fp32_d128(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp32_d128(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp32_d128_with_label("onehot_fp32_d128", nv, num_polys);
-}
-
-fn run_profile_onehot_fp32_d128_with_label(label: &str, nv: usize, num_polys: usize) {
     type Cfg = fp32::D128OneHot;
     let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
-    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
+    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d128", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp64_d32(nv: usize, num_polys: usize) {
@@ -487,13 +479,9 @@ fn run_profile_onehot_fp64_d32(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp64_d64(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp64_d64_with_label("onehot_fp64_d64", nv, num_polys);
-}
-
-fn run_profile_onehot_fp64_d64_with_label(label: &str, nv: usize, num_polys: usize) {
     type Cfg = fp64::D64OneHot;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
-    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
+    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64_d64", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp64_d128(nv: usize, num_polys: usize) {

@@ -799,23 +799,12 @@ impl LevelParams {
             .ok_or_else(Self::m_row_overflow)
     }
 
-    /// Row count with `num_commitments` explicit commitment vectors and
-    /// `num_public_outputs` public y-rows.
-    ///
-    /// Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
-    /// COMMIT (effective_commit_rows · num_commitments) |
-    /// B_inner (b_inner_rows_per_group · num_commitments) | A (n_a).  The
-    /// batched CWSS protocol uses one public y-row per distinct opening point.
-    #[inline]
-    pub fn m_row_count(
-        &self,
-        num_commitments: usize,
-        num_public_outputs: usize,
-    ) -> Result<usize, AkitaError> {
-        self.m_row_count_for(num_commitments, num_public_outputs, MRowLayout::WithDBlock)
-    }
-
     /// Row count for an explicit M-row layout.
+    ///
+    /// Row layout: consistency (1) | public (num_public_outputs) | optional D
+    /// (n_d) | COMMIT (effective_commit_rows · num_commitments) | B_inner
+    /// (b_inner_rows_per_group · num_commitments) | A (n_a). The batched CWSS
+    /// protocol uses one public y-row per distinct opening point.
     ///
     /// At the terminal fold the cleartext witness is shipped on the wire and
     /// the D-block is dropped from the M-matrix; see [`MRowLayout`].
@@ -1126,9 +1115,18 @@ mod tests {
             .with_layout(&sample_layout_lp(), 128)
             .unwrap();
 
-        assert_eq!(lp.m_row_count(1, 1).unwrap(), 3 + 4 + 1 + 1 + 2);
-        assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
-        assert_eq!(lp.m_row_count(4, 4).unwrap(), 3 + 4 * 4 + 4 + 1 + 2);
+        assert_eq!(
+            lp.m_row_count_for(1, 1, MRowLayout::WithDBlock).unwrap(),
+            3 + 4 + 1 + 1 + 2
+        );
+        assert_eq!(
+            lp.m_row_count_for(2, 5, MRowLayout::WithDBlock).unwrap(),
+            3 + 4 * 2 + 5 + 1 + 2
+        );
+        assert_eq!(
+            lp.m_row_count_for(4, 4, MRowLayout::WithDBlock).unwrap(),
+            3 + 4 * 4 + 4 + 1 + 2
+        );
         assert_eq!(
             lp.m_row_count_for(2, 5, MRowLayout::WithoutDBlock).unwrap(),
             4 * 2 + 5 + 1 + 2

@@ -101,12 +101,6 @@ pub(super) fn centered_prime_residue_i128<W: PrimeWidth>(prime: NttPrime<W>, val
 }
 
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
-    /// Build the lookup table from CRT primes, covering balanced digits in
-    /// `[-32, 31]`.
-    pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
-        Self::new_with_digit_bound(params, DIGIT_LUT_OFFSET as u64)
-    }
-
     /// Build a lookup table for the active balanced range `[-bound, bound)`.
     ///
     /// This keeps the fixed non-monomorphized LUT type while avoiding needless

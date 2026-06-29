@@ -41,8 +41,7 @@ pub use containers::{
     FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingBuf, RingSliceSerializer,
 };
 pub use direct_witness::{
-    segment_typed_witness_shape, terminal_direct_witness_shape,
-    terminal_direct_witness_shape_for_key, CleartextWitnessProof, CleartextWitnessShape,
+    segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape,
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{

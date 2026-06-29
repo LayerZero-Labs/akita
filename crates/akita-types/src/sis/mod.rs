@@ -22,7 +22,6 @@
 pub mod ajtai_key;
 pub mod decomposition_digits;
 pub mod fold_witness_grind;
-pub mod four_square;
 mod generated_sis_table;
 pub mod norm_bound;
 pub mod op_norm_pricing;
@@ -38,7 +37,6 @@ pub use decomposition_digits::{
     num_digits_s_commit,
 };
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
-pub use four_square::four_squares;
 pub use norm_bound::{
     committed_fold_collision_l2_sq, fold_challenge_norms, fold_witness_beta, fold_witness_linf_cap,
     fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,

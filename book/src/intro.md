@@ -61,7 +61,7 @@ Euclidean model), and what is asserted vs proven. The canonical narrative lives 
 - `crates/akita-types/src/sis/` (`mod.rs`, `ajtai_key.rs`, `norm_bound.rs`).
 - `docs/security-posture.md`.
 - Paper §3.12 `sec:batched-soundness`, §3.11 `sec:akita-cwss` (audited soundness).
-- `specs/security-hardening.md`, `specs/l2-msis-opnorm-folded-witness.md`.
+- `specs/security-hardening.md`, `specs/sis-euclidean-estimator.md`, `specs/fold-linf-rejection.md`.
 
 ## How to read this book
 

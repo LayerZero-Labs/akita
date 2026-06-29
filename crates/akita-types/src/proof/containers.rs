@@ -282,24 +282,6 @@ impl<F: FieldCore> FlatRingVec<F> {
         Ok(())
     }
 
-    /// Append the stored coefficients using the typed ring-vector transcript
-    /// encoding (alias for [`Self::append_as_ring_commitment`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
-    /// well-formed for ring dimension `D`.
-    pub fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
-        &self,
-        label: &[u8],
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        F: CanonicalField,
-    {
-        self.append_as_ring_commitment::<T, D>(label, transcript)
-    }
-
     /// Reconstruct a `RingCommitment`.
     ///
     /// # Panics

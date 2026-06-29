@@ -175,7 +175,7 @@ for a stacked follow-up.
 
 ### Keep as live specs
 
-`l2-msis-opnorm-folded-witness.md`, `setup-layout-repack.md`,
+`setup-layout-repack.md`,
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,
 `akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
