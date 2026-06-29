@@ -69,9 +69,9 @@ collision_A = 2 · κ̄ · β̄ · ν
 
 This is implemented in
 [`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs):
-`committed_fold_collision_s` computes the `8·ω·fold_witness_beta·ν` form, and
-the public entry point `rounded_up_collision_norm_s` builds the level's
-`FoldChallengeNorms` and `FoldWitnessNorms` and threads `r_vars`,
+`committed_fold_collision_l2_sq` prices the `8·ω·fold_witness_beta·ν` collision
+envelope (via `collision_l2_sq_for_linf_envelope`), and `committed_fold_a_role_rank`
+builds the level's audited A-role rank from the same geometry. Both thread
 `num_claims`, and `ring_subfield_norm_bound` from each call site (the planner
 DP in `schedule_params.rs`, the runtime expansion, and the verifier-reachable
 layout derivation in `layout/sis_derivation.rs`). The A-role price and the

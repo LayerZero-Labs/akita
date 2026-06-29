@@ -322,7 +322,7 @@ on this for correctness.
 #### Akita PR #155 — spec + S3 + S5a + S5b (single PR)
 
 - Spec revision (this file) and parent cross-links.
-- S3 op-norm rejection: **removed** in `remove/op-norm-rejection` (was #207).
+- S3 op-norm rejection: **removed** in [#248](https://github.com/LayerZero-Labs/akita/pull/248) (was #207).
 - S5a *(done):* vendored LE PR branch, hardened `gen_sis_table.py`, golden grid.
 - S5b *(done):* L2 `generated_sis_table/` stitch (pow2 ladder + derived `d·B²` keys),
   `collision_l2_sq` rename, `collision_l2_sq_for_linf_envelope` rank pricing, planner

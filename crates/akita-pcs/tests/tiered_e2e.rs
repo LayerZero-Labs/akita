@@ -235,8 +235,8 @@ fn tiered_onehot_batch_nv14() {
 fn tiered_onehot_singleton_nv29() {
     // Smallest singleton whose root fold both tiers (f_key present) and folds
     // (so the recursive variant exercises the tiered stage-3 setup sumcheck)
-    // under the witness-scored op-norm schedules. Tiering vs nv is non-monotonic;
-    // after the D64 witness-cost gate, nv=27/28 no longer tier at the root.
+    // under ω-only collision-pricing schedules. Tiering vs nv is non-monotonic;
+    // after the schedule regen, nv=27/28 no longer tier at the root.
     run_tiered_singleton(29, SetupContributionMode::Direct);
 }
 

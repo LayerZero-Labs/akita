@@ -4,8 +4,8 @@
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
 | Created     | 2026-06-10                                                |
-| Status      | implemented (#189 fold-linf; D64 op-norm rejection cutover [#207](https://github.com/LayerZero-Labs/akita/pull/207)) |
-| PR          | [#189](https://github.com/LayerZero-Labs/akita/pull/189) (fold-linf digit tightening); [#207](https://github.com/LayerZero-Labs/akita/pull/207) (D64 op-norm rejection, split from #195) |
+| Status      | implemented (#189 fold-linf) |
+| PR          | [#189](https://github.com/LayerZero-Labs/akita/pull/189) (fold-linf digit tightening) |
 
 ## Summary
 
@@ -136,7 +136,7 @@ The feature introduces or modifies:
 - **Not** a change to the challenge *sampler* distribution. The reroll is an outer
   loop over fold-challenge derivation; the per-attempt distribution is unchanged.
 - **Not** operator-norm rejection (`LevelParams.op_norm_rejection`, Γ collision pricing):
-  removed in `remove/op-norm-rejection`; folding challenges price collision from `ω`
+  removed in [#248](https://github.com/LayerZero-Labs/akita/pull/248); folding challenges price collision from `ω`
   (`‖c‖_1`) only. Historical product scope:
   [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md) § Product scope.
 - **No tensor or `BoundedL1Norm` threshold cutover in the first implementation.**
@@ -174,9 +174,9 @@ The feature introduces or modifies:
 - [x] Net proof-size improvement at the affected modes, reported by the profile
   command (direction: smaller next-level width at wide folds).
 - [x] D64 production `ExactShell { count_mag1: 31, count_mag2: 10 }` (ω = 51,
-  `challenge_l2_sq_max` = 71); operator-norm rejection removed (`remove/op-norm-rejection`).
-- [x] A-role collision priced from L1 mass `ω` only; `fp128_d64_*` schedule tables
-  regenerated; `generated_schedule_tables_match_find_schedule` passes.
+  `challenge_l2_sq_max` = 71). A-role collision priced from L1 mass `ω` only;
+  `fp128_d64_*` schedule tables regenerated; `generated_schedule_tables_match_find_schedule`
+  passes.
 
 ### Testing Strategy
 
@@ -212,11 +212,8 @@ Expected direction: **smaller proofs**, no prover slowdown of note.
   challenge derivation + one fold pass), a small constant overhead, only on
   levels where `t* < β_inf` crosses a digit boundary.
 - No verifier cost beyond consuming one extra nonce per fold level.
-- A-role rank, setup size, and the L2 pricing are unchanged.
-- Op-norm rejection sampling adds per-sparse-challenge predicate work on enabled levels;
-  the production path uses fused transposed `i64` accumulation (~2.7× faster than the
-  legacy nested `i128` loop in local criterion A/B). Planner `choose_op_norm_rejection`
-  recomputes per geometry during schedule search and drift guards.
+- A-role rank and setup size are unchanged by this spec (collision pricing is ω-only
+  and orthogonal; see `committed_fold_a_role_rank` in `norm_bound.rs`).
 
 ## Design
 
@@ -447,7 +444,7 @@ at `num_fold_blocks = 4, 8, 16, 32` before the tighter `ln_term`).
 signs are products `ε^α·ε^β` and are no longer independent across `(p,q)`. The
 clean sub-Gaussian tail argument does not apply directly. The code may expose
 `effective_l2_sq_max = challenge_l2_sq_max(α)·challenge_l2_sq_max(β)` for future descriptor
-binding, matching the shape of `effective_operator_norm_cap`, but the first
+binding, but the first
 digit-count cutover treats tensor as unsupported and returns deterministic
 `β_inf`. A future tensor threshold needs its own dependency-aware tail proof
 before it can change `K`.
@@ -456,8 +453,7 @@ before it can change `K`.
 
 - **Termination** is the `<= 1/2` miss probability above, capped at
   `MAX_FOLD_GRIND_ATTEMPTS = 4096`; exceeding the cap is a prover-only
-  `AkitaError`, never verifier-reachable. The cap is intentionally the same order
-  as `MAX_OP_NORM_ATTEMPTS`, but the expected count remains `<= 2`.
+  `AkitaError`, never verifier-reachable. The expected reroll count remains `<= 2`.
 - **Soundness** is structural: the verifier enforces
   `|z_r| <= balanced_digit_max(lb, K)` via the stage-1 range check against the
   published `K`; the weak-binding extractor reads only accepting transcripts and
@@ -481,11 +477,10 @@ worst-case path is generalized in place):
 **`akita-challenges`**
 
 - `src/config.rs`: add `pub fn challenge_l2_sq_max(&self) -> u128` to
-  `SparseChallengeConfig` (table above). Pure; mirrors the existing `l1_norm` /
-  `operator_norm_cap` accessors.
+  `SparseChallengeConfig` (table above). Pure; mirrors the existing `l1_norm`
+  accessor.
 - `src/tensor.rs`: add `pub fn effective_l2_sq_max(&self, cfg) -> u128` to
-  `ChallengeShape` (`Flat → challenge_l2_sq_max`, `Tensor → product`), mirroring
-  `effective_operator_norm_cap`.
+  `ChallengeShape` (`Flat → challenge_l2_sq_max`, `Tensor → product`).
 - `src/sampler/mod.rs`: extend `sample_folding_challenges` (and the inner
   `sample_sparse_challenges`) with a `grind_nonce: u32` that is folded into
   `sparse_challenge_absorb_buf` (a new field after the config domain separator),
@@ -508,8 +503,8 @@ worst-case path is generalized in place):
   degenerate guards and return `β_inf` for deterministic policies.
 - `src/sis/mod.rs`: re-export the new primitive.
 - `src/layout/params.rs`: `LevelParams::num_digits_fold` passes the new inputs
-  (`challenge_l2_sq_max` via `stage1_config`, `inner_width()·D`, the op-norm
-  acceptance `p`, and the threshold policy). Add
+  (`challenge_l2_sq_max` via `stage1_config`, `inner_width()·D`, and the
+  threshold policy). Add
   `fold_witness_linf_tail_bound_sq(num_claims)` so the prover reads the identical value
   (invariant 4).
 - `src/proof/levels.rs`: add `fold_grind_nonce: u32` to intermediate and terminal
@@ -607,7 +602,7 @@ F11  transcript-seeded grind probe order in ZK prover paths [akita-prover]      
      (`FoldLinfProtocolBinding::grind_probe_order`; no wire change)
 F12  fold grind probe-count observer for profile metrics    [akita-prover]      landed
 F13  D64 operator-norm rejection (historical)              [#207]              retired
-     Removed by `remove/op-norm-rejection`; production shell `(31, 10)`, ω-only pricing
+     Removed by [#248](https://github.com/LayerZero-Labs/akita/pull/248); production shell `(31, 10)`, ω-only pricing
 ```
 
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic
