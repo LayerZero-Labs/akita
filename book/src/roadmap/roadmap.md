@@ -3,8 +3,7 @@
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
 In-flight and planned work. The larger threads get their own pages
-([Euclidean security model](./euclidean-security.md),
-[Verifier offloading](./verifier-offloading.md),
+([Verifier offloading](./verifier-offloading.md),
 [Modulus switching](./modulus-switching.md),
 [Zero-knowledge](./zero-knowledge.md),
 [Compute backends](./compute-backends.md)); shorter items stay here as sections.

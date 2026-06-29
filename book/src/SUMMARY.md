@@ -51,7 +51,6 @@
 # Roadmap
 
 - [Roadmap](./roadmap/roadmap.md)
-  - [Euclidean security model](./roadmap/euclidean-security.md)
   - [Verifier offloading](./roadmap/verifier-offloading.md)
   - [Modulus switching](./roadmap/modulus-switching.md)
   - [Zero-knowledge](./roadmap/zero-knowledge.md)
