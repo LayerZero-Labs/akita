@@ -1,9 +1,9 @@
 //! Prover row-weight table construction (`g[i] = Σ_j eq(r_J,j) J[j,i]`).
 
 #[cfg(feature = "parallel")]
-use akita_field::parallel::*;
-#[cfg(feature = "parallel")]
 use crate::jl::panel::parallel_jl_enabled;
+#[cfg(feature = "parallel")]
+use akita_field::parallel::*;
 
 use akita_field::FieldCore;
 
