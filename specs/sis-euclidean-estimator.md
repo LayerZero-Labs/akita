@@ -11,7 +11,8 @@
 ## Summary
 
 Akita's L2 MSIS table regen (archived parent:
-[`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md))
+[`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md);
+the folded-witness L2 certificate was cancelled and removed in #247 on main)
 needs regenerated `generated_sis_table/` rows: for each representative modulus family,
 ring dimension, squared-Euclidean collision bucket, and module rank, the maximum commitment
 width that still yields at least 128-bit security under a fixed lattice-reduction cost model.
@@ -318,10 +319,9 @@ in Euclidean SIS length bound (cf. existing large-`q` overflow issues elsewhere)
 Defer if PR 1 is already large; Akita `--jobs` uses subprocess sharding and does not depend
 on this for correctness.
 
-#### Akita PR #155 — spec + S3 + S5a + S5b (single PR)
+#### Akita PR #155 — spec + S5a + S5b (single PR)
 
 - Spec revision (this file) and parent cross-links.
-- S3 op-norm rejection (on branch).
 - S5a *(done):* vendored LE PR branch, hardened `gen_sis_table.py`, golden grid.
 - S5b *(done):* L2 `generated_sis_table/` stitch (pow2 ladder + derived `d·B²` keys),
   `collision_l2_sq` rename, `collision_l2_sq_for_linf_envelope` rank pricing, planner

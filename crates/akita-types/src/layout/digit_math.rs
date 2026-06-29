@@ -10,7 +10,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
-    choose_op_norm_rejection_for_a_role, fold_level_witness_scoring_cost, num_digits_for_bound,
+    committed_fold_a_role_rank, fold_level_witness_scoring_cost, num_digits_for_bound,
     FoldChallengeNorms, FoldWitnessNorms, SisModulusFamily,
 };
 use crate::DecompositionParams;
@@ -113,7 +113,7 @@ pub fn optimal_m_r_split(
         let Some(inner_width) = (block_len as usize).checked_mul(delta_commit as usize) else {
             continue;
         };
-        let Some((op_norm_rejection, _a_collision, n_a)) = choose_op_norm_rejection_for_a_role(
+        let Some((_a_collision, n_a)) = committed_fold_a_role_rank(
             sis_family,
             d as usize,
             decomposition,
@@ -132,7 +132,6 @@ pub fn optimal_m_r_split(
 
         let Some(total) = fold_level_witness_scoring_cost(
             n_a,
-            op_norm_rejection,
             r,
             num_claims,
             inner_width,
@@ -167,14 +166,10 @@ mod tests {
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
-        use akita_challenges::{
-            D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
-            D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
-        };
+        use akita_challenges::{D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2};
         let stage1_config = SparseChallengeConfig::ExactShell {
             count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
             count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
-            operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         };
         let fold_challenge =
             crate::sis::fold_challenge_norms(&stage1_config, TensorChallengeShape::Flat);
@@ -188,7 +183,6 @@ mod tests {
             &stage1_config,
             TensorChallengeShape::Flat,
             64,
-            false,
             64,
             crate::FoldLinfProtocolBinding::CURRENT
                 .grind_target_accept_prob()

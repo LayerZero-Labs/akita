@@ -49,24 +49,12 @@ reduction later resolves.
 ## Norms, invertibility, and challenge families
 
 The centered \\( \ell_\infty, \ell_1, \ell_2 \\) norms on \\( R_q \\), the
-invertibility bound \\( \lVert c \rVert_\infty < q^{1/k}/\sqrt{k} \\), and the
+invertibility bound \\( \lVert c \rVert_\infty < q^{1/k}/\sqrt{k} \\), the
 challenge family with bounded \\( \ell_1 \\)-norm and invertible pairwise
-differences.
+differences, and challenge L1 mass \\( \omega = \lVert c \rVert_1 \\) for
+folded-witness collision sizing.
 
 **Sources to fold in**
 
 - Paper §2.1 ("Norms, invertibility, and challenges").
 - `crates/akita-challenges/src/` (challenge sampling), `crates/akita-types/src/sis/norm_bound.rs`.
-
-## The operator norm of a ring element
-
-\\( \Gamma(c) = \lVert M_c \rVert_{2\to2} = \max_k |c(\zeta_k)| \\), the largest
-singular value of the negacyclic multiplication matrix; it is submultiplicative
-and controls Euclidean folding \\( \lVert c\,u \rVert_2 \le \Gamma(c)\lVert u \rVert_2 \\).
-Certifying the cap \\( \Gamma(c) \le \Gamma \\) deterministically is its own
-topic: see [Operator-norm certification](./operator-norm-certification.md).
-
-**Sources to fold in**
-
-- Paper §2.1 ("Operator norm of a ring element").
-- `crates/akita-challenges/src/sampler/op_norm.rs`.
