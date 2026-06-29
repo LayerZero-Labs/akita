@@ -2,6 +2,7 @@
 
 use super::OpeningBatchShape;
 use crate::FpExtEncoding;
+use crate::witness::{WitnessChunkLayout, WitnessChunkLengths, WitnessLayout, witness_chunk_lengths};
 use crate::{
     embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
     RingOpeningPoint,
@@ -252,6 +253,64 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             offset_r,
         })
     }
+
+    /// Witness layout for the multi-chunk layout.
+    pub fn witness_layout(&self, lp: &LevelParams) -> Result<WitnessLayout, AkitaError> {
+        let chunk_lengths = witness_chunk_lengths::<F, D>(lp, RingRelationOpeningCounts {
+            num_claims: self.opening_batch.num_polynomials(),
+            num_t_vectors: self.opening_batch.num_polynomials(),
+        }, self.m_row_layout)?;
+        let WitnessChunkLengths {
+            z_chunk_len,
+            e_chunk_len,
+            t_chunk_len,
+            u_chunk_len,
+            r_chunk_len: _,
+        } = chunk_lengths;
+
+        if u_chunk_len != 0 {
+            return Err(AkitaError::InvalidSetup(
+                "witness layout: û segment is not supported for multi-chunk layout".to_string(),
+            ));
+        }
+        
+        let overflow = || { AkitaError::InvalidSetup("witness layout: chunk offset overflow".to_string()) };
+        let num_chunks = lp.witness_chunk.num_chunks;
+        let blocks_per_chunk = lp.num_blocks / num_chunks;
+        
+        // One chunk is [ẑ, ê, t̂] laid contiguously. The stride is constant across all chunks except the last one.
+        // The last chunk is [ẑ, ê, t̂, r̂] laid contiguously.
+        let chunk_stride = z_chunk_len
+            .checked_add(e_chunk_len)
+            .and_then(|n| n.checked_add(t_chunk_len))
+            .ok_or_else(overflow)?;
+        let offset_r = num_chunks.checked_mul(chunk_stride)
+            .ok_or_else(overflow)?;
+
+        let chunks = (0..num_chunks).map(|j| {
+            let is_last = j == num_chunks - 1;
+            let chunk_offset_base = j.checked_mul(chunk_stride).ok_or_else(overflow)?;
+            let offset_z = chunk_offset_base;
+            let offset_e = offset_z.checked_add(z_chunk_len).ok_or_else(overflow)?;
+            let offset_t = offset_e.checked_add(e_chunk_len).ok_or_else(overflow)?;
+            let offset_r = if is_last { Some(offset_r) } else { None };
+            Ok(WitnessChunkLayout {
+                global_block_base: j.checked_mul(blocks_per_chunk).ok_or_else(overflow)?,
+                offset_z,
+                offset_e,
+                offset_t,
+                offset_u: None,
+                offset_r,
+            })
+        }).collect::<Result<Vec<_>, AkitaError>>()?;
+
+        
+        Ok(WitnessLayout {
+            blocks_per_chunk,
+            chunks,
+            chunk_lengths,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -363,5 +422,70 @@ mod tests {
         instance
             .check_v_shape_for_level(&lp)
             .expect("v rows match layout");
+    }
+
+    #[test]
+    fn check_capacity_accepts_planner_sized_witness() {
+        let lp = test_level_params();
+        let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
+        let opening_point = opening_point(&lp);
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
+        let instance = RingRelationInstance::<F, D>::new(
+            MRowLayout::WithDBlock,
+            test_challenges(&lp, opening_batch.num_polynomials()),
+            opening_point,
+            ring_multiplier_point,
+            opening_batch,
+            vec![F::one(); 3],
+            vec![CyclotomicRing::one(); 3],
+            vec![CyclotomicRing::zero(); 2],
+            vec![CyclotomicRing::zero(); lp.d_key.row_len()],
+        )
+        .expect("relation instance");
+
+        let layout = instance.witness_layout(&lp).expect("witness layout");
+        layout
+            .check_capacity(
+                F::modulus_bits(),
+                &lp,
+                instance.opening_batch().num_polynomials(),
+                instance.m_row_layout(),
+            )
+            .expect("layout span matches planner pricing");
+    }
+
+    #[test]
+    fn check_capacity_rejects_too_short_witness() {
+        let lp = test_level_params();
+        let opening_batch = OpeningBatchShape::new(2, 1).expect("valid batch");
+        let opening_point = opening_point(&lp);
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
+        let instance = RingRelationInstance::<F, D>::new(
+            MRowLayout::WithoutDBlock,
+            test_challenges(&lp, opening_batch.num_polynomials()),
+            opening_point,
+            ring_multiplier_point,
+            opening_batch,
+            vec![F::one()],
+            vec![CyclotomicRing::one()],
+            vec![CyclotomicRing::zero(); 2],
+            Vec::new(),
+        )
+        .expect("relation instance");
+
+        let mut layout = instance.witness_layout(&lp).expect("witness layout");
+        layout.chunks.last_mut().unwrap().offset_r = Some(0);
+        let err = layout
+            .check_capacity(
+                F::modulus_bits(),
+                &lp,
+                instance.opening_batch().num_polynomials(),
+                instance.m_row_layout(),
+            )
+            .expect_err("corrupt layout must be rejected");
+        assert!(
+            format!("{err:?}").contains("witness capacity mismatch"),
+            "unexpected error: {err:?}"
+        );
     }
 }
