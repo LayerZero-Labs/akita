@@ -753,7 +753,7 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
                 count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
                 count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
             },
-            (53, 2),
+            (51, 2),
         ),
         (
             128,
