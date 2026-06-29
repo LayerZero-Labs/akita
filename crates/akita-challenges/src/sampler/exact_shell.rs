@@ -34,16 +34,6 @@ impl ExactShellScratch {
         }
     }
 
-    #[inline]
-    pub(crate) fn positions(&self) -> &[u32] {
-        &self.positions
-    }
-
-    #[inline]
-    pub(crate) fn coeffs(&self) -> &[i8] {
-        &self.coeffs
-    }
-
     /// Draw one exact-shell candidate into the scratch buffers.
     #[inline]
     pub(crate) fn sample(

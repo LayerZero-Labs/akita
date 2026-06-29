@@ -43,7 +43,6 @@ pub(crate) fn proof_optimized_ring_challenge_config(
         64 => akita_challenges::SparseChallengeConfig::ExactShell {
             count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
             count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
-            operator_norm_threshold: akita_challenges::D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
         },
         128 => akita_challenges::SparseChallengeConfig::Uniform {
             weight: 31,

@@ -22,7 +22,7 @@ use crate::generated::{
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_t,
     rounded_up_collision_norm_w,
 };
@@ -120,7 +120,7 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (op_norm_rejection, a_bucket, expected_n_a) = choose_op_norm_rejection_for_a_role(
+        let (a_bucket, expected_n_a) = committed_fold_a_role_rank(
             sis_family,
             ring_d,
             decomp,
@@ -238,7 +238,6 @@ impl GeneratedFoldStep {
             m_vars,
             r_vars,
             stage1_config: ring_challenge_cfg,
-            op_norm_rejection,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
             num_digits_open,
@@ -316,7 +315,7 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (op_norm_rejection, a_bucket, expected_n_a) = choose_op_norm_rejection_for_a_role(
+        let (a_bucket, expected_n_a) = committed_fold_a_role_rank(
             sis_family,
             ring_d,
             decomp,
@@ -390,7 +389,6 @@ impl GeneratedFoldStep {
             m_vars,
             r_vars,
             stage1_config: ring_challenge_cfg,
-            op_norm_rejection,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
             num_digits_open: num_digits_open_val,

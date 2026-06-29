@@ -44,7 +44,6 @@ pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
 # Synced with specs/PRUNING.md "Keep as live specs". CI scans only these unless --all.
 live_specs=(
-  specs/l2-msis-opnorm-folded-witness.md
   specs/setup-layout-repack.md
   specs/eor-streamed-prover.md
   specs/packed-sumcheck.md

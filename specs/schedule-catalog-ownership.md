@@ -602,8 +602,8 @@ trace the same name end to end.
 
 Meaning (from `CommitmentConfig` docs): the sparse ring element `c(X)` used in the
 **weak-binding fold** before sumcheck stage 1. It is **not** a sumcheck round
-challenge. The planner passes this closure to price folded-witness norms and
-operator-norm bounds during DP and entry expansion.
+challenge. The planner passes this closure to price folded-witness norms and ω-based
+collision bounds during DP and entry expansion.
 
 `fold_challenge_shape_at_level` (flat vs tensor root fold) stays aligned with the
 existing `CommitmentConfig` hook name.
