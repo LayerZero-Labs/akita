@@ -138,7 +138,6 @@ where
             &lp.fold_challenge_shape,
             labels,
             nonce,
-            lp.op_norm_rejection,
         )?;
         let witness = build_point_decompose_fold_witness::<F, P, B, D>(
             backend,
@@ -160,7 +159,6 @@ where
             &lp.fold_challenge_shape,
             labels,
             nonce,
-            lp.op_norm_rejection,
         )?;
         return Ok((witness, challenges, nonce));
     }

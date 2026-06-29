@@ -31,5 +31,4 @@ norm. Keep the fold-reprice correction explicit.
 - `crates/akita-types/src/sis/norm_bound.rs`, `layout/digit_math.rs` (`optimal_m_r_split`).
 - Paper §3.12 `sec:batched-soundness` (`def:batched-weak-opening`, `lem:batched-weak-binding`, `prop:committed-fold-price`).
 - `specs/weak-binding-norm-fix.md` (fold reprice — keep the correction section).
-- `specs/fold-linf-rejection.md` (interim op-norm rejection product scope).
-- [Foundations → Operator-norm certification](../foundations/operator-norm-certification.md).
+- `specs/fold-linf-rejection.md` (fold digit-count tightening).

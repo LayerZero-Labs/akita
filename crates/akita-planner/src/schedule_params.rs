@@ -13,7 +13,7 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
-    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
     rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
@@ -226,7 +226,7 @@ fn derive_candidate_level_params(
         let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
             continue;
         };
-        let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
+        let Some((norm_s, n_a)) = committed_fold_a_role_rank(
             family,
             d,
             decomp,
@@ -283,7 +283,6 @@ fn derive_candidate_level_params(
             m_vars: reduced_vars - r,
             r_vars: r,
             stage1_config: ring_challenge_cfg.clone(),
-            op_norm_rejection,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: delta_commit,
             num_digits_open: delta_open,
@@ -760,7 +759,7 @@ fn compute_root_direct_level_params(
     let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
         return Ok(None);
     };
-    let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
+    let Some((norm_s, n_a)) = committed_fold_a_role_rank(
         sis_family,
         d,
         level_decomp,
@@ -826,7 +825,6 @@ fn compute_root_direct_level_params(
         m_vars,
         r_vars,
         stage1_config: ring_challenge_cfg,
-        op_norm_rejection,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
@@ -973,7 +971,7 @@ fn find_schedule_inner(
             let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
                 continue;
             };
-            let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
+            let Some((norm_s, n_a)) = committed_fold_a_role_rank(
                 family,
                 d,
                 level_decomp,
@@ -1044,7 +1042,6 @@ fn find_schedule_inner(
                 m_vars,
                 r_vars,
                 stage1_config: ring_challenge_cfg.clone(),
-                op_norm_rejection,
                 fold_challenge_shape,
                 num_digits_commit,
                 num_digits_open,

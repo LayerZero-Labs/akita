@@ -18,11 +18,10 @@ fn preview_sparse_challenges<const D: usize>(
     n: usize,
     cfg: &SparseChallengeConfig,
     grind_nonce: u32,
-    op_norm_rejection: bool,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg, grind_nonce);
     let seed = preview.preview_challenge_bytes_after_absorb(&absorb_buf, 32);
-    sparse_challenges_from_seed::<D>(&seed, n, cfg, op_norm_rejection)
+    sparse_challenges_from_seed::<D>(&seed, n, cfg)
 }
 
 fn derive_live_sparse_seed<F, T>(transcript: &mut T, absorb_buf: &[u8]) -> Vec<u8>
@@ -40,7 +39,6 @@ fn sparse_challenges_from_live_seed<F, T, const D: usize>(
     n: usize,
     cfg: &SparseChallengeConfig,
     grind_nonce: u32,
-    op_norm_rejection: bool,
 ) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -49,14 +47,10 @@ where
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg, grind_nonce);
     let seed = derive_live_sparse_seed::<F, T>(transcript, &absorb_buf);
     let mut cursor = XofCursor::from_seed(&seed);
-    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg, op_norm_rejection)
+    sparse_challenges_from_xof_cursor::<D>(&mut cursor, n, cfg)
 }
 
 /// Preview folding challenges for grind probing without advancing the transcript.
-///
-/// `op_norm_rejection` is the per-level layout decision. When false, exact-shell
-/// factors are sampled from the full shell even if their configured threshold is
-/// binding; downstream sizing must then use the L1 mass, not the Gamma cap.
 ///
 /// # Errors
 ///
@@ -71,7 +65,6 @@ pub fn preview_folding_challenges<const D: usize>(
     shape: &ChallengeShape,
     labels: ChallengeLabels<'_>,
     grind_nonce: u32,
-    op_norm_rejection: bool,
 ) -> Result<Challenges, AkitaError> {
     validate_sparse_challenge_draw::<D>(cfg)?;
     match shape {
@@ -79,14 +72,8 @@ pub fn preview_folding_challenges<const D: usize>(
             let total = num_blocks.checked_mul(num_claims).ok_or_else(|| {
                 AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
             })?;
-            let challenges = preview_sparse_challenges::<D>(
-                preview,
-                labels.flat,
-                total,
-                cfg,
-                grind_nonce,
-                op_norm_rejection,
-            )?;
+            let challenges =
+                preview_sparse_challenges::<D>(preview, labels.flat, total, cfg, grind_nonce)?;
             Challenges::from_sparse(challenges, num_blocks, num_claims)
         }
         ChallengeShape::Tensor => {
@@ -109,7 +96,6 @@ pub fn preview_folding_challenges<const D: usize>(
                 left_total,
                 cfg,
                 grind_nonce,
-                op_norm_rejection,
             )?;
             let left_digest = tensor_left_digest::<D>(&left, left_len, num_claims)?;
             let right_buf = sparse_challenge_absorb_buf::<D>(
@@ -122,8 +108,7 @@ pub fn preview_folding_challenges<const D: usize>(
                 &[&left_buf, &left_digest, &right_buf],
                 &[32, 0, 32],
             );
-            let right =
-                sparse_challenges_from_seed::<D>(&right_seed, right_total, cfg, op_norm_rejection)?;
+            let right = sparse_challenges_from_seed::<D>(&right_seed, right_total, cfg)?;
             Challenges::from_tensor::<D>(TensorChallenges {
                 left,
                 right,
@@ -136,10 +121,6 @@ pub fn preview_folding_challenges<const D: usize>(
 }
 
 /// Sample folding challenges using the configured shape (live transcript advance).
-///
-/// `op_norm_rejection` is the per-level layout decision. It must match the
-/// pricing used by the level parameters so prover and verifier sample the same
-/// challenge support that the SIS bounds assume.
 ///
 /// # Errors
 ///
@@ -154,7 +135,6 @@ pub fn sample_folding_challenges<F, T, const D: usize>(
     shape: &ChallengeShape,
     labels: ChallengeLabels<'_>,
     grind_nonce: u32,
-    op_norm_rejection: bool,
 ) -> Result<Challenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -172,7 +152,6 @@ where
                 total,
                 cfg,
                 grind_nonce,
-                op_norm_rejection,
             )?;
             Challenges::from_sparse(challenges, num_blocks, num_claims)
         }
@@ -190,7 +169,6 @@ where
                 left_total,
                 cfg,
                 grind_nonce,
-                op_norm_rejection,
             )?;
             let left_digest = tensor_left_digest::<D>(&left, left_len, num_claims)?;
             transcript.append_bytes(labels.tensor_left_digest, &left_digest);
@@ -200,7 +178,6 @@ where
                 right_total,
                 cfg,
                 grind_nonce,
-                op_norm_rejection,
             )?;
             Challenges::from_tensor::<D>(TensorChallenges {
                 left,

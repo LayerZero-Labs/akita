@@ -3,7 +3,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_fold, num_digits_open,
     num_digits_s_commit, rounded_up_collision_norm_t, rounded_up_collision_norm_w, AjtaiKeyParams,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
@@ -54,7 +54,7 @@ fn group_root_params_from_layout(
 
     let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped A width overflow".to_string()))?;
-    let (op_norm_rejection, norm_s, min_n_a) = choose_op_norm_rejection_for_a_role(
+    let (norm_s, min_n_a) = committed_fold_a_role_rank(
         family,
         d,
         level_decomp,
@@ -108,7 +108,6 @@ fn group_root_params_from_layout(
         &ring_challenge_cfg,
         fold_challenge_shape,
         d,
-        op_norm_rejection,
         width_s,
     )?;
     let challenge = FoldChallengeNorms {
@@ -273,7 +272,7 @@ fn grouped_root_direct_main_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
         return Ok(None);
     };
-    let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
+    let Some((norm_s, n_a)) = committed_fold_a_role_rank(
         family,
         d,
         level_decomp,
@@ -333,7 +332,6 @@ fn grouped_root_direct_main_candidate(
         m_vars,
         r_vars,
         stage1_config: ctx.ring_challenge_cfg.clone(),
-        op_norm_rejection,
         fold_challenge_shape: ctx.fold_challenge_shape,
         num_digits_commit,
         num_digits_open,

@@ -100,10 +100,10 @@ D=32:
 
 D=64:
   SparseChallengeConfig::ExactShell {
-      count_mag1: 30,
-      count_mag2: 12,
+      count_mag1: 31,
+      count_mag2: 10,
   }
-  l1_norm()       = 54
+  l1_norm()       = 51
   infinity_norm() = 2
 
 D=128:
