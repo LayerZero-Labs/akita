@@ -264,9 +264,9 @@ impl GroupBatchAkitaScheduleLookupKey {
         self.main.validate()?;
         for layout in &self.precommitteds {
             layout.validate()?;
-            if layout.key.num_vars > self.main.num_vars / 2 {
+            if layout.key.num_vars > self.main.num_vars {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root requires precommitted groups to have at most half the main num_vars"
+                    "grouped root requires precommitted groups to have at most the main num_vars"
                         .to_string(),
                 ));
             }
@@ -998,9 +998,9 @@ mod tests {
     }
 
     #[test]
-    fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
+    fn group_batch_key_rejects_precommitted_num_vars_above_main() {
         let pre = CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(12, 1),
+            key: AkitaScheduleLookupKey::new(24, 1),
             m_vars: 4,
             r_vars: 2,
             log_basis: 2,
@@ -1014,14 +1014,14 @@ mod tests {
 
         let err = grouped
             .validate()
-            .expect_err("precommitted groups above half the main num_vars must be rejected");
+            .expect_err("precommitted groups above the main num_vars must be rejected");
         assert!(matches!(err, AkitaError::InvalidInput(_)));
     }
 
     #[test]
-    fn group_batch_key_allows_precommitted_num_vars_at_half_main() {
+    fn group_batch_key_allows_precommitted_num_vars_above_half_main() {
         let pre_small = CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(10, 1),
+            key: AkitaScheduleLookupKey::new(12, 1),
             m_vars: 4,
             r_vars: 2,
             log_basis: 2,
@@ -1035,7 +1035,7 @@ mod tests {
 
         grouped
             .validate()
-            .expect("precommitted groups may use dimensions at half the main key");
+            .expect("precommitted groups may exceed half the main key up to main num_vars");
     }
 
     #[test]
