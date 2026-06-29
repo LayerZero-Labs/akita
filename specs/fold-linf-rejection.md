@@ -47,7 +47,7 @@ quantity.
 The sub-Gaussian tail argument for the approved flat-family cutover is reproduced in
 the Design section below. This spec is self-contained and consistent with the
 "Folded-Witness ∞-Norm Rejection" section of
-[`specs/l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md).
+[`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md).
 
 ## Intent
 
@@ -139,7 +139,7 @@ The feature introduces or modifies:
   pricing and no rejection oracle (no proof-size win). **Potentially enabled only at
   D=64** under current production presets (`ExactShell (31, 11), T = 18`). D=32
   (`BoundedL1Norm`) and D=128/D=256 (`Uniform`) keep the flag false; see
-  [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) § Product scope.
+  [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md) § Product scope.
 - **No tensor or `BoundedL1Norm` threshold cutover in the first implementation.**
   Both continue to size `K` from `β_inf`; their tighter thresholds require a
   separate proof of the accepted-challenge tail bound and descriptor policy.
@@ -597,7 +597,7 @@ worst-case path is generalized in place):
 ## Documentation
 
 - Update the "Folded-Witness ∞-Norm Rejection" section of
-  [`l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md) to point
+  [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md) to point
   at this spec, mark flat `ExactShell`/`Uniform{[-1,1]}` as certified, and mark
   tensor/`BoundedL1Norm` as `WorstCaseBetaOnly` pending separate proofs.
 - Crate docs on `num_digits_fold` and the tail-bound primitive, stating the
@@ -631,10 +631,6 @@ F13  D64 operator-norm rejection cutover                     [#207]             
      planner memoization; `fp128_d64_*` schedule regen; descriptor bind
 ```
 
-**Out of scope for F13** (follow-up PRs split from #195):
-L2 certificate geometry (`fold_l2_certificate`, `B_l2_pub`), profile `l2_pub_bound`
-scouting, and planner `B_eff = min(B_l2_pub, d·β_inf²)` pricing.
-
 Resolved before approval: `BoundedL1` and tensor are scoped to deterministic
 `β_inf` in the first implementation; `num_fold_coeffs = inner_width · D` under
 the single-point batch contract; the nonce is a fixed `u32` per fold level that
@@ -642,7 +638,7 @@ runs stage-1 challenge sampling (root, intermediate, and terminal).
 
 ## References
 
-- [`specs/l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md)
+- [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md)
   ("Folded-Witness ∞-Norm Rejection" section; accepted-challenge entropy
   invariant).
 - `crates/akita-types/src/sis/{norm_bound,decomposition_digits,ajtai_key}.rs`

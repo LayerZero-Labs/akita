@@ -31,17 +31,5 @@ norm. Keep the fold-reprice correction explicit.
 - `crates/akita-types/src/sis/norm_bound.rs`, `layout/digit_math.rs` (`optimal_m_r_split`).
 - Paper §3.12 `sec:batched-soundness` (`def:batched-weak-opening`, `lem:batched-weak-binding`, `prop:committed-fold-price`).
 - `specs/weak-binding-norm-fix.md` (fold reprice — keep the correction section).
-
-## Euclidean security model
-
-The proposed Euclidean-model upgrade: operator-norm-capped folding challenges,
-the four-square norm witness, and the accepted-support floor that keeps the
-challenge set large. Cross-link the operator-norm certification background in
-[Foundations](../foundations/operator-norm-certification.md) and the roadmap
-page [Euclidean security model](../roadmap/euclidean-security.md).
-
-**Sources to fold in**
-
-- `specs/l2-msis-opnorm-folded-witness.md` (flagship active spec; S1/S4/S7 done, rest open).
-- `crates/akita-challenges/src/sampler/op_norm.rs`, `crates/akita-types/src/sis/four_square.rs`.
-- Paper §3.12 (fold-response ℓ₂ bounds), App C `sec:opnorm-support` (accepted-support floor).
+- `specs/fold-linf-rejection.md` (interim op-norm rejection product scope).
+- [Foundations → Operator-norm certification](../foundations/operator-norm-certification.md).
