@@ -15,11 +15,13 @@ use akita_schedules::{
 };
 #[cfg(feature = "schedules-default")]
 use akita_types::SisModulusFamily;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "schedules-default")]
 const MAX_I8_LOG_BASIS: u32 = 6;
 #[cfg(feature = "schedules-default")]
 const RAW_I8_RHS_MAX_ABS: u64 = 128;
+static PROOF_OPTIMIZED_GROUP_COMMIT_CALLED: AtomicBool = AtomicBool::new(false);
 #[test]
 fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
     // Terminal-direct steps ship the cleartext witness without
@@ -152,7 +154,9 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
 }
 
 #[test]
-fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
+fn setup_matrix_envelope_does_not_consult_group_commit_layout() {
+    PROOF_OPTIMIZED_GROUP_COMMIT_CALLED.store(false, Ordering::SeqCst);
+
     use akita_types::{CleartextWitnessShape, DecompositionParams, DirectStep, Schedule, Step};
 
     #[derive(Clone)]
@@ -210,6 +214,7 @@ fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
         fn get_params_for_group_commit(
             _key: &AkitaScheduleLookupKey,
         ) -> Result<LevelParams, AkitaError> {
+            PROOF_OPTIMIZED_GROUP_COMMIT_CALLED.store(true, Ordering::SeqCst);
             Err(AkitaError::InvalidSetup(
                 "synthetic group layout miss".to_string(),
             ))
@@ -218,9 +223,13 @@ fn setup_matrix_envelope_keeps_runtime_shape_when_group_layout_rejects() {
 
     let opening_batch = OpeningBatchShape::new(8, 1).expect("singleton opening batch");
     let envelope = setup_matrix_envelope_for_shape::<GroupLayoutRejectCfg>(&opening_batch)
-        .expect("runtime setup envelope should not abort on optional group layout miss")
+        .expect("runtime setup envelope should not consult group layout")
         .expect("runtime schedule is supported");
     assert_eq!(envelope.max_setup_len, 1);
+    assert!(
+        !PROOF_OPTIMIZED_GROUP_COMMIT_CALLED.load(Ordering::SeqCst),
+        "proof-optimized setup sizing must not include conservative group layouts"
+    );
 }
 
 #[test]

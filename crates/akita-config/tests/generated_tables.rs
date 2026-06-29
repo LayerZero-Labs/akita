@@ -14,10 +14,12 @@
 //! For each key the test resolves two schedules and asserts they are
 //! identical:
 //!
-//! - **table-backed** via `family.table_backed` (`Cfg::runtime_schedule`),
-//!   which serves the shipped table on a hit and expands the compact entry
-//!   through the planner's canonical walker;
-//! - **regenerated** via `family.regen`, which runs the pure DP from scratch.
+//! - **table-backed** via `family.table_backed` (`Cfg::runtime_schedule`) for
+//!   scalar schedules or `Cfg::get_group_batch_schedule` for grouped-root
+//!   schedules, each serving the shipped table on a hit and expanding the
+//!   compact entry through the planner's canonical walker;
+//! - **regenerated** via `family.regen` / `family.regen_group_batch`, which runs
+//!   the pure DP from scratch.
 //!
 //! The comparison is over the *fully resolved* [`Schedule`] — every step's
 //! expanded [`LevelParams`] (collision buckets + derived matrix widths,
@@ -37,10 +39,14 @@ use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERAT
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
-use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step};
+use akita_field::AkitaError;
+use akita_types::{
+    AkitaScheduleLookupKey, DirectStep, FoldStep, GroupBatchAkitaScheduleLookupKey, Schedule, Step,
+};
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
+use akita_planner::generated::group_batch_table_entry;
 #[cfg(feature = "all-schedules")]
 use akita_planner::generated::table_entry;
 #[cfg(feature = "all-schedules")]
@@ -120,10 +126,102 @@ fn assert_family_catalog_enabled(family: &GeneratedFamily, keys: &[AkitaSchedule
     }
 }
 
+fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
+    module_name: &str,
+    keys: &[GroupBatchAkitaScheduleLookupKey],
+) {
+    if keys.is_empty() {
+        return;
+    }
+    let catalog = Cfg::schedule_catalog()
+        .unwrap_or_else(|| panic!("family {module_name} must expose schedule_catalog()"));
+    let missing = keys
+        .iter()
+        .filter(|key| group_batch_table_entry(catalog, key).is_none())
+        .take(3)
+        .map(|key| format!("{key:?}"))
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "family {module_name} must have shipped grouped-table hits for every enumerated grouped key; first missing keys: {}",
+        missing.join("\n  ")
+    );
+}
+
+fn assert_family_group_batch_table_hit(
+    family: &GeneratedFamily,
+    keys: &[GroupBatchAkitaScheduleLookupKey],
+) {
+    match family.module_name {
+        "fp128_d128_full" => {
+            assert_group_batch_table_hits::<fp128::D128Full>(family.module_name, keys)
+        }
+        "fp128_d128_onehot" => {
+            assert_group_batch_table_hits::<fp128::D128OneHot>(family.module_name, keys)
+        }
+        "fp128_d64_onehot" => {
+            assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, keys)
+        }
+        "fp128_d64_full" => {
+            assert_group_batch_table_hits::<fp128::D64Full>(family.module_name, keys)
+        }
+        "fp128_d64_onehot_tensor" => assert_group_batch_table_hits::<
+            tensor_verifier::fp128::D64OneHotTensor,
+        >(family.module_name, keys),
+        "fp128_d64_onehot_tiered" => {
+            assert_group_batch_table_hits::<fp128::D64OneHotTiered>(family.module_name, keys)
+        }
+        "fp64_d128" => assert_group_batch_table_hits::<fp64::D128Full>(family.module_name, keys),
+        "fp64_d128_onehot" => {
+            assert_group_batch_table_hits::<fp64::D128OneHot>(family.module_name, keys)
+        }
+        "fp64_d256_onehot" => {
+            assert_group_batch_table_hits::<fp64::D256OneHot>(family.module_name, keys)
+        }
+        "fp32_d128_onehot" => {
+            assert_group_batch_table_hits::<fp32::D128OneHot>(family.module_name, keys)
+        }
+        "fp32_d256_onehot" => {
+            assert_group_batch_table_hits::<fp32::D256OneHot>(family.module_name, keys)
+        }
+        other => panic!("unknown generated family for grouped catalog guard: {other}"),
+    }
+}
+
+fn table_backed_group_batch_schedule<Cfg: CommitmentConfig>(
+    key: &GroupBatchAkitaScheduleLookupKey,
+) -> Result<Schedule, AkitaError> {
+    Cfg::get_group_batch_schedule(key)
+}
+
+fn resolve_family_group_batch_schedule(
+    family: &GeneratedFamily,
+    key: &GroupBatchAkitaScheduleLookupKey,
+) -> Result<Schedule, AkitaError> {
+    match family.module_name {
+        "fp128_d128_full" => table_backed_group_batch_schedule::<fp128::D128Full>(key),
+        "fp128_d128_onehot" => table_backed_group_batch_schedule::<fp128::D128OneHot>(key),
+        "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(key),
+        "fp128_d64_full" => table_backed_group_batch_schedule::<fp128::D64Full>(key),
+        "fp128_d64_onehot_tensor" => {
+            table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(key)
+        }
+        "fp128_d64_onehot_tiered" => {
+            table_backed_group_batch_schedule::<fp128::D64OneHotTiered>(key)
+        }
+        "fp64_d128" => table_backed_group_batch_schedule::<fp64::D128Full>(key),
+        "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(key),
+        "fp64_d256_onehot" => table_backed_group_batch_schedule::<fp64::D256OneHot>(key),
+        "fp32_d128_onehot" => table_backed_group_batch_schedule::<fp32::D128OneHot>(key),
+        "fp32_d256_onehot" => table_backed_group_batch_schedule::<fp32::D256OneHot>(key),
+        other => panic!("unknown generated family for grouped schedule guard: {other}"),
+    }
+}
+
 /// One `(family, key)` whose table-hit expansion disagrees with the DP.
 struct Mismatch {
     family: &'static str,
-    key: AkitaScheduleLookupKey,
+    key: String,
     table_backed: String,
     regenerated: String,
 }
@@ -131,7 +229,7 @@ struct Mismatch {
 impl Mismatch {
     fn render(&self) -> String {
         format!(
-            "  family={} key={:?}\n    table-backed: {}\n    regenerated:  {}\n",
+            "  family={} key={}\n    table-backed: {}\n    regenerated:  {}\n",
             self.family, self.key, self.table_backed, self.regenerated
         )
     }
@@ -185,21 +283,44 @@ fn schedules_equal(left: &Schedule, right: &Schedule) -> bool {
     true
 }
 
-fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
-    if !family_catalog_is_linked(family) {
-        return;
-    }
-
-    let keys: Vec<AkitaScheduleLookupKey> = family_keys(family)
-        .unwrap_or_else(|e| panic!("family {} key enumeration failed: {e}", family.module_name));
-
-    #[cfg(feature = "all-schedules")]
-    assert_family_catalog_enabled(family, &keys);
-
-    let workers = std::thread::available_parallelism()
+fn worker_count() -> usize {
+    std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
-        .min(4);
+        .min(4)
+}
+
+fn compare_scalar_key(family: &GeneratedFamily, key: AkitaScheduleLookupKey) -> Option<Mismatch> {
+    let table_backed = (family.table_backed)(key).unwrap_or_else(|e| {
+        panic!(
+            "table-backed schedule failed for family {} key={key:?}: {e}",
+            family.module_name
+        )
+    });
+    let regenerated = (family.regen)(key).unwrap_or_else(|e| {
+        panic!(
+            "DP regen failed for family {} key={key:?}: {e}",
+            family.module_name
+        )
+    });
+
+    if schedules_equal(&table_backed, &regenerated) {
+        return None;
+    }
+    Some(Mismatch {
+        family: family.module_name,
+        key: format!("{key:?}"),
+        table_backed: render_schedule(&table_backed),
+        regenerated: render_schedule(&regenerated),
+    })
+}
+
+fn check_scalar_keys(
+    family: &GeneratedFamily,
+    keys: &[AkitaScheduleLookupKey],
+    into: &mut Vec<Mismatch>,
+) {
+    let workers = worker_count();
 
     // The table drift guard is a hot CI path. Spread independent keys across a
     // small number of worker threads to reduce wall time on multi-core runners.
@@ -212,26 +333,8 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
                     scope.spawn(move || {
                         let mut local = Vec::new();
                         for &key in chunk {
-                            let table_backed = (family.table_backed)(key).unwrap_or_else(|e| {
-                                panic!(
-                                    "table-backed schedule failed for family {} key={key:?}: {e}",
-                                    family.module_name
-                                )
-                            });
-                            let regenerated = (family.regen)(key).unwrap_or_else(|e| {
-                                panic!(
-                                    "DP regen failed for family {} key={key:?}: {e}",
-                                    family.module_name
-                                )
-                            });
-
-                            if !schedules_equal(&table_backed, &regenerated) {
-                                local.push(Mismatch {
-                                    family: family.module_name,
-                                    key,
-                                    table_backed: render_schedule(&table_backed),
-                                    regenerated: render_schedule(&regenerated),
-                                });
+                            if let Some(mismatch) = compare_scalar_key(family, key) {
+                                local.push(mismatch);
                             }
                         }
                         local
@@ -246,28 +349,101 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     }
 
     for key in keys {
-        let table_backed = (family.table_backed)(key).unwrap_or_else(|e| {
-            panic!(
-                "table-backed schedule failed for family {} key={key:?}: {e}",
-                family.module_name
-            )
-        });
-        let regenerated = (family.regen)(key).unwrap_or_else(|e| {
-            panic!(
-                "DP regen failed for family {} key={key:?}: {e}",
-                family.module_name
-            )
-        });
-
-        if !schedules_equal(&table_backed, &regenerated) {
-            into.push(Mismatch {
-                family: family.module_name,
-                key,
-                table_backed: render_schedule(&table_backed),
-                regenerated: render_schedule(&regenerated),
-            });
+        if let Some(mismatch) = compare_scalar_key(family, *key) {
+            into.push(mismatch);
         }
     }
+}
+
+fn compare_group_batch_key(
+    family: &GeneratedFamily,
+    key: &GroupBatchAkitaScheduleLookupKey,
+) -> Option<Mismatch> {
+    let table_backed = resolve_family_group_batch_schedule(family, key).unwrap_or_else(|e| {
+        panic!(
+            "table-backed grouped schedule failed for family {} key={key:?}: {e}",
+            family.module_name
+        )
+    });
+    let regenerated = (family.regen_group_batch)(key.clone()).unwrap_or_else(|e| {
+        panic!(
+            "grouped DP regen failed for family {} key={key:?}: {e}",
+            family.module_name
+        )
+    });
+
+    if schedules_equal(&table_backed, &regenerated) {
+        return None;
+    }
+    Some(Mismatch {
+        family: family.module_name,
+        key: format!("group-batch {key:?}"),
+        table_backed: render_schedule(&table_backed),
+        regenerated: render_schedule(&regenerated),
+    })
+}
+
+fn check_group_batch_keys(
+    family: &GeneratedFamily,
+    keys: &[GroupBatchAkitaScheduleLookupKey],
+    into: &mut Vec<Mismatch>,
+) {
+    if keys.is_empty() {
+        return;
+    }
+
+    let workers = worker_count();
+    if workers > 1 && keys.len() >= 2 * workers {
+        let chunk_size = keys.len().div_ceil(workers);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = keys
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        let mut local = Vec::new();
+                        for key in chunk {
+                            if let Some(mismatch) = compare_group_batch_key(family, key) {
+                                local.push(mismatch);
+                            }
+                        }
+                        local
+                    })
+                })
+                .collect();
+            for handle in handles {
+                into.extend(handle.join().expect("worker thread panicked"));
+            }
+        });
+        return;
+    }
+
+    for key in keys {
+        if let Some(mismatch) = compare_group_batch_key(family, key) {
+            into.push(mismatch);
+        }
+    }
+}
+
+fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
+    if !family_catalog_is_linked(family) {
+        return;
+    }
+
+    let keys: Vec<AkitaScheduleLookupKey> = family_keys(family)
+        .unwrap_or_else(|e| panic!("family {} key enumeration failed: {e}", family.module_name));
+    let group_batch_keys = (family.group_batch_keys)(family).unwrap_or_else(|e| {
+        panic!(
+            "family {} grouped key enumeration failed: {e}",
+            family.module_name
+        )
+    });
+
+    #[cfg(feature = "all-schedules")]
+    assert_family_catalog_enabled(family, &keys);
+    assert_family_group_batch_table_hit(family, &group_batch_keys);
+
+    check_scalar_keys(family, &keys, into);
+    check_group_batch_keys(family, &group_batch_keys, into);
 }
 
 fn regen_hint() -> &'static str {

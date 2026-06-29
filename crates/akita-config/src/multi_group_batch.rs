@@ -5,7 +5,7 @@
 //! setup capacity, while final grouped-root schedule lookup is resolved as this
 //! config's canonical grouped runtime schedule.
 
-use crate::conservative_commitment::conservative_commit_params;
+use crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments;
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -82,10 +82,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for MultiGroupBatchConfig<Cfg> {
         // Start from the wrapped config's ordinary setup envelope, then add the
         // extra conservative B-rank capacity needed for precommitted groups.
         let mut envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
-        inflate_for_conservative_precommit::<Cfg>(
+        inflate_setup_envelope_for_conservative_commitments::<Cfg>(
             max_num_vars,
             max_num_batched_polys,
-            &mut envelope.max_setup_len,
+            &mut envelope,
         )?;
         Ok(envelope)
     }
@@ -101,60 +101,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for MultiGroupBatchConfig<Cfg> {
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
         Cfg::schedule_catalog()
     }
-}
-
-fn inflate_for_conservative_precommit<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-    max_setup_len: &mut usize,
-) -> Result<(), AkitaError> {
-    for num_vars in 1..=max_num_vars {
-        for num_polys in setup_envelope_poly_counts(max_num_batched_polys) {
-            let key = akita_types::AkitaScheduleLookupKey::new(num_vars, num_polys);
-            if let Ok(params) = conservative_commit_params::<Cfg>(&key) {
-                accumulate_matrix_envelope_for_level(&params, max_setup_len)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> [usize; 2] {
-    if max_num_batched_polys <= 1 {
-        [1, 1]
-    } else {
-        [1, max_num_batched_polys]
-    }
-}
-
-fn accumulate_matrix_envelope_for_level(
-    lp: &LevelParams,
-    max_setup_len: &mut usize,
-) -> Result<(), AkitaError> {
-    let a_len = lp
-        .a_key
-        .row_len()
-        .checked_mul(lp.inner_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup envelope overflow".to_string()))?;
-    let b_len = lp
-        .b_key
-        .row_len()
-        .checked_mul(lp.outer_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup envelope overflow".to_string()))?;
-    let d_len = lp
-        .d_key
-        .row_len()
-        .checked_mul(lp.d_matrix_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
-    let f_len = match lp.f_key.as_ref() {
-        Some(fk) => fk
-            .row_len()
-            .checked_mul(fk.col_len())
-            .ok_or_else(|| AkitaError::InvalidSetup("F setup envelope overflow".to_string()))?,
-        None => 0,
-    };
-    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len).max(f_len);
-    Ok(())
 }
 
 fn root_commit_params<'a>(

@@ -18,7 +18,8 @@ commitment groups in one root proof. The first supported shape is deliberately
 narrow:
 
 - every opened polynomial is a one-hot polynomial;
-- all commitment groups have the same `num_vars`;
+- the final/main group defines the shared padded opening arity, and every
+  precommitted group has `num_vars <= main.num_vars`;
 - all groups are opened at one shared point;
 - group sizes `K_g` may differ;
 - multi-group structure exists only at the root fold;
@@ -88,7 +89,8 @@ commitments, witness shapes, and descriptors must return `AkitaError`.
 
 - Multipoint openings. The batch still has one shared opening point.
 - Dense polynomial support for the initial multi-group root batching rollout.
-- Heterogeneous `num_vars`.
+- Precommitted groups whose `num_vars` exceed the final/main group's
+  `num_vars`.
 - Tiered multi-group commitments. Existing tiered paths may keep rejecting
 `G > 1`.
 - Recursive setup-contribution support for `G > 1` in the first rollout, unless
@@ -111,9 +113,11 @@ objects that are produced over time and later opened together:
 commit_group(group_0), ..., commit_group(group_{G-2}), commit_final(group_{G-1})
 ```
 
-For `G = 1`, grouped APIs must normalize to the existing scalar schedule and
-proof bytes. They must not introduce a parallel planner path or extra descriptor
-fields beyond the versioned grouped encoding.
+For `G = 1`, grouped APIs must eventually normalize to the existing scalar
+schedule and proof bytes. They must not introduce a parallel planner path or
+extra descriptor fields beyond the versioned grouped encoding. Until that
+normalization is implemented, public grouped schedule/proof APIs must reject or
+avoid exposing `G = 1` grouped requests.
 
 ## Terminology
 
@@ -318,14 +322,19 @@ pub struct AkitaScheduleLookupKey {
 }
 ```
 
-For scheduler adoption, each group entry is:
+For scheduler adoption, each group entry records that group's committed arity:
 
 ```text
-num_vars      = shared padded opening arity
+num_vars      = committed arity for this group
 num_t_vectors = K_g
 num_w_vectors = 1
 num_z_vectors = 1
 ```
+
+The final/main group sets the shared padded opening arity used by the grouped
+root. Precommitted group entries may have smaller arity; their
+`PointVariableSelection` chooses the coordinates they use from the shared point.
+Precommitted entries with arity greater than the final/main group must reject.
 
 Add a group-batch key for final commit/prove planning:
 
@@ -876,7 +885,9 @@ batches.
 
 The planner should therefore expose three modes:
 
-- `G = 1` normalizes to the scalar schedule.
+- `G = 1` normalizes to the scalar schedule once singleton grouped APIs are
+exposed. In the current phase, grouped-root planning is only supported for
+`G >= 2`.
 - All groups known before any commit use the existing scalar same-point batch,
 unless the caller explicitly needs separate commitment objects.
 - Staggered workflows use `commit_group` and `commit_final`, and pay the
@@ -902,7 +913,7 @@ At `commit_final` time:
 - `precommitteds` must be well-formed group metadata;
 - the full `GroupBatchAkitaScheduleLookupKey` must be derivable from
   `precommitteds + new`;
-- all groups must use the same `num_vars`;
+- each precommitted group must have `key.num_vars <= new.key.num_vars`;
 - each precommitted group must keep its `CommitmentGroupLayout` `m`, `r`,
   `log_basis`, `n_a`, and B width;
 - each precommitted group must use the frozen conservative B row count in the
@@ -941,7 +952,7 @@ At verify time:
 | ----------------------------------------------- | ------------------------------------------ | ---------------------------------------- |
 | Tiered preset + `G > 1`                         | Root relation quotient / prove entry       | `AkitaError::InvalidSetup`               |
 | Dense polynomial + `G > 1`                      | `commit_group` / `commit_final`            | `AkitaError::InvalidInput`               |
-| Heterogeneous `num_vars` across groups          | `commit_final` / `OpeningBatch` validation | `AkitaError::InvalidInput`               |
+| Precommitted `num_vars > main.num_vars`         | `commit_final` / grouped key validation    | `AkitaError::InvalidInput`               |
 | Recursive setup contribution + `G > 1`          | Prove / verify entry                       | `AkitaError::InvalidSetup`               |
 | Scalar table lookup collapsing `[1,3]` to `[4]` | Generated schedule lookup                  | table miss or `AkitaError::InvalidSetup` |
 | Grouped proof with descriptor version 1         | Descriptor parse                           | `SerializationError`                     |
@@ -1086,7 +1097,9 @@ B-row time is a bottleneck.
 key.
 - Generated grouped entries, once emitted, match DP.
 - Root `w_len` from planner matches prover-built grouped witness length.
-- Singleton `G = 1` schedules remain byte-identical.
+- Singleton `G = 1` grouped APIs reject or remain unexposed until scalar
+normalization lands; once exposed, their schedules remain byte-identical to the
+scalar path.
 - Setup envelope scans include unequal partitions such as `[1, 3]`.
 
 ### Performance Tests

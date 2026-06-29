@@ -4,6 +4,7 @@
 //! use a B rank conservative for a later grouped root whose final basis is not
 //! known at precommit time.
 
+use crate::proof_optimized::setup_envelope_poly_counts;
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -50,7 +51,13 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
+        let mut envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
+        inflate_setup_envelope_for_conservative_commitments::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            &mut envelope,
+        )?;
+        Ok(envelope)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -83,6 +90,23 @@ pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
 ) -> Result<LevelParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
     Ok(root_commit_params(&schedule, "conservative commit schedule")?.clone())
+}
+
+pub(crate) fn inflate_setup_envelope_for_conservative_commitments<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    envelope: &mut SetupMatrixEnvelope,
+) -> Result<(), AkitaError> {
+    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
+    for num_vars in 1..=max_num_vars {
+        for &num_polys in &poly_counts {
+            let key = AkitaScheduleLookupKey::new(num_vars, num_polys);
+            if let Ok(params) = conservative_commit_params::<Cfg>(&key) {
+                accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
@@ -152,6 +176,36 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         conservative_norm,
         Cfg::D,
     )?;
+    Ok(())
+}
+
+fn accumulate_matrix_envelope_for_level(
+    lp: &LevelParams,
+    max_setup_len: &mut usize,
+) -> Result<(), AkitaError> {
+    let a_len = lp
+        .a_key
+        .row_len()
+        .checked_mul(lp.inner_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("A setup envelope overflow".to_string()))?;
+    let b_len = lp
+        .b_key
+        .row_len()
+        .checked_mul(lp.outer_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup envelope overflow".to_string()))?;
+    let d_len = lp
+        .d_key
+        .row_len()
+        .checked_mul(lp.d_matrix_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
+    let f_len = match lp.f_key.as_ref() {
+        Some(fk) => fk
+            .row_len()
+            .checked_mul(fk.col_len())
+            .ok_or_else(|| AkitaError::InvalidSetup("F setup envelope overflow".to_string()))?,
+        None => 0,
+    };
+    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len).max(f_len);
     Ok(())
 }
 
