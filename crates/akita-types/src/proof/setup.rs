@@ -170,16 +170,7 @@ pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
-    derive_public_matrix_flat_labeled::<F, D>(total_ring_elements, seed, SHARED_MATRIX_LABEL)
-}
-
-#[tracing::instrument(skip_all, name = "derive_public_matrix_flat_labeled")]
-fn derive_public_matrix_flat_labeled<F: FieldCore + RandomSampling, const D: usize>(
-    total_ring_elements: usize,
-    seed: &PublicMatrixSeed,
-    matrix_label: &[u8],
-) -> FlatMatrix<F> {
-    let xof = LabeledMatrixXof::new(seed, matrix_label);
+    let xof = LabeledMatrixXof::new(seed, SHARED_MATRIX_LABEL);
     let mut data = vec![F::zero(); total_ring_elements * D];
     cfg_chunks_mut!(data, D)
         .enumerate()

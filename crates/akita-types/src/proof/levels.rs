@@ -256,25 +256,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         )
     }
 
-    /// Construct a level proof for a multi-row public opening relation.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_two_stage_many<const D: usize>(
-        v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<L>,
-        stage2_sumcheck_proof: SumcheckProof<L>,
-        next_w_commitment: FlatRingVec<F>,
-        next_w_eval: L,
-    ) -> Self {
-        Self::new_two_stage_many_with_extension_opening_reduction::<D>(
-            None,
-            v,
-            stage1,
-            stage2_sumcheck_proof,
-            next_w_commitment,
-            next_w_eval,
-        )
-    }
-
     /// Construct a level proof for a multi-row public opening relation with
     /// extension-opening reduction payloads already produced.
     #[allow(clippy::too_many_arguments)]

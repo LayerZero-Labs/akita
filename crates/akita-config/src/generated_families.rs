@@ -106,10 +106,6 @@ fn table_backed<Cfg: CommitmentConfig>(
     Cfg::runtime_schedule(key)
 }
 
-fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
-    policy_of::<Cfg>()
-}
-
 macro_rules! family_row {
     ($module:literal, $const:literal, $feat:literal, $min:expr, $max:expr, $cfg:ty) => {
         GeneratedFamily {
@@ -121,7 +117,7 @@ macro_rules! family_row {
             num_polys: DEFAULT_NUM_POLYS,
             regen: regen::<$cfg>,
             table_backed: table_backed::<$cfg>,
-            policy: family_policy::<$cfg>,
+            policy: policy_of::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             fold_challenge_shape_at_level:
                 <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,

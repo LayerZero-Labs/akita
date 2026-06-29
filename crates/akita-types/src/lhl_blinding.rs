@@ -52,26 +52,6 @@ pub fn blinding_digit_plane_count<F: CanonicalField>(
     )
 }
 
-/// Number of B-matrix columns reserved for the fresh digit-source blinding.
-pub fn blinding_column_count<F: CanonicalField>(
-    output_ring_len: usize,
-    ring_dimension: usize,
-    log_basis: u32,
-) -> usize {
-    blinding_digit_plane_count::<F>(output_ring_len, ring_dimension, log_basis)
-}
-
-/// Number of B-matrix columns reserved for the fresh digit-source blinding when
-/// only the field bit length is available.
-pub fn blinding_column_count_from_bits(
-    output_ring_len: usize,
-    ring_dimension: usize,
-    log_basis: u32,
-    field_bits: usize,
-) -> usize {
-    blinding_digit_plane_count_from_bits(output_ring_len, ring_dimension, log_basis, field_bits)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,11 +71,6 @@ mod tests {
     }
 
     #[test]
-    fn column_count_is_digit_plane_count() {
-        assert_eq!(blinding_column_count_from_bits(3, 8, 2, 8), 28);
-    }
-
-    #[test]
     fn zero_output_needs_no_digit_planes() {
         assert_eq!(blinding_digit_plane_count_from_bits(0, 32, 4, 128), 0);
     }
@@ -105,10 +80,5 @@ mod tests {
         assert_eq!(blinding_digit_plane_count_from_bits(1, 64, 5, 128), 27);
         assert_eq!(blinding_digit_plane_count_from_bits(1, 128, 5, 128), 26);
         assert_eq!(blinding_digit_plane_count_from_bits(1, 64, 4, 128), 33);
-    }
-
-    #[test]
-    fn zero_output_needs_no_blinding_columns() {
-        assert_eq!(blinding_column_count_from_bits(0, 32, 43, 128), 0);
     }
 }

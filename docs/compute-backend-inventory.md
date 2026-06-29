@@ -78,8 +78,8 @@ kernel modules, and low-level kernel benchmarks. `MultiDNttCaches`,
   NttSlotCache<D>`.
 - `crates/akita-prover/src/api/setup.rs:50`: `generate_with_capacity` builds
   shared CPU NTT state.
-- `crates/akita-prover/src/api/setup.rs:91`: `from_expanded` computes total
-  ring elements and rebuilds shared CPU NTT state.
+- `crates/akita-prover/src/api/setup.rs:91`: validated expanded-setup
+  constructors compute total ring elements without owning shared CPU NTT state.
 - `crates/akita-prover/src/api/scheme.rs:15`: `CommitmentProver` defaults its
   cache generic to `NttSlotCache<D>`.
 - `crates/akita-prover/src/api/scheme.rs:60`, `:86`, `:110`: `commit`,
