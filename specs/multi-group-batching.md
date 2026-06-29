@@ -26,7 +26,13 @@ narrow:
 witness commitment;
 - tiered multi-group commitments remain out of scope.
 
-The root model gives every commitment group its own folded `z` witness:
+> **Shared-z update.** The root model below gives every commitment group its
+> own folded `z` witness. That part of this spec is superseded by
+> [`multi-group-shared-z-setup-repack.md`](multi-group-shared-z-setup-repack.md),
+> which aligns A through a shared setup coordinate system and uses one root
+> `z` segment across groups.
+
+The original root model gives every commitment group its own folded `z` witness:
 
 ```text
 group g has z_g, and after decomposition it contributes z_hat_g
