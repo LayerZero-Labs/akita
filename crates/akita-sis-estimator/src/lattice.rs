@@ -78,7 +78,7 @@ pub fn cost_infinity_fixed(
         beta,
     )?;
     let short = short_vectors_for(config.red_cost_model, beta, effective_dimension)?;
-    let bkz_log2 = log2_bkz_cost(config.red_cost_model, beta)?;
+    let bkz_log2 = log2_bkz_cost(config.red_cost_model, beta, effective_dimension)?;
 
     let log_trial_prob = infinity_log_trial_probability(
         scratch.log_q,

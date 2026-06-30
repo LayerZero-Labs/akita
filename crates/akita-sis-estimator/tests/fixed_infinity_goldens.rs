@@ -1,6 +1,6 @@
 use akita_sis_estimator::{
     cost_infinity, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig,
-    EstimatorError, OptimizerConfig, ReductionCostModel, ShapeModel,
+    EstimatorError, NearestNeighborModel, OptimizerConfig, ReductionCostModel, ShapeModel,
 };
 
 const FLOAT_TOLERANCE: f64 = 1e-6;
@@ -30,6 +30,7 @@ fn fixed_infinity_lgsa_goldens_match_pinned_estimator_trusted_rows() {
     run_fixed_infinity_goldens(
         include_str!("../../../scripts/sis_golden/fixed_infinity_golden.csv"),
         ShapeModel::Lgsa,
+        ReductionCostModel::default(),
     );
 }
 
@@ -38,6 +39,7 @@ fn fixed_infinity_gsa_goldens_match_pinned_estimator_trusted_rows() {
     run_fixed_infinity_goldens(
         include_str!("../../../scripts/sis_golden/fixed_infinity_golden_adps16_gsa_fixed.csv"),
         ShapeModel::Gsa,
+        ReductionCostModel::default(),
     );
 }
 
@@ -46,6 +48,16 @@ fn fixed_infinity_zgsa_goldens_match_pinned_estimator_trusted_rows() {
     run_fixed_infinity_goldens(
         include_str!("../../../scripts/sis_golden/fixed_infinity_golden_adps16_zgsa_fixed.csv"),
         ShapeModel::Zgsa,
+        ReductionCostModel::default(),
+    );
+}
+
+#[test]
+fn fixed_infinity_bdgl16_goldens_match_pinned_estimator_trusted_rows() {
+    run_fixed_infinity_goldens(
+        include_str!("../../../scripts/sis_golden/fixed_infinity_golden_bdgl16_lgsa_fixed.csv"),
+        ShapeModel::Lgsa,
+        ReductionCostModel::Bdgl16,
     );
 }
 
@@ -53,7 +65,9 @@ fn fixed_infinity_zgsa_goldens_match_pinned_estimator_trusted_rows() {
 fn fixed_infinity_rejects_unsupported_profiles_without_panicking() {
     let params = scalar_sis_from_ring(AkitaModulusFamily::Q32, 32, 1, 2, 15).unwrap();
     let config = EstimateConfig {
-        red_cost_model: ReductionCostModel::Bdgl16,
+        red_cost_model: ReductionCostModel::Matzov {
+            nearest_neighbor: NearestNeighborModel::Classical,
+        },
         red_shape_model: ShapeModel::Lgsa,
         ..EstimateConfig::default()
     };
@@ -64,7 +78,11 @@ fn fixed_infinity_rejects_unsupported_profiles_without_panicking() {
     ));
 }
 
-fn run_fixed_infinity_goldens(csv: &str, shape_model: ShapeModel) {
+fn run_fixed_infinity_goldens(
+    csv: &str,
+    shape_model: ShapeModel,
+    red_cost_model: ReductionCostModel,
+) {
     for row in parse_rows(csv) {
         if row.trust != "trusted" {
             continue;
@@ -74,7 +92,7 @@ fn run_fixed_infinity_goldens(csv: &str, shape_model: ShapeModel) {
             scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
                 .unwrap();
         let config = EstimateConfig {
-            red_cost_model: ReductionCostModel::default(),
+            red_cost_model,
             red_shape_model: shape_model,
             optimizer: OptimizerConfig::Fixed {
                 beta: row.beta_input,
