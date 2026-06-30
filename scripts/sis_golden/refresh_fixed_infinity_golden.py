@@ -168,9 +168,9 @@ def main() -> int:
             for row in rows
         ],
     }
-    # codeql[py/clear-text-storage-sensitive-data]: this golden metadata contains
-    # only public estimator provenance and non-secret grid coordinates.
-    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
+    with metadata_path.open("w") as fh:
+        json.dump(metadata, fh, indent=2)
+        fh.write("\n")
 
     print(
         f"Wrote {len(rows)} fixed infinity cells to {output} "
