@@ -346,7 +346,8 @@ impl LevelParams {
         )
     }
 
-    /// Level-static config for [`crate::sis::fold_witness_linf_cap`] inside [`crate::sis::num_digits_fold`].
+    /// Level-static config for [`crate::sis::fold_witness_honest_prover_linf_cap`] inside
+    /// [`crate::sis::num_digits_fold`].
     #[inline]
     pub fn fold_witness_linf_cap_config(&self) -> crate::sis::FoldWitnessLinfCapConfig {
         self.fold_linf_cap_config
@@ -405,40 +406,21 @@ impl LevelParams {
         Ok(self)
     }
 
-    /// Squared `‖z‖_inf` tail bound `t*²` for tail-bound-with-grind levels.
-    ///
-    /// The prover reroll loop (F7) and planner DP (F5) must read this accessor so
-    /// digit sizing and acceptance use the same value (invariant 4).
+    /// Honest-prover per-coefficient `‖z‖_inf` target for fold digit sizing, grind,
+    /// and terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] for deterministic policies, zero
-    /// `num_fold_coeffs`, or overflow in the tail-bound formula.
-    /// Fiat–Shamir grind contract for this fold level (prover reroll + verifier nonce check).
-    ///
-    /// `max_grind_attempts` must match the active
-    /// [`crate::FoldLinfProtocolBinding::max_grind_attempts`] bound in setup.
-    ///
-    /// # Errors
-    ///
-    /// Per-coefficient `‖z‖_inf` cap for fold digit sizing, grind acceptance, and
-    /// terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`crate::sis::fold_witness_beta`] and
-    /// [`crate::sis::fold_witness_linf_cap`] setup errors.
+    /// Propagates [`crate::sis::fold_witness_honest_prover_linf_cap`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let witness = self.fold_witness_norms();
-        let witness_linf = witness.infinity_norm();
-        let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
         let challenge =
             crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
-        let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
-        crate::sis::fold_witness_linf_cap(
-            beta,
-            self.num_fold_blocks(num_claims)?,
-            witness_linf_sq,
+        crate::sis::fold_witness_honest_prover_linf_cap(
+            challenge,
+            witness,
+            self.r_vars,
+            num_claims,
             &self.fold_linf_cap_config,
         )
     }

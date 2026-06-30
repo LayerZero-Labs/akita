@@ -266,6 +266,9 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
             steps: steps_ref,
         });
     }
+    debug_assert!(crate::generated::catalog_entries_sorted_for_lookup(
+        &memory_entries
+    ));
 
     writeln!(out, "];").map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;
