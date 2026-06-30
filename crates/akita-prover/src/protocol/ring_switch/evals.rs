@@ -139,10 +139,17 @@ where
     };
     let rows = lp.m_row_count_for(1, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
+    // Chunked layout replicates the `z` segment once per window; `e`/`t` are
+    // partitioned (their totals are unchanged). `num_chunks = 1` is the
+    // single-chunk case.
+    let num_chunks = lp.witness_chunk.num_chunks.max(1);
+    let z_cols_total = z_len
+        .checked_mul(num_chunks)
+        .ok_or_else(|| AkitaError::InvalidSetup("chunked Z width overflow".to_string()))?;
     let total_cols = w_len
         .checked_add(t_len)
         .and_then(|cols| cols.checked_add(u_seg_len))
-        .and_then(|cols| cols.checked_add(z_len))
+        .and_then(|cols| cols.checked_add(z_cols_total))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
 
@@ -425,11 +432,48 @@ where
         })
         .collect();
 
-    out.extend(z_segment);
-    out.extend(w_segment);
-    out.extend(t_segment);
-    out.extend(u_segment);
-    out.extend(r_tail);
+    if num_chunks <= 1 {
+        out.extend(z_segment);
+        out.extend(w_segment);
+        out.extend(t_segment);
+        out.extend(u_segment);
+        out.extend(r_tail);
+    } else {
+        // Chunked column layout `[z|e_i|t_i]…[u][r]`: `z` replicated, `e`/`t`
+        // partitioned by global block (the same per-cell values as the
+        // single-chunk segments, only repositioned). `e`: order
+        // (digit, claim, block_local); `t`: (a_row, digit, t_vector, block_local).
+        let blocks_per_chunk = num_blocks / num_chunks;
+        for i in 0..num_chunks {
+            out.extend_from_slice(&z_segment);
+            for dig in 0..depth_open {
+                for claim in 0..num_claims {
+                    for bl in 0..blocks_per_chunk {
+                        let gb = i * blocks_per_chunk + bl;
+                        out.push(w_segment[(dig * num_claims + claim) * num_blocks + gb]);
+                    }
+                }
+            }
+            for a_idx in 0..n_a {
+                for digit in 0..depth_open {
+                    for tvec in 0..num_t_vectors {
+                        for bl in 0..blocks_per_chunk {
+                            let compound = a_idx * depth_open + digit;
+                            let gb = i * blocks_per_chunk + bl;
+                            out.push(
+                                t_segment[compound * (num_t_vectors * num_blocks)
+                                    + tvec * num_blocks
+                                    + gb],
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // Tiered `û` is rejected for chunked layouts, so `u_segment` is empty.
+        out.extend(u_segment);
+        out.extend(r_tail);
+    }
     out.resize(x_len, E::zero());
     Ok(out)
 }

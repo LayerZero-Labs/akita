@@ -318,6 +318,115 @@ where
     }
 }
 
+/// Validate the chunked-witness configuration at the prover boundary (no-panic
+/// contract), before any witness math. Mirrors the planner entry guard and the
+/// verifier layout resolution.
+fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
+    lp.witness_chunk.validate()?;
+    let w = lp.witness_chunk.num_chunks;
+    if w > 1 {
+        if !lp.num_blocks.is_multiple_of(w) {
+            return Err(AkitaError::InvalidSetup(
+                "witness chunk count must divide num_blocks".to_string(),
+            ));
+        }
+        if !(lp.num_blocks / w).is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "witness chunk block window must be a power of two".to_string(),
+            ));
+        }
+        if lp.tier_split > 1 {
+            return Err(AkitaError::InvalidSetup(
+                "multi-chunk witness layout for tiered commitments is not supported".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Restrict sparse fold challenges to one chunk's global block window
+/// `[chunk·blocks_per_chunk, (chunk+1)·blocks_per_chunk)`, zeroing all other
+/// blocks. Folding under these yields the partial response `z_i = Σ_{j∈I_i}
+/// c_j s_j`.
+fn window_sparse_challenges(
+    challenges: &Challenges,
+    chunk: usize,
+    blocks_per_chunk: usize,
+) -> Result<Challenges, AkitaError> {
+    match challenges {
+        Challenges::Sparse {
+            challenges: sparse,
+            num_blocks_per_claim,
+            num_claims,
+        } => {
+            let lo = chunk * blocks_per_chunk;
+            let hi = lo + blocks_per_chunk;
+            let windowed: Vec<SparseChallenge> = sparse
+                .iter()
+                .enumerate()
+                .map(|(idx, ch)| {
+                    let block = idx % num_blocks_per_claim;
+                    if (lo..hi).contains(&block) {
+                        ch.clone()
+                    } else {
+                        SparseChallenge {
+                            positions: Vec::new(),
+                            coeffs: Vec::new(),
+                        }
+                    }
+                })
+                .collect();
+            Challenges::from_sparse(windowed, *num_blocks_per_claim, *num_claims)
+        }
+        Challenges::Tensor { .. } => Err(AkitaError::InvalidSetup(
+            "chunked fold response requires sparse fold challenges".to_string(),
+        )),
+    }
+}
+
+/// Compute the per-window centered fold responses `z_i` (length `num_chunks`).
+///
+/// Single-chunk levels reuse the already-computed global response. Multi-chunk
+/// levels recompute the fold per window under the same (final, grind-accepted)
+/// challenges, restricted to the window's blocks. The sum of the windows equals
+/// the global response mod `q`, so the value-identical relation quotient holds.
+fn compute_z_folded_per_chunk<F, P, B, const D: usize>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup<D>>,
+    challenges: &Challenges,
+    polys: &[&P],
+    lp: &LevelParams,
+    global: &DecomposeFoldWitness<F, D>,
+) -> Result<Vec<Vec<[i32; D]>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    P: RootOpeningSource<F, D>,
+    B: crate::compute::ComputeBackendSetup<F>
+        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
+    let num_chunks = lp.witness_chunk.num_chunks;
+    if num_chunks <= 1 {
+        return Ok(vec![global.centered_coeffs.clone()]);
+    }
+    let blocks_per_chunk = lp.num_blocks / num_chunks;
+    let point_indices = (0..polys.len()).collect::<Vec<_>>();
+    (0..num_chunks)
+        .map(|chunk| {
+            let windowed = window_sparse_challenges(challenges, chunk, blocks_per_chunk)?;
+            let w_i = build_point_decompose_fold_witness::<F, P, B, D>(
+                backend,
+                prepared,
+                &windowed,
+                polys,
+                &point_indices,
+                lp,
+            )?;
+            Ok(w_i.centered_coeffs)
+        })
+        .collect()
+}
+
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
 pub struct RingRelationProver;
 
@@ -369,6 +478,7 @@ impl RingRelationProver {
         RB: DigitRowsComputeBackend<F>,
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+        validate_chunked_witness_cfg(&lp)?;
         let opening_batch = fold_claims.to_opening_shape::<F>()?;
         let polys = fold_claims.flat_polys();
         let group_sizes = opening_batch.num_polys_per_commitment_group();
@@ -460,6 +570,18 @@ impl RingRelationProver {
                 terminal_tail_t_vectors,
             )?;
 
+        // Distributed-prover chunked layout: emit one folded response per block
+        // window. `Σ_i z_i = z` (mod q), so the relation quotient is unchanged.
+        // Single-chunk levels reuse the global response directly.
+        let z_folded_centered_per_chunk = compute_z_folded_per_chunk::<F, P, OB, D>(
+            opening_backend,
+            Some(opening_ctx.prepared()),
+            &challenges,
+            &polys,
+            &lp,
+            &z_folded_rings,
+        )?;
+
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits
@@ -492,6 +614,7 @@ impl RingRelationProver {
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
             z_folded_rings,
+            z_folded_centered_per_chunk,
             fold_grind_nonce,
             e_hat,
             e_folded,

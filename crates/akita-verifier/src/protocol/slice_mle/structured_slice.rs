@@ -349,8 +349,8 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningBatchShape,
-        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-        RingRelationSegmentLayout, SisModulusFamily, WitnessLayout,
+        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SisModulusFamily,
+        WitnessLayout,
     };
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
@@ -397,7 +397,7 @@ mod tests {
         lp: &LevelParams,
         m_row_layout: MRowLayout,
         num_polys: usize,
-    ) -> Result<RingRelationSegmentLayout, AkitaError> {
+    ) -> Result<WitnessLayout, AkitaError> {
         let opening_batch = OpeningBatchShape::new(32, num_polys)?;
         let opening_point = RingOpeningPoint {
             a: vec![F::zero(); lp.block_len],
@@ -421,7 +421,7 @@ mod tests {
             vec![CyclotomicRing::<F, D>::zero(); num_claims],
             Vec::new(),
         )?;
-        instance.segment_layout(lp)
+        instance.segment_layout(lp, None)
     }
 
     fn fixture() -> StructuredFixture {
@@ -445,13 +445,14 @@ mod tests {
 
         let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
-        let witness_segment_layout =
+        let chunk_layout =
             ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
                 .expect("witness segment layout");
-        let offset_e = witness_segment_layout.offset_e;
-        let offset_t = witness_segment_layout.offset_t;
-        let offset_z = witness_segment_layout.offset_z;
-        let offset_r = witness_segment_layout.offset_r;
+        let chunk0 = chunk_layout.chunks[0];
+        let offset_e = chunk0.offset_e;
+        let offset_t = chunk0.offset_t;
+        let offset_z = chunk0.offset_z;
+        let offset_r = chunk0.offset_r.expect("single chunk carries r-tail");
         let total_len = offset_r + rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
@@ -474,12 +475,6 @@ mod tests {
             depth_open,
             depth_commit,
             depth_fold,
-            #[cfg(feature = "zk")]
-            d_blinding_segment_len: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_digit_planes_per_point: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_segment_len: 0,
             block_len,
             inner_width,
             log_basis,
@@ -491,7 +486,7 @@ mod tests {
             n_f: 0,
             rows,
             num_polys: num_claims,
-            witness_layout: WitnessLayout::from_legacy_segment_layout(witness_segment_layout),
+            chunk_layout,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);

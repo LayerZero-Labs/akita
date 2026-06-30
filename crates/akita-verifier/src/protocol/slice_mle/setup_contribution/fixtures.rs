@@ -7,8 +7,8 @@ use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix,
-    MRowLayout, RingRelationSegmentLayout, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout,
+    WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
@@ -29,9 +29,6 @@ pub(crate) struct SetupContributionFixture {
     pub z_block_low_eq: Vec<TestField>,
     pub alpha_pows: Vec<TestField>,
     pub fold_gadget: Vec<TestField>,
-    pub offset_e: usize,
-    pub offset_t: usize,
-    pub offset_z: usize,
 }
 
 pub(crate) struct SetupContributionShape {
@@ -221,25 +218,6 @@ impl SetupContributionFixture {
         let eq_tau1: Vec<TestField> = (0..rows.next_power_of_two())
             .map(|idx| test_scalar(11 + idx as u128))
             .collect();
-        let chunk_lengths = WitnessChunkLengths {
-            z_chunk_len: 0,
-            e_chunk_len: z_len,
-            t_chunk_len: z_len + e_len,
-            u_chunk_len: z_len + e_len + t_len,
-            r_chunk_len: rows * r_decomp_levels::<TestField>(shape.log_basis),
-        };
-        let witness_layout = WitnessLayout {
-            blocks_per_chunk: shape.num_blocks,
-            chunks: vec![WitnessChunkLayout {
-                global_block_base: 0,
-                offset_e,
-                offset_t,
-                offset_u: Some(offset_u),
-                offset_z,
-                offset_r: Some(offset_r),
-            }],
-            chunk_lengths,
-        };
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -264,7 +242,24 @@ impl SetupContributionFixture {
             n_f: shape.n_f,
             rows,
             num_polys: shape.num_polys_per_segment.iter().sum(),
-            witness_layout,
+            chunk_layout: WitnessLayout {
+                blocks_per_chunk: shape.num_blocks,
+                chunks: vec![WitnessChunkLayout {
+                    offset_z,
+                    offset_e,
+                    offset_t,
+                    offset_u: tiered.then_some(offset_u),
+                    offset_r: Some(offset_r),
+                    global_block_base: 0,
+                }],
+                chunk_lengths: vec![WitnessChunkLengths {
+                    z_len,
+                    e_len,
+                    t_len,
+                    u_len: tiered.then_some(u_len),
+                    r_len: Some(0),
+                }],
+            },
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)
@@ -290,16 +285,11 @@ impl SetupContributionFixture {
             z_block_low_eq,
             alpha_pows,
             fold_gadget,
-            offset_e,
-            offset_t,
-            offset_z,
         }
     }
 
     pub fn compute_contribution(&self) -> TestField {
         let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        // TODO: remove this unwrap after the legacy layout is deprecated and we support tiered commitment in multi-chunk layout.
-        let offset_u = self.prepared.witness_layout.chunks[0].offset_u.unwrap();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -307,12 +297,7 @@ impl SetupContributionFixture {
             Some(&self.z_block_low_eq),
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            offset_u,
-            None,
-            None,
+            &self.prepared.chunk_layout,
         );
         match evaluator
             .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
@@ -327,8 +312,6 @@ impl SetupContributionFixture {
 
     pub fn recursive_contribution(&self) -> TestField {
         let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        // TODO: remove this unwrap after the legacy layout is deprecated and we support tiered commitment in multi-chunk layout.
-        let offset_u = self.prepared.witness_layout.chunks[0].offset_u.unwrap();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -336,12 +319,7 @@ impl SetupContributionFixture {
             None,
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            offset_u,
-            None,
-            None,
+            &self.prepared.chunk_layout,
         );
         match evaluator
             .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Recursive { setup: &self.setup })
@@ -369,8 +347,6 @@ impl SetupContributionFixture {
     /// including the tiered `B'`/`F` blocks.
     pub fn assert_eq_eval_matches_materialized(&self) {
         let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        // TODO: remove this unwrap after the legacy layout is deprecated and we support tiered commitment in multi-chunk layout.
-        let offset_u = self.prepared.witness_layout.chunks[0].offset_u.unwrap();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -378,12 +354,7 @@ impl SetupContributionFixture {
             Some(&self.z_block_low_eq),
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            offset_u,
-            None,
-            None,
+            &self.prepared.chunk_layout,
         );
         let plan = evaluator.prepare().unwrap();
         let bar_omega = plan.materialize_bar_omega();

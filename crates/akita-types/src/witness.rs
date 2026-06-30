@@ -11,12 +11,105 @@
 //! and the per-level [`crate::LevelParams::witness_chunk`] carries the resolved
 //! value the verifier consumes.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::AkitaError;
 
-use crate::{
-    w_ring_element_count_for_chunks, LevelParams, MRowLayout, RingRelationOpeningCounts,
-    RingRelationSegmentLayout,
-};
+/// Per-chunk witness segment ring-column counts (emission order `z ‖ e ‖ t ‖ u ‖ r`).
+///
+/// `z_len` is **replicated** (the same in every chunk); `e_len`/`t_len` are
+/// **partitioned** (each chunk covers `blocks_per_chunk = num_blocks /
+/// num_chunks` blocks). `u_len`/`r_len` are `Some` only in the last chunk
+/// (`u_len` only when tiered); `None` elsewhere, so a call site cannot treat an
+/// absent segment as length `0`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WitnessChunkLengths {
+    /// Replicated folded-response width: `num_digits_fold · num_digits_commit · block_len`.
+    pub z_len: usize,
+    /// Partitioned opening-digit width: `num_digits_open · num_claims · blocks_per_chunk`.
+    pub e_len: usize,
+    /// Partitioned inner-Ajtai width: `num_digits_open · n_a · num_t_vectors · blocks_per_chunk`.
+    pub t_len: usize,
+    /// Tiered `û_concat` width; `Some` only in the last chunk when `tier_split > 1`.
+    pub u_len: Option<usize>,
+    /// Shared quotient-tail width (`num_rows · r_decomp_levels`); `Some` only in
+    /// the last chunk.
+    pub r_len: Option<usize>,
+}
+
+/// Per-chunk witness segment column offsets.
+///
+/// `offset_u`/`offset_r` mirror [`WitnessChunkLengths::u_len`]/[`WitnessChunkLengths::r_len`]:
+/// `None` when the segment is absent from this chunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WitnessChunkLayout {
+    /// Column offset of the replicated folded response `zᵢ`.
+    pub offset_z: usize,
+    /// Column offset of the partitioned opening digits `êᵢ`.
+    pub offset_e: usize,
+    /// Column offset of the partitioned inner-Ajtai digits `t̂ᵢ`.
+    pub offset_t: usize,
+    /// Column offset of the tiered `û_concat` segment; `None` when absent.
+    pub offset_u: Option<usize>,
+    /// Column offset of the shared quotient tail; `Some` only in the last chunk.
+    pub offset_r: Option<usize>,
+    /// First global block index owned by this chunk (`chunk_idx · blocks_per_chunk`).
+    pub global_block_base: usize,
+}
+
+/// Resolved, layout-agnostic witness column description consumed by the
+/// ring-switch row-MLE evaluation and the setup-contribution planner.
+///
+/// `num_chunks = 1` is the single-chunk (historical) case: one chunk spanning
+/// all `num_blocks` with `global_block_base = 0`, byte-identical to the legacy
+/// `z ‖ e ‖ t ‖ u ‖ r` layout. `num_chunks = W` lays out `W` contiguous
+/// `[zᵢ | eᵢ | t̂ᵢ]` strides followed by a single shared `r̂` tail.
+///
+/// `chunks` and `chunk_lengths` are parallel vectors of length `num_chunks`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WitnessLayout {
+    /// Blocks owned by each chunk (`num_blocks / num_chunks`); equals
+    /// `num_blocks` for the single-chunk case.
+    pub blocks_per_chunk: usize,
+    /// Per-chunk offsets; `len == num_chunks`.
+    pub chunks: Vec<WitnessChunkLayout>,
+    /// Per-chunk lengths; parallel to [`Self::chunks`].
+    pub chunk_lengths: Vec<WitnessChunkLengths>,
+}
+
+impl WitnessLayout {
+    /// Number of resolved chunks (`1` for the single-chunk layout).
+    pub fn num_chunks(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// The last chunk's offsets/lengths, which alone carry the shared `r̂` (and
+    /// tiered `û`) segments.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] if the layout has no chunks (a
+    /// malformed layout that resolution should never produce).
+    pub fn last_chunk(&self) -> Result<(&WitnessChunkLayout, &WitnessChunkLengths), AkitaError> {
+        match (self.chunks.last(), self.chunk_lengths.last()) {
+            (Some(layout), Some(lengths)) => Ok((layout, lengths)),
+            _ => Err(AkitaError::InvalidSetup(
+                "witness layout has no chunks".to_string(),
+            )),
+        }
+    }
+
+    /// Column offset of the shared quotient tail (always carried by the last chunk).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] if the layout is empty or the last
+    /// chunk is missing its `r̂` offset.
+    pub fn r_offset(&self) -> Result<usize, AkitaError> {
+        let (layout, _) = self.last_chunk()?;
+        layout.offset_r.ok_or_else(|| {
+            AkitaError::InvalidSetup("last witness chunk is missing the r-tail offset".to_string())
+        })
+    }
+}
 
 /// Chunk-based witness layout parameters.
 ///
@@ -31,230 +124,6 @@ pub struct ChunkedWitnessCfg {
     /// Count of leading fold levels (absolute levels `0, 1, …, R−1`) priced
     /// under the chunked layout. `0` disables multi-chunk planning.
     pub num_activated_levels: usize,
-}
-
-/// Per-chunk segment lengths.
-/// Each chunk share the same lengths of ê/t̂/ẑ.
-/// û is not present in any chunk since tiered commitment is not supported for multi-chunk layout.
-/// r̂ is only present in the last chunk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WitnessChunkLengths {
-    pub z_chunk_len: usize,
-    pub e_chunk_len: usize,
-    pub t_chunk_len: usize,
-    pub u_chunk_len: usize,
-    pub r_chunk_len: usize,
-}
-
-/// Per-chunk segment offsets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WitnessChunkLayout {
-    pub global_block_base: usize, // chunk_idx * blocks_per_chunk
-    pub offset_z: usize,
-    pub offset_e: usize,
-    pub offset_t: usize,
-    pub offset_u: Option<usize>,
-    pub offset_r: Option<usize>,
-}
-
-/// Full witness column layout for num_chunks chunks.
-/// `chunks` and `chunk_lengths` are parallel Vecs of length `num_chunks`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WitnessLayout {
-    /// Number of blocks for witnes ê/t̂ per chunk.
-    pub blocks_per_chunk: usize,
-    pub chunks: Vec<WitnessChunkLayout>,
-    /// Lengths for each chunk. Each chunk share the same lengths of ê/t̂/ẑ.
-    /// û is not present in any chunk since tiered commitment is not supported for multi-chunk layout.
-    /// r̂ is only present in the last chunk.
-    pub chunk_lengths: WitnessChunkLengths,
-}
-
-impl WitnessLayout {
-    pub fn num_chunks(&self) -> usize {
-        self.chunks.len()
-    }
-
-    pub fn blocks_per_chunk(&self) -> usize {
-        self.blocks_per_chunk
-    }
-
-    pub fn chunk_lengths(&self) -> &WitnessChunkLengths {
-        &self.chunk_lengths
-    }
-
-    /// Convert to the legacy segment layout for the single-chunk layout.
-    ///
-    /// TODO: remove this method after the legacy layout is deprecated.
-    pub fn to_legacy_segment_layout(&self) -> RingRelationSegmentLayout {
-        if self.chunks.len() != 1 {
-            panic!("witness layout: multi-chunk layout is not supported");
-        }
-        let only = &self.chunks[0];
-        // Non-tiered single chunk carries no `u` segment (`offset_u == None`).
-        // The legacy layout still expects a concrete offset: the column right
-        // after `t̂` (`offset_t + t_len`), which is where `r` begins when `u` is
-        // empty. Reconstruct it rather than unwrapping `None`.
-        let offset_u = only
-            .offset_u
-            .unwrap_or(only.offset_t + self.chunk_lengths.t_chunk_len);
-        RingRelationSegmentLayout {
-            offset_e: only.offset_e,
-            offset_t: only.offset_t,
-            offset_u,
-            offset_z: only.offset_z,
-            offset_r: only
-                .offset_r
-                .unwrap_or(offset_u + self.chunk_lengths.r_chunk_len),
-        }
-    }
-
-    /// Convert from the legacy segment layout to the witness layout.
-    ///
-    /// TODO: remove this method after the legacy layout is deprecated.
-    pub fn from_legacy_segment_layout(layout: RingRelationSegmentLayout) -> WitnessLayout {
-        WitnessLayout {
-            blocks_per_chunk: 0,
-            chunks: vec![WitnessChunkLayout {
-                global_block_base: 0,
-                offset_e: layout.offset_e,
-                offset_t: layout.offset_t,
-                offset_u: Some(layout.offset_u),
-                offset_z: layout.offset_z,
-                offset_r: Some(layout.offset_r),
-            }],
-            chunk_lengths: WitnessChunkLengths {
-                z_chunk_len: 0,
-                e_chunk_len: 0,
-                t_chunk_len: 0,
-                u_chunk_len: 0,
-                r_chunk_len: 0,
-            },
-        }
-    }
-
-    /// Layout span in ring columns: last chunk `offset_r + r_len`.
-    pub fn witness_ring_len(&self) -> Result<usize, AkitaError> {
-        let overflow = || AkitaError::InvalidSetup("witness layout: capacity overflow".to_string());
-        let last = self.chunks.last().ok_or_else(|| {
-            AkitaError::InvalidSetup("witness layout: missing chunk table".to_string())
-        })?;
-        let r_offset = last.offset_r.ok_or_else(|| {
-            AkitaError::InvalidSetup("witness layout: last chunk missing r segment".to_string())
-        })?;
-        r_offset
-            .checked_add(self.chunk_lengths.r_chunk_len)
-            .ok_or_else(overflow)
-    }
-
-    /// Validate that the resolved layout span matches planner witness pricing.
-    ///
-    /// `required` comes from [`w_ring_element_count_for_chunks`]; `witness_ring_len`
-    /// is derived from this layout (`last.offset_r + r_chunk_len`). Both must agree.
-    pub fn check_capacity(
-        &self,
-        field_bits: u32,
-        lp: &LevelParams,
-        num_polynomials: usize,
-        m_row_layout: MRowLayout,
-    ) -> Result<(), AkitaError> {
-        let required = w_ring_element_count_for_chunks(
-            field_bits,
-            lp,
-            num_polynomials,
-            m_row_layout,
-            lp.witness_chunk.num_chunks,
-        )?;
-        let witness_ring_len = self.witness_ring_len()?;
-        if witness_ring_len != required {
-            return Err(AkitaError::InvalidSetup(
-                "witness capacity mismatch".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-pub fn witness_chunk_lengths<F: FieldCore + CanonicalField, const D: usize>(
-    lp: &LevelParams,
-    opening_counts: RingRelationOpeningCounts,
-    m_row_layout: MRowLayout,
-) -> Result<WitnessChunkLengths, AkitaError> {
-    let num_blocks = lp.num_blocks;
-    let num_chunks = lp.witness_chunk.num_chunks;
-
-    if num_blocks == 0 || !num_blocks.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "witness_chunk_lengths: num_blocks must be a non-zero power of two".to_string(),
-        ));
-    }
-    if num_chunks == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "witness_chunk_lengths: num_chunks must be a non-zero power of two".to_string(),
-        ));
-    }
-    if !num_blocks.is_multiple_of(num_chunks) {
-        return Err(AkitaError::InvalidSetup(
-            "witness_chunk_lengths: num_blocks must be divisible by num_chunks".to_string(),
-        ));
-    }
-
-    // Multi-chunk + tiered is unsupported (the chunked closed form assumes a
-    // non-tiered, empty û segment). Reject rather than silently mis-price.
-    if lp.f_key.is_some() || lp.tier_split != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "witness_chunk_lengths: multi-chunk layout does not support tiered commitments"
-                .to_string(),
-        ));
-    }
-
-    let overflow = || {
-        AkitaError::InvalidSetup(
-            "witness_chunk_lengths: chunked witness width overflow".to_string(),
-        )
-    };
-    let num_blocks_per_chunk = num_blocks / num_chunks;
-    let num_claims = opening_counts.num_claims;
-
-    let depth_open = lp.num_digits_open;
-    let depth_commit = lp.num_digits_commit;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
-    if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "witness_chunk_lengths: prepared ring-switch layout has zero width".to_string(),
-        ));
-    }
-
-    let num_total_blocks_per_chunk = num_claims * num_blocks_per_chunk;
-    // ê / t̂: partitioned over the per-chunk block window.
-    let e_chunk_len = num_total_blocks_per_chunk
-        .checked_mul(depth_open)
-        .ok_or_else(overflow)?;
-    let t_chunk_len = num_total_blocks_per_chunk
-        .checked_mul(depth_open)
-        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
-        .ok_or_else(overflow)?;
-    // ẑ: replicated across all chunks.
-    let z_chunk_len = lp
-        .inner_width()
-        .checked_mul(depth_fold)
-        .ok_or_else(overflow)?;
-
-    // r̂: summed quotient collected on the last chunk.
-    let r_rows = lp.m_row_count_for(1, 0, m_row_layout)?;
-    let r_chunk_len = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
-            F::modulus_bits(),
-            lp.log_basis,
-        ))
-        .ok_or_else(overflow)?;
-    Ok(WitnessChunkLengths {
-        z_chunk_len,
-        e_chunk_len,
-        t_chunk_len,
-        u_chunk_len: 0,
-        r_chunk_len,
-    })
 }
 
 impl Default for ChunkedWitnessCfg {
@@ -341,39 +210,6 @@ impl ChunkedWitnessCfg {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn witness_ring_len_uses_last_chunk_r_tail() {
-        let layout = WitnessLayout {
-            blocks_per_chunk: 4,
-            chunks: vec![
-                WitnessChunkLayout {
-                    global_block_base: 0,
-                    offset_z: 0,
-                    offset_e: 10,
-                    offset_t: 20,
-                    offset_u: None,
-                    offset_r: None,
-                },
-                WitnessChunkLayout {
-                    global_block_base: 4,
-                    offset_z: 30,
-                    offset_e: 40,
-                    offset_t: 50,
-                    offset_u: None,
-                    offset_r: Some(60),
-                },
-            ],
-            chunk_lengths: WitnessChunkLengths {
-                z_chunk_len: 10,
-                e_chunk_len: 10,
-                t_chunk_len: 10,
-                u_chunk_len: 0,
-                r_chunk_len: 5,
-            },
-        };
-        assert_eq!(layout.witness_ring_len().unwrap(), 65);
-    }
 
     #[test]
     fn default_is_single_chunk() {

@@ -1,33 +1,16 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
 use super::OpeningBatchShape;
-use crate::witness::{
-    witness_chunk_lengths, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
-};
+use crate::witness::{WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
 use crate::FpExtEncoding;
 use crate::{
-    embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint,
+    embed_ring_subfield_scalar, r_decomp_levels, LevelParams, MRowLayout,
+    RingMultiplierOpeningPoint, RingOpeningPoint,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
-
-/// Witness-column segment offsets for ring-switch evaluation.
-///
-/// Produced only by [`RingRelationInstance::segment_layout`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingRelationSegmentLayout {
-    pub offset_e: usize,
-    pub offset_t: usize,
-    /// Witness column offset of the tiered `û_concat` segment (flat, contiguous,
-    /// immediately after `t̂`). Equals `offset_t + t_len`; for single-tier
-    /// levels the segment is empty (`u_len == 0`) but the offset is still valid.
-    pub offset_u: usize,
-    pub offset_z: usize,
-    pub offset_r: usize,
-}
 
 /// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,16 +198,36 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         Ok((gamma, row_coefficient_rings))
     }
 
-    /// Witness-column segment layout shared by prover and verifier ring-switch paths.
+    /// Resolve the layout-agnostic [`WitnessLayout`] for this level's witness,
+    /// validating shape and (when supplied) capacity at the boundary.
+    ///
+    /// This is the **single source of truth** for witness column offsets shared
+    /// by the distributed prover's emission and the verifier's row-MLE
+    /// evaluation. `lp.witness_chunk.num_chunks = 1` yields a single chunk with
+    /// the historical `z ‖ e ‖ t ‖ u ‖ r` offsets; `num_chunks = W` lays out `W`
+    /// contiguous `[zᵢ | eᵢ | t̂ᵢ]` strides (z-first, `zᵢ` replicated, `eᵢ`/`t̂ᵢ`
+    /// partitioned) followed by one shared `r̂` tail sized at the single-machine
+    /// row count. Pass `witness_ring_len = Some(w_len / D)` to enforce the
+    /// no-panic capacity bound at this boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] (never panics) for a malformed chunk
+    /// count (`0`, non-power-of-two, `> num_blocks`, or `∤ num_blocks`), a
+    /// non-power-of-two block window, multi-chunk + tiered commitments (not yet
+    /// specified), any offset/length arithmetic overflow, or a layout whose `r̂`
+    /// tail would exceed the committed witness capacity.
     pub fn segment_layout(
         &self,
         lp: &LevelParams,
-    ) -> Result<RingRelationSegmentLayout, AkitaError> {
+        witness_ring_len: Option<usize>,
+    ) -> Result<WitnessLayout, AkitaError> {
+        let num_claims = self.opening_batch.num_polynomials();
         let lens = ring_relation_segment_lengths::<F, D>(
             lp,
             RingRelationOpeningCounts {
-                num_claims: self.opening_batch.num_polynomials(),
-                num_t_vectors: self.opening_batch.num_polynomials(),
+                num_claims,
+                num_t_vectors: num_claims,
             },
             self.m_row_layout,
         )?;
@@ -235,144 +238,156 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             u_len,
         } = lens;
 
-        let offset_z = 0;
-        let offset_e = z_len;
-        let offset_t = z_len
-            .checked_add(e_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?;
-        let offset_u = offset_t
-            .checked_add(t_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("U offset overflow".to_string()))?;
-        let offset_r = offset_u
-            .checked_add(u_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
-
-        Ok(RingRelationSegmentLayout {
-            offset_e,
-            offset_t,
-            offset_u,
-            offset_z,
-            offset_r,
-        })
-    }
-
-    /// Resolve the witness column layout. Single-chunk (including tiered)
-    /// delegates to the legacy `segment_layout`; multi-chunk uses the chunked
-    /// `[ẑ|ê|t̂]`-per-machine layout, which rejects tiered commitments.
-    pub fn witness_layout(&self, lp: &LevelParams) -> Result<WitnessLayout, AkitaError> {
-        if lp.witness_chunk.num_chunks == 1 {
-            return self.single_chunk_layout(lp);
-        }
-        self.multi_chunk_layout(lp)
-    }
-
-    /// Single-chunk layout sourced from the legacy `segment_layout`, so it stays
-    /// byte-identical to today and supports the tiered `û` segment
-    /// (`offset_u` is `Some` exactly when `u_len > 0`).
-    fn single_chunk_layout(&self, lp: &LevelParams) -> Result<WitnessLayout, AkitaError> {
-        let opening_counts = RingRelationOpeningCounts {
-            num_claims: self.opening_batch.num_polynomials(),
-            num_t_vectors: self.opening_batch.num_polynomials(),
-        };
-        let legacy = self.segment_layout(lp)?;
-        let lens = ring_relation_segment_lengths::<F, D>(lp, opening_counts, self.m_row_layout)?;
-        // Same r-tail formula as witness_chunk_lengths — keep them in sync.
-        let r_chunk_len = lp
-            .m_row_count_for(1, 0, self.m_row_layout)?
-            .checked_mul(crate::sis::compute_num_digits_full_field(
-                F::modulus_bits(),
-                lp.log_basis,
-            ))
-            .ok_or_else(|| AkitaError::InvalidSetup("single-chunk r-tail overflow".to_string()))?;
-        Ok(WitnessLayout {
-            blocks_per_chunk: lp.num_blocks,
-            chunks: vec![WitnessChunkLayout {
-                global_block_base: 0,
-                offset_z: legacy.offset_z,
-                offset_e: legacy.offset_e,
-                offset_t: legacy.offset_t,
-                offset_u: (lens.u_len > 0).then_some(legacy.offset_u),
-                offset_r: Some(legacy.offset_r),
-            }],
-            chunk_lengths: WitnessChunkLengths {
-                z_chunk_len: lens.z_len,
-                e_chunk_len: lens.e_len,
-                t_chunk_len: lens.t_len,
-                u_chunk_len: lens.u_len,
-                r_chunk_len,
-            },
-        })
-    }
-
-    /// Multi-chunk `[ẑ|ê|t̂]`-per-machine layout (tiered rejected in
-    /// `witness_chunk_lengths`).
-    fn multi_chunk_layout(&self, lp: &LevelParams) -> Result<WitnessLayout, AkitaError> {
-        let chunk_lengths = witness_chunk_lengths::<F, D>(
-            lp,
-            RingRelationOpeningCounts {
-                num_claims: self.opening_batch.num_polynomials(),
-                num_t_vectors: self.opening_batch.num_polynomials(),
-            },
-            self.m_row_layout,
-        )?;
-        let WitnessChunkLengths {
-            z_chunk_len,
-            e_chunk_len,
-            t_chunk_len,
-            u_chunk_len,
-            r_chunk_len: _,
-        } = chunk_lengths;
-
-        if u_chunk_len != 0 {
-            return Err(AkitaError::InvalidSetup(
-                "witness layout: û segment is not supported for multi-chunk layout".to_string(),
-            ));
-        }
-
-        let overflow =
-            || AkitaError::InvalidSetup("witness layout: chunk offset overflow".to_string());
+        let num_blocks = lp.num_blocks;
         let num_chunks = lp.witness_chunk.num_chunks;
-        let blocks_per_chunk = lp.num_blocks / num_chunks;
 
-        // One chunk is [ẑ, ê, t̂] laid contiguously. The stride is constant across all chunks except the last one.
-        // The last chunk is [ẑ, ê, t̂, r̂] laid contiguously.
-        let chunk_stride = z_chunk_len
-            .checked_add(e_chunk_len)
-            .and_then(|n| n.checked_add(t_chunk_len))
-            .ok_or_else(overflow)?;
-        let offset_r = num_chunks.checked_mul(chunk_stride).ok_or_else(overflow)?;
+        // Shared, single-machine quotient tail: never scales with the chunk count.
+        let r_levels = r_decomp_levels::<F>(lp.log_basis);
+        let r_len_total = self
+            .y
+            .len()
+            .checked_mul(r_levels)
+            .ok_or_else(|| AkitaError::InvalidSetup("r-tail length overflow".to_string()))?;
 
-        let chunks = (0..num_chunks)
-            .map(|j| {
+        // The tiered `û_concat` segment exists only on single-tier-aware levels
+        // and is unsupported alongside multi-chunk layouts (rejected below).
+        let u_present = lp.tier_split > 1 && u_len > 0;
+
+        let layout = if num_chunks <= 1 {
+            let offset_z = 0usize;
+            let offset_e = z_len;
+            let offset_t = z_len
+                .checked_add(e_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("t offset overflow".to_string()))?;
+            let offset_u = offset_t
+                .checked_add(t_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("u offset overflow".to_string()))?;
+            let offset_r = offset_u
+                .checked_add(if u_present { u_len } else { 0 })
+                .ok_or_else(|| AkitaError::InvalidSetup("r offset overflow".to_string()))?;
+            let chunk = WitnessChunkLayout {
+                offset_z,
+                offset_e,
+                offset_t,
+                offset_u: u_present.then_some(offset_u),
+                offset_r: Some(offset_r),
+                global_block_base: 0,
+            };
+            let lengths = WitnessChunkLengths {
+                z_len,
+                e_len,
+                t_len,
+                u_len: u_present.then_some(u_len),
+                r_len: Some(r_len_total),
+            };
+            WitnessLayout {
+                blocks_per_chunk: num_blocks,
+                chunks: vec![chunk],
+                chunk_lengths: vec![lengths],
+            }
+        } else {
+            if !num_chunks.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(
+                    "witness chunk count must be a power of two".to_string(),
+                ));
+            }
+            if num_chunks > num_blocks {
+                return Err(AkitaError::InvalidSetup(
+                    "witness chunk count exceeds num_blocks".to_string(),
+                ));
+            }
+            if !num_blocks.is_multiple_of(num_chunks) {
+                return Err(AkitaError::InvalidSetup(
+                    "witness chunk count must divide num_blocks".to_string(),
+                ));
+            }
+            if lp.tier_split > 1 {
+                return Err(AkitaError::InvalidSetup(
+                    "multi-chunk witness layout for tiered commitments is not specified"
+                        .to_string(),
+                ));
+            }
+            let blocks_per_chunk = num_blocks / num_chunks;
+            if !blocks_per_chunk.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(
+                    "witness chunk block window must be a power of two".to_string(),
+                ));
+            }
+            if !e_len.is_multiple_of(num_chunks) || !t_len.is_multiple_of(num_chunks) {
+                return Err(AkitaError::InvalidSetup(
+                    "partitioned witness segment lengths must divide evenly across chunks"
+                        .to_string(),
+                ));
+            }
+            let z_len_j = z_len;
+            let e_len_j = e_len / num_chunks;
+            let t_len_j = t_len / num_chunks;
+            let stride = z_len_j
+                .checked_add(e_len_j)
+                .and_then(|s| s.checked_add(t_len_j))
+                .ok_or_else(|| AkitaError::InvalidSetup("chunk stride overflow".to_string()))?;
+            let r_offset = stride
+                .checked_mul(num_chunks)
+                .ok_or_else(|| AkitaError::InvalidSetup("r offset overflow".to_string()))?;
+
+            let mut chunks = Vec::with_capacity(num_chunks);
+            let mut chunk_lengths = Vec::with_capacity(num_chunks);
+            for j in 0..num_chunks {
                 let is_last = j == num_chunks - 1;
-                let chunk_offset_base = j.checked_mul(chunk_stride).ok_or_else(overflow)?;
-                let offset_z = chunk_offset_base;
-                let offset_e = offset_z.checked_add(z_chunk_len).ok_or_else(overflow)?;
-                let offset_t = offset_e.checked_add(e_chunk_len).ok_or_else(overflow)?;
-                let offset_r = if is_last { Some(offset_r) } else { None };
-                Ok(WitnessChunkLayout {
-                    global_block_base: j.checked_mul(blocks_per_chunk).ok_or_else(overflow)?,
-                    offset_z,
+                let base = j
+                    .checked_mul(stride)
+                    .ok_or_else(|| AkitaError::InvalidSetup("chunk base overflow".to_string()))?;
+                let offset_e = base.checked_add(z_len_j).ok_or_else(|| {
+                    AkitaError::InvalidSetup("chunk e offset overflow".to_string())
+                })?;
+                let offset_t = offset_e.checked_add(e_len_j).ok_or_else(|| {
+                    AkitaError::InvalidSetup("chunk t offset overflow".to_string())
+                })?;
+                let global_block_base = j.checked_mul(blocks_per_chunk).ok_or_else(|| {
+                    AkitaError::InvalidSetup("global block base overflow".to_string())
+                })?;
+                chunks.push(WitnessChunkLayout {
+                    offset_z: base,
                     offset_e,
                     offset_t,
                     offset_u: None,
-                    offset_r,
-                })
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
+                    offset_r: is_last.then_some(r_offset),
+                    global_block_base,
+                });
+                chunk_lengths.push(WitnessChunkLengths {
+                    z_len: z_len_j,
+                    e_len: e_len_j,
+                    t_len: t_len_j,
+                    u_len: None,
+                    r_len: is_last.then_some(r_len_total),
+                });
+            }
+            WitnessLayout {
+                blocks_per_chunk,
+                chunks,
+                chunk_lengths,
+            }
+        };
 
-        Ok(WitnessLayout {
-            blocks_per_chunk,
-            chunks,
-            chunk_lengths,
-        })
+        if let Some(witness_ring_len) = witness_ring_len {
+            let r_offset = layout.r_offset()?;
+            let needed = r_offset
+                .checked_add(r_len_total)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness capacity overflow".to_string()))?;
+            if needed > witness_ring_len {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "resolved witness layout requires {needed} ring columns but only {witness_ring_len} are committed"
+                )));
+            }
+        }
+
+        Ok(layout)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::w_ring_element_count_for_chunks;
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
 
@@ -440,6 +455,167 @@ mod tests {
         );
     }
 
+    fn chunk_test_level_params(r_vars: usize) -> LevelParams {
+        // num_blocks = 2^r_vars, block_len = 2^m_vars, single-tier.
+        LevelParams::params_only(crate::SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
+            .with_decomp(2, r_vars, 1, 2, 0)
+            .expect("test params")
+    }
+
+    /// Build a minimal `WithDBlock` relation instance whose layout-relevant
+    /// shape is `opening_batch.num_polynomials() = num_claims` and `y.len() =
+    /// num_rows` (the only fields [`RingRelationInstance::segment_layout`] reads).
+    fn build_instance(
+        lp: &LevelParams,
+        num_claims: usize,
+        num_rows: usize,
+    ) -> RingRelationInstance<F, D> {
+        let opening_batch = OpeningBatchShape::new(8, num_claims).expect("opening batch");
+        let opening_point = opening_point(lp);
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
+        RingRelationInstance::<F, D>::new(
+            MRowLayout::WithDBlock,
+            test_challenges(lp, num_claims),
+            opening_point,
+            ring_multiplier_point,
+            opening_batch,
+            vec![F::one(); num_claims],
+            vec![CyclotomicRing::one(); num_claims],
+            vec![CyclotomicRing::zero(); num_rows],
+            Vec::new(),
+        )
+        .expect("instance")
+    }
+
+    #[test]
+    fn resolve_single_chunk_matches_legacy_offsets() {
+        let lp = chunk_test_level_params(1);
+        assert_eq!(lp.witness_chunk.num_chunks, 1);
+        let num_claims = 3;
+        let lens = ring_relation_segment_lengths::<F, D>(
+            &lp,
+            RingRelationOpeningCounts {
+                num_claims,
+                num_t_vectors: num_claims,
+            },
+            MRowLayout::WithDBlock,
+        )
+        .expect("lengths");
+
+        let resolved = build_instance(&lp, num_claims, 4)
+            .segment_layout(&lp, None)
+            .expect("resolved layout");
+        assert_eq!(resolved.num_chunks(), 1);
+        let chunk = resolved.chunks[0];
+        // Legacy single-chunk offsets: z-first, then e, t, (u), r.
+        assert_eq!(chunk.offset_z, 0);
+        assert_eq!(chunk.offset_e, lens.z_len);
+        assert_eq!(chunk.offset_t, lens.z_len + lens.e_len);
+        // Single-tier fixture: u segment absent, r tails z‖e‖t.
+        assert_eq!(chunk.offset_r, Some(lens.z_len + lens.e_len + lens.t_len));
+        assert_eq!(chunk.global_block_base, 0);
+        assert_eq!(resolved.blocks_per_chunk, lp.num_blocks);
+    }
+
+    #[test]
+    fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
+        let num_claims = 2;
+        for w in [1usize, 2, 4, 8] {
+            let mut lp = chunk_test_level_params(3); // num_blocks = 8
+            if w > 1 {
+                lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+                    num_chunks: w,
+                    num_activated_levels: 1,
+                };
+            }
+            let lens = ring_relation_segment_lengths::<F, D>(
+                &lp,
+                RingRelationOpeningCounts {
+                    num_claims,
+                    num_t_vectors: num_claims,
+                },
+                MRowLayout::WithDBlock,
+            )
+            .expect("lengths");
+            let layout = build_instance(&lp, num_claims, 4)
+                .segment_layout(&lp, None)
+                .expect("layout");
+            assert_eq!(layout.num_chunks(), w);
+            assert_eq!(layout.blocks_per_chunk, lp.num_blocks / w);
+
+            // Partitioned e/t lengths sum to the single-machine totals; z replicated.
+            let e_sum: usize = layout.chunk_lengths.iter().map(|l| l.e_len).sum();
+            let t_sum: usize = layout.chunk_lengths.iter().map(|l| l.t_len).sum();
+            assert_eq!(e_sum, lens.e_len);
+            assert_eq!(t_sum, lens.t_len);
+            for l in &layout.chunk_lengths {
+                assert_eq!(l.z_len, lens.z_len);
+            }
+
+            // Offsets are contiguous z-first per chunk; only the last chunk has r̂.
+            let stride = lens.z_len + lens.e_len / w + lens.t_len / w;
+            for (j, chunk) in layout.chunks.iter().enumerate() {
+                let base = j * stride;
+                assert_eq!(chunk.offset_z, base);
+                assert_eq!(chunk.offset_e, base + lens.z_len);
+                assert_eq!(chunk.offset_t, base + lens.z_len + lens.e_len / w);
+                assert_eq!(chunk.global_block_base, j * (lp.num_blocks / w));
+                assert_eq!(chunk.offset_u, None);
+                if j + 1 == w {
+                    assert_eq!(chunk.offset_r, Some(w * stride));
+                } else {
+                    assert_eq!(chunk.offset_r, None);
+                }
+            }
+            // Block windows tile [0, num_blocks).
+            assert_eq!(
+                layout.chunks.last().unwrap().global_block_base + layout.blocks_per_chunk,
+                lp.num_blocks
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_rejects_bad_chunk_count() {
+        let num_claims = 2;
+        // num_chunks = 3 is not a power of two.
+        let mut lp = chunk_test_level_params(3);
+        lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+            num_chunks: 3,
+            num_activated_levels: 1,
+        };
+        assert!(build_instance(&lp, num_claims, 4)
+            .segment_layout(&lp, None)
+            .is_err());
+
+        // num_chunks = 16 exceeds num_blocks = 8.
+        let mut lp = chunk_test_level_params(3);
+        lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+            num_chunks: 16,
+            num_activated_levels: 1,
+        };
+        assert!(build_instance(&lp, num_claims, 4)
+            .segment_layout(&lp, None)
+            .is_err());
+    }
+
+    #[test]
+    fn resolve_rejects_capacity_overflow() {
+        let num_claims = 2;
+        let lp = chunk_test_level_params(3);
+        // A witness ring capacity of 1 is far smaller than offset_r + r_len.
+        assert!(
+            build_instance(&lp, num_claims, 4)
+                .segment_layout(&lp, Some(1))
+                .is_err(),
+            "tiny witness capacity must be rejected"
+        );
+        // A generous capacity passes.
+        build_instance(&lp, num_claims, 4)
+            .segment_layout(&lp, Some(1 << 20))
+            .expect("ample capacity");
+    }
+
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
         let lp = test_level_params();
@@ -459,7 +635,8 @@ mod tests {
         )
         .expect("same-axis relation");
 
-        let layout = instance.segment_layout(&lp).expect("layout");
+        let layout = instance.segment_layout(&lp, None).expect("layout");
+        let chunk = layout.chunks[0];
         let lens = ring_relation_segment_lengths::<F, D>(
             &lp,
             RingRelationOpeningCounts {
@@ -469,210 +646,14 @@ mod tests {
             instance.m_row_layout(),
         )
         .expect("segment lengths");
-        assert_eq!(layout.offset_z, 0);
-        assert_eq!(layout.offset_e, lens.z_len);
-        assert_eq!(layout.offset_t, lens.z_len + lens.e_len);
-        assert_eq!(
-            layout.offset_r,
-            lens.z_len + lens.e_len + lens.t_len + lens.u_len
-        );
+        assert_eq!(layout.num_chunks(), 1);
+        assert_eq!(chunk.offset_z, 0);
+        assert_eq!(chunk.offset_e, lens.z_len);
+        assert_eq!(chunk.offset_t, lens.z_len + lens.e_len);
+        // Single-tier: r tails z‖e‖t (u segment absent).
+        assert_eq!(chunk.offset_r, Some(lens.z_len + lens.e_len + lens.t_len));
         instance
             .check_v_shape_for_level(&lp)
             .expect("v rows match layout");
-    }
-
-    #[test]
-    fn check_capacity_accepts_planner_sized_witness() {
-        let lp = test_level_params();
-        let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
-        let opening_point = opening_point(&lp);
-        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let instance = RingRelationInstance::<F, D>::new(
-            MRowLayout::WithDBlock,
-            test_challenges(&lp, opening_batch.num_polynomials()),
-            opening_point,
-            ring_multiplier_point,
-            opening_batch,
-            vec![F::one(); 3],
-            vec![CyclotomicRing::one(); 3],
-            vec![CyclotomicRing::zero(); 2],
-            vec![CyclotomicRing::zero(); lp.d_key.row_len()],
-        )
-        .expect("relation instance");
-
-        let layout = instance.witness_layout(&lp).expect("witness layout");
-        layout
-            .check_capacity(
-                F::modulus_bits(),
-                &lp,
-                instance.opening_batch().num_polynomials(),
-                instance.m_row_layout(),
-            )
-            .expect("layout span matches planner pricing");
-    }
-
-    #[test]
-    fn check_capacity_rejects_too_short_witness() {
-        let lp = test_level_params();
-        let opening_batch = OpeningBatchShape::new(2, 1).expect("valid batch");
-        let opening_point = opening_point(&lp);
-        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let instance = RingRelationInstance::<F, D>::new(
-            MRowLayout::WithoutDBlock,
-            test_challenges(&lp, opening_batch.num_polynomials()),
-            opening_point,
-            ring_multiplier_point,
-            opening_batch,
-            vec![F::one()],
-            vec![CyclotomicRing::one()],
-            vec![CyclotomicRing::zero(); 2],
-            Vec::new(),
-        )
-        .expect("relation instance");
-
-        let mut layout = instance.witness_layout(&lp).expect("witness layout");
-        layout.chunks.last_mut().unwrap().offset_r = Some(0);
-        let err = layout
-            .check_capacity(
-                F::modulus_bits(),
-                &lp,
-                instance.opening_batch().num_polynomials(),
-                instance.m_row_layout(),
-            )
-            .expect_err("corrupt layout must be rejected");
-        assert!(
-            format!("{err:?}").contains("witness capacity mismatch"),
-            "unexpected error: {err:?}"
-        );
-    }
-
-    #[test]
-    fn witness_ring_len_matches_planner_pricing_at_single_chunk() {
-        let lp = test_level_params();
-        assert_eq!(lp.witness_chunk.num_chunks, 1);
-        let opening_batch = OpeningBatchShape::new(2, 1).expect("valid batch");
-        let opening_point = opening_point(&lp);
-        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let instance = RingRelationInstance::<F, D>::new(
-            MRowLayout::WithoutDBlock,
-            test_challenges(&lp, opening_batch.num_polynomials()),
-            opening_point,
-            ring_multiplier_point,
-            opening_batch,
-            vec![F::one()],
-            vec![CyclotomicRing::one()],
-            vec![CyclotomicRing::zero(); 2],
-            Vec::new(),
-        )
-        .expect("relation instance");
-
-        let layout = instance.witness_layout(&lp).expect("witness layout");
-        let legacy_required = w_ring_element_count_for_chunks(
-            F::modulus_bits(),
-            &lp,
-            instance.opening_batch().num_polynomials(),
-            instance.m_row_layout(),
-            lp.witness_chunk.num_chunks,
-        )
-        .expect("planner witness width");
-        assert_eq!(
-            legacy_required,
-            layout.witness_ring_len().expect("layout ring span"),
-        );
-    }
-
-    /// Build a relation instance for `lp` without repeating the construction
-    /// boilerplate in every test.
-    fn instance_for(lp: &LevelParams, layout: MRowLayout) -> RingRelationInstance<F, D> {
-        let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
-        let n = opening_batch.num_polynomials();
-        let opening_point = opening_point(lp);
-        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let v = match layout {
-            MRowLayout::WithDBlock => vec![CyclotomicRing::zero(); lp.d_key.row_len()],
-            MRowLayout::WithoutDBlock => Vec::new(),
-        };
-        RingRelationInstance::<F, D>::new(
-            layout,
-            test_challenges(lp, n),
-            opening_point,
-            ring_multiplier_point,
-            opening_batch,
-            vec![F::one(); n],
-            vec![CyclotomicRing::one(); n],
-            vec![CyclotomicRing::zero(); 2],
-            v,
-        )
-        .expect("relation instance")
-    }
-
-    /// `r_vars = 3` ⇒ `num_blocks = 8`, so the witness splits into W ∈ {1,2,4,8}.
-    fn multi_chunk_level_params(num_chunks: usize) -> LevelParams {
-        let mut lp =
-            LevelParams::params_only(crate::SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-                .with_decomp(2, 3, 1, 2, 0)
-                .expect("test params");
-        lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
-            num_chunks,
-            num_activated_levels: 1,
-        };
-        lp
-    }
-
-    /// The key Stage-1 invariant: single-chunk offsets are byte-identical to the
-    /// legacy `segment_layout`. Everything downstream relies on this.
-    #[test]
-    fn num_chunks_one_matches_legacy_segment_layout() {
-        let lp = test_level_params();
-        let instance = instance_for(&lp, MRowLayout::WithDBlock);
-
-        let legacy = instance.segment_layout(&lp).expect("legacy layout");
-        let layout = instance.witness_layout(&lp).expect("witness layout");
-
-        assert_eq!(layout.chunks.len(), 1);
-        let c = &layout.chunks[0];
-        assert_eq!(c.offset_z, legacy.offset_z);
-        assert_eq!(c.offset_e, legacy.offset_e);
-        assert_eq!(c.offset_t, legacy.offset_t);
-        assert_eq!(c.offset_r, Some(legacy.offset_r));
-        assert_eq!(c.global_block_base, 0);
-    }
-
-    /// Multi-chunk geometry: `[z|e|t]` per chunk at a constant stride, `r` only on
-    /// the last chunk, and `global_block_base` walking the block axis.
-    #[test]
-    fn multi_chunk_offsets_are_contiguous_and_cover_blocks() {
-        for w in [2usize, 4, 8] {
-            let lp = multi_chunk_level_params(w);
-            let instance = instance_for(&lp, MRowLayout::WithDBlock);
-            let layout = instance.witness_layout(&lp).expect("witness layout");
-
-            assert_eq!(layout.chunks.len(), w);
-            assert_eq!(layout.blocks_per_chunk, 8 / w);
-
-            let lens = layout.chunk_lengths;
-            let stride = lens.z_chunk_len + lens.e_chunk_len + lens.t_chunk_len;
-            for (j, c) in layout.chunks.iter().enumerate() {
-                assert_eq!(c.offset_z, j * stride);
-                assert_eq!(c.offset_e, j * stride + lens.z_chunk_len);
-                assert_eq!(c.offset_t, j * stride + lens.z_chunk_len + lens.e_chunk_len);
-                assert_eq!(c.global_block_base, j * (8 / w));
-                assert_eq!(c.offset_r, if j == w - 1 { Some(w * stride) } else { None });
-            }
-        }
-    }
-
-    /// No-panic boundary: malformed chunk counts return `Err`, never panic.
-    /// `3 ∤ 8` and `16 > 8` are both rejected by the divisibility check.
-    #[test]
-    fn rejects_bad_chunk_counts() {
-        for bad in [3usize, 16] {
-            let lp = multi_chunk_level_params(bad);
-            let instance = instance_for(&lp, MRowLayout::WithDBlock);
-            assert!(
-                instance.witness_layout(&lp).is_err(),
-                "num_chunks = {bad} should be rejected"
-            );
-        }
     }
 }

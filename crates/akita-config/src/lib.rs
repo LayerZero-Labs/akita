@@ -60,7 +60,7 @@ macro_rules! impl_multi_chunk_companion {
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
             ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-                <$base as $crate::CommitmentConfig>::max_setup_matrix_size(
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<$cfg>(
                     max_num_vars,
                     max_num_batched_polys,
                 )

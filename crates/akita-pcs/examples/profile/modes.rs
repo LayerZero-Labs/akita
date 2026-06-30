@@ -228,6 +228,12 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
+    // Chunked relation (num_chunks = 8 on the leading fold levels).
+    // Runtime-DP-backed unless the multi-chunk schedule feature is enabled.
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk",
+        run: run_profile_onehot_fp128_d64_multi_chunk,
+    },
     // Tiered second-tier commitment (F). Only tiers with a batch (B > A), so
     // run with `AKITA_NUM_POLYS=16` or more; excluded from the `all` sweep.
     ProfileMode {
@@ -280,6 +286,7 @@ const PROFILE_MODES: &[ProfileMode] = &[
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_tensor",
     "onehot_fp128_d64_tiered",
+    "onehot_fp128_d64_multi_chunk",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
@@ -351,6 +358,16 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     let title = fp128_onehot_title(64, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp128_d64_multi_chunk(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D64OneHotMultiChunk;
+    let prime = fp128_prime_label();
+    let onehot_k = onehot_k_for_num_vars(nv);
+    let title = format!(
+        "=== onehot_fp128_d64_multi_chunk (fp128, {prime}, D=64, 1-of-{onehot_k}, distributed chunked relation, num_chunks=8 x 3 leading levels) ==="
+    );
+    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_multi_chunk", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {

@@ -489,10 +489,10 @@ where
     let trace_wire = if prepared.trace_prepared_point.is_none() {
         None
     } else if prepared.trace_block_opening.is_none() {
-        let segment = relation_instance.segment_layout(prepared.lp)?;
+        let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
-            &segment,
+            &segment_layout,
             rs.col_bits,
             rs.ring_bits,
             prepared.lp.num_blocks,
@@ -513,7 +513,7 @@ where
             )?,
         })
     } else {
-        let segment = relation_instance.segment_layout(prepared.lp)?;
+        let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
         let num_trace_blocks = relation_instance
             .opening_batch()
             .num_polynomials()
@@ -521,7 +521,7 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
-            &segment,
+            &segment_layout,
             rs.col_bits,
             rs.ring_bits,
             num_trace_blocks,

@@ -97,15 +97,14 @@ pub use proof::{
     OpeningGroupShape, OpeningPoints, PointVariableSelection, PreparedOpeningPoint,
     ProverCommitmentRows, PublicMatrixSeed, RelationOnlyStage2Inputs, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLayout, RingRelationSegmentLengths, RingSliceSerializer,
-    SegmentTypedWitness, SegmentTypedWitnessShape, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout,
-    TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    RingRelationSegmentLengths, RingSliceSerializer, SegmentTypedWitness, SegmentTypedWitnessShape,
+    SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
+    TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -127,12 +126,9 @@ pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
     eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
-    trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening,
-    TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable,
-    TraceTerm, TraceWeightLayout,
+    trace_terms_root, trace_weight_layout_from_segment, TraceChunkLayout, TraceClaim,
+    TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,
+    TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
-pub use witness::{
-    witness_chunk_lengths, ChunkedWitnessCfg, WitnessChunkLayout, WitnessChunkLengths,
-    WitnessLayout,
-};
+pub use witness::{ChunkedWitnessCfg, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
