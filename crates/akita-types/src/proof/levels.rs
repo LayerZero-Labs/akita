@@ -347,15 +347,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         }
     }
 
-    /// Reconstruct typed `v` as a borrowed slice, returning an empty slice for
-    /// terminal levels.
-    pub fn v_as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        match self {
-            Self::Intermediate { v, .. } => v.as_ring_slice::<D>(),
-            Self::Terminal { .. } => Ok(&[]),
-        }
-    }
-
     /// Mutably borrow the intermediate `v` payload.
     ///
     /// # Panics
@@ -486,31 +477,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             Self::Intermediate { .. } => Some(self.next_w_commitment()),
             Self::Terminal { .. } => None,
         }
-    }
-
-    /// Reconstruct typed `w_commitment`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `D` does not match the stored ring dimension.
-    pub fn w_commitment_typed<const D: usize>(&self) -> RingCommitment<F, D> {
-        RingCommitment {
-            u: self.next_w_commitment().to_vec(),
-        }
-    }
-
-    /// Reconstruct typed `w_commitment`, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored next-level commitment
-    /// is not well-formed for ring dimension `D`.
-    pub fn try_w_commitment_typed<const D: usize>(
-        &self,
-    ) -> Result<RingCommitment<F, D>, AkitaError> {
-        Ok(RingCommitment {
-            u: self.next_w_commitment().try_to_vec()?,
-        })
     }
 
     /// Claimed evaluation of the next witness `w` at the norm-check output point.
@@ -837,15 +803,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
             Self::Fold(fold) => fold.extension_opening_reduction.as_ref(),
             Self::Terminal(terminal) => terminal.extension_opening_reduction.as_ref(),
             Self::ZeroFold { .. } => None,
-        }
-    }
-
-    /// Borrow typed root `v` for fold proofs; terminal roots have no D-block rows.
-    pub fn fold_v<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        match self {
-            Self::Fold(fold) => fold.v.as_ring_slice::<D>(),
-            Self::Terminal(_) => Ok(&[]),
-            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         }
     }
 

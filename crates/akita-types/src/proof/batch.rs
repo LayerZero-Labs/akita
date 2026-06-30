@@ -3,8 +3,7 @@
 use crate::{
     basis_weights, embed_ring_subfield_scalar, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    AppendToTranscript, BasisMode, BlockOrder, FpExtEncoding, LevelParams, RingCommitment,
-    RingOpeningPoint,
+    BasisMode, BlockOrder, Commitment, FpExtEncoding, LevelParams, RingOpeningPoint,
 };
 use akita_algebra::{ring::eval_ring_at_pows, CyclotomicRing};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -251,15 +250,23 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
     })
 }
 
-/// Absorb the batch commitment into the transcript.
-pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
-    commitment: &RingCommitment<F, D>,
+/// Absorb the batch commitment into the transcript using the D-free flat
+/// coefficient encoding under the schedule-derived `ring_dim`.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] if the stored buffer is not well-formed
+/// for `ring_dim`.
+pub fn append_batched_commitments_to_transcript<F, T>(
+    commitment: &Commitment<F>,
+    ring_dim: usize,
     transcript: &mut T,
-) where
+) -> Result<(), AkitaError>
+where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    commitment.append_to_transcript(ABSORB_COMMITMENT, ring_dim, transcript)
 }
 
 /// Largest natural arity across polynomials in a scalar batched commit/prove call.

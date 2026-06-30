@@ -2,7 +2,7 @@
 
 use akita_field::{AkitaError, FieldCore};
 
-use super::FlatDigitBlocks;
+use super::DigitBlocks;
 use crate::LevelParams;
 
 /// Logical digit range occupied by terminal `e_hat` inside the final witness.
@@ -102,41 +102,42 @@ pub fn terminal_witness_transcript_parts(
 /// Encode a prover-held terminal `e_hat` block collection in the same logical
 /// order used by terminal witness replay.
 ///
-/// `FlatDigitBlocks` stores each block's digit planes contiguously. The
-/// terminal transcript binds digits by plane across all blocks so that this
-/// prover-side encoding matches the packed final-witness segment replayed by
-/// the verifier.
+/// [`DigitBlocks`] stores each block's digit planes contiguously, each plane
+/// `digit_stride` digits wide (the former ring dimension `D`). The terminal
+/// transcript binds digits by plane across all blocks so that this prover-side
+/// encoding matches the packed final-witness segment replayed by the verifier.
 ///
 /// # Errors
 ///
 /// Returns an error when the block layout is malformed or the logical
 /// terminal `e_hat` byte stream would be empty.
-pub fn terminal_e_hat_bytes_from_blocks<const D: usize>(
-    e_hat: &FlatDigitBlocks<D>,
+pub fn terminal_e_hat_bytes_from_blocks(
+    e_hat: &DigitBlocks,
     planes_per_block: usize,
 ) -> Result<Vec<u8>, AkitaError> {
     let total_blocks = e_hat.block_count();
+    let stride = e_hat.digit_stride();
     let expected_planes = total_blocks
         .checked_mul(planes_per_block)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal e_hat width overflow".to_string()))?;
-    if planes_per_block == 0 || e_hat.flat_digits().len() != expected_planes {
+    if planes_per_block == 0 || e_hat.total_planes() != expected_planes {
         return Err(AkitaError::InvalidInput(
             "terminal e_hat block layout does not match open digit depth".to_string(),
         ));
     }
 
     let total_digits = expected_planes
-        .checked_mul(D)
+        .checked_mul(stride)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal e_hat byte overflow".to_string()))?;
     let mut bytes = Vec::with_capacity(total_digits);
     for compound_dig in 0..planes_per_block {
         for block in 0..total_blocks {
-            bytes.extend(
-                e_hat.flat_digits()[block * planes_per_block + compound_dig]
-                    .iter()
-                    .copied()
-                    .map(|digit| digit as u8),
-            );
+            let plane = e_hat
+                .plane(block * planes_per_block + compound_dig)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("terminal e_hat plane index out of range".to_string())
+                })?;
+            bytes.extend(plane.iter().copied().map(|digit| digit as u8));
         }
     }
     if bytes.is_empty() {
@@ -301,7 +302,12 @@ mod tests {
 
     #[test]
     fn terminal_e_hat_bytes_from_blocks_uses_plane_major_order() {
-        let e_hat = FlatDigitBlocks::from_blocks(vec![vec![[1, 2], [3, 4]], vec![[5, 6], [7, 8]]]);
+        // Two blocks of two planes each, stride 2 (the former D=2).
+        let e_hat = DigitBlocks::from_blocks(
+            vec![vec![vec![1, 2], vec![3, 4]], vec![vec![5, 6], vec![7, 8]]],
+            2,
+        )
+        .expect("digit blocks");
 
         assert_eq!(
             terminal_e_hat_bytes_from_blocks(&e_hat, 2).unwrap(),

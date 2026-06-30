@@ -4,7 +4,7 @@ use akita_algebra::CompressedUniPoly;
 use akita_field::{Prime128Offset275, RandomSampling};
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
-use akita_transcript::{labels, AkitaTranscript};
+use akita_transcript::{labels, AkitaTranscript, Transcript};
 use rand::SeedableRng;
 
 type F = Prime128Offset275;
@@ -40,8 +40,6 @@ fn flat_ring_vec_checked_decoders_reject_zero_dimension() {
     assert!(!flat.can_decode_vec(0));
     assert!(flat.try_to_single::<0>().is_err());
     assert!(flat.try_to_vec::<0>().is_err());
-    assert!(flat.as_ring_slice::<0>().is_err());
-    assert!(flat.try_to_ring_commitment::<0>().is_err());
 }
 
 #[test]
@@ -295,8 +293,31 @@ fn terminal_level_proof_serde_round_trip() {
         .expect("terminal shape with reduction passes Valid::check()");
 }
 
-/// Helper: absorb `ring_elems` via the existing typed path and return the
-/// challenge bytes squeezed immediately afterwards.
+/// Local reproduction of the (deleted) typed `RingSliceSerializer`: serialize a
+/// borrowed slice of ring elements with no length header, each ring element via
+/// its own `serialize_with_mode`. This is the reference encoding the S4 flat
+/// absorber must remain byte-identical to.
+struct TypedRingSliceSerializer<'a, const D: usize>(&'a [CyclotomicRing<F, D>]);
+
+impl<const D: usize> AkitaSerialize for TypedRingSliceSerializer<'_, D> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        for ring in self.0 {
+            ring.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.0.iter().map(|r| r.serialized_size(compress)).sum()
+    }
+}
+
+/// Helper: absorb `ring_elems` via the legacy typed encoding (reproduced above)
+/// and return the challenge bytes squeezed immediately afterwards.
 fn typed_challenge<const D: usize>(
     ring_elems: &[CyclotomicRing<F, D>],
     label: &[u8],
@@ -307,11 +328,7 @@ where
     F: CanonicalField,
 {
     let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let commitment = RingCommitment::<F, D> {
-        u: ring_elems.to_vec(),
-    };
-    use crate::AppendToTranscript;
-    commitment.append_to_transcript(label, &mut t);
+    t.append_serde(label, &TypedRingSliceSerializer(ring_elems));
     t.challenge_bytes(challenge_label, challenge_len)
 }
 
@@ -334,9 +351,9 @@ where
 }
 
 /// Prove that the D-free flat transcript absorber produces a byte-identical
-/// transcript state to the typed `RingSliceSerializer` / `RingCommitment`
-/// absorption path, for D ∈ {32, 64, 128, 256} and a fixed number of ring
-/// elements.
+/// transcript state to the legacy typed ring-slice encoding (reproduced by
+/// `TypedRingSliceSerializer`), for D ∈ {32, 64, 128, 256} and a fixed number
+/// of ring elements.
 ///
 /// Both paths absorb the same field-element bytes in the same order (no
 /// length header, coefficient-major within each ring element). The comparison
