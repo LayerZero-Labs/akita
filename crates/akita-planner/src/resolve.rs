@@ -17,8 +17,8 @@ use akita_types::{
 
 use crate::catalog_identity::validate_catalog_identity;
 use crate::generated::{
-    table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
-    GeneratedStep,
+    table_entry, validate_generated_schedule_entry, GeneratedScheduleKey, GeneratedScheduleTable,
+    GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
 use crate::{find_group_batch_schedule, find_schedule};
@@ -56,6 +56,13 @@ pub fn resolve_schedule(
         &fold_challenge_shape_at_level,
     )?;
     if let Some(entry) = table_entry(table, generated_schedule_lookup_key(key)) {
+        validate_generated_schedule_entry(
+            entry,
+            key,
+            policy,
+            &ring_challenge_config,
+            &fold_challenge_shape_at_level,
+        )?;
         return schedule_from_entry(
             entry,
             key,
@@ -267,20 +274,18 @@ pub fn schedule_from_entry(
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
                     let params = match direct.commit {
-                        Some(commit) => commit
-                            .expand_to_level_params(
-                                policy,
-                                &ring_challenge_config,
-                                0,
-                                expected_root_w_len,
-                                fold_challenge_shape_at_level(AkitaScheduleInputs {
-                                    num_vars: key.num_vars,
-                                    level: 0,
-                                    current_w_len: expected_root_w_len,
-                                }),
-                                key.num_polynomials,
-                            )
-                            .ok(),
+                        Some(commit) => Some(commit.expand_to_level_params(
+                            policy,
+                            &ring_challenge_config,
+                            0,
+                            expected_root_w_len,
+                            fold_challenge_shape_at_level(AkitaScheduleInputs {
+                                num_vars: key.num_vars,
+                                level: 0,
+                                current_w_len: expected_root_w_len,
+                            }),
+                            key.num_polynomials,
+                        )?),
                         None => None,
                     };
                     (
@@ -355,6 +360,11 @@ pub fn estimate_proof_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog_identity::expected_catalog_identity;
+    use crate::generated::{
+        validate_generated_schedule_entry, GeneratedDirectStep, GeneratedFoldStep,
+        GeneratedScheduleTable, GeneratedStep,
+    };
     use akita_types::{DecompositionParams, SisModulusFamily};
 
     fn flat_policy() -> PlannerPolicy {
@@ -386,6 +396,47 @@ mod tests {
         TensorChallengeShape::Flat
     }
 
+    fn generated_fold_step(lp: &LevelParams) -> GeneratedFoldStep {
+        GeneratedFoldStep {
+            ring_d: lp.ring_dimension as u32,
+            log_basis: lp.log_basis,
+            m_vars: lp.m_vars as u32,
+            r_vars: lp.r_vars as u32,
+            n_a: lp.a_key.row_len() as u32,
+            n_b: lp.b_key.row_len() as u32,
+            n_d: lp.d_key.row_len() as u32,
+            tier_split: if lp.tier_split > 1 {
+                Some(lp.tier_split as u32)
+            } else {
+                None
+            },
+            n_f: lp.f_key.as_ref().map(|f| f.row_len() as u32),
+        }
+    }
+
+    fn generated_steps_from_schedule(schedule: &Schedule) -> Vec<GeneratedStep> {
+        schedule
+            .steps
+            .iter()
+            .map(|step| match step {
+                Step::Fold(fold) => GeneratedStep::Fold(generated_fold_step(&fold.params)),
+                Step::Direct(direct) => GeneratedStep::Direct(GeneratedDirectStep {
+                    commit: direct.params.as_ref().map(generated_fold_step),
+                }),
+            })
+            .collect()
+    }
+
+    fn generated_entry_from_steps(
+        key: AkitaScheduleLookupKey,
+        steps: Vec<GeneratedStep>,
+    ) -> GeneratedScheduleTableEntry {
+        GeneratedScheduleTableEntry {
+            key: generated_schedule_lookup_key(key),
+            steps: Box::leak(steps.into_boxed_slice()),
+        }
+    }
+
     #[test]
     fn resolve_schedule_none_matches_find_schedule() {
         let key = AkitaScheduleLookupKey::new(20, 1);
@@ -406,5 +457,87 @@ mod tests {
             .expect_err("zero-arity key must be rejected");
 
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn validate_generated_entry_accepts_materialized_dp_schedule() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
+
+        validate_generated_schedule_entry(
+            &entry,
+            key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect("generated entry should validate");
+    }
+
+    #[test]
+    fn validate_generated_entry_rejects_overstated_b_rank() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let mut steps = generated_steps_from_schedule(&schedule);
+        match steps
+            .iter_mut()
+            .find(|step| matches!(step, GeneratedStep::Fold(_)))
+            .expect("schedule should contain a fold")
+        {
+            GeneratedStep::Fold(fold) => fold.n_b += 1,
+            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
+        }
+        let entry = generated_entry_from_steps(key, steps);
+
+        let err = validate_generated_schedule_entry(
+            &entry,
+            key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect_err("overstated B rank must be rejected");
+
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("b-rank mismatch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_schedule_rejects_corrupt_table_hit() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let mut steps = generated_steps_from_schedule(&schedule);
+        match steps
+            .iter_mut()
+            .find(|step| matches!(step, GeneratedStep::Fold(_)))
+            .expect("schedule should contain a fold")
+        {
+            GeneratedStep::Fold(fold) => fold.n_d += 1,
+            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
+        }
+        let entry = generated_entry_from_steps(key, steps);
+        let entries: &'static [GeneratedScheduleTableEntry] =
+            Box::leak(vec![entry].into_boxed_slice());
+        let identity =
+            expected_catalog_identity("test", &policy, entries, ring_challenge_config, fold_shape)
+                .expect("identity");
+        let table = GeneratedScheduleTable { entries, identity };
+
+        let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, Some(table))
+            .expect_err("corrupt table hit must be rejected");
+
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("d-rank mismatch")),
+            "unexpected error: {err}"
+        );
     }
 }

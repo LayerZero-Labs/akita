@@ -150,6 +150,7 @@ pub fn validate_catalog_identity(
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
+    validate_catalog_keys(catalog.entries)?;
     let embedded = catalog.identity;
     let expected = catalog_identity_expectation(
         embedded.family_name,
@@ -189,6 +190,20 @@ pub fn validate_catalog_identity(
     check_field!(ring_challenge_config_digest);
     check_field!(key_count);
     check_field!(key_digest);
+    Ok(())
+}
+
+fn validate_catalog_keys(entries: &[GeneratedScheduleTableEntry]) -> Result<(), AkitaError> {
+    let mut keys: Vec<GeneratedScheduleKey> = entries.iter().map(|entry| entry.key).collect();
+    keys.sort_by_key(|key| (key.num_vars, key.num_polynomials));
+    for pair in keys.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule catalog contains duplicate key {:?}",
+                pair[0]
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -435,6 +450,23 @@ mod tests {
             validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
                 .expect_err("key digest mismatch should error");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn duplicate_catalog_keys_are_rejected() {
+        let policy = sample_policy();
+        let entries = Box::leak(Box::new([sample_entry(), sample_entry()]));
+        let catalog = GeneratedScheduleTable {
+            entries,
+            identity: expected_identity(&policy, entries),
+        };
+        let err =
+            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+                .expect_err("duplicate keys should error");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("duplicate key")),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

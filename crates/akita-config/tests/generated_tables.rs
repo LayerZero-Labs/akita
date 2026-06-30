@@ -44,7 +44,7 @@ use akita_config::policy_of;
 #[cfg(feature = "all-schedules")]
 use akita_planner::generated::table_entry;
 #[cfg(feature = "all-schedules")]
-use akita_planner::{generated_schedule_lookup_key, validate_catalog_identity};
+use akita_planner::{generated_schedule_lookup_key, validate_generated_schedule_table};
 
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
@@ -85,13 +85,13 @@ fn check_family_catalog<Cfg: CommitmentConfig>(module_name: &str, keys: &[AkitaS
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
-    validate_catalog_identity(
+    validate_generated_schedule_table(
         &catalog,
         &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
+        &Cfg::ring_challenge_config,
+        &Cfg::fold_challenge_shape_at_level,
     )
-    .unwrap_or_else(|e| panic!("catalog identity validation failed for {module_name}: {e}"));
+    .unwrap_or_else(|e| panic!("catalog validation failed for {module_name}: {e}"));
     assert_table_hit(module_name, &catalog, keys);
 }
 

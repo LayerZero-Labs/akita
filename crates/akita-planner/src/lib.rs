@@ -27,7 +27,10 @@ pub use catalog_identity::{
     validate_catalog_identity,
 };
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
-pub use generated::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
+pub use generated::{
+    validate_generated_schedule_entry, validate_generated_schedule_table,
+    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
+};
 pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, generated_schedule_lookup_key, resolve_group_batch_schedule,
