@@ -4,7 +4,9 @@
     "norm": "infinity",
     "red_cost_model": "ADPS16",
     "red_shape_model": "LGSA",
-    "zeta": "fixed"
+    "zeta": "fixed",
+    "adps16_mode": "classical",
+    "nearest_neighbor": "classical"
   },
   "target_bits": 138.0,
   "lattice_estimator_remote": "https://github.com/quangvdao/lattice-estimator.git",

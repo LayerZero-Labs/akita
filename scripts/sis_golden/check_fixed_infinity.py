@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay committed fixed-beta, fixed-zeta infinity golden cells against PR217."""
+"""Replay committed fixed-beta, fixed-zeta infinity golden cells."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from infinity_core import (  # noqa: E402
     FRAGILE,
     INT_FIELDS,
     TRUSTED,
-    assert_pr217_estimator,
+    assert_pinned_estimator,
     estimate_fixed_infinity_cell,
     estimator_git_sha,
     fixed_row_key,
@@ -27,6 +27,11 @@ from infinity_core import (  # noqa: E402
     load_estimator,
     locate_estimator,
     parse_float,
+)
+from infinity_profile import (  # noqa: E402
+    InfinityEstimatorProfile,
+    add_profile_arguments,
+    profile_from_metadata_with_overrides,
 )
 
 FLOAT_ABS_TOL = 1e-6
@@ -46,7 +51,8 @@ def parse_args() -> argparse.Namespace:
         default=GOLDEN_DIR / "fixed_infinity_metadata.json",
         help="Golden metadata path.",
     )
-    parser.add_argument("--estimator-path", help="Path to lattice-estimator PR217 checkout.")
+    parser.add_argument("--estimator-path", help="Path to pinned lattice-estimator checkout.")
+    add_profile_arguments(parser)
     return parser.parse_args()
 
 
@@ -76,8 +82,9 @@ def compare_float(field: str, expected: str, actual: str) -> str | None:
 def main() -> int:
     args = parse_args()
     metadata = json.loads(args.metadata.read_text())
+    profile = profile_from_metadata_with_overrides(metadata, args, zeta="fixed")
     estimator_path = locate_estimator(args.estimator_path)
-    assert_pr217_estimator(estimator_path)
+    assert_pinned_estimator(estimator_path)
     actual_sha = estimator_git_sha(estimator_path)
     expected_sha = metadata.get("lattice_estimator_sha")
     if expected_sha and actual_sha != expected_sha:
@@ -85,6 +92,14 @@ def main() -> int:
             "estimator SHA mismatch: "
             f"golden expects {format_estimator_sha(expected_sha)}, "
             f"got {format_estimator_sha(actual_sha)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    metadata_profile = InfinityEstimatorProfile.from_metadata(metadata.get("profile", {}))
+    if metadata_profile.to_metadata() != profile.to_metadata():
+        print(
+            "profile mismatch between metadata and replay selection",
             file=sys.stderr,
         )
         return 1
@@ -120,6 +135,7 @@ def main() -> int:
             beta=int(expected["beta_input"]),
             zeta=int(expected["zeta_input"]),
             target_bits=float(expected["target_bits"]),
+            profile=profile,
         )
         checked += 1
 
@@ -141,8 +157,9 @@ def main() -> int:
         return 1
 
     print(
-        f"OK: {checked} trusted fixed infinity cell(s) match PR217 @ "
-        f"{format_estimator_sha(actual_sha)}; "
+        f"OK: {checked} trusted fixed infinity cell(s) match pinned estimator @ "
+        f"{format_estimator_sha(actual_sha)} "
+        f"({profile.description_suffix()}); "
         f"skipped {skipped_fragile} fragile cell(s)"
     )
     return 0

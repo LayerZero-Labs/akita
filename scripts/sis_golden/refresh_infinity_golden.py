@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate SIS infinity-norm golden cells from lattice-estimator PR217."""
+"""Regenerate SIS infinity-norm golden cells from the pinned lattice-estimator."""
 
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ from infinity_core import (  # noqa: E402
     FAMILIES,
     FLOAT_FIELDS,
     INT_FIELDS,
-    PROFILE,
-    PR217_LATTICE_ESTIMATOR_SHA,
-    assert_pr217_estimator,
+    PINNED_LATTICE_ESTIMATOR_SHA,
+    assert_pinned_estimator,
     estimate_infinity_cell,
     estimator_git_sha,
     estimator_remote_url,
@@ -37,6 +36,11 @@ from infinity_grid import (  # noqa: E402
     INFINITY_WIDTH_FACTORS,
     TARGET_BITS,
     infinity_work_items,
+)
+from infinity_profile import (  # noqa: E402
+    add_profile_arguments,
+    default_output_path,
+    profile_from_args,
 )
 
 FIELDNAMES = [
@@ -67,18 +71,18 @@ def parse_csv_list(raw: str | None, *, cast=str):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--estimator-path", help="Path to lattice-estimator PR217 checkout.")
+    parser.add_argument("--estimator-path", help="Path to pinned lattice-estimator checkout.")
     parser.add_argument(
         "--output",
         type=Path,
-        default=GOLDEN_DIR / "infinity_golden.csv",
-        help="Output CSV path.",
+        default=None,
+        help="Output CSV path (default: infinity_golden.csv or profile-specific name).",
     )
     parser.add_argument(
         "--metadata",
         type=Path,
-        default=GOLDEN_DIR / "infinity_metadata.json",
-        help="Metadata JSON path.",
+        default=None,
+        help="Metadata JSON path (default: matches --output basename).",
     )
     parser.add_argument("--target-bits", type=float, default=TARGET_BITS)
     parser.add_argument("--families", help="Comma-separated family filter.")
@@ -87,6 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bounds", help="Comma-separated coefficient-Linf bound filter.")
     parser.add_argument("--widths", help="Comma-separated width filter.")
     parser.add_argument("--limit", type=int, help="Limit rows after filtering, for smoke tests.")
+    add_profile_arguments(parser)
     return parser.parse_args()
 
 
@@ -110,7 +115,15 @@ def select_work(args: argparse.Namespace) -> list[dict[str, int | str]]:
         if widths is not None and item["width"] not in widths:
             continue
         work.append(item)
-    work.sort(key=lambda row: (str(row["family"]), int(row["d"]), int(row["rank"]), int(row["width"]), int(row["coeff_linf_bound"])))
+    work.sort(
+        key=lambda row: (
+            str(row["family"]),
+            int(row["d"]),
+            int(row["rank"]),
+            int(row["width"]),
+            int(row["coeff_linf_bound"]),
+        )
+    )
     if args.limit is not None:
         work = work[: args.limit]
     return work
@@ -118,8 +131,15 @@ def select_work(args: argparse.Namespace) -> list[dict[str, int | str]]:
 
 def main() -> int:
     args = parse_args()
+    profile = profile_from_args(args, zeta="full optimizer")
+    output = args.output or default_output_path(
+        GOLDEN_DIR / "infinity_golden.csv",
+        profile,
+    )
+    metadata_path = args.metadata or default_metadata_path(output)
+
     estimator_path = locate_estimator(args.estimator_path)
-    assert_pr217_estimator(estimator_path)
+    assert_pinned_estimator(estimator_path)
     SIS, RC, log, oo, _RealField = load_estimator(estimator_path)
 
     work = select_work(args)
@@ -143,6 +163,7 @@ def main() -> int:
                 width=int(item["width"]),
                 coeff_linf_bound=int(item["coeff_linf_bound"]),
                 target_bits=args.target_bits,
+                profile=profile,
             )
         except Exception as exc:  # noqa: BLE001 - fragile goldens record estimator failures.
             row = fragile_infinity_cell(
@@ -162,22 +183,22 @@ def main() -> int:
         rows.append(row)
 
     rows.sort(key=row_key)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.output.open("w", newline="") as fh:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
     metadata = {
         "description": (
-            f"{len(rows)} SIS infinity golden cells using norm=oo, ADPS16, LGSA, "
-            f"full zeta optimizer, and target_bits={args.target_bits}."
+            f"{len(rows)} SIS infinity golden cells using {profile.description_suffix()} "
+            f"and target_bits={args.target_bits}."
         ),
-        "profile": PROFILE,
+        "profile": profile.to_metadata(),
         "target_bits": args.target_bits,
         "lattice_estimator_remote": estimator_remote_url(estimator_path),
         "lattice_estimator_sha": estimator_git_sha(estimator_path),
-        "expected_lattice_estimator_sha": PR217_LATTICE_ESTIMATOR_SHA,
+        "expected_lattice_estimator_sha": PINNED_LATTICE_ESTIMATOR_SHA,
         "families": {family: {"q": q, "label": label} for family, (q, label) in FAMILIES.items()},
         "grid": {
             "families": INFINITY_FAMILIES,
@@ -199,10 +220,10 @@ def main() -> int:
             for row in rows
         ],
     }
-    args.metadata.write_text(json.dumps(metadata, indent=2) + "\n")
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
 
     print(
-        f"Wrote {len(rows)} infinity cells to {args.output} "
+        f"Wrote {len(rows)} infinity cells to {output} "
         f"in {time.time() - t0:.1f}s",
         file=sys.stderr,
     )

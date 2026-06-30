@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate fixed-beta, fixed-zeta SIS infinity golden cells from PR217."""
+"""Regenerate fixed-beta, fixed-zeta SIS infinity golden cells."""
 
 from __future__ import annotations
 
@@ -20,11 +20,10 @@ from fixed_infinity_grid import (  # noqa: E402
 )
 from infinity_core import (  # noqa: E402
     FAMILIES,
-    FIXED_PROFILE,
     FLOAT_FIELDS,
     INT_FIELDS,
-    PR217_LATTICE_ESTIMATOR_SHA,
-    assert_pr217_estimator,
+    PINNED_LATTICE_ESTIMATOR_SHA,
+    assert_pinned_estimator,
     estimate_fixed_infinity_cell,
     estimator_git_sha,
     estimator_remote_url,
@@ -32,6 +31,12 @@ from infinity_core import (  # noqa: E402
     fragile_fixed_infinity_cell,
     load_estimator,
     locate_estimator,
+)
+from infinity_profile import (  # noqa: E402
+    add_profile_arguments,
+    default_metadata_path,
+    default_output_path,
+    profile_from_args,
 )
 
 FIELDNAMES = [
@@ -55,27 +60,35 @@ FIELDNAMES = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--estimator-path", help="Path to lattice-estimator PR217 checkout.")
+    parser.add_argument("--estimator-path", help="Path to pinned lattice-estimator checkout.")
     parser.add_argument(
         "--output",
         type=Path,
-        default=GOLDEN_DIR / "fixed_infinity_golden.csv",
-        help="Output CSV path.",
+        default=None,
+        help="Output CSV path (default: fixed_infinity_golden.csv or profile-specific name).",
     )
     parser.add_argument(
         "--metadata",
         type=Path,
-        default=GOLDEN_DIR / "fixed_infinity_metadata.json",
-        help="Metadata JSON path.",
+        default=None,
+        help="Metadata JSON path (default: matches --output basename).",
     )
     parser.add_argument("--target-bits", type=float, default=TARGET_BITS)
+    add_profile_arguments(parser)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    profile = profile_from_args(args, zeta="fixed")
+    output = args.output or default_output_path(
+        GOLDEN_DIR / "fixed_infinity_golden.csv",
+        profile,
+    )
+    metadata_path = args.metadata or default_metadata_path(output)
+
     estimator_path = locate_estimator(args.estimator_path)
-    assert_pr217_estimator(estimator_path)
+    assert_pinned_estimator(estimator_path)
     SIS, RC, log, oo, _RealField = load_estimator(estimator_path)
 
     work = fixed_infinity_work_items()
@@ -101,6 +114,7 @@ def main() -> int:
                 beta=int(item["beta"]),
                 zeta=int(item["zeta"]),
                 target_bits=args.target_bits,
+                profile=profile,
             )
         except Exception as exc:  # noqa: BLE001
             row = fragile_fixed_infinity_cell(
@@ -122,8 +136,8 @@ def main() -> int:
         rows.append(row)
 
     rows.sort(key=fixed_row_key)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.output.open("w", newline="") as fh:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
@@ -131,13 +145,13 @@ def main() -> int:
     metadata = {
         "description": (
             f"{len(rows)} fixed-beta, fixed-zeta SIS infinity golden cells using "
-            f"norm=oo, ADPS16, LGSA, and target_bits={args.target_bits}."
+            f"{profile.description_suffix()} and target_bits={args.target_bits}."
         ),
-        "profile": FIXED_PROFILE,
+        "profile": profile.to_metadata(),
         "target_bits": args.target_bits,
         "lattice_estimator_remote": estimator_remote_url(estimator_path),
         "lattice_estimator_sha": estimator_git_sha(estimator_path),
-        "expected_lattice_estimator_sha": PR217_LATTICE_ESTIMATOR_SHA,
+        "expected_lattice_estimator_sha": PINNED_LATTICE_ESTIMATOR_SHA,
         "families": {family: {"q": q, "label": label} for family, (q, label) in FAMILIES.items()},
         "grid": {"cells": work},
         "rows": [
@@ -154,10 +168,10 @@ def main() -> int:
             for row in rows
         ],
     }
-    args.metadata.write_text(json.dumps(metadata, indent=2) + "\n")
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
 
     print(
-        f"Wrote {len(rows)} fixed infinity cells to {args.output} "
+        f"Wrote {len(rows)} fixed infinity cells to {output} "
         f"in {time.time() - t0:.1f}s",
         file=sys.stderr,
     )

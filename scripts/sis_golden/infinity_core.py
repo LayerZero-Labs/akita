@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+GOLDEN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(GOLDEN_DIR))
 from lattice_estimator_pin import (  # noqa: E402
     PINNED_LATTICE_ESTIMATOR_SHA,
     assert_pinned_estimator,
@@ -19,6 +21,11 @@ from lattice_estimator_pin import (  # noqa: E402
     locate_estimator,
     normalize_git_remote_url,
     repo_root,
+)
+from infinity_profile import (  # noqa: E402
+    InfinityEstimatorProfile,
+    resolve_red_cost_model,
+    resolve_shape_model,
 )
 
 # Backward-compatible aliases for scripts that still name the PR217 pin explicitly.
@@ -31,19 +38,8 @@ FAMILIES: dict[str, tuple[int, str]] = {
     "q128": ((1 << 128) - ((1 << 32) - 22537), "2^128 - (2^32 - 22537)"),
 }
 
-PROFILE = {
-    "norm": "infinity",
-    "red_cost_model": "ADPS16",
-    "red_shape_model": "LGSA",
-    "zeta": "full optimizer",
-}
-
-FIXED_PROFILE = {
-    "norm": "infinity",
-    "red_cost_model": "ADPS16",
-    "red_shape_model": "LGSA",
-    "zeta": "fixed",
-}
+PROFILE = InfinityEstimatorProfile.default_optimizer().to_metadata()
+FIXED_PROFILE = InfinityEstimatorProfile.default_fixed().to_metadata()
 
 TRUSTED = "trusted"
 FRAGILE = "fragile"
@@ -120,7 +116,11 @@ def estimate_fixed_infinity_cell(
     zeta: int,
     target_bits: float,
     success_probability: float = 0.99,
+    profile: InfinityEstimatorProfile | None = None,
 ) -> dict[str, str]:
+    profile = profile or InfinityEstimatorProfile.default_fixed()
+    red_cost_model = resolve_red_cost_model(RC, profile)
+    red_shape_model = resolve_shape_model(profile)
     q, _label = FAMILIES[family]
     params = SIS.Parameters(
         n=rank * d,
@@ -138,8 +138,8 @@ def estimate_fixed_infinity_cell(
             params,
             zeta=zeta,
             success_probability=success_probability,
-            red_cost_model=RC.ADPS16,
-            red_shape_model="lgsa",
+            red_cost_model=red_cost_model,
+            red_shape_model=red_shape_model,
             log_level=0,
         )
 
@@ -240,7 +240,11 @@ def estimate_infinity_cell(
     width: int,
     coeff_linf_bound: int,
     target_bits: float,
+    profile: InfinityEstimatorProfile | None = None,
 ) -> dict[str, str]:
+    profile = profile or InfinityEstimatorProfile.default_optimizer()
+    red_cost_model = resolve_red_cost_model(RC, profile)
+    red_shape_model = resolve_shape_model(profile)
     q, _label = FAMILIES[family]
     params = SIS.Parameters(
         n=rank * d,
@@ -253,8 +257,8 @@ def estimate_infinity_cell(
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         out = SIS.lattice(
             params,
-            red_cost_model=RC.ADPS16,
-            red_shape_model="lgsa",
+            red_cost_model=red_cost_model,
+            red_shape_model=red_shape_model,
             log_level=0,
         )
 

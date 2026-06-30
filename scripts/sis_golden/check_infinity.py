@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay committed SIS infinity-norm golden cells against PR217."""
+"""Replay committed SIS infinity-norm golden cells against the pinned lattice-estimator."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from infinity_core import (  # noqa: E402
     FRAGILE,
     INT_FIELDS,
     TRUSTED,
-    assert_pr217_estimator,
+    assert_pinned_estimator,
     estimate_infinity_cell,
     estimator_git_sha,
     format_estimator_sha,
@@ -28,6 +28,11 @@ from infinity_core import (  # noqa: E402
     locate_estimator,
     parse_float,
     row_key,
+)
+from infinity_profile import (  # noqa: E402
+    InfinityEstimatorProfile,
+    add_profile_arguments,
+    profile_from_metadata_with_overrides,
 )
 
 FLOAT_ABS_TOL = 1e-6
@@ -47,12 +52,13 @@ def parse_args() -> argparse.Namespace:
         default=GOLDEN_DIR / "infinity_metadata.json",
         help="Golden metadata path.",
     )
-    parser.add_argument("--estimator-path", help="Path to lattice-estimator PR217 checkout.")
+    parser.add_argument("--estimator-path", help="Path to pinned lattice-estimator checkout.")
     parser.add_argument(
         "--skip-monotonicity",
         action="store_true",
         help="Skip width and bound monotonicity checks.",
     )
+    add_profile_arguments(parser)
     return parser.parse_args()
 
 
@@ -103,26 +109,20 @@ def check_monotonicity(rows: list[dict[str, str]]) -> list[str]:
             )
         ].append(row)
 
-    for key, group in by_width.items():
-        prior_width = None
+    for group in by_width.values():
         prior_bits = None
         for row in sorted(group, key=lambda r: int(r["width"])):
-            width = int(row["width"])
             bits = parse_float(row["rop_log2"])
             if prior_bits is not None and bits > prior_bits + FLOAT_ABS_TOL:
                 failures.append("width monotonicity failure")
-            prior_width = width
             prior_bits = bits
 
-    for key, group in by_bound.items():
-        prior_bound = None
+    for group in by_bound.values():
         prior_bits = None
         for row in sorted(group, key=lambda r: int(r["coeff_linf_bound"])):
-            bound = int(row["coeff_linf_bound"])
             bits = parse_float(row["rop_log2"])
             if prior_bits is not None and bits > prior_bits + FLOAT_ABS_TOL:
                 failures.append("bound monotonicity failure")
-            prior_bound = bound
             prior_bits = bits
     return failures
 
@@ -130,8 +130,13 @@ def check_monotonicity(rows: list[dict[str, str]]) -> list[str]:
 def main() -> int:
     args = parse_args()
     metadata = json.loads(args.metadata.read_text())
+    profile = profile_from_metadata_with_overrides(
+        metadata,
+        args,
+        zeta="full optimizer",
+    )
     estimator_path = locate_estimator(args.estimator_path)
-    assert_pr217_estimator(estimator_path)
+    assert_pinned_estimator(estimator_path)
     actual_sha = estimator_git_sha(estimator_path)
     expected_sha = metadata.get("lattice_estimator_sha")
     if expected_sha and actual_sha != expected_sha:
@@ -139,6 +144,14 @@ def main() -> int:
             "estimator SHA mismatch: "
             f"golden expects {format_estimator_sha(expected_sha)}, "
             f"got {format_estimator_sha(actual_sha)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    metadata_profile = InfinityEstimatorProfile.from_metadata(metadata.get("profile", {}))
+    if metadata_profile.to_metadata() != profile.to_metadata():
+        print(
+            "profile mismatch between metadata and replay selection",
             file=sys.stderr,
         )
         return 1
@@ -173,6 +186,7 @@ def main() -> int:
             width=int(expected["width"]),
             coeff_linf_bound=int(expected["coeff_linf_bound"]),
             target_bits=float(expected["target_bits"]),
+            profile=profile,
         )
         checked += 1
 
@@ -199,8 +213,9 @@ def main() -> int:
         return 1
 
     print(
-        f"OK: {checked} trusted infinity cell(s) match PR217 @ "
-        f"{format_estimator_sha(actual_sha)}; "
+        f"OK: {checked} trusted infinity cell(s) match pinned estimator @ "
+        f"{format_estimator_sha(actual_sha)} "
+        f"({profile.description_suffix()}); "
         f"skipped {skipped_fragile} fragile cell(s)"
     )
     return 0

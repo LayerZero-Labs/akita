@@ -79,6 +79,18 @@ sage -python scripts/sis_golden/check_infinity.py
 For quick local smoke tests, use the same script with filters such as
 `--families q32 --dims 32 --ranks 1 --limit 2`.
 
+Profile flags (shared by refresh and replay):
+
+```bash
+--red-cost-model adps16|bdgl16|matzov|gj21|kyber
+--red-shape-model lgsa|gsa|zgsa|cn11|cn11_nq
+--adps16-mode classical|quantum|paranoid
+--nearest-neighbor classical|quantum|paranoid
+```
+
+Non-default profiles write `infinity_golden_<slug>.csv` and matching metadata
+unless `--output` is set explicitly.
+
 ## Fixed infinity-cost goldens
 
 Slice 3 uses a smaller fixed-beta, fixed-zeta fixture. These cells exercise
@@ -88,15 +100,13 @@ optimizer CSV above.
 Refresh:
 
 ```bash
-sage -python scripts/sis_golden/refresh_fixed_infinity_golden.py \
-  --estimator-path /path/to/lattice-estimator-pr217
+sage -python scripts/sis_golden/refresh_fixed_infinity_golden.py
 ```
 
 Replay:
 
 ```bash
-sage -python scripts/sis_golden/check_fixed_infinity.py \
-  --estimator-path /path/to/lattice-estimator-pr217
+sage -python scripts/sis_golden/check_fixed_infinity.py
 ```
 
 Benchmark the Rust fixed-cell estimator:
