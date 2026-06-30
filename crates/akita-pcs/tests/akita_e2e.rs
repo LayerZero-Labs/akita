@@ -405,7 +405,7 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
     );
 }
 
-/// End-to-end distributed/chunked prove→verify: the multi-chunk preset stamps
+/// End-to-end chunked prove→verify: the multi-chunk preset stamps
 /// `num_chunks = 8` on the three leading fold levels (NV=16 ⇒ 64 blocks each).
 /// The single prover assembles the modified `[zᵢ|eᵢ|t̂ᵢ]…|r̂` relation and the
 /// verifier evaluates the chunked row-MLE; the proof must verify.

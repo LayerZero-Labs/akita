@@ -112,7 +112,7 @@ where
     ))
 }
 
-fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
+pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F, D>>,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
     let Some((first, rest)) = witnesses.split_first() else {
@@ -348,7 +348,7 @@ fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
 /// `[chunk·blocks_per_chunk, (chunk+1)·blocks_per_chunk)`, zeroing all other
 /// blocks. Folding under these yields the partial response `z_i = Σ_{j∈I_i}
 /// c_j s_j`.
-fn window_sparse_challenges(
+pub(super) fn window_sparse_challenges(
     challenges: &Challenges,
     chunk: usize,
     blocks_per_chunk: usize,
@@ -382,49 +382,6 @@ fn window_sparse_challenges(
             "chunked fold response requires sparse fold challenges".to_string(),
         )),
     }
-}
-
-/// Compute the per-window centered fold responses `z_i` (length `num_chunks`).
-///
-/// Single-chunk levels reuse the already-computed global response. Multi-chunk
-/// levels recompute the fold per window under the same (final, grind-accepted)
-/// challenges, restricted to the window's blocks. The sum of the windows equals
-/// the global response mod `q`, so the value-identical relation quotient holds.
-fn compute_z_folded_per_chunk<F, P, B, const D: usize>(
-    backend: &B,
-    prepared: Option<&B::PreparedSetup<D>>,
-    challenges: &Challenges,
-    polys: &[&P],
-    lp: &LevelParams,
-    global: &DecomposeFoldWitness<F, D>,
-) -> Result<Vec<Vec<[i32; D]>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    P: RootOpeningSource<F, D>,
-    B: crate::compute::ComputeBackendSetup<F>
-        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
-        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
-{
-    let num_chunks = lp.witness_chunk.num_chunks;
-    if num_chunks <= 1 {
-        return Ok(vec![global.centered_coeffs.clone()]);
-    }
-    let blocks_per_chunk = lp.num_blocks / num_chunks;
-    let point_indices = (0..polys.len()).collect::<Vec<_>>();
-    (0..num_chunks)
-        .map(|chunk| {
-            let windowed = window_sparse_challenges(challenges, chunk, blocks_per_chunk)?;
-            let w_i = build_point_decompose_fold_witness::<F, P, B, D>(
-                backend,
-                prepared,
-                &windowed,
-                polys,
-                &point_indices,
-                lp,
-            )?;
-            Ok(w_i.centered_coeffs)
-        })
-        .collect()
 }
 
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
@@ -559,7 +516,10 @@ impl RingRelationProver {
                 .collect();
             absorb_terminal_e_folded_fields::<F, T, D>(transcript, &e_folded_flat)?;
         }
-        let (z_folded_rings, challenges, fold_grind_nonce) =
+        // Distributed-prover chunked layout: the grind emits one folded response
+        // per block window (`z_i`), and the global response is their sum
+        // (`Σ_i z_i = z`, exact coefficient-wise i32 accumulation).
+        let (z_folded_rings, z_folded_centered_per_chunk, challenges, fold_grind_nonce) =
             fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
                 opening_backend,
                 Some(opening_ctx.prepared()),
@@ -569,18 +529,6 @@ impl RingRelationProver {
                 num_claims,
                 terminal_tail_t_vectors,
             )?;
-
-        // Distributed-prover chunked layout: emit one folded response per block
-        // window. `Σ_i z_i = z` (mod q), so the relation quotient is unchanged.
-        // Single-chunk levels reuse the global response directly.
-        let z_folded_centered_per_chunk = compute_z_folded_per_chunk::<F, P, OB, D>(
-            opening_backend,
-            Some(opening_ctx.prepared()),
-            &challenges,
-            &polys,
-            &lp,
-            &z_folded_rings,
-        )?;
 
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty

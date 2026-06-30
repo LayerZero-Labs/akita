@@ -110,7 +110,6 @@ where
                 AkitaError::InvalidSetup("next witness length overflow".to_string())
             })?
         }
-
     };
     let terminal_replay = if proof.final_w_len().is_some() {
         let layout =
