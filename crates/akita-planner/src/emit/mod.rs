@@ -201,30 +201,24 @@ fn emit_group_batch_schedule_entry(
     key_str: &str,
     schedule: &Schedule,
 ) -> Result<(), String> {
-    let steps = schedule
-        .steps
-        .iter()
-        .map(emit_step_inline)
-        .collect::<Vec<_>>()
-        .join(", ");
     writeln!(
         out,
-        "    GeneratedGroupBatchScheduleTableEntry {{ key: {key_str}, steps: &[{steps}] }},",
+        "    GeneratedGroupBatchScheduleTableEntry {{ key: {key_str}, steps: &[",
     )
-    .map_err(|e| e.to_string())
-}
+    .map_err(|e| e.to_string())?;
 
-fn emit_step_inline(step: &Step) -> String {
-    match step {
-        Step::Fold(fold) => format!("GeneratedStep::Fold({})", emit_fold_struct(&fold.params)),
-        Step::Direct(direct) => match &direct.params {
-            Some(commit) => format!(
-                "GeneratedStep::Direct(GeneratedDirectStep {{ commit: Some({}) }})",
-                emit_fold_struct(commit)
-            ),
-            None => "GeneratedStep::Direct(GeneratedDirectStep { commit: None })".to_string(),
-        },
+    for step in &schedule.steps {
+        match step {
+            Step::Fold(fold) => {
+                writeln!(out, "{}", emit_fold(fold)).map_err(|e| e.to_string())?;
+            }
+            Step::Direct(direct) => {
+                writeln!(out, "{}", emit_direct(direct)).map_err(|e| e.to_string())?;
+            }
+        }
     }
+
+    writeln!(out, "    ] }},").map_err(|e| e.to_string())
 }
 
 fn emit_decomposition(d: akita_types::DecompositionParams) -> String {
