@@ -228,7 +228,7 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `lp.witness_chunk` fails
-/// [`ChunkedWitnessCfg::validate`].
+/// `akita_types::ChunkedWitnessCfg::validate`.
 ///
 /// # Panics
 ///

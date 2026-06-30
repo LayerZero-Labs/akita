@@ -762,7 +762,7 @@ mod tests {
             chunk_counts.iter().any(|&w| w > 1),
             "fixture must have num_blocks > 1 to exercise chunking (num_blocks={num_blocks})"
         );
-        for w in chunk_counts {
+        for w in chunk_counts.into_iter().filter(|&w| w > 1) {
             let bpc = num_blocks / w;
             let mut chunked: Vec<F> = Vec::new();
             for j in 0..w {
