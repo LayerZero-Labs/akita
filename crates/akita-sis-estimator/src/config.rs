@@ -174,6 +174,16 @@ impl EstimateConfig {
         }
     }
 
+    /// Akita Euclidean table generation profile: BDGL16 with the Euclidean
+    /// SIS lattice path used by the shipped 128-bit L2 table.
+    #[must_use]
+    pub fn akita_euclidean_table() -> Self {
+        Self {
+            red_cost_model: ReductionCostModel::Bdgl16,
+            ..Self::default()
+        }
+    }
+
     /// Lattice-estimator parity profile: ADPS16 classical + LGSA with Python's
     /// local-minimum beta and zeta search.
     #[must_use]

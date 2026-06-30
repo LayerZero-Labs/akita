@@ -30,18 +30,24 @@ sage -python scripts/sis_golden/check.py
 
 ## Full table regen
 
-Regenerate and stitch every SIS table row with the pinned
-`third_party/lattice-estimator` checkout:
+Regenerate and stitch every SIS table row with the Rust Euclidean estimator:
 
 ```bash
-sage -python scripts/stitch_generated_sis_table.py --jobs 6
+cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --format rust-split
 ```
 
-The stitcher uses `--max-rank 20`, passes `--estimator-path
-third_party/lattice-estimator` to every shard, and rejects any estimator checkout
-whose `HEAD` does not match `metadata.json`.
+The generator uses `--max-rank 20`, the current 128-bit BDGL16 Euclidean
+profile, and the same power-of-two plus derived `d * B^2` collision-key set as
+the legacy Sage stitcher.
 
-Manual workflow only. Rust CI does not require Sage or an initialized submodule.
+For a row-oriented comparison artifact:
+
+```bash
+cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --output scripts/sis_golden/euclidean_width_table_rust.csv --format csv
+```
+
+Manual workflow only. Rust CI does not require Sage or an initialized submodule
+for the Rust table generator.
 
 ## Infinity-norm goldens
 

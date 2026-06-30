@@ -71,7 +71,7 @@ pub fn cost_infinity_fixed(
     }
 
     let identity_vectors = effective_dimension as i128 - params.n as i128;
-    let reduction_dimension = u32::try_from(effective_dimension).unwrap_or(u32::MAX);
+    let reduction_dimension = effective_dimension;
     let short = short_vectors_for(config.red_cost_model, beta, reduction_dimension)?;
     let bkz_log2 = log2_bkz_cost(config.red_cost_model, beta, reduction_dimension)?;
 
@@ -173,6 +173,7 @@ fn length_bound_as_f64(bound: &Bound) -> Result<f64> {
             numerator,
             denominator,
         } => Ok(numerator.to_f64().unwrap_or(0.0) / denominator.to_f64().unwrap_or(1.0)),
+        Bound::SqrtInteger(value) => Ok(value.to_f64().unwrap_or(f64::INFINITY).sqrt()),
     }
 }
 

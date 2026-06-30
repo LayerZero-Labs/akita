@@ -11,6 +11,8 @@ pub mod akita;
 pub mod config;
 pub mod cost;
 pub mod error;
+pub mod euclidean;
+pub mod euclidean_width_table;
 pub mod lattice;
 pub mod math;
 pub mod numeric;
@@ -21,7 +23,10 @@ pub mod reduction;
 pub mod simulator;
 pub mod width_table;
 
-pub use akita::{scalar_sis_from_ring, scalar_sis_from_ring_wide, AkitaModulusFamily};
+pub use akita::{
+    scalar_sis_from_ring, scalar_sis_from_ring_euclidean, scalar_sis_from_ring_wide,
+    AkitaModulusFamily,
+};
 pub use config::{
     Adps16Mode, EstimateConfig, NearestNeighborModel, OptimizerConfig, ReductionCostModel,
     SearchMode, ShapeModel,
@@ -43,9 +48,12 @@ pub use params::{
 pub fn estimate(params: &SisParameters, config: &EstimateConfig) -> Result<LatticeCost> {
     params.validate()?;
     config.validate()?;
+    if params.norm == SisNorm::Euclidean {
+        return euclidean::cost_euclidean(params, config);
+    }
     if params.norm != SisNorm::Infinity {
         return Err(EstimatorError::Unsupported {
-            feature: "estimate for non-infinity norm",
+            feature: "estimate for unsupported norm",
         });
     }
     optimizer::estimate_infinity(params, config)
@@ -115,9 +123,7 @@ pub fn cost_euclidean(params: &SisParameters, config: &EstimateConfig) -> Result
             reason: "cost_euclidean requires SisNorm::Euclidean".to_string(),
         });
     }
-    Err(EstimatorError::Unsupported {
-        feature: "cost_euclidean",
-    })
+    euclidean::cost_euclidean(params, config)
 }
 
 fn validate_beta_zeta(beta: u32, zeta: u64) -> Result<()> {

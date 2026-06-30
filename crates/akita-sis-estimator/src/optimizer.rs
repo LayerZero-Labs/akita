@@ -409,6 +409,7 @@ fn euclidean_baseline_length_bound(bound: &Bound) -> Result<f64> {
             numerator,
             denominator,
         } => numerator.to_f64().unwrap_or(0.0) / denominator.to_f64().unwrap_or(1.0),
+        Bound::SqrtInteger(value) => value.to_f64().unwrap_or(f64::INFINITY).sqrt(),
     };
     if value.is_finite() && value > 0.0 {
         Ok(value)

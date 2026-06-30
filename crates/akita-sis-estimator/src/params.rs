@@ -28,6 +28,8 @@ pub enum Bound {
         /// Positive denominator.
         denominator: BigUint,
     },
+    /// Exact square root of a positive integer.
+    SqrtInteger(BigUint),
 }
 
 impl Bound {
@@ -41,6 +43,32 @@ impl Bound {
     #[must_use]
     pub fn from_u128(value: u128) -> Self {
         Self::Integer(BigUint::from(value))
+    }
+
+    /// Create an exact square-root bound from a positive integer radicand.
+    #[must_use]
+    pub fn sqrt_integer(value: BigUint) -> Self {
+        Self::SqrtInteger(value)
+    }
+
+    /// Return `log₂(bound)`.
+    #[must_use]
+    pub fn log2(&self) -> f64 {
+        match self {
+            Self::Integer(value) => crate::math::log2_biguint(value),
+            Self::Float(value) => value.log2(),
+            Self::Rational {
+                numerator,
+                denominator,
+            } => crate::math::log2_biguint(numerator) - crate::math::log2_biguint(denominator),
+            Self::SqrtInteger(value) => (0.5 * crate::math::log2_biguint(value)).next_up(),
+        }
+    }
+
+    /// Return `ln(bound)`.
+    #[must_use]
+    pub fn ln(&self) -> f64 {
+        self.log2() * std::f64::consts::LN_2
     }
 
     /// Validate that the bound is positive and numerically well formed.
@@ -73,6 +101,11 @@ impl Bound {
                 })
             }
             Self::Rational { .. } => Ok(()),
+            Self::SqrtInteger(value) if value.is_zero() => Err(EstimatorError::InvalidParameter {
+                field: "length_bound",
+                reason: "square-root radicand must be positive".to_string(),
+            }),
+            Self::SqrtInteger(_) => Ok(()),
         }
     }
 }

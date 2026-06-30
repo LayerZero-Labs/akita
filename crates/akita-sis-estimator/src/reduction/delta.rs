@@ -13,6 +13,7 @@ const SMALL_DELTA: [(u32, f64); 8] = [
     (28, 1.01331),
     (40, 1.01295),
 ];
+const BETA_INVERSION_DELTA_TOLERANCE: f64 = 1e-13;
 
 /// Compute δ from block size β, mirroring `ReductionCost._delta`.
 #[must_use]
@@ -38,6 +39,36 @@ pub fn delta(beta: u32) -> f64 {
     (beta_f / (2.0 * pi * e) * (pi * beta_f).powf(1.0 / beta_f)).powf(1.0 / (2.0 * (beta_f - 1.0)))
 }
 
+/// Invert a root-Hermite factor to the smallest supported BKZ block size.
+///
+/// This mirrors lattice-estimator's `ReductionCost._beta_find_root` integer
+/// semantics for the SIS Euclidean path: values that would require `β < 40`
+/// return `40`, while values beyond the search bracket return `None`.
+#[must_use]
+pub fn beta(delta_target: f64) -> Option<u32> {
+    if !delta_target.is_finite() {
+        return None;
+    }
+    if delta(40) < delta_target {
+        return Some(40);
+    }
+    if delta_target < delta(BETA_SEARCH_MAX) {
+        return None;
+    }
+
+    let mut low = 40;
+    let mut high = BETA_SEARCH_MAX;
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if delta(mid) <= delta_target + BETA_INVERSION_DELTA_TOLERANCE {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    Some(low)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,5 +76,13 @@ mod tests {
     #[test]
     fn delta_matches_small_table() {
         assert!((delta(40) - 1.01295).abs() < 1e-5);
+    }
+
+    #[test]
+    fn beta_inversion_matches_lattice_estimator_doctests() {
+        assert_eq!(beta(1.0121), Some(50));
+        assert_eq!(beta(1.0093), Some(100));
+        assert_eq!(beta(1.0024), Some(808));
+        assert_eq!(beta(1.000_000_000_045_374_4), None);
     }
 }
