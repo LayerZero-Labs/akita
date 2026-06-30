@@ -430,15 +430,13 @@ impl LevelParams {
     /// [`crate::sis::fold_witness_linf_cap`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let witness = self.fold_witness_norms();
-        let witness_linf = witness.infinity_norm();
-        let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
         let challenge =
             crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
-        let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
-        crate::sis::fold_witness_linf_cap(
-            beta,
-            self.num_fold_blocks(num_claims)?,
-            witness_linf_sq,
+        crate::sis::folded_witness_public_linf_cap(
+            challenge,
+            witness,
+            self.r_vars,
+            num_claims,
             &self.fold_linf_cap_config,
         )
     }
