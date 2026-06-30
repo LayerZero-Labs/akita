@@ -149,7 +149,7 @@ pub fn coeff_linf_bucket_sq(bound: u64) -> u128 {
     if bound <= 3 {
         return u128::from(bound) * u128::from(bound);
     }
-    let k = 64 - (bound + 1).leading_zeros() - 1;
+    let k = (bound + 1).ilog2();
     (1u128 << (2 * k)) - (1u128 << (k + 1)) + 1
 }
 
@@ -420,7 +420,14 @@ where
             hit_cap: false,
         });
     }
-    if predicate(cap)? {
+    let mut low = 1;
+    let mut high = 2.min(cap);
+    while high < cap && predicate(high)? {
+        low = high;
+        high = high.saturating_mul(2).min(cap);
+    }
+
+    if high == cap && predicate(cap)? {
         return Ok(PrefixSearchResult {
             max_value: cap,
             next_value: None,
@@ -428,11 +435,6 @@ where
         });
     }
 
-    let mut high = 2.min(cap);
-    while high < cap && predicate(high)? {
-        high = high.saturating_mul(2).min(cap);
-    }
-    let mut low = high / 2;
     while low + 1 < high {
         let mid = low + (high - low) / 2;
         if predicate(mid)? {
@@ -478,6 +480,8 @@ mod tests {
 
     #[test]
     fn derived_collision_keys_match_python_contract() {
+        assert_eq!(coeff_linf_bucket_sq(15), 225);
+        assert_eq!(coeff_linf_bucket_sq(31), 961);
         assert!(derived_l2_collision_keys().contains(&(32 * 15 * 15)));
         assert!(l2_table_collision_keys().contains(&(1u128 << 84)));
     }

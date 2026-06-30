@@ -122,7 +122,14 @@ fn parse_profile(value: &str) -> InfinityWidthProfile {
     match value {
         "local-minimum" | "local_minimum" => InfinityWidthProfile::LocalMinimum,
         "exhaustive-serial" | "exhaustive_serial" => InfinityWidthProfile::ExhaustiveSerial,
-        "exhaustive-parallel" | "exhaustive_parallel" => InfinityWidthProfile::ExhaustiveParallel,
+        "exhaustive-parallel" | "exhaustive_parallel" => {
+            #[cfg(not(feature = "parallel"))]
+            fatal("profile exhaustive-parallel requires building with --features parallel");
+            #[cfg(feature = "parallel")]
+            {
+                InfinityWidthProfile::ExhaustiveParallel
+            }
+        }
         _ => fatal("profile must be one of: local-minimum, exhaustive-serial, exhaustive-parallel"),
     }
 }
