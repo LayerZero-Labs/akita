@@ -56,27 +56,35 @@ through the witness norm.
 
 ### The corrected bound
 
-Every committed level is priced at the fold response:
+Every committed level is priced at the fold response, then at the **verifier digit
+envelope** the stage-1 range check actually certifies:
 
 ```text
-collision_A = 2 · κ̄ · β̄ · ν
-  κ̄ = ||c − c'||_1 = 2·ω            (challenge difference; ω = ||c||_1)
-  β̄ = 2 · β^resp                    (extractor: ||z^(ℓ,i) − z^0||_inf ≤ 2·β^resp)
-  β^resp = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
-        = fold_witness_beta(...)
-=> collision_A = 8 · ω · fold_witness_beta · ν.
+β^resp = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
+       = fold_witness_beta(...)
+δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*) when tail-bound-with-grind)
+z_verifier = fold_witness_verifier_linf_bound(log_basis, δ_fold)
+
+collision_A_inf = 8 · ω · z_verifier · ν
+collision_A     = ceil_bucket(d · collision_A_inf²)   (L2 MSIS table)
 ```
 
+`fold_witness_beta` still names the fold-response kernel bound; MSIS pricing uses
+`z_verifier`, not raw `β_inf`, because the verifier accepts only balanced
+`δ_fold`-digit coefficients.
+
 This is implemented in
-[`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs):
-`committed_fold_collision_l2_sq` prices the `8·ω·fold_witness_beta·ν` collision
-envelope (via `collision_l2_sq_for_linf_envelope`), and `committed_fold_a_role_rank`
-builds the level's audited A-role rank from the same geometry. Both thread
-`num_claims`, and `ring_subfield_norm_bound` from each call site (the planner
-DP in `schedule_params.rs`, the runtime expansion, and the verifier-reachable
-layout derivation in `layout/sis_derivation.rs`). The A-role price and the
-fold bound now share `fold_witness_beta` and `FoldWitnessNorms`, so the binding
-rank and the digit count cannot drift.
+[`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs)
+(with fold-linf cap policy in
+[`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
+`committed_fold_collision_l2_sq` prices the `8·ω·fold_witness_verifier_linf_bound·ν`
+collision envelope (via `collision_l2_sq_for_linf_envelope`), and
+`committed_fold_a_role_rank` builds the level's audited A-role rank from the same
+geometry. Both thread `num_claims`, and `ring_subfield_norm_bound` from each call
+site (the planner DP in `schedule_params.rs`, the runtime expansion, and the
+verifier-reachable layout derivation in `layout/sis_derivation.rs`). The A-role
+price and `δ_fold` now share `fold_witness_honest_prover_linf_cap` /
+`num_digits_fold`, so the binding rank and the digit count cannot drift.
 
 ### Public-paper basis
 
@@ -189,13 +197,13 @@ needs `||z||_1`. Two independent facts close that door:
    `||·||_1 / ||·||_inf` ratio, so the outer `min` is a no-op: there is no
    `ω`-factor to recover, with or without an L1 range check.
 
-So the shipped `8·ω·fold_witness_beta·ν` bound is already the tight one for the
-one-hot case; replacing the outer `||c||_1` with `||c||_inf` would under-price
-`collision_inf` by a factor of `ω` and select sub-128-bit SIS ranks. No code
-change: the conservative `||c||_1` outer factor is also the correct one. The
+So the shipped `8·ω·fold_witness_verifier_linf_bound(δ_fold)·ν` bound is already the
+tight one for the one-hot case; replacing the outer `||c||_1` with `||c||_inf` would
+under-price `collision_inf` by a factor of `ω` and select sub-128-bit SIS ranks. No
+code change: the conservative `||c||_1` outer factor is also the correct one. The
 one-hot A-rank therefore cannot be lowered by this route; any further one-hot
 proof-size win has to come from the fold / digit side (already optimized via the
-`min`), not from the binding collision.
+`min` and the digit envelope), not from the binding collision.
 
 ---
 
