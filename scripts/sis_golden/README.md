@@ -45,13 +45,14 @@ Manual workflow only. Rust CI does not require Sage or an initialized submodule.
 
 ## Infinity-norm goldens
 
-The infinity-norm harness is separate from the Euclidean table generator. It
-targets lattice-estimator PR 217:
+Infinity-norm goldens use the same pinned `third_party/lattice-estimator`
+checkout as the Euclidean table generator:
 
 ```text
-quangvdao:quang/fix-amplify-tiny-success
 c667a48546f140c3a5454c7503c3ca44a264cce2
 ```
+
+(malb/lattice-estimator#217; strict descendant of malb#213 @ 27a581b)
 
 Profile:
 
@@ -66,15 +67,13 @@ target_bits = 138
 Refresh:
 
 ```bash
-sage -python scripts/sis_golden/refresh_infinity_golden.py \
-  --estimator-path /path/to/lattice-estimator-pr217
+sage -python scripts/sis_golden/refresh_infinity_golden.py
 ```
 
 Replay:
 
 ```bash
-sage -python scripts/sis_golden/check_infinity.py \
-  --estimator-path /path/to/lattice-estimator-pr217
+sage -python scripts/sis_golden/check_infinity.py
 ```
 
 For quick local smoke tests, use the same script with filters such as
@@ -117,21 +116,37 @@ AKITA_SIS_FIXED_INFINITY_BENCH_CSV=scripts/sis_golden/fixed_infinity_golden.csv 
   cargo bench -p akita-sis-estimator --bench fixed_infinity
 ```
 
-Benchmark the Rust optimizer path with Criterion:
+Benchmark the Rust optimizer paths with Criterion:
 
 ```bash
 cargo bench -p akita-sis-estimator --bench infinity_optimizer
 ```
 
-By default the optimizer bench runs a small representative subset of trusted
-infinity cells. To bench a custom optimizer grid, point
-`AKITA_SIS_INFINITY_BENCH_CSV` at a CSV with `family`, `d`, `rank`, `width`, and
-`coeff_linf_bound` columns. The committed fixture works as a full trusted-cell
-input:
+By default the optimizer bench uses a representative trusted-row ladder from
+`scripts/sis_golden/infinity_golden.csv` and runs the serial local-minimum and
+serial exhaustive profiles. With `--features parallel`, it also runs the
+parallel exhaustive profile in the same Criterion group:
 
 ```bash
-AKITA_SIS_INFINITY_BENCH_CSV=scripts/sis_golden/infinity_golden.csv \
-  cargo bench -p akita-sis-estimator --bench infinity_optimizer
+cargo bench -p akita-sis-estimator --features parallel --bench infinity_optimizer
+```
+
+The durable benchmark controls are environment variables:
+
+| Variable | Values | Default |
+|---|---|---|
+| `AKITA_SIS_INFINITY_BENCH_SET` | `representative`, `exhaustive-ci`, `all-trusted` | `representative` |
+| `AKITA_SIS_INFINITY_BENCH_PROFILES` | comma-separated `local-minimum`, `exhaustive-serial`, `exhaustive-parallel` | serial profiles, plus parallel when the feature is enabled |
+| `AKITA_SIS_INFINITY_BENCH_CSV` | CSV with `family`, `d`, `rank`, `width`, `coeff_linf_bound` columns | committed infinity golden CSV |
+| `AKITA_SIS_INFINITY_BENCH_SAMPLE_SIZE` | Criterion sample size, minimum 10 | Criterion default |
+| `AKITA_SIS_INFINITY_BENCH_WARM_UP_MS` | Criterion warm-up milliseconds | Criterion default |
+| `AKITA_SIS_INFINITY_BENCH_MEASUREMENT_MS` | Criterion measurement milliseconds | Criterion default |
+
+The committed fixture works as a full trusted-cell input:
+
+```bash
+AKITA_SIS_INFINITY_BENCH_SET=all-trusted \
+  cargo bench -p akita-sis-estimator --features parallel --bench infinity_optimizer
 ```
 
 For Rust-vs-Sage single-shot timing, run:

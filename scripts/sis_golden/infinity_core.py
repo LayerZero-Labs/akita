@@ -5,13 +5,25 @@ from __future__ import annotations
 import contextlib
 import io
 import math
-import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-PR217_LATTICE_ESTIMATOR_SHA = "c667a48546f140c3a5454c7503c3ca44a264cce2"
+SCRIPTS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPTS))
+from lattice_estimator_pin import (  # noqa: E402
+    PINNED_LATTICE_ESTIMATOR_SHA,
+    assert_pinned_estimator,
+    estimator_git_sha,
+    estimator_remote_url,
+    locate_estimator,
+    normalize_git_remote_url,
+    repo_root,
+)
+
+# Backward-compatible aliases for scripts that still name the PR217 pin explicitly.
+PR217_LATTICE_ESTIMATOR_SHA = PINNED_LATTICE_ESTIMATOR_SHA
+assert_pr217_estimator = assert_pinned_estimator
 
 FAMILIES: dict[str, tuple[int, str]] = {
     "q32": ((1 << 32) - 99, "2^32 - 99"),
@@ -47,81 +59,9 @@ FLOAT_FIELDS = [
 INT_FIELDS = ["beta", "eta", "zeta", "lattice_dimension"]
 
 
-def normalize_git_remote_url(url: str) -> str:
-    """Canonicalize common GitHub SSH remotes for reproducible metadata."""
-    if url.startswith("git@github.com:"):
-        return "https://github.com/" + url.removeprefix("git@github.com:")
-    if url.startswith("ssh://git@github.com/"):
-        return "https://github.com/" + url.removeprefix("ssh://git@github.com/")
-    return url
-
-
-def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
-def locate_estimator(explicit: str | None) -> Path:
-    candidates: list[Path] = []
-    if explicit:
-        candidates.append(Path(explicit).expanduser())
-    env_path = os.environ.get("LATTICE_ESTIMATOR_INFINITY_PATH")
-    if env_path:
-        candidates.append(Path(env_path).expanduser())
-    root = repo_root()
-    candidates.extend(
-        [
-            root / "work" / "lattice-estimator-pr217",
-            root.parent / "lattice-estimator-pr217",
-            root.parent / "lattice-estimator",
-        ]
-    )
-    for candidate in candidates:
-        if (candidate / "estimator" / "__init__.py").exists():
-            return candidate.resolve()
-    raise SystemExit(
-        "Could not locate lattice-estimator PR217 checkout. "
-        "Pass --estimator-path or set LATTICE_ESTIMATOR_INFINITY_PATH."
-    )
-
-
-def estimator_git_sha(path: Path) -> str:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return out.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
-
-
 def format_estimator_sha(sha: str) -> str:
     """Short SHA for console output (avoids logging full commit ids)."""
     return sha[:12] if len(sha) > 12 else sha
-
-
-def estimator_remote_url(path: Path) -> str:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(path), "remote", "get-url", "origin"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return normalize_git_remote_url(out.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
-
-
-def assert_pr217_estimator(path: Path) -> None:
-    actual = estimator_git_sha(path)
-    if actual != PR217_LATTICE_ESTIMATOR_SHA:
-        raise SystemExit(
-            "lattice-estimator infinity SHA mismatch: "
-            f"expected {PR217_LATTICE_ESTIMATOR_SHA}, got {actual} at {path}"
-        )
 
 
 def load_estimator(path: Path):
