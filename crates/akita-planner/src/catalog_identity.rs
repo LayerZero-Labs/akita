@@ -5,6 +5,7 @@
 //! Identity mismatch is a hard error; a row miss after validation falls back to
 //! the offline DP search.
 
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
 
@@ -13,7 +14,7 @@ use akita_field::AkitaError;
 use akita_types::AkitaScheduleInputs;
 
 use crate::generated::{
-    GeneratedDirectStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
+    catalog_key_cmp, GeneratedDirectStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
@@ -296,14 +297,22 @@ fn verify_ring_challenge_config_digest_on_cache_hit(
 }
 
 fn validate_catalog_keys(entries: &[GeneratedScheduleTableEntry]) -> Result<(), AkitaError> {
-    let mut keys: Vec<GeneratedScheduleKey> = entries.iter().map(|entry| entry.key).collect();
-    keys.sort_by_key(|key| (key.num_vars, key.num_polynomials));
-    for pair in keys.windows(2) {
-        if pair[0] == pair[1] {
-            return Err(AkitaError::InvalidSetup(format!(
-                "schedule catalog contains duplicate key {:?}",
-                pair[0]
-            )));
+    for pair in entries.windows(2) {
+        match catalog_key_cmp(pair[0].key, pair[1].key) {
+            Ordering::Less => {}
+            Ordering::Equal => {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "schedule catalog contains duplicate key {:?}",
+                    pair[0].key
+                )));
+            }
+            Ordering::Greater => {
+                return Err(AkitaError::InvalidSetup(
+                    "schedule catalog entries are not sorted for binary lookup \
+                     (num_polynomials, then num_vars)"
+                        .to_string(),
+                ));
+            }
         }
     }
     Ok(())
@@ -601,6 +610,30 @@ mod tests {
                 .expect_err("duplicate keys should error");
         assert!(
             matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("duplicate key")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn unsorted_catalog_keys_are_rejected() {
+        let policy = sample_policy();
+        let mut batched = sample_entry();
+        let mut singleton = sample_entry();
+        batched.key.num_polynomials = 4;
+        batched.key.num_vars = 20;
+        singleton.key.num_polynomials = 1;
+        singleton.key.num_vars = 30;
+        // Binary lookup order is (num_polynomials, num_vars); batched before singleton.
+        let entries = Box::leak(Box::new([batched, singleton]));
+        let catalog = GeneratedScheduleTable {
+            entries,
+            identity: expected_identity(&policy, entries),
+        };
+        let err =
+            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+                .expect_err("unsorted keys should error");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("not sorted for binary lookup")),
             "unexpected error: {err}"
         );
     }
