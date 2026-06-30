@@ -1,6 +1,11 @@
 //! ADPS16 reduction cost model.
 
-use crate::{config::Adps16Mode, cost::CostValue, math::log2_positive, reduction::delta::delta};
+use crate::{
+    config::Adps16Mode,
+    cost::CostValue,
+    math::log2_positive,
+    reduction::{delta::delta, short_vectors::ShortVectors},
+};
 
 /// ADPS16 exponent for each cost mode.
 #[must_use]
@@ -16,19 +21,6 @@ pub const fn adps16_exponent(mode: Adps16Mode) -> f64 {
 #[must_use]
 pub fn adps16_log2_cost(beta: u32, mode: Adps16Mode) -> f64 {
     adps16_exponent(mode) * beta as f64
-}
-
-/// Output of the ADPS16 short-vector sieve path for fixed-cost infinity estimates.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ShortVectors {
-    /// Scaling factor ρ relative to the shortest BKZ vector.
-    pub rho: f64,
-    /// Total short-vector generation cost in log2 space.
-    pub cost_red_log2: f64,
-    /// Number of output vectors.
-    pub count: f64,
-    /// Sieving dimension η.
-    pub sieve_dim: u32,
 }
 
 /// Cost short vectors using the ADPS16 sieve model from lattice-estimator.

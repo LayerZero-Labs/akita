@@ -4,31 +4,46 @@ use num_bigint::BigUint;
 use num_traits::{ToPrimitive, Zero};
 
 use crate::{
-    config::{Adps16Mode, EstimateConfig, ReductionCostModel, ShapeModel},
+    config::EstimateConfig,
     cost::{CostValue, EstimateTag, LatticeCost},
     error::{EstimatorError, Result},
-    math::{erf, log2_biguint, log2_positive, sis_trivially_easy},
+    math::{erf, log2_positive, sis_trivially_easy},
     params::{Bound, SisParameters},
     probability::log2_amplify,
-    reduction::{adps16_log2_cost, adps16_short_vectors, delta, log2_to_cost_value},
-    simulator::lgsa_squared_norms,
+    reduction::{log2_bkz_cost, log2_to_cost_value, short_vectors_for, validate_infinity_reduction},
+    simulator::{infinity_shape_profile, validate_infinity_shape},
 };
 
 const Q_VECTOR_TOLERANCE: f64 = 1e-8;
 const UNIT_VECTOR_TOLERANCE: f64 = 1e-8;
 const MIN_SIEVE_LOG2: f64 = -100.0 * std::f64::consts::LOG2_10;
-// PR217 computes the sieve floor as Sage RR(1e-100), which overflows to oo
-// once repeated past the binary64 exponent range.
+// Pinned lattice-estimator computes the sieve floor as Sage RR(1e-100), which
+// overflows to oo once repeated past the binary64 exponent range.
 const SAGE_RR_MAX_LOG2: f64 = 1024.0;
 
-/// Evaluate fixed-beta, fixed-zeta infinity cost for ADPS16 + LGSA.
+/// Cached numeric values reused across optimizer probes for one modulus.
+#[derive(Clone, Copy, Debug)]
+struct EvalScratch {
+    log_q: f64,
+}
+
+impl EvalScratch {
+    fn new(q: &BigUint) -> Self {
+        Self {
+            log_q: crate::math::log2_biguint(q),
+        }
+    }
+}
+
+/// Evaluate fixed-beta, fixed-zeta infinity cost for the configured profile.
 pub fn cost_infinity_fixed(
     beta: u32,
     params: &SisParameters,
     zeta: u32,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
-    validate_fixed_profile(config)?;
+    validate_infinity_profile(config)?;
+    let scratch = EvalScratch::new(&params.q);
     let length_bound = length_bound_as_f64(&params.length_bound)?;
     if sis_trivially_easy(&params.q, length_bound) {
         return Err(EstimatorError::InvalidParameter {
@@ -52,18 +67,23 @@ pub fn cost_infinity_fixed(
         return Ok(infinite_cost(params, beta, zeta, effective_dimension));
     }
 
-    let mode = adps16_mode(config.red_cost_model);
     let identity_vectors = effective_dimension as i64 - params.n as i64;
-    let profile = lgsa_squared_norms(effective_dimension, identity_vectors, &params.q, beta)?;
-    let short = adps16_short_vectors(beta, effective_dimension, mode);
-    let bkz_log2 = adps16_log2_cost(beta, mode);
+    let profile = infinity_shape_profile(
+        config.red_shape_model,
+        effective_dimension,
+        identity_vectors,
+        &params.q,
+        beta,
+    )?;
+    let short = short_vectors_for(config.red_cost_model, beta, effective_dimension)?;
+    let bkz_log2 = log2_bkz_cost(config.red_cost_model, beta)?;
 
     let log_trial_prob = infinity_log_trial_probability(
-        &params.q,
+        scratch.log_q,
         length_bound,
         lattice_dimension,
         effective_dimension,
-        &profile,
+        profile.squared_norms(),
         short.rho,
         short.sieve_dim,
     )?;
@@ -90,7 +110,7 @@ pub fn cost_infinity_fixed(
             repetitions_log2,
             sieve_log2,
         )),
-        delta: Some(delta(beta)),
+        delta: Some(crate::reduction::delta(beta)),
         beta: Some(beta),
         eta: Some(short.sieve_dim),
         zeta: Some(zeta),
@@ -105,30 +125,9 @@ pub fn cost_infinity_fixed(
     })
 }
 
-fn validate_fixed_profile(config: &EstimateConfig) -> Result<()> {
-    let unsupported_cost_model = match config.red_cost_model {
-        ReductionCostModel::Adps16 { .. } => None,
-        ReductionCostModel::Bdgl16 => Some("red_cost_model::Bdgl16"),
-        ReductionCostModel::Matzov { .. } => Some("red_cost_model::Matzov"),
-        ReductionCostModel::Gj21 { .. } => Some("red_cost_model::Gj21"),
-        ReductionCostModel::Kyber { .. } => Some("red_cost_model::Kyber"),
-    };
-    if let Some(feature) = unsupported_cost_model {
-        return Err(EstimatorError::Unsupported { feature });
-    }
-    if config.red_shape_model != ShapeModel::Lgsa {
-        return Err(EstimatorError::Unsupported {
-            feature: "red_shape_model != LGSA",
-        });
-    }
-    Ok(())
-}
-
-fn adps16_mode(model: ReductionCostModel) -> Adps16Mode {
-    match model {
-        ReductionCostModel::Adps16 { mode } => mode,
-        _ => Adps16Mode::Classical,
-    }
+fn validate_infinity_profile(config: &EstimateConfig) -> Result<()> {
+    validate_infinity_reduction(config.red_cost_model)?;
+    validate_infinity_shape(config.red_shape_model)
 }
 
 fn length_bound_as_f64(bound: &Bound) -> Result<f64> {
@@ -151,7 +150,7 @@ fn length_bound_as_f64(bound: &Bound) -> Result<f64> {
 }
 
 fn infinity_log_trial_probability(
-    q: &BigUint,
+    log_q: f64,
     length_bound: f64,
     lattice_dimension: u32,
     effective_dimension: u32,
@@ -160,24 +159,22 @@ fn infinity_log_trial_probability(
     sieve_dim: u32,
 ) -> Result<f64> {
     let d_ = effective_dimension as f64;
-    let log_q = log2_biguint(q);
     if ((lattice_dimension as f64).sqrt() * length_bound) <= 2.0_f64.powf(log_q) {
         let vector_length = rho * profile[0].sqrt();
         let sigma = vector_length / d_.sqrt();
         let erf_arg = length_bound / (2.0_f64.sqrt() * sigma);
         Ok(d_ * log2_positive(erf(erf_arg)))
     } else {
-        dilithium_log_trial_probability(q, length_bound, profile, sieve_dim)
+        dilithium_log_trial_probability(log_q, length_bound, profile, sieve_dim)
     }
 }
 
 fn dilithium_log_trial_probability(
-    q: &BigUint,
+    log_q: f64,
     length_bound: f64,
     profile: &[f64],
     sieve_dim: u32,
 ) -> Result<f64> {
-    let log_q = log2_biguint(q);
     let q_f = 2.0_f64.powf(log_q);
     let r0 = profile[0];
     let idx_start = if (r0.sqrt() - q_f).abs() < Q_VECTOR_TOLERANCE {
@@ -249,7 +246,7 @@ fn infinite_cost(
         rop: CostValue::Infinity,
         red: Some(CostValue::Infinity),
         sieve: Some(CostValue::Infinity),
-        delta: Some(delta(beta)),
+        delta: Some(crate::reduction::delta(beta)),
         beta: Some(beta),
         eta: None,
         zeta: Some(zeta),
