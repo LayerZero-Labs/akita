@@ -9,16 +9,13 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
-    GroupBatchAkitaScheduleLookupKey, LevelParams, MRowLayout, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, GroupBatchAkitaScheduleLookupKey, Schedule,
 };
 
 use crate::catalog_identity::validate_catalog_identity;
+use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{
     table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
-    GeneratedStep,
 };
 use crate::schedule_params::validate_policy_witness_chunk;
 use crate::PlannerPolicy;
@@ -101,39 +98,6 @@ pub fn resolve_group_batch_schedule(
     )
 }
 
-fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
-    let padded = len
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
-    Ok(padded.trailing_zeros() as usize)
-}
-
-fn extension_opening_reduction_level_bytes(
-    challenge_field_bits: u32,
-    extension_opening_width: usize,
-    fold_level: usize,
-    key: AkitaScheduleLookupKey,
-    current_w_len: usize,
-) -> Result<usize, AkitaError> {
-    if extension_opening_width <= 1 {
-        return Ok(0);
-    }
-    let (partials, opening_vars) = if fold_level == 0 {
-        (
-            extension_opening_width.saturating_mul(key.num_polynomials),
-            key.num_vars,
-        )
-    } else {
-        (extension_opening_width, padded_boolean_vars(current_w_len)?)
-    };
-    extension_opening_reduction_proof_bytes(
-        challenge_field_bits,
-        partials,
-        opening_vars,
-        extension_opening_width,
-    )
-}
-
 /// Build the runtime [`Schedule`] for a compact generated entry.
 pub fn schedule_from_entry(
     entry: &GeneratedScheduleTableEntry,
@@ -142,220 +106,14 @@ pub fn schedule_from_entry(
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    entry.validate()?;
-    let extension_opening_width = policy.claim_ext_degree;
-    let field_bits = policy.decomposition.field_bits();
-    let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-
-    let expected_root_w_len = 1usize
-        .checked_shl(key.num_vars as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
-    let mut steps = Vec::with_capacity(entry.steps.len());
-    let mut total = 0usize;
-    let mut fold_level = 0usize;
-    let mut current_w_len = expected_root_w_len;
-    let mut terminal_witness_field_len: Option<usize> = None;
-    let mut last_fold_lp: Option<LevelParams> = None;
-
-    for (idx, step) in entry.steps.iter().enumerate() {
-        match step {
-            GeneratedStep::Fold(level) => {
-                let next = entry.steps.get(idx + 1).ok_or_else(|| {
-                    AkitaError::InvalidSetup(format!(
-                        "generated schedule ended with a fold step at level {fold_level}"
-                    ))
-                })?;
-                let is_terminal = matches!(next, GeneratedStep::Direct(_));
-                let inputs = AkitaScheduleInputs {
-                    num_vars: key.num_vars,
-                    level: fold_level,
-                    current_w_len,
-                };
-                let level_num_claims = if fold_level == 0 {
-                    key.num_polynomials
-                } else {
-                    1
-                };
-                let mut lp = level.expand_to_level_params(
-                    policy,
-                    &ring_challenge_config,
-                    fold_level,
-                    current_w_len,
-                    fold_challenge_shape_at_level(inputs),
-                    level_num_claims,
-                )?;
-                // Stamp the per-level chunk layout (the expander defaults it so a
-                // root-direct commit stays single-chunk); must match the DP.
-                lp.witness_chunk = policy.witness_chunk_for_level(fold_level);
-                let num_polynomials = if fold_level == 0 {
-                    key.num_polynomials
-                } else {
-                    1
-                };
-                // Chunk count of the witness this level commits/produces. Equal to
-                // the count stamped on `lp.witness_chunk`, mirroring the DP.
-                let num_chunks = policy.chunks_at_level(fold_level);
-                let mul_d = |ring: usize| -> Result<usize, AkitaError> {
-                    ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "generated next witness length overflow".to_string(),
-                        )
-                    })
-                };
-                let (next_w_len, next_lp, layout) = if is_terminal {
-                    let ring = w_ring_element_count_for_chunks(
-                        field_bits,
-                        &lp,
-                        num_polynomials,
-                        MRowLayout::WithoutDBlock,
-                        num_chunks,
-                    )?;
-                    let len = mul_d(ring)?;
-                    terminal_witness_field_len = Some(len);
-                    (len, None, MRowLayout::WithoutDBlock)
-                } else {
-                    let ring = w_ring_element_count_for_chunks(
-                        field_bits,
-                        &lp,
-                        num_polynomials,
-                        MRowLayout::WithDBlock,
-                        num_chunks,
-                    )?;
-                    let len = mul_d(ring)?;
-                    let GeneratedStep::Fold(next_level) = next else {
-                        return Err(AkitaError::InvalidSetup(
-                            "generated non-terminal successor must be a fold step".to_string(),
-                        ));
-                    };
-                    let next_inputs = AkitaScheduleInputs {
-                        num_vars: key.num_vars,
-                        level: fold_level + 1,
-                        current_w_len: len,
-                    };
-                    let mut next_lp = next_level.expand_to_level_params(
-                        policy,
-                        &ring_challenge_config,
-                        fold_level + 1,
-                        len,
-                        fold_challenge_shape_at_level(next_inputs),
-                        1,
-                    )?;
-                    next_lp.witness_chunk = policy.witness_chunk_for_level(fold_level + 1);
-                    (len, Some(next_lp), MRowLayout::WithDBlock)
-                };
-                // Single commitment group at one point: one public row per level.
-                let num_claims_here = 1;
-                let level_bytes = level_proof_bytes(
-                    field_bits,
-                    challenge_field_bits,
-                    &lp,
-                    next_lp.as_ref(),
-                    next_w_len,
-                    num_claims_here,
-                    layout,
-                ) + extension_opening_reduction_level_bytes(
-                    challenge_field_bits,
-                    extension_opening_width,
-                    fold_level,
-                    key,
-                    current_w_len,
-                )?;
-                total = total.checked_add(level_bytes).ok_or_else(|| {
-                    AkitaError::InvalidSetup("proof byte total overflow".to_string())
-                })?;
-                last_fold_lp = Some(lp.clone());
-                steps.push(Step::Fold(FoldStep {
-                    params: lp,
-                    current_w_len,
-                    next_w_len,
-                    level_bytes,
-                }));
-                fold_level += 1;
-                current_w_len = next_w_len;
-            }
-            GeneratedStep::Direct(direct) => {
-                let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
-                    let params = match direct.commit {
-                        Some(commit) => commit
-                            .expand_to_level_params(
-                                policy,
-                                &ring_challenge_config,
-                                0,
-                                expected_root_w_len,
-                                fold_challenge_shape_at_level(AkitaScheduleInputs {
-                                    num_vars: key.num_vars,
-                                    level: 0,
-                                    current_w_len: expected_root_w_len,
-                                }),
-                                key.num_polynomials,
-                            )
-                            .ok(),
-                        None => None,
-                    };
-                    (
-                        CleartextWitnessShape::FieldElements(expected_root_w_len),
-                        expected_root_w_len,
-                        params,
-                    )
-                } else {
-                    let len = terminal_witness_field_len.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing precomputed witness length".to_string(),
-                        )
-                    })?;
-                    let terminal_fold_level = fold_level.saturating_sub(1);
-                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing predecessor fold params".to_string(),
-                        )
-                    })?;
-                    let num_polynomials = if terminal_fold_level == 0 {
-                        key.num_polynomials
-                    } else {
-                        1
-                    };
-                    // The terminal-direct (cleartext) witness is single-chunk by
-                    // construction: the prover emits the global folded response
-                    // and one shared `r̂` tail (`build_segment_typed_witness` uses
-                    // a single `z` and `num_segments = 1`). Chunking the cleartext
-                    // tail is unsupported, so the last fold level must be
-                    // single-chunk — the leading activated levels are chunked,
-                    // never the tail. Reject loudly here instead of letting the
-                    // prover hit a cryptic layout-mismatch at prove time.
-                    if terminal_lp.witness_chunk.num_chunks > 1 {
-                        return Err(AkitaError::InvalidSetup(
-                            "terminal-direct witness does not support a multi-chunk last fold level"
-                                .to_string(),
-                        ));
-                    }
-                    let witness_shape = segment_typed_witness_shape(
-                        terminal_lp,
-                        field_bits,
-                        num_polynomials,
-                        num_polynomials,
-                        1,
-                        1,
-                    )?;
-                    (witness_shape, len, None)
-                };
-                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-                total = total.checked_add(direct_bytes).ok_or_else(|| {
-                    AkitaError::InvalidSetup("proof byte total overflow".to_string())
-                })?;
-                steps.push(Step::Direct(DirectStep {
-                    current_w_len: direct_current_w_len,
-                    witness_shape,
-                    direct_bytes,
-                    params,
-                }));
-            }
-        }
-    }
-
-    Ok(Schedule {
-        steps,
-        total_bytes: total,
-    })
+    Ok(walk_generated_schedule_entry(
+        entry,
+        key,
+        policy,
+        &ring_challenge_config,
+        &fold_challenge_shape_at_level,
+    )?
+    .schedule)
 }
 
 pub fn estimate_proof_bytes(
@@ -365,12 +123,12 @@ pub fn estimate_proof_bytes(
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<usize, AkitaError> {
-    Ok(schedule_from_entry(
+    Ok(walk_generated_schedule_entry(
         entry,
         key,
         policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
+        &ring_challenge_config,
+        &fold_challenge_shape_at_level,
     )?
     .total_bytes)
 }
@@ -378,8 +136,14 @@ pub fn estimate_proof_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog_identity::expected_catalog_identity;
+    use crate::generated::{
+        validate_generated_schedule_entry, GeneratedDirectStep, GeneratedFoldStep,
+        GeneratedScheduleTable, GeneratedStep,
+    };
     use akita_types::{
-        ChunkedWitnessCfg, DecompositionParams, MultiChunkProfileId, SisModulusFamily,
+        ChunkedWitnessCfg, DecompositionParams, LevelParams, MultiChunkProfileId, SisModulusFamily,
+        Step,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -410,6 +174,47 @@ mod tests {
 
     fn fold_shape(_: AkitaScheduleInputs) -> TensorChallengeShape {
         TensorChallengeShape::Flat
+    }
+
+    fn generated_fold_step(lp: &LevelParams) -> GeneratedFoldStep {
+        GeneratedFoldStep {
+            ring_d: lp.ring_dimension as u32,
+            log_basis: lp.log_basis,
+            m_vars: lp.m_vars as u32,
+            r_vars: lp.r_vars as u32,
+            n_a: lp.a_key.row_len() as u32,
+            n_b: lp.b_key.row_len() as u32,
+            n_d: lp.d_key.row_len() as u32,
+            tier_split: if lp.tier_split > 1 {
+                Some(lp.tier_split as u32)
+            } else {
+                None
+            },
+            n_f: lp.f_key.as_ref().map(|f| f.row_len() as u32),
+        }
+    }
+
+    fn generated_steps_from_schedule(schedule: &Schedule) -> Vec<GeneratedStep> {
+        schedule
+            .steps
+            .iter()
+            .map(|step| match step {
+                Step::Fold(fold) => GeneratedStep::Fold(generated_fold_step(&fold.params)),
+                Step::Direct(direct) => GeneratedStep::Direct(GeneratedDirectStep {
+                    commit: direct.params.as_ref().map(generated_fold_step),
+                }),
+            })
+            .collect()
+    }
+
+    fn generated_entry_from_steps(
+        key: AkitaScheduleLookupKey,
+        steps: Vec<GeneratedStep>,
+    ) -> GeneratedScheduleTableEntry {
+        GeneratedScheduleTableEntry {
+            key: generated_schedule_lookup_key(key),
+            steps: Box::leak(steps.into_boxed_slice()),
+        }
     }
 
     #[test]
@@ -519,5 +324,172 @@ mod tests {
             .expect_err("zero-arity key must be rejected");
 
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn validate_generated_entry_accepts_materialized_dp_schedule() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
+
+        validate_generated_schedule_entry(
+            &entry,
+            key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect("generated entry should validate");
+    }
+
+    #[test]
+    fn validate_generated_entry_rejects_overstated_b_rank() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let mut steps = generated_steps_from_schedule(&schedule);
+        match steps
+            .iter_mut()
+            .find(|step| matches!(step, GeneratedStep::Fold(_)))
+            .expect("schedule should contain a fold")
+        {
+            GeneratedStep::Fold(fold) => fold.n_b += 1,
+            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
+        }
+        let entry = generated_entry_from_steps(key, steps);
+
+        let err = validate_generated_schedule_entry(
+            &entry,
+            key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect_err("overstated B rank must be rejected");
+
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("b-rank mismatch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_generated_entry_rejects_overstated_a_rank() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let mut steps = generated_steps_from_schedule(&schedule);
+        match steps
+            .iter_mut()
+            .find(|step| matches!(step, GeneratedStep::Fold(_)))
+            .expect("schedule should contain a fold")
+        {
+            GeneratedStep::Fold(fold) => fold.n_a += 1,
+            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
+        }
+        let entry = generated_entry_from_steps(key, steps);
+
+        let err = validate_generated_schedule_entry(
+            &entry,
+            key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect_err("overstated A rank must be rejected");
+
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("a-rank mismatch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_generated_entry_rejects_understated_a_rank() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let mut steps = generated_steps_from_schedule(&schedule);
+        match steps
+            .iter_mut()
+            .find(|step| matches!(step, GeneratedStep::Fold(_)))
+            .expect("schedule should contain a fold")
+        {
+            GeneratedStep::Fold(fold) => {
+                assert!(fold.n_a > 1, "test needs n_a > 1 to understate rank");
+                fold.n_a -= 1;
+            }
+            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
+        }
+        let entry = generated_entry_from_steps(key, steps);
+
+        let err = validate_generated_schedule_entry(
+            &entry,
+            key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect_err("understated A rank must be rejected");
+
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("a-rank mismatch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_schedule_rejects_corrupt_table_hit() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let mut steps = generated_steps_from_schedule(&schedule);
+        match steps
+            .iter_mut()
+            .find(|step| matches!(step, GeneratedStep::Fold(_)))
+            .expect("schedule should contain a fold")
+        {
+            GeneratedStep::Fold(fold) => fold.n_d += 1,
+            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
+        }
+        let entry = generated_entry_from_steps(key, steps);
+        let entries: &'static [GeneratedScheduleTableEntry] =
+            Box::leak(vec![entry].into_boxed_slice());
+        let identity =
+            expected_catalog_identity("test", &policy, entries, ring_challenge_config, fold_shape)
+                .expect("identity");
+        let table = GeneratedScheduleTable { entries, identity };
+
+        let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, Some(table))
+            .expect_err("corrupt table hit must be rejected");
+
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("d-rank mismatch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn walk_validate_matches_materialize_total_bytes() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
+
+        let validated =
+            estimate_proof_bytes(&entry, key, &policy, ring_challenge_config, fold_shape)
+                .expect("validate bytes");
+        let materialized =
+            schedule_from_entry(&entry, key, &policy, ring_challenge_config, fold_shape)
+                .expect("materialize");
+
+        assert_eq!(validated, materialized.total_bytes);
     }
 }

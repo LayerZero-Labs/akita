@@ -102,11 +102,36 @@ pub struct GeneratedScheduleTable {
 }
 
 pub mod expand;
+pub mod validate;
+pub(crate) mod walk;
 pub use akita_types::SisModulusFamily;
+pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
+
+use core::cmp::Ordering;
+
+/// Lexicographic order used by shipped catalog emission: `num_polynomials`, then `num_vars`.
+#[inline]
+pub fn catalog_key_cmp(a: GeneratedScheduleKey, b: GeneratedScheduleKey) -> Ordering {
+    a.num_polynomials
+        .cmp(&b.num_polynomials)
+        .then_with(|| a.num_vars.cmp(&b.num_vars))
+}
+
+/// Returns true when `entries` are ordered for [`table_entry`] binary search.
+pub fn catalog_entries_sorted_for_lookup(entries: &[GeneratedScheduleTableEntry]) -> bool {
+    entries
+        .windows(2)
+        .all(|window| catalog_key_cmp(window[0].key, window[1].key).is_lt())
+}
 
 pub fn table_entry(
     table: GeneratedScheduleTable,
     key: GeneratedScheduleKey,
 ) -> Option<&'static GeneratedScheduleTableEntry> {
-    table.entries.iter().find(|entry| entry.key == key)
+    debug_assert!(catalog_entries_sorted_for_lookup(table.entries));
+    table
+        .entries
+        .binary_search_by(|entry| catalog_key_cmp(entry.key, key))
+        .ok()
+        .map(|idx| &table.entries[idx])
 }

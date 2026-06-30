@@ -23,11 +23,14 @@ pub mod schedule_params;
 
 pub use akita_challenges::TensorChallengeShape;
 pub use catalog_identity::{
-    expected_catalog_identity, identity_digest, key_digest, ring_challenge_config_digest,
-    validate_catalog_identity,
+    expected_catalog_identity, identity_digest, key_digest, policy_digest,
+    ring_challenge_config_digest, validate_catalog_identity,
 };
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
-pub use generated::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
+pub use generated::{
+    catalog_entries_sorted_for_lookup, validate_generated_schedule_entry,
+    validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
+};
 pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, generated_schedule_lookup_key, resolve_group_batch_schedule,
