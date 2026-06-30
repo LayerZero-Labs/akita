@@ -182,6 +182,8 @@ def main() -> int:
 
     if not args.skip_monotonicity:
         failures.extend(check_monotonicity(rows))
+    if checked == 0:
+        failures.append("no trusted infinity cells checked")
 
     if failures:
         for failure in failures:

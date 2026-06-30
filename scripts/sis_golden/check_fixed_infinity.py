@@ -125,6 +125,9 @@ def main() -> int:
             if expected[field] != actual[field]:
                 failures.append(f"row {row_index}: {field} mismatch")
 
+    if checked == 0:
+        failures.append("no trusted fixed infinity cells checked")
+
     if failures:
         for failure in failures:
             print(f"FAIL {failure}", file=sys.stderr)

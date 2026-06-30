@@ -17,6 +17,9 @@ use crate::{
 const Q_VECTOR_TOLERANCE: f64 = 1e-8;
 const UNIT_VECTOR_TOLERANCE: f64 = 1e-8;
 const MIN_SIEVE_LOG2: f64 = -100.0 * std::f64::consts::LOG2_10;
+// PR217 computes the sieve floor as Sage RR(1e-100), which overflows to oo
+// once repeated past the binary64 exponent range.
+const SAGE_RR_MAX_LOG2: f64 = 1024.0;
 
 /// Evaluate fixed-beta, fixed-zeta infinity cost for ADPS16 + LGSA.
 pub fn cost_infinity_fixed(
@@ -74,14 +77,15 @@ pub fn cost_infinity_fixed(
         return Ok(infinite_cost(params, beta, zeta, effective_dimension));
     }
 
-    let sieve_log2 = pre_repeat_sieve_log2(short.cost_red_log2, bkz_log2) + repetitions_log2;
+    let pre_repeat_sieve = pre_repeat_sieve_log2(short.cost_red_log2, bkz_log2);
+    let sieve_log2 = pre_repeat_sieve.log2 + repetitions_log2;
     let rop_log2 = short.cost_red_log2 + repetitions_log2;
     let red_log2 = bkz_log2 + repetitions_log2;
 
     Ok(LatticeCost {
         rop: log2_to_cost_value(rop_log2),
         red: Some(log2_to_cost_value(red_log2)),
-        sieve: Some(log2_to_cost_value(sieve_log2)),
+        sieve: Some(sieve_cost_value(pre_repeat_sieve, sieve_log2)),
         delta: Some(delta(beta)),
         beta: Some(beta),
         eta: Some(short.sieve_dim),
@@ -190,11 +194,31 @@ fn dilithium_log_trial_probability(
     Ok(log_trial_prob)
 }
 
-fn pre_repeat_sieve_log2(cost_red_log2: f64, bkz_log2: f64) -> f64 {
+#[derive(Clone, Copy, Debug)]
+struct PreRepeatSieve {
+    log2: f64,
+    used_floor: bool,
+}
+
+fn pre_repeat_sieve_log2(cost_red_log2: f64, bkz_log2: f64) -> PreRepeatSieve {
     if cost_red_log2 > bkz_log2 {
-        cost_red_log2 + log2_positive(1.0 - 2.0_f64.powf(bkz_log2 - cost_red_log2))
+        PreRepeatSieve {
+            log2: cost_red_log2 + log2_positive(1.0 - 2.0_f64.powf(bkz_log2 - cost_red_log2)),
+            used_floor: false,
+        }
     } else {
-        MIN_SIEVE_LOG2
+        PreRepeatSieve {
+            log2: MIN_SIEVE_LOG2,
+            used_floor: true,
+        }
+    }
+}
+
+fn sieve_cost_value(pre_repeat: PreRepeatSieve, repeated_log2: f64) -> CostValue {
+    if pre_repeat.used_floor && repeated_log2 >= SAGE_RR_MAX_LOG2 {
+        CostValue::Infinity
+    } else {
+        log2_to_cost_value(repeated_log2)
     }
 }
 

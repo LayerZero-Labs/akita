@@ -17,7 +17,7 @@ struct FixedGoldenRow {
     zeta_input: u32,
     rop_log2: f64,
     red_log2: f64,
-    sieve_log2: Option<f64>,
+    sieve_log2: ExpectedLog2,
     repetitions_log2: f64,
     beta: u32,
     eta: u32,
@@ -49,9 +49,7 @@ fn fixed_infinity_goldens_match_pr217_trusted_rows() {
 
         assert_log2_close(row.rop_log2, cost.rop, "rop", &row);
         assert_log2_close(row.red_log2, cost.red.unwrap(), "red", &row);
-        if let Some(expected_sieve_log2) = row.sieve_log2 {
-            assert_log2_close(expected_sieve_log2, cost.sieve.unwrap(), "sieve", &row);
-        }
+        assert_log2_matches(row.sieve_log2, cost.sieve.unwrap(), "sieve", &row);
         assert_log2_close(
             row.repetitions_log2,
             cost.repetitions.unwrap(),
@@ -105,7 +103,7 @@ fn parse_rows() -> Vec<FixedGoldenRow> {
                 zeta_input: parse(get("zeta_input")),
                 rop_log2: parse(get("rop_log2")),
                 red_log2: parse(get("red_log2")),
-                sieve_log2: parse_optional_log2(get("sieve_log2")),
+                sieve_log2: parse_expected_log2(get("sieve_log2")),
                 repetitions_log2: parse(get("repetitions_log2")),
                 beta: parse(get("beta")),
                 eta: parse(get("eta")),
@@ -125,10 +123,31 @@ where
     value.parse().unwrap()
 }
 
-fn parse_optional_log2(value: &str) -> Option<f64> {
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ExpectedLog2 {
+    Finite(f64),
+    Infinity,
+}
+
+fn parse_expected_log2(value: &str) -> ExpectedLog2 {
     match value {
-        "inf" | "-inf" | "" => None,
-        _ => Some(parse(value)),
+        "inf" => ExpectedLog2::Infinity,
+        _ => ExpectedLog2::Finite(parse(value)),
+    }
+}
+
+fn assert_log2_matches(
+    expected: ExpectedLog2,
+    actual: CostValue,
+    field: &str,
+    row: &FixedGoldenRow,
+) {
+    match expected {
+        ExpectedLog2::Finite(expected) => assert_log2_close(expected, actual, field, row),
+        ExpectedLog2::Infinity => assert!(
+            matches!(actual, CostValue::Infinity),
+            "{field}: expected inf, got {actual:?} for {row:?}",
+        ),
     }
 }
 
