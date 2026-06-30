@@ -35,6 +35,7 @@ pub struct EmitSpec {
     pub policy: PlannerPolicy,
     pub keys: Vec<AkitaScheduleLookupKey>,
     pub group_batch_keys: Vec<GroupBatchAkitaScheduleLookupKey>,
+    pub emit_group_batch: bool,
     pub output_dir: PathBuf,
     pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     pub regen_group_batch: fn(GroupBatchAkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
@@ -483,9 +484,11 @@ fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
         }
         writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {};", output_group_batch_module_name(spec))
-            .map_err(|e| e.to_string())?;
+        if spec.emit_group_batch {
+            writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
+            writeln!(out, "pub mod {};", output_group_batch_module_name(spec))
+                .map_err(|e| e.to_string())?;
+        }
     }
     if !tiered_wired {
         emit_tiered_module_declaration(&mut out)?;
@@ -504,9 +507,14 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
     let group_batch_module_name = output_group_batch_module_name(spec);
     let const_name = spec.const_name;
     let group_batch_const_name = output_group_batch_const_name(spec);
+    let group_batch_entries = if spec.emit_group_batch {
+        format!("{group_batch_module_name}::{group_batch_const_name}")
+    } else {
+        "&[]".to_string()
+    };
     Ok(format!(
         "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        group_batch_entries: {group_batch_module_name}::{group_batch_const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
+         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        group_batch_entries: {group_batch_entries},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
 }
 

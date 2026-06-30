@@ -35,24 +35,14 @@ pub mod fp128_d64_onehot_tiered;
 pub mod fp128_d64_onehot_tiered_group_batch;
 #[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot;
-#[cfg(feature = "fp32-d128-onehot")]
-pub mod fp32_d128_onehot_group_batch;
 #[cfg(feature = "fp32-d256-onehot")]
 pub mod fp32_d256_onehot;
-#[cfg(feature = "fp32-d256-onehot")]
-pub mod fp32_d256_onehot_group_batch;
 #[cfg(feature = "fp64-d128")]
 pub mod fp64_d128;
-#[cfg(feature = "fp64-d128")]
-pub mod fp64_d128_group_batch;
 #[cfg(feature = "fp64-d128-onehot")]
 pub mod fp64_d128_onehot;
-#[cfg(feature = "fp64-d128-onehot")]
-pub mod fp64_d128_onehot_group_batch;
 #[cfg(feature = "fp64-d256-onehot")]
 pub mod fp64_d256_onehot;
-#[cfg(feature = "fp64-d256-onehot")]
-pub mod fp64_d256_onehot_group_batch;
 
 #[cfg(feature = "fp128-d128-full")]
 pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
@@ -118,7 +108,7 @@ pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
 pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp32_d128_onehot::FP32_D128_ONEHOT_SCHEDULES,
-        group_batch_entries: fp32_d128_onehot_group_batch::FP32_D128_ONEHOT_GROUP_BATCH_SCHEDULES,
+        group_batch_entries: &[],
         identity: fp32_d128_onehot::CATALOG_IDENTITY,
     }
 }
@@ -127,7 +117,7 @@ pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
 pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp32_d256_onehot::FP32_D256_ONEHOT_SCHEDULES,
-        group_batch_entries: fp32_d256_onehot_group_batch::FP32_D256_ONEHOT_GROUP_BATCH_SCHEDULES,
+        group_batch_entries: &[],
         identity: fp32_d256_onehot::CATALOG_IDENTITY,
     }
 }
@@ -136,7 +126,7 @@ pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
 pub fn fp64_d128_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp64_d128::FP64_D128_SCHEDULES,
-        group_batch_entries: fp64_d128_group_batch::FP64_D128_GROUP_BATCH_SCHEDULES,
+        group_batch_entries: &[],
         identity: fp64_d128::CATALOG_IDENTITY,
     }
 }
@@ -145,7 +135,7 @@ pub fn fp64_d128_table() -> GeneratedScheduleTable {
 pub fn fp64_d128_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp64_d128_onehot::FP64_D128_ONEHOT_SCHEDULES,
-        group_batch_entries: fp64_d128_onehot_group_batch::FP64_D128_ONEHOT_GROUP_BATCH_SCHEDULES,
+        group_batch_entries: &[],
         identity: fp64_d128_onehot::CATALOG_IDENTITY,
     }
 }
@@ -154,7 +144,7 @@ pub fn fp64_d128_onehot_table() -> GeneratedScheduleTable {
 pub fn fp64_d256_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp64_d256_onehot::FP64_D256_ONEHOT_SCHEDULES,
-        group_batch_entries: fp64_d256_onehot_group_batch::FP64_D256_ONEHOT_GROUP_BATCH_SCHEDULES,
+        group_batch_entries: &[],
         identity: fp64_d256_onehot::CATALOG_IDENTITY,
     }
 }

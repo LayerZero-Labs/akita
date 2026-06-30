@@ -73,8 +73,10 @@ fn main() -> Result<(), String> {
                 .map_err(|e| format!("{}: emit spec: {e}", family.module_name))?;
             let dest = write_family_module(&spec)?;
             println!("wrote {}", dest.display());
-            let dest = write_group_batch_family_module(&spec)?;
-            println!("wrote {}", dest.display());
+            if spec.emit_group_batch {
+                let dest = write_group_batch_family_module(&spec)?;
+                println!("wrote {}", dest.display());
+            }
         }
     }
 

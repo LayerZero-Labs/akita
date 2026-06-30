@@ -57,6 +57,8 @@ pub struct GeneratedFamily {
     pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     /// Pure grouped DP regeneration that ignores any shipped table.
     pub regen_group_batch: fn(GroupBatchAkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    /// Whether this family ships grouped-root generated tables.
+    pub emit_group_batch: bool,
     /// Grouped-root keys enumerated for this generated family.
     pub group_batch_keys:
         fn(&GeneratedFamily) -> Result<Vec<GroupBatchAkitaScheduleLookupKey>, AkitaError>,
@@ -137,6 +139,9 @@ fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
 fn group_batch_keys<Cfg: CommitmentConfig>(
     family: &GeneratedFamily,
 ) -> Result<Vec<GroupBatchAkitaScheduleLookupKey>, AkitaError> {
+    if !family.emit_group_batch {
+        return Ok(Vec::new());
+    }
     if Cfg::TIERED_COMMITMENT || Cfg::decomposition().log_commit_bound != 1 {
         return Ok(Vec::new());
     }
@@ -191,6 +196,25 @@ fn precommitted_group_patterns(main_num_polynomials: usize) -> Vec<Vec<usize>> {
 }
 
 macro_rules! family_row {
+    (group_batch, $module:literal, $const:literal, $feat:literal, $min:expr, $max:expr, $cfg:ty) => {
+        GeneratedFamily {
+            module_name: $module,
+            const_name: $const,
+            schedule_feature: $feat,
+            min_num_vars: $min,
+            max_num_vars: $max,
+            num_polys: DEFAULT_NUM_POLYS,
+            regen: regen::<$cfg>,
+            regen_group_batch: regen_group_batch::<$cfg>,
+            emit_group_batch: true,
+            group_batch_keys: group_batch_keys::<$cfg>,
+            table_backed: table_backed::<$cfg>,
+            policy: family_policy::<$cfg>,
+            ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
+            fold_challenge_shape_at_level:
+                <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,
+        }
+    };
     ($module:literal, $const:literal, $feat:literal, $min:expr, $max:expr, $cfg:ty) => {
         GeneratedFamily {
             module_name: $module,
@@ -201,6 +225,7 @@ macro_rules! family_row {
             num_polys: DEFAULT_NUM_POLYS,
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
+            emit_group_batch: false,
             group_batch_keys: group_batch_keys::<$cfg>,
             table_backed: table_backed::<$cfg>,
             policy: family_policy::<$cfg>,
@@ -221,6 +246,7 @@ pub fn wiring_emit_spec(family: &GeneratedFamily, output_dir: std::path::PathBuf
         policy: (family.policy)(),
         keys: Vec::new(),
         group_batch_keys: Vec::new(),
+        emit_group_batch: family.emit_group_batch,
         output_dir,
         regen: family.regen,
         regen_group_batch: family.regen_group_batch,
@@ -244,6 +270,7 @@ pub fn emit_spec_for_family(
         policy: (family.policy)(),
         keys: family_keys(family)?,
         group_batch_keys: (family.group_batch_keys)(family)?,
+        emit_group_batch: family.emit_group_batch,
         output_dir,
         regen: family.regen,
         regen_group_batch: family.regen_group_batch,
@@ -260,6 +287,7 @@ pub fn emit_spec_for_family(
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
+        group_batch,
         "fp128_d128_full",
         "FP128_D128_FULL_SCHEDULES",
         "fp128-d128-full",
@@ -268,6 +296,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D128Full
     ),
     family_row!(
+        group_batch,
         "fp128_d128_onehot",
         "FP128_D128_ONEHOT_SCHEDULES",
         "fp128-d128-onehot",
@@ -276,6 +305,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D128OneHot
     ),
     family_row!(
+        group_batch,
         "fp128_d64_onehot",
         "FP128_D64_ONEHOT_SCHEDULES",
         "fp128-d64-onehot",
@@ -284,6 +314,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64OneHot
     ),
     family_row!(
+        group_batch,
         "fp128_d64_full",
         "FP128_D64_FULL_SCHEDULES",
         "fp128-d64-full",
@@ -292,6 +323,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64Full
     ),
     family_row!(
+        group_batch,
         "fp128_d64_onehot_tensor",
         "FP128_D64_ONEHOT_TENSOR_SCHEDULES",
         "fp128-d64-onehot-tensor",
@@ -301,6 +333,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     ),
     // Tiered companion of `fp128_d64_onehot`
     family_row!(
+        group_batch,
         "fp128_d64_onehot_tiered",
         "FP128_D64_ONEHOT_TIERED_SCHEDULES",
         "fp128-d64-onehot-tiered",
