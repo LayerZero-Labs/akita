@@ -250,7 +250,7 @@ macro_rules! delegate_root_commit_kernel {
                 prepared: &Self::PreparedSetup,
                 source: S,
                 plan: CommitInnerPlan,
-            ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+            ) -> Result<CommitInnerWitness<F>, AkitaError> {
                 CpuBackend.commit_inner(prepared, source, plan)
             }
         }

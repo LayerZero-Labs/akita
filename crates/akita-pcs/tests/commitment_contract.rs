@@ -122,7 +122,7 @@ where
         prepared: &Self::PreparedSetup,
         source: ContractCommitView<'_>,
         plan: CommitInnerPlan,
-    ) -> Result<akita_prover::CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<akita_prover::CommitInnerWitness<F>, AkitaError> {
         let dense = DensePoly::<F, D>::from_ring_coeffs(source.poly.coeffs.clone());
         RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
             &CpuBackend,

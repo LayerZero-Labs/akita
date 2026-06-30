@@ -32,7 +32,7 @@ pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
     instance: &RingRelationInstance<F, D>,
-    witness: RingRelationWitness<F, D>,
+    witness: RingRelationWitness<F>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
     retain_terminal_artifacts: bool,
@@ -53,8 +53,11 @@ where
         e_hat,
         e_folded,
         hint,
+        ..
     } = witness;
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+    let e_hat = FlatDigitBlocks::<D>::from_digit_blocks(&e_hat)?;
+    let e_folded = e_folded.as_ring_slice_trusted::<D>();
     // Recompose the inner rows on demand from the D-free decomposed digit stream
     // (S5 re-home); the flattened decomposed view feeds the relation quotient.
     let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
@@ -98,7 +101,7 @@ where
     };
     let terminal_artifacts = if retain_terminal_artifacts {
         Some(RingSwitchTerminalArtifacts {
-            e_folded,
+            e_folded: e_folded.to_vec(),
             recomposed_inner_rows,
             z_folded_centered: z_centered,
             r,

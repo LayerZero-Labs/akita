@@ -154,7 +154,7 @@ where
         prepared: &Self::PreparedSetup,
         source: SparseRingView<'_, F, D>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<CommitInnerWitness<F>, AkitaError> {
         source.poly.commit_inner(self, prepared, plan)
     }
 }

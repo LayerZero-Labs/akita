@@ -54,7 +54,7 @@ where
         prepared: &Self::PreparedSetup,
         source: S,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>;
+    ) -> Result<CommitInnerWitness<F>, AkitaError>;
 }
 
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.

@@ -676,11 +676,12 @@ mod tests {
                         plan,
                     )
                     .unwrap();
+                    let typed_digits = inner.decomposed_inner_rows_trusted::<TEST_D>().unwrap();
                     CpuBackend
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.b_key.row_len(),
-                            inner.decomposed_inner_rows.flat_digits(),
+                            typed_digits.flat_digits(),
                             lp.log_basis,
                         )
                         .unwrap()

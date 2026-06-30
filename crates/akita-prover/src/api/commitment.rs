@@ -79,7 +79,7 @@ pub(crate) fn commit_inner_flat_digit_count(
 
 #[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
 pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
-    inner: &CommitInnerWitness<F, D>,
+    inner: &CommitInnerWitness<F>,
     num_blocks: usize,
     n_a: usize,
     num_digits_open: usize,
@@ -92,14 +92,17 @@ where
     let expected_flat_digits = commit_inner_flat_digit_count(num_blocks, n_a, num_digits_open)?;
     validate_i8_setup_log_basis(log_basis, "when recomposing i8 inner commitment digits")?;
 
-    if inner.recomposed_inner_rows.len() != num_blocks {
+    inner.ensure_ring_dim::<D>()?;
+
+    if inner.block_count() != num_blocks {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} inner commitment blocks, expected {}",
-            inner.recomposed_inner_rows.len(),
+            inner.block_count(),
             num_blocks
         )));
     }
-    for (block_idx, block_rows) in inner.recomposed_inner_rows.iter().enumerate() {
+    for block_idx in 0..num_blocks {
+        let block_rows = inner.recomposed_block_trusted::<D>(block_idx)?;
         if block_rows.len() != n_a {
             return Err(AkitaError::InvalidSetup(format!(
                 "backend returned {} A rows for inner commitment block {}, expected {}",
@@ -125,10 +128,10 @@ where
             )));
         }
     }
-    if inner.decomposed_inner_rows.flat_digits().len() != expected_flat_digits {
+    if inner.decomposed_inner_rows.total_planes() != expected_flat_digits {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} total decomposed inner commitment digits, expected {}",
-            inner.decomposed_inner_rows.flat_digits().len(),
+            inner.decomposed_inner_rows.total_planes(),
             expected_flat_digits
         )));
     }
@@ -413,15 +416,16 @@ where
         .try_for_each(|((dst, poly), decomposed)| -> Result<(), AkitaError> {
             let inner =
                 RootCommitKernel::commit_inner(backend, prepared, poly.commit_view()?, plan)?;
-            validate_commit_inner_shape(
+            validate_commit_inner_shape::<F, D>(
                 &inner,
                 params.num_blocks,
                 params.a_key.row_len(),
                 params.num_digits_open,
                 params.log_basis,
             )?;
-            dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
-            *decomposed = inner.decomposed_inner_rows;
+            let typed_digits = inner.decomposed_inner_rows_trusted::<D>()?;
+            dst.copy_from_slice(typed_digits.flat_digits());
+            *decomposed = typed_digits;
             Ok(())
         })?;
     validate_commit_outer_input_nonempty(b_input_digits.len())?;
@@ -787,63 +791,63 @@ mod tests {
         recomposed_blocks: usize,
         rows_per_block: usize,
         block_sizes: Vec<usize>,
-    ) -> CommitInnerWitness<F, D> {
+    ) -> CommitInnerWitness<F> {
         let total_digits = block_sizes.iter().sum();
-        CommitInnerWitness {
-            recomposed_inner_rows: vec![
+        CommitInnerWitness::from_parts(
+            vec![
                 vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
                 recomposed_blocks
             ],
-            decomposed_inner_rows: FlatDigitBlocks::new(vec![[0i8; D]; total_digits], block_sizes)
+            FlatDigitBlocks::new(vec![[0i8; D]; total_digits], block_sizes)
                 .expect("valid flat digit blocks"),
-        }
+        )
     }
 
     #[test]
     fn commit_inner_shape_accepts_expected_layout() {
         let inner = inner_witness(2, 3, vec![6, 6]);
-        validate_commit_inner_shape(&inner, 2, 3, 2, 4).expect("shape should match");
+        validate_commit_inner_shape::<F, D>(&inner, 2, 3, 2, 4).expect("shape should match");
     }
 
     #[test]
     fn commit_inner_shape_rejects_bad_block_count() {
         let inner = inner_witness(1, 3, vec![6, 6]);
-        assert!(validate_commit_inner_shape(&inner, 2, 3, 2, 4).is_err());
+        assert!(validate_commit_inner_shape::<F, D>(&inner, 2, 3, 2, 4).is_err());
     }
 
     #[test]
     fn commit_inner_shape_rejects_bad_digit_block_size() {
         let inner = inner_witness(2, 3, vec![6, 5]);
-        assert!(validate_commit_inner_shape(&inner, 2, 3, 2, 4).is_err());
+        assert!(validate_commit_inner_shape::<F, D>(&inner, 2, 3, 2, 4).is_err());
     }
 
     #[test]
     fn commit_inner_shape_rejects_recomposition_mismatch() {
         let mut inner = inner_witness(1, 1, vec![2]);
-        inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
-        assert!(check_decomposed_rows_i8_match(&inner, 1, 2, 4).is_err());
+        inner.decomposed_inner_rows.digits_mut()[0] = 1;
+        assert!(check_decomposed_rows_i8_match::<F, D>(&inner, 1, 2, 4).is_err());
     }
 
     #[test]
     fn commit_inner_shape_rejects_nonzero_digits_on_zero_row() {
         let mut inner = inner_witness(1, 3, vec![6]);
-        inner.decomposed_inner_rows.flat_digits_mut()[2][0] = 1;
-        assert!(check_decomposed_rows_i8_match(&inner, 3, 2, 4).is_err());
+        inner.decomposed_inner_rows.digits_mut()[2 * D] = 1;
+        assert!(check_decomposed_rows_i8_match::<F, D>(&inner, 3, 2, 4).is_err());
     }
 
     #[test]
     fn commit_inner_shape_accepts_many_all_zero_blocks() {
         let num_blocks = 1024;
         let inner = inner_witness(num_blocks, 3, vec![6; num_blocks]);
-        validate_commit_inner_shape(&inner, num_blocks, 3, 2, 4).expect("all-zero blocks");
-        check_decomposed_rows_i8_match(&inner, 3, 2, 4).expect("digit consistency");
+        validate_commit_inner_shape::<F, D>(&inner, num_blocks, 3, 2, 4).expect("all-zero blocks");
+        check_decomposed_rows_i8_match::<F, D>(&inner, 3, 2, 4).expect("digit consistency");
     }
 
     #[test]
     fn commit_inner_shape_rejects_log_basis_above_i8_range() {
         let inner = inner_witness(1, 1, vec![2]);
         assert!(matches!(
-            validate_commit_inner_shape(&inner, 1, 1, 2, 7),
+            validate_commit_inner_shape::<F, D>(&inner, 1, 1, 2, 7),
             Err(AkitaError::InvalidSetup(_))
         ));
     }

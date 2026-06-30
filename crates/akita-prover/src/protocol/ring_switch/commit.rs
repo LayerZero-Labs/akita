@@ -69,7 +69,7 @@ where
     let w_view = w.view::<F, D>()?;
     let plan = CommitInnerPlan::from_level(commit_layout);
     let inner = w_view.commit_inner(backend, prepared, plan)?;
-    validate_commit_inner_shape(
+    validate_commit_inner_shape::<F, D>(
         &inner,
         commit_layout.num_blocks,
         commit_layout.a_key.row_len(),
@@ -77,7 +77,8 @@ where
         commit_layout.log_basis,
     )?;
 
-    let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
+    let typed_digits = inner.decomposed_inner_rows_trusted::<D>()?;
+    let outer_input = typed_digits.flat_digits().to_vec();
     validate_commit_outer_input_nonempty(outer_input.len())?;
     let u: Vec<CyclotomicRing<F, D>> = if commit_layout.f_key.is_some() {
         // Tiered: u_final = F·decompose(blockdiag(B')·t̂). ZK blinding of the F
@@ -102,7 +103,7 @@ where
     };
     // Protocol storage is D-free: the typed digit planes flatten into a
     // `DigitBlocks` hint; recomposed rows are recomputed on demand downstream.
-    let hint = AkitaCommitmentHint::singleton(inner.decomposed_inner_rows.into_digit_blocks());
+    let hint = AkitaCommitmentHint::singleton(inner.decomposed_inner_rows.clone());
     Ok((RingVec::from_ring_elems(&u), hint))
 }
 

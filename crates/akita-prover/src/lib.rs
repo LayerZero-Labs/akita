@@ -16,7 +16,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, Commitment,
-    OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection, RingVec,
+    DigitBlocks, OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection, RingVec,
 };
 
 pub use api::{
@@ -379,10 +379,93 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
 }
 
 /// Prover-side output of the inner Ajtai commit step.
-pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
-    /// Recombined inner `A * s_i` rows, grouped by block.
-    pub recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Digit decompositions of `A * s_i` in flat column-major order plus
-    /// explicit block boundaries.
-    pub decomposed_inner_rows: FlatDigitBlocks<D>,
+///
+/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
+/// closures borrow typed ring rows via [`Self::recomposed_block_trusted`] and
+/// typed digit planes via [`Self::decomposed_inner_rows_trusted`].
+pub struct CommitInnerWitness<F: FieldCore> {
+    /// Recombined inner `A * s_i` rows per block, each block in flat ring storage.
+    pub recomposed_inner_rows: Vec<RingVec<F>>,
+    /// Digit decompositions of `A * s_i` in D-free protocol storage.
+    pub decomposed_inner_rows: DigitBlocks,
+    /// Ring dimension (coefficients per ring element), fixed at construction.
+    ring_dim: usize,
+}
+
+impl<F: FieldCore> CommitInnerWitness<F> {
+    /// Construct from typed kernel output at a commit boundary.
+    pub fn from_parts<const D: usize>(
+        recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
+        decomposed_inner_rows: crate::compute::FlatDigitBlocks<D>,
+    ) -> Self {
+        Self {
+            recomposed_inner_rows: recomposed_inner_rows
+                .into_iter()
+                .map(|block| RingVec::from_ring_elems(&block))
+                .collect(),
+            decomposed_inner_rows: decomposed_inner_rows.into_digit_blocks(),
+            ring_dim: D,
+        }
+    }
+
+    /// Stored ring dimension (coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Number of inner commitment blocks.
+    pub fn block_count(&self) -> usize {
+        self.recomposed_inner_rows.len()
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "commit inner witness ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if self.decomposed_inner_rows.digit_stride() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.decomposed_inner_rows.digit_stride(),
+            });
+        }
+        for block in &self.recomposed_inner_rows {
+            if !block.can_decode_vec(D) {
+                return Err(AkitaError::InvalidSize {
+                    expected: D,
+                    actual: block.coeff_len(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Borrow recomposed rows for one block after [`Self::ensure_ring_dim`].
+    pub fn recomposed_block_trusted<const D: usize>(
+        &self,
+        block: usize,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.recomposed_inner_rows
+            .get(block)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(format!(
+                    "commit inner witness block index {block} out of range"
+                ))
+            })
+            .map(|rows| rows.as_ring_slice_trusted::<D>())
+    }
+
+    /// Rebuild typed digit planes after [`Self::ensure_ring_dim`].
+    pub fn decomposed_inner_rows_trusted<const D: usize>(
+        &self,
+    ) -> Result<crate::compute::FlatDigitBlocks<D>, AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        crate::compute::FlatDigitBlocks::from_digit_blocks(&self.decomposed_inner_rows)
+    }
 }

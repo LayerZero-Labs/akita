@@ -91,7 +91,7 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
     pub(in crate::protocol::core) commitment: RingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
-    pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
+    pub(in crate::protocol::core) witness: RingRelationWitness<F>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
     pub(in crate::protocol::core) trace_eval_target: L,

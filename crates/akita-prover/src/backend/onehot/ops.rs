@@ -175,7 +175,7 @@ where
         prepared: &Self::PreparedSetup,
         source: OneHotView<'_, F, D, I>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<CommitInnerWitness<F>, AkitaError> {
         source.poly.commit_inner(self, prepared, plan)
     }
 }
@@ -841,7 +841,7 @@ where
         backend: &B,
         prepared: &B::PreparedSetup,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
+    ) -> Result<CommitInnerWitness<F>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
@@ -862,9 +862,6 @@ where
             plan.log_basis,
         )?;
 
-        Ok(CommitInnerWitness {
-            recomposed_inner_rows: t,
-            decomposed_inner_rows,
-        })
+        Ok(CommitInnerWitness::from_parts(t, decomposed_inner_rows))
     }
 }

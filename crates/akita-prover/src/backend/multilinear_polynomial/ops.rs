@@ -37,7 +37,7 @@ where
         prepared: &Self::PreparedSetup,
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<CommitInnerWitness<F>, AkitaError> {
         source.dispatch(
             |poly| {
                 RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(

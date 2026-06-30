@@ -206,16 +206,17 @@ fn check_rows_i8_digit_planes<F: FieldCore + CanonicalField, const D: usize>(
 /// Test helper for inner-commitment digit round-trip checks.
 #[cfg(test)]
 pub fn check_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
-    inner: &crate::CommitInnerWitness<F, D>,
+    inner: &crate::CommitInnerWitness<F>,
     n_a: usize,
     num_digits_open: usize,
     log_basis: u32,
 ) -> Result<(), AkitaError> {
     use crate::api::commitment::commit_inner_block_digit_count;
 
+    let decomposed = inner.decomposed_inner_rows_trusted::<D>()?;
     let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
-    for (block_idx, block_digits) in inner.decomposed_inner_rows.iter_blocks().enumerate() {
-        let recomposed_block = &inner.recomposed_inner_rows[block_idx];
+    for (block_idx, block_digits) in decomposed.iter_blocks().enumerate() {
+        let recomposed_block = inner.recomposed_block_trusted::<D>(block_idx)?;
         if block_digits.len() != expected_block_digits {
             return Err(AkitaError::InvalidSetup(format!(
                 "backend returned {actual} decomposed digits for inner commitment block {block_idx}, expected {expected_block_digits}",

@@ -360,7 +360,7 @@ impl RingRelationProver {
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
-    ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
+    ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         PointF: Clone,
@@ -491,13 +491,13 @@ impl RingRelationProver {
             v,
         )?;
         instance.check_v_shape_for_level(&lp)?;
-        let witness = RingRelationWitness {
+        let witness = RingRelationWitness::from_parts::<D>(
             z_folded_rings,
             fold_grind_nonce,
             e_hat,
             e_folded,
-            hint: flattened_hint,
-        };
+            flattened_hint,
+        );
         Ok((instance, witness))
     }
 }

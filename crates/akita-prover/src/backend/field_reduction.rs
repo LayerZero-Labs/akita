@@ -192,7 +192,7 @@ where
         prepared: &Self::PreparedSetup,
         source: RootTensorProjectionView<'_, F, D>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<CommitInnerWitness<F>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
                 RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
