@@ -161,6 +161,26 @@ pub struct EstimateConfig {
 }
 
 impl EstimateConfig {
+    /// Akita infinity table generation profile: ADPS16 classical + LGSA with
+    /// exhaustive beta and zeta search.
+    #[must_use]
+    pub fn akita_infinity_table() -> Self {
+        Self {
+            optimizer: OptimizerConfig::OptimizeZeta {
+                beta: SearchMode::Exhaustive,
+                zeta: SearchMode::Exhaustive,
+            },
+            ..Self::default()
+        }
+    }
+
+    /// Lattice-estimator parity profile: ADPS16 classical + LGSA with Python's
+    /// local-minimum beta and zeta search.
+    #[must_use]
+    pub fn lattice_estimator_parity() -> Self {
+        Self::default()
+    }
+
     /// Validate all configuration fields.
     ///
     /// # Errors

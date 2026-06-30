@@ -1,9 +1,8 @@
 use akita_sis_estimator::{
-    estimate, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig,
+    estimate, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig, NumericConfig,
 };
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/infinity_golden.csv");
-const FLOAT_TOLERANCE: f64 = 0.25;
 
 #[derive(Debug)]
 struct OptimizerGoldenRow {
@@ -29,7 +28,7 @@ fn infinity_optimizer_goldens_match_pr217_trusted_rows() {
         let params =
             scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
                 .unwrap();
-        let cost = estimate(&params, &EstimateConfig::default()).unwrap();
+        let cost = estimate(&params, &EstimateConfig::lattice_estimator_parity()).unwrap();
 
         record_log2_mismatch(row.rop_log2, cost.rop, "rop", &row, &mut mismatches);
         record_log2_mismatch(
@@ -158,7 +157,7 @@ fn record_log2_close_mismatch(
     match actual {
         CostValue::Finite(actual) => {
             let diff = (expected - actual.log2).abs();
-            if diff > FLOAT_TOLERANCE {
+            if diff > NumericConfig::default().sage_abs_tolerance {
                 mismatches.push(format!(
                     "{field}: expected {expected}, got {} for {row:?}",
                     actual.log2
