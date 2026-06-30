@@ -276,14 +276,106 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningBatch<'a, PointF, P,
 }
 
 /// Prover-side output of the decompose + challenge-fold step.
+///
+/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
+/// closures borrow typed ring rows via [`Self::z_folded_rings_trusted`] and
+/// [`Self::centered_coeffs_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
-    /// Folded witness rows in ring form.
-    pub z_folded_rings: Vec<CyclotomicRing<F, D>>,
-    /// Centered integer coefficients for each `z_folded_rings` row.
-    pub centered_coeffs: Vec<[i32; D]>,
-    /// Infinity norm of `centered_coeffs`.
+pub struct DecomposeFoldWitness<F: FieldCore> {
+    /// Folded witness rows in flat ring storage.
+    pub z_folded_rings: RingVec<F>,
+    /// Centered integer coefficients for each [`z_folded_rings`] row, stored row-major flat.
+    ///
+    /// Hot paths borrow typed rows via [`Self::centered_coeffs_trusted`].
+    centered_coeffs_flat: Vec<i32>,
+    /// Infinity norm of the flat centered coefficient storage above.
     pub centered_inf_norm: u32,
+    /// Ring dimension (field coefficients per ring element), fixed at construction.
+    ring_dim: usize,
+}
+
+impl<F: FieldCore> DecomposeFoldWitness<F> {
+    /// Construct from typed ring rows at a kernel boundary.
+    pub fn from_parts<const D: usize>(
+        z_folded_rings: Vec<CyclotomicRing<F, D>>,
+        centered_coeffs: Vec<[i32; D]>,
+        centered_inf_norm: u32,
+    ) -> Self {
+        debug_assert_eq!(z_folded_rings.len(), centered_coeffs.len());
+        Self {
+            z_folded_rings: RingVec::from_ring_elems(&z_folded_rings),
+            centered_coeffs_flat: centered_coeffs
+                .iter()
+                .flat_map(|row| row.iter().copied())
+                .collect(),
+            centered_inf_norm,
+            ring_dim: D,
+        }
+    }
+
+    /// Stored ring dimension (coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Number of folded witness rows.
+    pub fn row_count(&self) -> usize {
+        self.centered_coeffs_flat
+            .len()
+            .checked_div(self.ring_dim)
+            .unwrap_or(0)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "decompose fold witness ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if !self.centered_coeffs_flat.len().is_multiple_of(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.centered_coeffs_flat.len(),
+            });
+        }
+        if !self.z_folded_rings.can_decode_vec(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.z_folded_rings.coeff_len(),
+            });
+        }
+        let ring_count = self.z_folded_rings.count();
+        let row_count = self.centered_coeffs_flat.len() / D;
+        if ring_count != row_count {
+            return Err(AkitaError::InvalidInput(
+                "decompose fold witness ring row count mismatch".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Borrow folded ring rows after [`Self::ensure_ring_dim`].
+    pub fn z_folded_rings_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
+        debug_assert_eq!(self.ring_dim, D);
+        self.z_folded_rings.as_ring_slice_trusted::<D>()
+    }
+
+    /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].
+    pub fn centered_coeffs_trusted<const D: usize>(&self) -> &[[i32; D]] {
+        debug_assert_eq!(self.ring_dim, D);
+        let (chunks, rem) = self.centered_coeffs_flat.as_chunks::<D>();
+        debug_assert!(rem.is_empty());
+        chunks
+    }
+
+    /// Owned copy of centered coefficient rows after [`Self::ensure_ring_dim`].
+    pub fn centered_coeffs_owned<const D: usize>(&self) -> Vec<[i32; D]> {
+        self.centered_coeffs_trusted::<D>().to_vec()
+    }
 }
 
 /// Prover-side output of the inner Ajtai commit step.

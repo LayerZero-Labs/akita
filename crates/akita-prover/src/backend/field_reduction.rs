@@ -250,7 +250,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
                 OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::decompose_fold(

@@ -233,7 +233,7 @@ where
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
+    ) -> DecomposeFoldWitness<F> {
         let n = self.coeffs.len();
         let coeffs = &self.coeffs;
 
@@ -333,7 +333,7 @@ where
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
         tensor_fold::decompose_fold_batched_tensor_dense(
             polys, tensor, block_len, num_digits, log_basis,
         )

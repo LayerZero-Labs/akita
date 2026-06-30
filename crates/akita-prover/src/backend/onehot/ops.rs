@@ -215,7 +215,7 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.poly.decompose_fold(
             plan.challenges,
             plan.block_len,
@@ -780,7 +780,7 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
+    ) -> DecomposeFoldWitness<F> {
         let blocks = self
             .blocks_for(block_len)
             .expect("OneHotPoly::decompose_fold: invalid block_len for this polynomial");
@@ -801,7 +801,7 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F, D>> {
+    ) -> Option<DecomposeFoldWitness<F>> {
         // Materialize per-poly block caches up front so every poly agrees on
         // `block_len` before we touch the batched kernels.
         for poly in polys {
@@ -831,7 +831,7 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
         Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
     }
 

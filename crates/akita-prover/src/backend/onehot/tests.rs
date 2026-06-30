@@ -9,35 +9,33 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 fn aggregate_witnesses<F: FieldCore, const D: usize>(
-    witnesses: &[DecomposeFoldWitness<F, D>],
-) -> DecomposeFoldWitness<F, D> {
-    let mut acc = witnesses[0].clone();
+    witnesses: &[DecomposeFoldWitness<F>],
+) -> DecomposeFoldWitness<F> {
+    let mut z_folded_rings = witnesses[0].z_folded_rings_trusted::<D>().to_vec();
+    let mut centered_coeffs = witnesses[0].centered_coeffs_owned::<D>();
     for witness in &witnesses[1..] {
-        for (dst, src) in acc
-            .z_folded_rings
+        for (dst, src) in z_folded_rings
             .iter_mut()
-            .zip(witness.z_folded_rings.iter())
+            .zip(witness.z_folded_rings_trusted::<D>())
         {
             *dst += *src;
         }
-        for (dst, src) in acc
-            .centered_coeffs
+        for (dst, src) in centered_coeffs
             .iter_mut()
-            .zip(witness.centered_coeffs.iter())
+            .zip(witness.centered_coeffs_trusted::<D>())
         {
             for k in 0..D {
                 dst[k] += src[k];
             }
         }
     }
-    acc.centered_inf_norm = acc
-        .centered_coeffs
+    let centered_inf_norm = centered_coeffs
         .iter()
         .flat_map(|coeffs| coeffs.iter())
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
-    acc
+    DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
 }
 
 fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, D, I>) -> DensePoly<F, D>
@@ -831,7 +829,7 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
         },
     ];
 
-    let expected = aggregate_witnesses(
+    let expected = aggregate_witnesses::<F, D>(
         &polys
             .iter()
             .zip(challenges.chunks(2))

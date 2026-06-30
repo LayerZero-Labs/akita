@@ -96,7 +96,7 @@ where
         prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         source.dispatch(
             |poly| {
                 OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::decompose_fold(

@@ -40,9 +40,9 @@ where
 {
 }
 
-fn accepts_fold_witness<const D: usize>(
+fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     contract: &FoldWitnessGrindContract,
-    witness: &DecomposeFoldWitness<impl CanonicalField, D>,
+    witness: &DecomposeFoldWitness<F>,
     witness_linf_cap: u128,
     tail_t_vectors: Option<usize>,
 ) -> bool {
@@ -52,7 +52,11 @@ fn accepts_fold_witness<const D: usize>(
         return false;
     }
     if tail_t_vectors.is_some()
-        && golomb_rice_rows_admit_terminal_wire(&witness.centered_coeffs, witness_linf_cap).is_err()
+        && golomb_rice_rows_admit_terminal_wire(
+            witness.centered_coeffs_trusted::<D>(),
+            witness_linf_cap,
+        )
+        .is_err()
     {
         return false;
     }
@@ -111,7 +115,7 @@ pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     lp: &LevelParams,
     num_claims: usize,
     tail_t_vectors: Option<usize>,
-) -> Result<(DecomposeFoldWitness<F, D>, Challenges, u32), AkitaError>
+) -> Result<(DecomposeFoldWitness<F>, Challenges, u32), AkitaError>
 where
     F: FieldCore + CanonicalField,
     P: RootOpeningSource<F, D>,
@@ -147,7 +151,7 @@ where
             &point_indices,
             lp,
         )?;
-        if !accepts_fold_witness(&contract, &witness, witness_linf_cap, tail_t_vectors) {
+        if !accepts_fold_witness::<F, D>(&contract, &witness, witness_linf_cap, tail_t_vectors) {
             continue;
         }
         super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);
@@ -172,6 +176,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_transcript::AkitaTranscript;
     use akita_types::sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy};
@@ -220,11 +225,11 @@ mod tests {
             witness_linf_cap: cap,
             max_nonce_exclusive: 1,
         };
-        let witness = DecomposeFoldWitness::<F, D> {
-            z_folded_rings: Vec::new(),
-            centered_coeffs: vec![[cap as i32; D]],
-            centered_inf_norm: cap as u32,
-        };
-        assert!(!accepts_fold_witness(&contract, &witness, cap, Some(1),));
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[cap as i32; D]],
+            cap as u32,
+        );
+        assert!(!accepts_fold_witness::<F, D>(&contract, &witness, cap, Some(1),));
     }
 }

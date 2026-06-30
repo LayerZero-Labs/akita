@@ -11,7 +11,7 @@ use akita_types::AkitaCommitmentHint;
 /// recomposed inner rows are recomputed on demand from it (see
 /// [`crate::compute::recompose_flat_hint_inner_rows`]).
 pub struct RingRelationWitness<F: FieldCore, const D: usize> {
-    pub z_folded_rings: DecomposeFoldWitness<F, D>,
+    pub z_folded_rings: DecomposeFoldWitness<F>,
     pub fold_grind_nonce: u32,
     pub e_hat: FlatDigitBlocks<D>,
     pub e_folded: Vec<akita_algebra::CyclotomicRing<F, D>>,
