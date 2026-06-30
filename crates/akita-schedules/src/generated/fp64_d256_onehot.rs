@@ -141,7 +141,7 @@ pub(crate) static FP64_D256_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 28, num_polynomials: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 12, r_vars: 8, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 12, r_vars: 8, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 10, r_vars: 6, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 8, r_vars: 4, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -177,9 +177,9 @@ pub(crate) static FP64_D256_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 32, num_polynomials: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 14, r_vars: 10, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 11, r_vars: 7, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 10, r_vars: 5, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 14, r_vars: 10, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 9, r_vars: 5, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -309,7 +309,7 @@ pub(crate) static FP64_D256_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 26, num_polynomials: 4 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 12, r_vars: 6, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 12, r_vars: 6, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 10, r_vars: 6, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 8, r_vars: 4, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -345,9 +345,9 @@ pub(crate) static FP64_D256_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 30, num_polynomials: 4 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 11, r_vars: 7, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 10, r_vars: 5, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 9, r_vars: 5, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -356,7 +356,7 @@ pub(crate) static FP64_D256_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 31, num_polynomials: 4 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 2, m_vars: 12, r_vars: 7, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 3, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 3, m_vars: 10, r_vars: 5, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 256, log_basis: 4, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1, tier_split: None, n_f: None }),

@@ -39,17 +39,23 @@ use super::norm_bound::{
 };
 use crate::DecompositionParams;
 
-/// Maximum coefficient `L∞` norm the verifier enforces on folded witness `z`
-/// when each ring coefficient is decomposed into `num_digits_fold` balanced
+/// Maximum coefficient `L∞` envelope accepted for folded witness `z` when each
+/// ring coefficient is decomposed into `num_digits_fold` balanced
 /// base-`2^log_basis` digits.
 ///
 /// Stage-1 digit membership is the only norm-shaped constraint on `z`; A-role
-/// weak binding must price at this envelope, not at
-/// [`super::norm_bound::fold_witness_honest_prover_linf_cap`] alone.
+/// weak binding must price at the absolute envelope of all accepted digit
+/// strings, not at [`super::norm_bound::fold_witness_honest_prover_linf_cap`]
+/// alone and not only at the shorter positive side.
+///
+/// Balanced digits lie in `[-b/2, b/2 - 1]`, so `num_digits` digits represent
+/// values down to `-(b/2) · (b^n - 1)/(b - 1)` and up to
+/// `(b/2 - 1) · (b^n - 1)/(b - 1)`. This returns the larger absolute value,
+/// i.e. the negative reach.
 #[inline]
 #[must_use]
 pub fn fold_witness_verifier_linf_bound(log_basis: u32, num_digits_fold: usize) -> u128 {
-    balanced_digit_max(log_basis, num_digits_fold.max(1))
+    balanced_digit_abs_max(log_basis, num_digits_fold.max(1))
 }
 
 /// Maximum positive value representable by `num_digits` balanced base-`b`
@@ -68,6 +74,22 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
     }
 
     max_digit.saturating_mul(base_pow.saturating_sub(1) / base_minus_1)
+}
+
+/// Maximum absolute value accepted by `num_digits` balanced base-`b` digits,
+/// i.e. the negative reach `(b/2) · (b^n - 1)/(b - 1)`.
+fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
+    let base: u128 = 1u128 << log_basis;
+    let max_abs_digit = base / 2;
+
+    let mut pow = 1u128;
+    let mut series = 0u128;
+    for _ in 0..num_digits {
+        series = series.saturating_add(pow);
+        pow = pow.saturating_mul(base);
+    }
+
+    max_abs_digit.saturating_mul(series)
 }
 
 /// Minimum number of balanced base-`2^log_basis` digits needed to represent a
@@ -250,6 +272,17 @@ mod tests {
     fn balanced_digit_max_cases() {
         assert_eq!(balanced_digit_max(2, 2), 5);
         assert_eq!(balanced_digit_max(3, 1), 3);
+    }
+
+    #[test]
+    fn fold_witness_verifier_linf_bound_uses_negative_reach() {
+        // b = 4, δ = 3 digits represent [-42, 21]; A-role pricing must use
+        // the accepted absolute envelope, not the shorter positive side.
+        assert_eq!(balanced_digit_max(2, 3), 21);
+        assert_eq!(fold_witness_verifier_linf_bound(2, 3), 42);
+        // b = 8, δ = 2 digits represent [-36, 27].
+        assert_eq!(balanced_digit_max(3, 2), 27);
+        assert_eq!(fold_witness_verifier_linf_bound(3, 2), 36);
     }
 
     #[test]

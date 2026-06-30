@@ -186,10 +186,11 @@ pub fn fold_witness_honest_prover_linf_cap(
 /// A-role committed-level per-ring-row squared Euclidean collision bucket.
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L2 MSIS table. Lemma 7
-/// bounds the extracted kernel by challenge mass; the verifier accepts folded
-/// witnesses only inside [`fold_witness_verifier_linf_bound`] at the `δ_fold`
-/// depth induced by [`fold_witness_honest_prover_linf_cap`]. MSIS accounting
-/// converts the resulting L∞ collision via `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:
+/// bounds the extracted kernel by challenge mass; stage-1 digit membership
+/// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
+/// envelope is [`fold_witness_verifier_linf_bound`] at the `δ_fold` depth
+/// induced by [`fold_witness_honest_prover_linf_cap`]. MSIS accounting converts
+/// the resulting L∞ collision via `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:
 ///
 /// ```text
 /// collision_A_inf = 8 · challenge_l1_mass · fold_witness_verifier_linf_bound · nu,
