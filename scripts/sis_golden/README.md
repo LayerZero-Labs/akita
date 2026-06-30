@@ -43,9 +43,10 @@ the legacy Sage stitcher.
 For a row-oriented comparison artifact:
 
 ```bash
-cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --output scripts/sis_golden/euclidean_width_table_rust.csv --format csv
+cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --output /tmp/euclidean_width_table_rust.csv --format csv
 ```
 
+The full comparison CSV is a local audit artifact, not a committed source file.
 Manual workflow only. Rust CI does not require Sage or an initialized submodule
 for the Rust table generator.
 
