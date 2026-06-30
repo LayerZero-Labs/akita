@@ -422,25 +422,27 @@ mod tests {
     }
 
     #[test]
-    fn multi_chunk_rejects_chunked_terminal_fold_level() {
-        // The terminal-direct (cleartext) witness is single-chunk only. Activating
-        // chunking far enough that the schedule's last fold level is chunked must
-        // be rejected at plan time rather than emitting an unprovable schedule.
-        // (`flat_policy` produces short schedules at NV=24, so the last fold is
-        // chunked here.) The supported chunked-leading + single-chunk-tail shape
-        // is exercised end-to-end by the production multi-chunk presets.
+    fn multi_chunk_schedule_ends_with_single_chunk_terminal_fold() {
+        // Chunked leading levels are allowed when the planner can route through a
+        // single-chunk fold before the terminal-direct tail.
         let mut policy = flat_policy();
         policy.witness_chunk = ChunkedWitnessCfg {
             num_chunks: 8,
             num_activated_levels: 2,
         };
         let key = AkitaScheduleLookupKey::new(24, 1);
-        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
-            .expect_err("chunked terminal must be rejected");
-        assert!(
-            format!("{err:?}").contains("multi-chunk last fold level"),
-            "unexpected error: {err:?}"
-        );
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("schedule");
+        let last_fold = schedule
+            .steps
+            .iter()
+            .rev()
+            .find_map(|step| match step {
+                Step::Fold(fold) => Some(fold),
+                _ => None,
+            })
+            .expect("fold-then-direct schedule");
+        assert_eq!(last_fold.params.witness_chunk.num_chunks, 1);
     }
 
     #[test]

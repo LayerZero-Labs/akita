@@ -239,8 +239,12 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         } = lens;
 
         let num_blocks = lp.num_blocks;
-        // `0` (unset) and `1` are both the single-chunk layout.
-        let num_chunks = lp.witness_chunk.num_chunks.max(1);
+        if lp.witness_chunk.num_chunks == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "witness chunk count must be >= 1".to_string(),
+            ));
+        }
+        let num_chunks = lp.witness_chunk.num_chunks;
 
         // Shared, single-machine quotient tail: never scales with the chunk count.
         let r_levels = r_decomp_levels::<F>(lp.log_basis);

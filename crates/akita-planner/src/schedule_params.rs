@@ -448,6 +448,29 @@ fn make_terminal_direct_step(
     })
 }
 
+/// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
+/// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
+/// fold-then-direct branch without aborting fold-then-fold exploration.
+fn try_terminal_direct_suffix_cost(
+    current_w_len: usize,
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    key: AkitaScheduleLookupKey,
+    terminal_fold_level: usize,
+) -> Result<Option<(DirectStep, usize)>, AkitaError> {
+    if terminal_lp.witness_chunk.num_chunks > 1 {
+        return Ok(None);
+    }
+    let (direct, direct_bytes) = terminal_direct_suffix_cost(
+        current_w_len,
+        terminal_lp,
+        field_bits,
+        key,
+        terminal_fold_level,
+    )?;
+    Ok(Some((direct, direct_bytes)))
+}
+
 fn terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
@@ -592,33 +615,34 @@ fn derive_optimal_suffix_schedule(
         // Branch A: suffix is a Direct at level+1.
         if let Some(direct_suffix) = suffix.best_direct {
             let field_bits = policy.decomposition.field_bits();
-            let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
+            if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
                 direct_suffix.current_w_len,
                 &candidate_params,
                 field_bits,
                 key,
                 level,
-            )?;
-            let level_proof_size = level_proof_bytes(
-                field_bits,
-                field_bits * policy.chal_ext_degree as u32,
-                &candidate_params,
-                None,
-                next_witness_len_terminal,
-                1,
-                MRowLayout::WithoutDBlock,
-            ) + eor_bytes;
-            let total = level_proof_size + suffix_cost;
-            let steps = vec![
-                Step::Fold(FoldStep {
-                    params: candidate_params.clone(),
-                    current_w_len: current_witness_len,
-                    next_w_len: next_witness_len_terminal,
-                    level_bytes: level_proof_size,
-                }),
-                Step::Direct(direct_step),
-            ];
-            try_update(total, steps, &mut best_for_this_lb);
+            )? {
+                let level_proof_size = level_proof_bytes(
+                    field_bits,
+                    field_bits * policy.chal_ext_degree as u32,
+                    &candidate_params,
+                    None,
+                    next_witness_len_terminal,
+                    1,
+                    MRowLayout::WithoutDBlock,
+                ) + eor_bytes;
+                let total = level_proof_size + suffix_cost;
+                let steps = vec![
+                    Step::Fold(FoldStep {
+                        params: candidate_params.clone(),
+                        current_w_len: current_witness_len,
+                        next_w_len: next_witness_len_terminal,
+                        level_bytes: level_proof_size,
+                    }),
+                    Step::Direct(direct_step),
+                ];
+                try_update(total, steps, &mut best_for_this_lb);
+            }
         }
         // Branch B: suffix is a Fold at level+1.
         for suffix_fold in suffix.best_fold_per_lb.values() {
@@ -1113,34 +1137,35 @@ fn find_schedule_inner(
 
             // Branch A: suffix at level 1 is a Direct
             if let Some(direct_suffix) = suffix.best_direct {
-                let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
+                if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
                     direct_suffix.current_w_len,
                     &candidate_params,
                     field_bits,
                     key,
                     0,
-                )?;
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    field_bits * policy.chal_ext_degree as u32,
-                    &candidate_params,
-                    None,
-                    next_w_len_terminal,
-                    1,
-                    MRowLayout::WithoutDBlock,
-                ) + eor_bytes;
-                let total = root_proof_size + suffix_cost;
-                if total < best_cost {
-                    best_cost = total;
-                    best_steps = vec![
-                        Step::Fold(FoldStep {
-                            params: candidate_params.clone(),
-                            current_w_len: witness_len,
-                            next_w_len: next_w_len_terminal,
-                            level_bytes: root_proof_size,
-                        }),
-                        Step::Direct(direct_step),
-                    ];
+                )? {
+                    let root_proof_size = level_proof_bytes(
+                        field_bits,
+                        field_bits * policy.chal_ext_degree as u32,
+                        &candidate_params,
+                        None,
+                        next_w_len_terminal,
+                        1,
+                        MRowLayout::WithoutDBlock,
+                    ) + eor_bytes;
+                    let total = root_proof_size + suffix_cost;
+                    if total < best_cost {
+                        best_cost = total;
+                        best_steps = vec![
+                            Step::Fold(FoldStep {
+                                params: candidate_params.clone(),
+                                current_w_len: witness_len,
+                                next_w_len: next_w_len_terminal,
+                                level_bytes: root_proof_size,
+                            }),
+                            Step::Direct(direct_step),
+                        ];
+                    }
                 }
             }
             // Branch B: suffix at level 1 is a Fold

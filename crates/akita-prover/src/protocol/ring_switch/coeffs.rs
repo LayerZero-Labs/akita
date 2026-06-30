@@ -250,7 +250,10 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let levels = r_decomp_levels::<F>(log_basis);
 
     // Chunk geometry: `num_chunks = 1` is the single-chunk (historical) layout.
-    let num_chunks = lp.witness_chunk.num_chunks.max(1);
+    lp.witness_chunk
+        .validate()
+        .expect("build_w_coeffs: witness_chunk layout invalid in validated level params");
+    let num_chunks = lp.witness_chunk.num_chunks;
     let blocks_per_chunk = num_blocks.checked_div(num_chunks).unwrap_or(num_blocks);
 
     let e_hat_planes = e_hat.flat_digits().len();

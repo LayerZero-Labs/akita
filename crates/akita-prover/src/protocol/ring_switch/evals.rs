@@ -142,7 +142,8 @@ where
     // Chunked layout replicates the `z` segment once per window; `e`/`t` are
     // partitioned (their totals are unchanged). `num_chunks = 1` is the
     // single-chunk case.
-    let num_chunks = lp.witness_chunk.num_chunks.max(1);
+    lp.witness_chunk.validate()?;
+    let num_chunks = lp.witness_chunk.num_chunks;
     let z_cols_total = z_len
         .checked_mul(num_chunks)
         .ok_or_else(|| AkitaError::InvalidSetup("chunked Z width overflow".to_string()))?;
