@@ -29,7 +29,7 @@ use akita_types::{
 /// same `(num_vars, num_polynomials)` keys as its sibling; the schedules differ
 /// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
 macro_rules! impl_multi_chunk_companion {
-    ($cfg:ty, $base:ty, $feat:literal, $table:ident) => {
+    ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
@@ -72,7 +72,7 @@ macro_rules! impl_multi_chunk_companion {
                 <$base as $crate::CommitmentConfig>::onehot_chunk_size()
             }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
-                akita_types::ChunkedWitnessCfg::d64_production()
+                $profile.cfg()
             }
             fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
                 #[cfg(feature = $feat)]

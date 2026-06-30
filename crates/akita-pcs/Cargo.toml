@@ -51,6 +51,8 @@ profile-ci = [
   "akita-config/schedules-fp128-d64-onehot",
   "akita-config/schedules-fp128-d64-full",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk",
+  "akita-config/schedules-fp128-d64-onehot-multi-chunk-w2r2",
+  "akita-config/schedules-fp128-d64-onehot-multi-chunk-w4r2",
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [

@@ -19,6 +19,10 @@ pub mod fp128_d64_full_multi_chunk;
 pub mod fp128_d64_onehot;
 #[cfg(feature = "fp128-d64-onehot-multi-chunk")]
 pub mod fp128_d64_onehot_multi_chunk;
+#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
+pub mod fp128_d64_onehot_multi_chunk_w2r2;
+#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
+pub mod fp128_d64_onehot_multi_chunk_w4r2;
 #[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor;
 #[cfg(feature = "fp128-d64-onehot-tiered")]
@@ -79,6 +83,22 @@ pub fn fp128_d64_onehot_multi_chunk_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_onehot_multi_chunk::FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES,
         identity: fp128_d64_onehot_multi_chunk::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
+pub fn fp128_d64_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d64_onehot_multi_chunk_w2r2::FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES,
+        identity: fp128_d64_onehot_multi_chunk_w2r2::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
+pub fn fp128_d64_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d64_onehot_multi_chunk_w4r2::FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES,
+        identity: fp128_d64_onehot_multi_chunk_w4r2::CATALOG_IDENTITY,
     }
 }
 

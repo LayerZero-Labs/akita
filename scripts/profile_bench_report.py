@@ -90,7 +90,13 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "dense_fp128_d128": CaseMetadata("fp128", "dense", "dense", "D128"),
     "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
     "onehot_fp128_d64_multi_chunk": CaseMetadata(
-        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk"
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W8R2"
+    ),
+    "onehot_fp128_d64_multi_chunk_w2r2": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W2R2"
+    ),
+    "onehot_fp128_d64_multi_chunk_w4r2": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W4R2"
     ),
     "onehot_fp128_d128": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
     "onehot_fp128_d64_tensor": CaseMetadata(
