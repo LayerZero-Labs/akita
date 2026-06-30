@@ -3,7 +3,6 @@ use akita_sis_estimator::{
     EstimatorError, OptimizerConfig, ReductionCostModel, ShapeModel,
 };
 
-const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/fixed_infinity_golden.csv");
 const FLOAT_TOLERANCE: f64 = 1e-6;
 
 #[derive(Debug)]
@@ -27,8 +26,38 @@ struct FixedGoldenRow {
 }
 
 #[test]
-fn fixed_infinity_goldens_match_pr217_trusted_rows() {
-    for row in parse_rows() {
+fn fixed_infinity_lgsa_goldens_match_pinned_estimator_trusted_rows() {
+    run_fixed_infinity_goldens(
+        include_str!("../../../scripts/sis_golden/fixed_infinity_golden.csv"),
+        ShapeModel::Lgsa,
+    );
+}
+
+#[test]
+fn fixed_infinity_gsa_goldens_match_pinned_estimator_trusted_rows() {
+    run_fixed_infinity_goldens(
+        include_str!("../../../scripts/sis_golden/fixed_infinity_golden_adps16_gsa_fixed.csv"),
+        ShapeModel::Gsa,
+    );
+}
+
+#[test]
+fn fixed_infinity_rejects_unsupported_profiles_without_panicking() {
+    let params = scalar_sis_from_ring(AkitaModulusFamily::Q32, 32, 1, 2, 15).unwrap();
+    let config = EstimateConfig {
+        red_cost_model: ReductionCostModel::Bdgl16,
+        red_shape_model: ShapeModel::Lgsa,
+        ..EstimateConfig::default()
+    };
+
+    assert!(matches!(
+        cost_infinity(63, &params, 0, &config),
+        Err(EstimatorError::Unsupported { .. })
+    ));
+}
+
+fn run_fixed_infinity_goldens(csv: &str, shape_model: ShapeModel) {
+    for row in parse_rows(csv) {
         if row.trust != "trusted" {
             continue;
         }
@@ -38,7 +67,7 @@ fn fixed_infinity_goldens_match_pr217_trusted_rows() {
                 .unwrap();
         let config = EstimateConfig {
             red_cost_model: ReductionCostModel::default(),
-            red_shape_model: ShapeModel::Lgsa,
+            red_shape_model: shape_model,
             optimizer: OptimizerConfig::Fixed {
                 beta: row.beta_input,
                 zeta: row.zeta_input,
@@ -63,23 +92,8 @@ fn fixed_infinity_goldens_match_pr217_trusted_rows() {
     }
 }
 
-#[test]
-fn fixed_infinity_rejects_unsupported_profiles_without_panicking() {
-    let params = scalar_sis_from_ring(AkitaModulusFamily::Q32, 32, 1, 2, 15).unwrap();
-    let config = EstimateConfig {
-        red_cost_model: ReductionCostModel::Bdgl16,
-        red_shape_model: ShapeModel::Lgsa,
-        ..EstimateConfig::default()
-    };
-
-    assert!(matches!(
-        cost_infinity(63, &params, 0, &config),
-        Err(EstimatorError::Unsupported { .. })
-    ));
-}
-
-fn parse_rows() -> Vec<FixedGoldenRow> {
-    let mut lines = GOLDEN_CSV.lines();
+fn parse_rows(csv: &str) -> Vec<FixedGoldenRow> {
+    let mut lines = csv.lines();
     let header = lines.next().unwrap();
     let columns: Vec<&str> = header.split(',').collect();
     lines

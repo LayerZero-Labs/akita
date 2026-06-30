@@ -10,7 +10,9 @@ use crate::{
     math::{erf, log2_positive, sis_trivially_easy},
     params::{Bound, SisParameters},
     probability::log2_amplify,
-    reduction::{log2_bkz_cost, log2_to_cost_value, short_vectors_for, validate_infinity_reduction},
+    reduction::{
+        log2_bkz_cost, log2_to_cost_value, short_vectors_for, validate_infinity_reduction,
+    },
     simulator::{infinity_shape_profile, validate_infinity_shape},
 };
 
@@ -280,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_infinity_rejects_non_lgsa_shape_model() {
+    fn fixed_infinity_rejects_unimplemented_shape_model() {
         let params = SisParameters::try_new(
             32,
             akita_q32(),
@@ -290,7 +292,7 @@ mod tests {
         )
         .unwrap();
         let mut config = sample_config();
-        config.red_shape_model = ShapeModel::Gsa;
+        config.red_shape_model = ShapeModel::Zgsa;
         assert!(matches!(
             cost_infinity_fixed(63, &params, 0, &config),
             Err(EstimatorError::Unsupported { .. })
