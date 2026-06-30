@@ -4,9 +4,10 @@ use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
     RingSwitchProveBackend, RootPolyMeta, RootPolyShape, RootProvePoly,
-    SuffixDispatchOpeningProveBackendFor, SuffixDispatchTensorProveBackendFor,
-    SuffixRingSwitchProveBackend, TensorBackendFor,
+    SuffixOpeningProveBackend, SuffixRingSwitchProveBackend, SuffixTensorProveBackend,
+    TensorBackendFor,
 };
+use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
@@ -126,12 +127,14 @@ where
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
-        + SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
+        + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
-        + SuffixDispatchTensorProveBackendFor<Cfg::Field, Cfg::ExtField, D>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, Cfg::ExtField, D>
+        + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
         + SuffixRingSwitchProveBackend<Cfg::Field>
@@ -157,11 +160,6 @@ where
         effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     let schedule_ctx =
         ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
-    for shape in schedule_ctx.level_shapes() {
-        stacks
-            .prove_stack_at_level(shape.level)
-            .ensure_fold_level_envelope_ntt(expanded.as_ref(), shape.ring_dimension)?;
-    }
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => {
             validate_level_dispatch::<D>(&root.params)?;
@@ -219,6 +217,7 @@ where
         transcript,
         claims,
         &schedule,
+        &schedule_ctx,
         basis,
         setup_contribution_mode,
     )
@@ -251,6 +250,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     transcript: &mut T,
     claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &Schedule,
+    schedule_ctx: &ValidatedScheduleContext<'_>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
@@ -278,12 +278,14 @@ where
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
-        + SuffixDispatchOpeningProveBackendFor<Cfg::Field, D>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
+        + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
-        + SuffixDispatchTensorProveBackendFor<Cfg::Field, Cfg::ExtField, D>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, Cfg::ExtField, D>
+        + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
         + SuffixRingSwitchProveBackend<Cfg::Field>
@@ -296,6 +298,20 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
+    let root_ring_d = schedule_ctx
+        .level_shape(0)?
+        .ring_dimension;
+    if root_ring_d != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
+        )));
+    }
+    for shape in schedule_ctx.level_shapes() {
+        stacks
+            .prove_stack_at_level(shape.level)
+            .ensure_fold_level_envelope_ntt(expanded.as_ref(), shape.ring_dimension)?;
+    }
+
     let root_scheduled = schedule.get_execution_schedule(0)?;
     validate_level_dispatch::<D>(&root_scheduled.params)?;
     {

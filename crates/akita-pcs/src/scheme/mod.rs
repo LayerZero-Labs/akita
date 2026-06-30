@@ -117,6 +117,7 @@ where
         B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
     {
         validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
+        setup.ensure_root_ring_dim(D)?;
         akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
@@ -138,6 +139,7 @@ where
         B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
     {
         validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
+        setup.ensure_root_ring_dim(D)?;
         akita_prover::batched_commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
@@ -159,6 +161,7 @@ where
         B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
     {
         validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
+        setup.ensure_root_ring_dim(D)?;
         akita_prover::commit_group::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
@@ -192,6 +195,7 @@ where
     {
         let t_prove_total = Instant::now();
         validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
+        setup.ensure_root_ring_dim(D)?;
         let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B, D>(
             &setup.expanded,
             &setup.prefix_slots,
