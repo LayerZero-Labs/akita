@@ -1,21 +1,134 @@
 use super::*;
 use crate::compute::{OperationCtx, RingSwitchProveBackend};
 use crate::validation::validate_i8_setup_log_basis;
+use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
-pub struct RingSwitchTerminalArtifacts<F: FieldCore, const D: usize> {
-    pub e_folded: Vec<akita_algebra::CyclotomicRing<F, D>>,
-    pub recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>>,
-    pub z_folded_centered: Vec<[i32; D]>,
-    pub r: Vec<akita_algebra::CyclotomicRing<F, D>>,
+///
+/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
+/// closures borrow typed ring rows via [`Self::e_folded_trusted`],
+/// [`Self::recomposed_block_trusted`], [`Self::z_folded_centered_trusted`], and
+/// [`Self::r_trusted`].
+pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
+    pub e_folded: RingVec<F>,
+    pub recomposed_inner_rows: Vec<RingVec<F>>,
+    z_folded_centered_flat: Vec<i32>,
+    pub r: RingVec<F>,
     pub u_concat_planes: usize,
+    ring_dim: usize,
+}
+
+impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
+    /// Construct from typed ring-switch output at a kernel boundary.
+    pub fn from_parts<const D: usize>(
+        e_folded: Vec<CyclotomicRing<F, D>>,
+        recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
+        z_folded_centered: Vec<[i32; D]>,
+        r: Vec<CyclotomicRing<F, D>>,
+        u_concat_planes: usize,
+    ) -> Self {
+        Self {
+            e_folded: RingVec::from_ring_elems(&e_folded),
+            recomposed_inner_rows: recomposed_inner_rows
+                .into_iter()
+                .map(|block| RingVec::from_ring_elems(&block))
+                .collect(),
+            z_folded_centered_flat: z_folded_centered
+                .iter()
+                .flat_map(|row| row.iter().copied())
+                .collect(),
+            r: RingVec::from_ring_elems(&r),
+            u_concat_planes,
+            ring_dim: D,
+        }
+    }
+
+    /// Stored ring dimension (coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "ring switch terminal artifacts ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if !self.z_folded_centered_flat.len().is_multiple_of(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.z_folded_centered_flat.len(),
+            });
+        }
+        if !self.e_folded.can_decode_vec(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.e_folded.coeff_len(),
+            });
+        }
+        if !self.r.can_decode_vec(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.r.coeff_len(),
+            });
+        }
+        for block in &self.recomposed_inner_rows {
+            if !block.can_decode_vec(D) {
+                return Err(AkitaError::InvalidSize {
+                    expected: D,
+                    actual: block.coeff_len(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Borrow folded `e` rows after [`Self::ensure_ring_dim`].
+    pub fn e_folded_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        Ok(self.e_folded.as_ring_slice_trusted::<D>())
+    }
+
+    /// Borrow recomposed rows for one block after [`Self::ensure_ring_dim`].
+    pub fn recomposed_block_trusted<const D: usize>(
+        &self,
+        block: usize,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.recomposed_inner_rows
+            .get(block)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(format!(
+                    "ring switch terminal artifacts block index {block} out of range"
+                ))
+            })
+            .map(|rows| rows.as_ring_slice_trusted::<D>())
+    }
+
+    /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].
+    pub fn z_folded_centered_trusted<const D: usize>(&self) -> Result<&[[i32; D]], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        let (chunks, rem) = self.z_folded_centered_flat.as_chunks::<D>();
+        debug_assert!(rem.is_empty());
+        Ok(chunks)
+    }
+
+    /// Borrow relation quotient `r` rows after [`Self::ensure_ring_dim`].
+    pub fn r_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        Ok(self.r.as_ring_slice_trusted::<D>())
+    }
 }
 
 /// Output of [`ring_switch_build_w`].
-pub struct RingSwitchBuildOutput<F: FieldCore, const D: usize> {
+pub struct RingSwitchBuildOutput<F: FieldCore> {
     pub w: RecursiveWitnessFlat,
-    pub terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
+    pub terminal_artifacts: Option<RingSwitchTerminalArtifacts<F>>,
 }
 
 /// Build the witness vector `w` from the ring-relation witness.
@@ -36,7 +149,7 @@ pub fn ring_switch_build_w<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
     retain_terminal_artifacts: bool,
-) -> Result<RingSwitchBuildOutput<F, D>, AkitaError>
+) -> Result<RingSwitchBuildOutput<F>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -100,13 +213,13 @@ where
         )
     };
     let terminal_artifacts = if retain_terminal_artifacts {
-        Some(RingSwitchTerminalArtifacts {
-            e_folded: e_folded.to_vec(),
+        Some(RingSwitchTerminalArtifacts::from_parts::<D>(
+            e_folded.to_vec(),
             recomposed_inner_rows,
-            z_folded_centered: z_centered,
+            z_centered,
             r,
-            u_concat_planes: u_concat_digits.len(),
-        })
+            u_concat_digits.len(),
+        ))
     } else {
         None
     };

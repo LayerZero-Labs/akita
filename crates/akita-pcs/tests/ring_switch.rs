@@ -835,11 +835,18 @@ mod tests {
         let artifacts = build_output
             .terminal_artifacts
             .expect("terminal artifacts retained");
+        artifacts.ensure_ring_dim::<D>().expect("ring dim");
+        let recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>> = artifacts
+            .recomposed_inner_rows
+            .iter()
+            .map(|block| block.try_to_vec::<D>())
+            .collect::<Result<_, _>>()
+            .expect("recomposed blocks");
         let segment = build_segment_typed_witness::<D, F>(
-            &artifacts.e_folded,
-            &artifacts.recomposed_inner_rows,
-            &artifacts.z_folded_centered,
-            &artifacts.r,
+            artifacts.e_folded.as_ring_slice_trusted::<D>(),
+            &recomposed_inner_rows,
+            artifacts.z_folded_centered_trusted::<D>().expect("z centered"),
+            artifacts.r.as_ring_slice_trusted::<D>(),
             &level_params,
             1,
             1,

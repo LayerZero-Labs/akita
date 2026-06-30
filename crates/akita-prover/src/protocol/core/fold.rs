@@ -865,7 +865,7 @@ pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T, const D
     lp: &LevelParams,
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
-    terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
+    terminal_artifacts: Option<RingSwitchTerminalArtifacts<F>>,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<BoundNextWitness<F>, AkitaError>
 where
@@ -895,11 +895,17 @@ where
             };
             let (num_w_vectors, num_t_vectors, num_public_rows) =
                 akita_types::tail_segment_multiplicities_from_layout(lp, &scheduled_shape.layout)?;
+            artifacts.ensure_ring_dim::<D>()?;
+            let recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>> = artifacts
+                .recomposed_inner_rows
+                .iter()
+                .map(|block| block.try_to_vec::<D>())
+                .collect::<Result<_, _>>()?;
             let segment = build_segment_typed_witness::<D, F>(
-                &artifacts.e_folded,
-                &artifacts.recomposed_inner_rows,
-                &artifacts.z_folded_centered,
-                &artifacts.r,
+                artifacts.e_folded.as_ring_slice_trusted::<D>(),
+                &recomposed_inner_rows,
+                artifacts.z_folded_centered_trusted::<D>()?,
+                artifacts.r.as_ring_slice_trusted::<D>(),
                 lp,
                 num_w_vectors,
                 num_t_vectors,
