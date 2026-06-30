@@ -1,6 +1,6 @@
 use akita_sis_estimator::{
-    cost_infinity, cost_zeta, estimate, scalar_sis_from_ring, AkitaModulusFamily, CostValue,
-    EstimateConfig, OptimizerConfig, SearchMode,
+    cost_infinity, cost_zeta, estimate, scalar_sis_from_ring, AkitaModulusFamily, Bound, CostValue,
+    EstimateConfig, OptimizerConfig, SearchMode, SisNorm, SisParameters,
 };
 use std::{
     env,
@@ -20,6 +20,8 @@ enum Mode {
 struct Args {
     mode: Mode,
     family: AkitaModulusFamily,
+    raw_n: Option<u32>,
+    raw_m: Option<u32>,
     d: u32,
     rank: u32,
     width: u32,
@@ -31,14 +33,9 @@ struct Args {
 
 fn main() {
     let args = Args::parse_or_exit();
-    let params = scalar_sis_from_ring(
-        args.family,
-        args.d,
-        args.rank,
-        args.width,
-        args.coeff_linf_bound,
-    )
-    .unwrap_or_else(|error| fatal(&format!("invalid SIS parameters: {error}")));
+    let params = args
+        .params()
+        .unwrap_or_else(|error| fatal(&format!("invalid SIS parameters: {error}")));
 
     let mut total = Duration::ZERO;
     let mut last = None;
@@ -87,12 +84,14 @@ fn main() {
     let seconds = total.as_secs_f64();
     let seconds_per_iter = seconds / f64::from(args.iterations);
     println!(
-        "mode,family,d,rank,width,coeff_linf_bound,iterations,total_seconds,seconds_per_iter,rop_log2,beta,zeta,lattice_dimension"
+        "mode,family,n,m,d,rank,width,coeff_linf_bound,iterations,total_seconds,seconds_per_iter,rop_log2,beta,zeta,lattice_dimension"
     );
     println!(
-        "{},{},{},{},{},{},{},{:.9},{:.9},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{:.9},{:.9},{},{},{},{}",
         args.mode.label(),
         args.family.label(),
+        params.n,
+        params.m.unwrap_or(0),
         args.d,
         args.rank,
         args.width,
@@ -113,6 +112,8 @@ impl Args {
         let mut parsed = Self {
             mode: Mode::Estimate,
             family: AkitaModulusFamily::Q32,
+            raw_n: None,
+            raw_m: None,
             d: 0,
             rank: 0,
             width: 0,
@@ -132,6 +133,8 @@ impl Args {
                     parsed.family = AkitaModulusFamily::parse(&value)
                         .unwrap_or_else(|error| fatal(&format!("{error}")));
                 }
+                "--n" => parsed.raw_n = Some(parse(&value, "--n")),
+                "--m" => parsed.raw_m = Some(parse(&value, "--m")),
                 "--d" => parsed.d = parse(&value, "--d"),
                 "--rank" => parsed.rank = parse(&value, "--rank"),
                 "--width" => parsed.width = parse(&value, "--width"),
@@ -146,15 +149,38 @@ impl Args {
             }
         }
 
-        if parsed.d == 0
-            || parsed.rank == 0
-            || parsed.width == 0
+        let has_raw_shape = parsed.raw_n.is_some() && parsed.raw_m.is_some();
+        let has_ring_shape = parsed.d != 0 && parsed.rank != 0 && parsed.width != 0;
+        if (!has_raw_shape && !has_ring_shape)
             || parsed.coeff_linf_bound == 0
             || parsed.iterations == 0
         {
             usage(2);
         }
         parsed
+    }
+
+    fn params(&self) -> akita_sis_estimator::Result<SisParameters> {
+        match (self.raw_n, self.raw_m) {
+            (Some(n), Some(m)) => SisParameters::try_new(
+                n,
+                self.family.modulus(),
+                Some(m),
+                Bound::from_u64(self.coeff_linf_bound),
+                SisNorm::Infinity,
+            ),
+            (None, None) => scalar_sis_from_ring(
+                self.family,
+                self.d,
+                self.rank,
+                self.width,
+                self.coeff_linf_bound,
+            ),
+            _ => {
+                eprintln!("error: --n and --m must be provided together");
+                process::exit(2);
+            }
+        }
     }
 }
 
@@ -214,7 +240,7 @@ fn optional_u32_text(value: Option<u32>) -> String {
 
 fn usage(code: i32) -> ! {
     eprintln!(
-        "usage: sis_estimator_once --family q32|q64|q128 --d N --rank N --width N --coeff-linf-bound N [--mode estimate|fixed|zeta] [--beta N] [--zeta N] [--iterations N]"
+        "usage: sis_estimator_once --family q32|q64|q128 (--n N --m N | --d N --rank N --width N) --coeff-linf-bound N [--mode estimate|fixed|zeta] [--beta N] [--zeta N] [--iterations N]"
     );
     process::exit(code);
 }
