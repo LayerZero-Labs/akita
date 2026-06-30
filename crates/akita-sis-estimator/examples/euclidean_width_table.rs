@@ -121,8 +121,9 @@ fn write_rust_split(
     config: &EuclideanWidthTableConfig,
     output: Option<&Path>,
 ) -> io::Result<()> {
-    let out_dir =
-        output.unwrap_or_else(|| Path::new("crates/akita-types/src/sis/generated_sis_table"));
+    let default_out_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-types/src/sis/generated_sis_table");
+    let out_dir = output.unwrap_or(default_out_dir.as_path());
     fs::create_dir_all(out_dir)?;
     fs::write(out_dir.join("mod.rs"), rust_mod_source())?;
     let arms = rust_table_arms(rows, config.max_rank);

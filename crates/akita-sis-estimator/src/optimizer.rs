@@ -9,7 +9,7 @@ use crate::{
     lattice::cost_infinity_fixed,
     math::{log2_biguint, log2_positive},
     params::{Bound, SisParameters},
-    reduction::delta::{delta, BETA_SEARCH_MAX},
+    reduction::delta::{beta as beta_from_delta, BETA_SEARCH_MAX},
 };
 use num_traits::{One, ToPrimitive};
 #[cfg(feature = "parallel")]
@@ -419,27 +419,6 @@ fn euclidean_baseline_length_bound(bound: &Bound) -> Result<f64> {
             reason: "Euclidean baseline requires a finite positive length bound".to_string(),
         })
     }
-}
-
-fn beta_from_delta(target_delta: f64) -> Option<u32> {
-    if delta(MIN_BETA) < target_delta {
-        return Some(MIN_BETA);
-    }
-    if target_delta < delta(BETA_SEARCH_MAX) {
-        return None;
-    }
-
-    let mut low = MIN_BETA;
-    let mut high = BETA_SEARCH_MAX;
-    while low < high {
-        let mid = low + (high - low) / 2;
-        if delta(mid) <= target_delta {
-            high = mid;
-        } else {
-            low = mid + 1;
-        }
-    }
-    Some(low)
 }
 
 fn ceil_div(numerator: u64, denominator: u64) -> u64 {
