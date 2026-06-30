@@ -71,6 +71,18 @@ pub struct WitnessLayout {
 }
 
 impl WitnessLayout {
+    pub fn num_chunks(&self) -> usize {
+        self.chunks.len()
+    }
+
+    pub fn blocks_per_chunk(&self) -> usize {
+        self.blocks_per_chunk
+    }
+
+    pub fn chunk_lengths(&self) -> &WitnessChunkLengths {
+        &self.chunk_lengths
+    }
+
     /// Convert to the legacy segment layout for the single-chunk layout.
     ///
     /// TODO: remove this method after the legacy layout is deprecated.
@@ -78,13 +90,22 @@ impl WitnessLayout {
         if self.chunks.len() != 1 {
             panic!("witness layout: multi-chunk layout is not supported");
         }
-        let last = &self.chunks[0];
+        let only = &self.chunks[0];
+        // Non-tiered single chunk carries no `u` segment (`offset_u == None`).
+        // The legacy layout still expects a concrete offset: the column right
+        // after `t̂` (`offset_t + t_len`), which is where `r` begins when `u` is
+        // empty. Reconstruct it rather than unwrapping `None`.
+        let offset_u = only
+            .offset_u
+            .unwrap_or(only.offset_t + self.chunk_lengths.t_chunk_len);
         RingRelationSegmentLayout {
-            offset_e: last.offset_e,
-            offset_t: last.offset_t,
-            offset_u: last.offset_u.unwrap(),
-            offset_z: last.offset_z,
-            offset_r: last.offset_r.unwrap(),
+            offset_e: only.offset_e,
+            offset_t: only.offset_t,
+            offset_u,
+            offset_z: only.offset_z,
+            offset_r: only
+                .offset_r
+                .unwrap_or(offset_u + self.chunk_lengths.r_chunk_len),
         }
     }
 

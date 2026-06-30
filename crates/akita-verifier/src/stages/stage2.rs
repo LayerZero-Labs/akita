@@ -257,7 +257,7 @@ where
     }
 
     fn row_eval(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
-        self.prepared_row_eval.eval_at_point::<F, D>(
+        self.prepared_row_eval.legacy_eval_at_point::<F, D>(
             x_challenges,
             self.setup,
             self.opening_point,
