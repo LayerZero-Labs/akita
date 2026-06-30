@@ -12,6 +12,8 @@ use crate::{
     reduction::delta::{delta, BETA_SEARCH_MAX},
 };
 use num_traits::{One, ToPrimitive};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 const MIN_BETA: u32 = 40;
 const SAGE_SANITY_MAX_LOG2: f64 = 10_000.0;
@@ -79,13 +81,17 @@ fn cost_zeta_search(
         SearchMode::Exhaustive => best_in_range(0, zeta_stop, |zeta| {
             cost_zeta_with_mode(zeta, beta_mode, params, config)
         })?
-        .ok_or_else(|| EstimatorError::InvalidParameter {
-            field: "zeta",
-            reason: "zeta search range is empty".to_string(),
-        }),
-        SearchMode::ExhaustiveParallel => Err(EstimatorError::Unsupported {
-            feature: "parallel zeta search",
-        }),
+        .ok_or_else(empty_range_error("zeta")),
+        SearchMode::ExhaustiveParallel => {
+            let inner_beta_mode = match beta_mode {
+                SearchMode::ExhaustiveParallel => SearchMode::Exhaustive,
+                mode => mode,
+            };
+            best_in_range_parallel(0, zeta_stop, |zeta| {
+                cost_zeta_with_mode(zeta, inner_beta_mode, params, config)
+            })?
+            .ok_or_else(empty_range_error("zeta"))
+        }
         SearchMode::ProvenPruned => Err(EstimatorError::Unsupported {
             feature: "proven-pruned zeta search",
         }),
@@ -111,6 +117,16 @@ fn cost_zeta_with_mode(
                         reason: "local-minimum beta search returned a cost without beta"
                             .to_string(),
                     })?;
+                    // Refinement matches lattice-estimator `it.neighborhood`: half-open
+                    // [rough_beta - 2, min(search_stop, rough_beta + 2)), so the largest β
+                    // tried is rough_beta + 1, not rough_beta + 2. Do not widen this window
+                    // for parity goldens: a strictly cheaper β+1 neighbor can exist but Sage
+                    // skips it when coarse search lands two below; exhaustive search may find it.
+                    // Refinement window matches lattice-estimator `it.neighborhood`:
+                    // range(x - precision, min(stop_bound, x + precision)) with precision=2,
+                    // i.e. half-open [beta-2, beta+2) capped by the coarse-search stop.
+                    // Do not evaluate beta+2 here: Sage never does, and doing so can pick a
+                    // strictly cheaper beta while breaking PR217 golden parity.
                     let start = beta.saturating_sub(2).max(MIN_BETA);
                     let stop = beta.saturating_add(2).min(stop);
                     best_in_range(start, stop, |candidate| {
@@ -138,9 +154,16 @@ fn cost_zeta_with_mode(
                 reason: "beta search range is empty".to_string(),
             })
         }
-        SearchMode::ExhaustiveParallel => Err(EstimatorError::Unsupported {
-            feature: "parallel beta search",
-        }),
+        SearchMode::ExhaustiveParallel => {
+            let stop = beta_search_stop(params, config)?;
+            if stop <= MIN_BETA {
+                return Ok(cost_infinity_fixed(MIN_BETA, params, zeta, config)?);
+            }
+            best_in_range_parallel(MIN_BETA, stop, |beta| {
+                cost_infinity_fixed(beta, params, zeta, config)
+            })?
+            .ok_or_else(empty_range_error("beta"))
+        }
         SearchMode::ProvenPruned => Err(EstimatorError::Unsupported {
             feature: "proven-pruned beta search",
         }),
@@ -240,17 +263,68 @@ fn best_in_range<F>(start: u32, stop: u32, mut f: F) -> Result<Option<LatticeCos
 where
     F: FnMut(u32) -> Result<LatticeCost>,
 {
-    let mut best = None;
+    let mut best = None::<SearchCandidate>;
     for value in start..stop {
-        let candidate = f(value)?;
-        if best
-            .as_ref()
-            .is_none_or(|current| cost_leq(&candidate, current))
-        {
-            best = Some(candidate);
-        }
+        best = Some(select_best(
+            best,
+            SearchCandidate {
+                value,
+                cost: f(value)?,
+            },
+        ));
     }
-    Ok(best)
+    Ok(best.map(|candidate| candidate.cost))
+}
+
+#[cfg(feature = "parallel")]
+fn best_in_range_parallel<F>(start: u32, stop: u32, f: F) -> Result<Option<LatticeCost>>
+where
+    F: Fn(u32) -> Result<LatticeCost> + Sync,
+{
+    match (start..stop)
+        .into_par_iter()
+        .map(|value| f(value).map(|cost| SearchCandidate { value, cost }))
+        .try_reduce_with(|best, candidate| Ok(select_best(Some(best), candidate)))
+    {
+        Some(Ok(candidate)) => Ok(Some(candidate.cost)),
+        Some(Err(error)) => Err(error),
+        None => Ok(None),
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+fn best_in_range_parallel<F>(_start: u32, _stop: u32, _f: F) -> Result<Option<LatticeCost>>
+where
+    F: Fn(u32) -> Result<LatticeCost>,
+{
+    Err(EstimatorError::Unsupported {
+        feature: "parallel exhaustive search",
+    })
+}
+
+#[derive(Clone, Debug)]
+struct SearchCandidate {
+    value: u32,
+    cost: LatticeCost,
+}
+
+fn select_best(best: Option<SearchCandidate>, candidate: SearchCandidate) -> SearchCandidate {
+    match best {
+        Some(current) if !candidate_leq(&candidate, &current) => current,
+        _ => candidate,
+    }
+}
+
+fn candidate_leq(lhs: &SearchCandidate, rhs: &SearchCandidate) -> bool {
+    cost_order(lhs.cost.rop) < cost_order(rhs.cost.rop)
+        || (cost_order(lhs.cost.rop) == cost_order(rhs.cost.rop) && lhs.value >= rhs.value)
+}
+
+fn empty_range_error(field: &'static str) -> impl FnOnce() -> EstimatorError {
+    move || EstimatorError::InvalidParameter {
+        field,
+        reason: format!("{field} search range is empty"),
+    }
 }
 
 fn explicit_m(params: &SisParameters) -> Result<u32> {
