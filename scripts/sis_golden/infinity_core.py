@@ -26,6 +26,13 @@ PROFILE = {
     "zeta": "full optimizer",
 }
 
+FIXED_PROFILE = {
+    "norm": "infinity",
+    "red_cost_model": "ADPS16",
+    "red_shape_model": "LGSA",
+    "zeta": "fixed",
+}
+
 TRUSTED = "trusted"
 FRAGILE = "fragile"
 
@@ -134,8 +141,146 @@ def _log2_value(value: Any, log: Any, oo: Any) -> str:
         return ""
 
 
+def _fixed_log2_value(value: Any, log: Any, oo: Any) -> str:
+    if value is None:
+        return ""
+    if value == oo:
+        return "inf"
+    try:
+        if value == 0:
+            return "-inf"
+        from sage.all import RealField  # noqa: WPS433
+
+        return format(float(RealField(256)(value).log2()), ".17g")
+    except (TypeError, ValueError, OverflowError):
+        return _log2_value(value, log, oo)
+
+
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
+
+
+def estimate_fixed_infinity_cell(
+    SIS: Any,
+    RC: Any,
+    log: Any,
+    oo: Any,
+    *,
+    family: str,
+    d: int,
+    rank: int,
+    width: int,
+    coeff_linf_bound: int,
+    beta: int,
+    zeta: int,
+    target_bits: float,
+    success_probability: float = 0.99,
+) -> dict[str, str]:
+    q, _label = FAMILIES[family]
+    params = SIS.Parameters(
+        n=rank * d,
+        q=q,
+        m=width * d,
+        length_bound=coeff_linf_bound,
+        norm=oo,
+        tag="akita_fixed_infinity_golden",
+    )
+    from estimator.sis_lattice import SISLattice  # noqa: WPS433
+
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        out = SISLattice.cost_infinity(
+            beta,
+            params,
+            zeta=zeta,
+            success_probability=success_probability,
+            red_cost_model=RC.ADPS16,
+            red_shape_model="lgsa",
+            log_level=0,
+        )
+
+    rop_log2 = _fixed_log2_value(out.get("rop"), log, oo)
+    prob_log2 = _fixed_log2_value(out.get("prob"), log, oo)
+    repetitions_log2 = _fixed_log2_value(out.get("repetitions"), log, oo)
+    security_met = rop_log2 not in {"", "-inf"} and (
+        rop_log2 == "inf" or float(rop_log2) >= target_bits
+    )
+    tiny_probability = prob_log2 not in {"", "inf"} and float(prob_log2) < -512.0
+
+    return {
+        "family": family,
+        "q": str(q),
+        "d": d,
+        "rank": rank,
+        "width": width,
+        "coeff_linf_bound": str(coeff_linf_bound),
+        "beta_input": str(beta),
+        "zeta_input": str(zeta),
+        "target_bits": format(target_bits, ".17g"),
+        "rop_log2": rop_log2,
+        "red_log2": _fixed_log2_value(out.get("red"), log, oo),
+        "sieve_log2": _fixed_log2_value(out.get("sieve"), log, oo),
+        "beta": str(out.get("beta", "")),
+        "eta": str(out.get("eta", "")),
+        "zeta": str(out.get("zeta", "")),
+        "lattice_dimension": str(out.get("d", "")),
+        "prob_log2": prob_log2,
+        "repetitions_log2": repetitions_log2,
+        "security_met": _bool_text(security_met),
+        "tiny_probability": _bool_text(tiny_probability),
+        "trust": TRUSTED,
+        "notes": "",
+    }
+
+
+def fragile_fixed_infinity_cell(
+    *,
+    family: str,
+    d: int,
+    rank: int,
+    width: int,
+    coeff_linf_bound: int,
+    beta: int,
+    zeta: int,
+    target_bits: float,
+    exc: BaseException,
+) -> dict[str, str]:
+    q, _label = FAMILIES[family]
+    return {
+        "family": family,
+        "q": str(q),
+        "d": d,
+        "rank": rank,
+        "width": width,
+        "coeff_linf_bound": str(coeff_linf_bound),
+        "beta_input": str(beta),
+        "zeta_input": str(zeta),
+        "target_bits": format(target_bits, ".17g"),
+        "rop_log2": "",
+        "red_log2": "",
+        "sieve_log2": "",
+        "beta": "",
+        "eta": "",
+        "zeta": "",
+        "lattice_dimension": "",
+        "prob_log2": "",
+        "repetitions_log2": "",
+        "security_met": "false",
+        "tiny_probability": "false",
+        "trust": FRAGILE,
+        "notes": f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')}",
+    }
+
+
+def fixed_row_key(row: dict[str, str]) -> tuple[str, int, int, int, int, int, int]:
+    return (
+        row["family"],
+        int(row["d"]),
+        int(row["rank"]),
+        int(row["width"]),
+        int(row["coeff_linf_bound"]),
+        int(row["beta_input"]),
+        int(row["zeta_input"]),
+    )
 
 
 def estimate_infinity_cell(

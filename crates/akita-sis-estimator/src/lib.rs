@@ -7,12 +7,19 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
+pub mod akita;
 pub mod config;
 pub mod cost;
 pub mod error;
+pub mod lattice;
+pub mod math;
 pub mod numeric;
 pub mod params;
+pub mod probability;
+pub mod reduction;
+pub mod simulator;
 
+pub use akita::{scalar_sis_from_ring, AkitaModulusFamily};
 pub use config::{
     Adps16Mode, EstimateConfig, NearestNeighborModel, OptimizerConfig, ReductionCostModel,
     SearchMode, ShapeModel,
@@ -44,8 +51,8 @@ pub fn estimate(params: &SisParameters, config: &EstimateConfig) -> Result<Latti
 /// # Errors
 ///
 /// Returns validation errors for malformed inputs. The actual estimator math is
-/// implemented in later slices, so valid inputs currently return
-/// [`EstimatorError::Unsupported`].
+/// implemented for the fixed ADPS16 + LGSA target profile in this slice. Other
+/// profiles return [`EstimatorError::Unsupported`].
 pub fn cost_infinity(
     beta: u32,
     params: &SisParameters,
@@ -61,9 +68,7 @@ pub fn cost_infinity(
             reason: "cost_infinity requires SisNorm::Infinity".to_string(),
         });
     }
-    Err(EstimatorError::Unsupported {
-        feature: "cost_infinity",
-    })
+    lattice::cost_infinity_fixed(beta, params, zeta, config)
 }
 
 /// Evaluate the best beta for one fixed zeta.
@@ -108,10 +113,10 @@ pub fn cost_euclidean(params: &SisParameters, config: &EstimateConfig) -> Result
 }
 
 fn validate_beta_zeta(beta: u32, zeta: u32) -> Result<()> {
-    if beta == 0 {
+    if beta < 2 {
         return Err(EstimatorError::InvalidParameter {
             field: "beta",
-            reason: "beta must be positive".to_string(),
+            reason: "beta must be at least 2".to_string(),
         });
     }
     let _ = zeta;
@@ -136,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn valid_entry_points_are_explicitly_unsupported_for_now() {
+    fn optimizer_entry_point_is_explicitly_unsupported_for_now() {
         let params = sample_params(SisNorm::Infinity);
         let config = EstimateConfig::default();
         assert!(matches!(
@@ -145,12 +150,7 @@ mod tests {
                 feature: "estimate"
             })
         ));
-        assert!(matches!(
-            cost_infinity(64, &params, 0, &config),
-            Err(EstimatorError::Unsupported {
-                feature: "cost_infinity"
-            })
-        ));
+        assert!(cost_infinity(64, &params, 0, &config).is_ok());
     }
 
     #[test]

@@ -79,3 +79,23 @@ sage -python scripts/sis_golden/check_infinity.py \
 
 For quick local smoke tests, use the same script with filters such as
 `--families q32 --dims 32 --ranks 1 --limit 2`.
+
+## Fixed infinity-cost goldens
+
+Slice 3 uses a smaller fixed-beta, fixed-zeta fixture. These cells exercise
+`SISLattice.cost_infinity(...)` directly and are separate from the full
+optimizer CSV above.
+
+Refresh:
+
+```bash
+sage -python scripts/sis_golden/refresh_fixed_infinity_golden.py \
+  --estimator-path /path/to/lattice-estimator-pr217
+```
+
+Replay:
+
+```bash
+sage -python scripts/sis_golden/check_fixed_infinity.py \
+  --estimator-path /path/to/lattice-estimator-pr217
+```
