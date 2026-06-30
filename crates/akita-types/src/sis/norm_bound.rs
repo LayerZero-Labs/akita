@@ -256,7 +256,7 @@ pub fn committed_fold_a_role_rank(
     if challenge_l1_mass == 0 {
         return None;
     }
-    let is_onehot = is_root && decomposition.log_commit_bound == 1;
+    let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
     let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
     let challenge = fold_challenge_norms(stage1_config, fold_shape);
     let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
@@ -662,8 +662,7 @@ impl FoldWitnessLinfCapConfig {
                 num_fold_coeffs,
                 grind_target_accept_num,
                 grind_target_accept_den,
-            )
-            .unwrap_or(u128::MAX),
+            )?,
         };
         Ok(Self {
             policy,

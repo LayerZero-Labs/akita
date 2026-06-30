@@ -468,7 +468,10 @@ fn validate_expanded_level_params(
     fold_level: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
-    if lp.num_blocks != 1usize.checked_shl(step.r_vars).unwrap_or(0) {
+    let expected_num_blocks = 1usize.checked_shl(step.r_vars).ok_or_else(|| {
+        AkitaError::InvalidSetup("generated schedule 2^r_vars overflows usize".to_string())
+    })?;
+    if lp.num_blocks != expected_num_blocks {
         return Err(AkitaError::InvalidSetup(
             "expanded generated level has mismatched num_blocks".to_string(),
         ));
@@ -486,6 +489,14 @@ fn validate_expanded_level_params(
     if fold_level > 0 && lp.onehot_chunk_size != 0 {
         return Err(AkitaError::InvalidSetup(
             "generated recursive level must not carry one-hot root metadata".to_string(),
+        ));
+    }
+    if fold_level == 0
+        && policy.decomposition.log_commit_bound == 1
+        && policy.onehot_chunk_size == 0
+    {
+        return Err(AkitaError::InvalidSetup(
+            "one-hot root requires onehot_chunk_size > 0".to_string(),
         ));
     }
     if fold_level == 0

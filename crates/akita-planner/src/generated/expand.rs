@@ -124,9 +124,9 @@ impl GeneratedFoldStep {
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
-        // batch factor (the root commits `num_claims` polynomials); the stored
-        // `n_a` sizes the B-role width. Unlike the planner DP, expansion audits
-        // the *shipped* ranks against these (norm, width) via `try_new`.
+        // batch factor (the root commits `num_claims` polynomials); `n_a` is the
+        // A-matrix row count. Unlike the planner DP, expansion audits the
+        // *shipped* ranks against these (norm, width) via `try_new`.
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
@@ -143,7 +143,7 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (a_bucket, expected_n_a) = committed_fold_a_role_rank(
+        let (a_bucket, _) = committed_fold_a_role_rank(
             sis_family,
             ring_d,
             decomp,
@@ -157,12 +157,6 @@ impl GeneratedFoldStep {
             inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
-        if self.n_a as usize != expected_n_a {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated schedule A-rank mismatch: stored n_a = {}, recomputed n_a = {expected_n_a}",
-                self.n_a
-            )));
-        }
         require_exact_rank(
             "a",
             sis_family,
