@@ -182,6 +182,7 @@ dependencies = [
  "criterion",
  "num-bigint",
  "num-traits",
+ "rayon",
  "thiserror",
 ]
 

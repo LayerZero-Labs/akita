@@ -12,6 +12,7 @@
 
 use akita_sis_estimator::{
     estimate, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig, NumericConfig,
+    OptimizerConfig, SearchMode,
 };
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/infinity_golden.csv");
@@ -31,6 +32,17 @@ fn local_minimum_config() -> EstimateConfig {
 
 fn exhaustive_config() -> EstimateConfig {
     EstimateConfig::akita_infinity_table()
+}
+
+#[cfg(feature = "parallel")]
+fn parallel_exhaustive_config() -> EstimateConfig {
+    EstimateConfig {
+        optimizer: OptimizerConfig::OptimizeZeta {
+            beta: SearchMode::ExhaustiveParallel,
+            zeta: SearchMode::ExhaustiveParallel,
+        },
+        ..EstimateConfig::default()
+    }
 }
 
 #[test]
@@ -65,6 +77,27 @@ fn exhaustive_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
     }
     if !violations.is_empty() {
         panic!("{}", violations.join("\n\n"));
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_exhaustive_matches_serial_exhaustive_on_medium_subset() {
+    let mut mismatches = Vec::new();
+    for row in exhaustive_subset_rows() {
+        let params =
+            scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
+                .unwrap();
+        let serial = estimate(&params, &exhaustive_config()).unwrap();
+        let parallel = estimate(&params, &parallel_exhaustive_config()).unwrap();
+        if serial != parallel {
+            mismatches.push(format!(
+                "parallel exhaustive mismatch for {row:?}\n  serial={serial:?}\n  parallel={parallel:?}"
+            ));
+        }
+    }
+    if !mismatches.is_empty() {
+        panic!("{}", mismatches.join("\n\n"));
     }
 }
 

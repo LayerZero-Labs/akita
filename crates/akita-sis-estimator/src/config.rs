@@ -198,16 +198,6 @@ impl EstimateConfig {
     }
 }
 
-fn validate_positive(field: &'static str, value: u32) -> Result<()> {
-    if value == 0 {
-        return Err(EstimatorError::InvalidConfig {
-            field,
-            reason: "value must be positive".to_string(),
-        });
-    }
-    Ok(())
-}
-
 fn validate_min_beta(field: &'static str, beta: u32) -> Result<()> {
     if beta < 2 {
         return Err(EstimatorError::InvalidConfig {

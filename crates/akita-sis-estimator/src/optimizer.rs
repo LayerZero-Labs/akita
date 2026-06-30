@@ -139,7 +139,7 @@ fn cost_zeta_with_mode(
         SearchMode::Exhaustive => {
             let stop = beta_search_stop(params, config)?;
             if stop <= MIN_BETA {
-                return Ok(cost_infinity_fixed(MIN_BETA, params, zeta, config)?);
+                return cost_infinity_fixed(MIN_BETA, params, zeta, config);
             }
             best_in_range(MIN_BETA, stop, |beta| {
                 cost_infinity_fixed(beta, params, zeta, config)
@@ -152,7 +152,7 @@ fn cost_zeta_with_mode(
         SearchMode::ExhaustiveParallel => {
             let stop = beta_search_stop(params, config)?;
             if stop <= MIN_BETA {
-                return Ok(cost_infinity_fixed(MIN_BETA, params, zeta, config)?);
+                return cost_infinity_fixed(MIN_BETA, params, zeta, config);
             }
             best_in_range_parallel(MIN_BETA, stop, |beta| {
                 cost_infinity_fixed(beta, params, zeta, config)
