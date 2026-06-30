@@ -292,7 +292,7 @@ mod tests {
         )
         .unwrap();
         let mut config = sample_config();
-        config.red_shape_model = ShapeModel::Zgsa;
+        config.red_shape_model = ShapeModel::Cn11;
         assert!(matches!(
             cost_infinity_fixed(63, &params, 0, &config),
             Err(EstimatorError::Unsupported { .. })

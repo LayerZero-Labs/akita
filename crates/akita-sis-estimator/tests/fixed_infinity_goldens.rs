@@ -42,6 +42,14 @@ fn fixed_infinity_gsa_goldens_match_pinned_estimator_trusted_rows() {
 }
 
 #[test]
+fn fixed_infinity_zgsa_goldens_match_pinned_estimator_trusted_rows() {
+    run_fixed_infinity_goldens(
+        include_str!("../../../scripts/sis_golden/fixed_infinity_golden_adps16_zgsa_fixed.csv"),
+        ShapeModel::Zgsa,
+    );
+}
+
+#[test]
 fn fixed_infinity_rejects_unsupported_profiles_without_panicking() {
     let params = scalar_sis_from_ring(AkitaModulusFamily::Q32, 32, 1, 2, 15).unwrap();
     let config = EstimateConfig {
