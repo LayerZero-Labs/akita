@@ -126,10 +126,6 @@ pub struct LevelParams {
     /// levels `block_len` is not necessarily `2^r_vars`.
     pub r_vars: usize,
     pub stage1_config: SparseChallengeConfig,
-    /// When true, fold challenges are operator-norm rejected and A-role SIS
-    /// collision is priced with `Γ`; when false, samples from the full shell
-    /// and prices with L1 mass `ω`.
-    pub op_norm_rejection: bool,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
     /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
@@ -205,7 +201,6 @@ impl LevelParams {
                 weight: 0,
                 nonzero_coeffs: Vec::new(),
             },
-            op_norm_rejection: false,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
@@ -258,7 +253,6 @@ impl LevelParams {
             m_vars: 0,
             r_vars: 0,
             stage1_config,
-            op_norm_rejection: false,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
@@ -342,15 +336,6 @@ impl LevelParams {
             .ok_or_else(|| AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string()))
     }
 
-    /// Operator-norm acceptance probability `p_opnorm` as a rational `p_num / p_den`.
-    #[inline]
-    pub fn op_norm_acceptance_p(&self) -> (u128, u128) {
-        (
-            self.fold_linf_cap_config.op_norm_accept_p_num,
-            self.fold_linf_cap_config.op_norm_accept_p_den,
-        )
-    }
-
     /// Fold witness L∞ cap policy for this level's sparse family and fold shape.
     #[inline]
     pub fn fold_witness_linf_cap_policy(&self) -> crate::sis::FoldWitnessLinfCapPolicy {
@@ -361,7 +346,8 @@ impl LevelParams {
         )
     }
 
-    /// Level-static config for [`crate::sis::fold_witness_linf_cap`] inside [`crate::sis::num_digits_fold`].
+    /// Level-static config for [`crate::sis::fold_witness_honest_prover_linf_cap`] inside
+    /// [`crate::sis::num_digits_fold`].
     #[inline]
     pub fn fold_witness_linf_cap_config(&self) -> crate::sis::FoldWitnessLinfCapConfig {
         self.fold_linf_cap_config
@@ -378,11 +364,6 @@ impl LevelParams {
     }
 
     /// Attach the level-static fold-linf cap config derived from this layout.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] when `op_norm_rejection` is enabled for a
-    /// binding preset without a certified acceptance floor.
     pub fn with_fold_linf_cap_config(
         mut self,
         field_bits: u32,
@@ -393,7 +374,6 @@ impl LevelParams {
             &self.stage1_config,
             self.fold_challenge_shape,
             self.ring_dimension,
-            self.op_norm_rejection,
             self.inner_width(),
         )?;
         let challenge =
@@ -426,40 +406,21 @@ impl LevelParams {
         Ok(self)
     }
 
-    /// Squared `‖z‖_inf` tail bound `t*²` for tail-bound-with-grind levels.
-    ///
-    /// The prover reroll loop (F7) and planner DP (F5) must read this accessor so
-    /// digit sizing and acceptance use the same value (invariant 4).
+    /// Honest-prover per-coefficient `‖z‖_inf` target for fold digit sizing, grind,
+    /// and terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] for deterministic policies, zero
-    /// `num_fold_coeffs`, or overflow in the tail-bound formula.
-    /// Fiat–Shamir grind contract for this fold level (prover reroll + verifier nonce check).
-    ///
-    /// `max_grind_attempts` must match the active
-    /// [`crate::FoldLinfProtocolBinding::max_grind_attempts`] bound in setup.
-    ///
-    /// # Errors
-    ///
-    /// Per-coefficient `‖z‖_inf` cap for fold digit sizing, grind acceptance, and
-    /// terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`crate::sis::fold_witness_beta`] and
-    /// [`crate::sis::fold_witness_linf_cap`] setup errors.
+    /// Propagates [`crate::sis::fold_witness_honest_prover_linf_cap`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let witness = self.fold_witness_norms();
-        let witness_linf = witness.infinity_norm();
-        let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
         let challenge =
             crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
-        let beta = crate::sis::fold_witness_beta(self.r_vars, num_claims, challenge, witness)?;
-        crate::sis::fold_witness_linf_cap(
-            beta,
-            self.num_fold_blocks(num_claims)?,
-            witness_linf_sq,
+        crate::sis::fold_witness_honest_prover_linf_cap(
+            challenge,
+            witness,
+            self.r_vars,
+            num_claims,
             &self.fold_linf_cap_config,
         )
     }
@@ -515,11 +476,8 @@ impl LevelParams {
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
         let ln_term = crate::sis::fold_witness_linf_ln_term(
             cap_config.num_fold_coeffs,
-            num_fold_blocks,
             cap_config.grind_target_accept_num,
             cap_config.grind_target_accept_den,
-            cap_config.op_norm_accept_p_num,
-            cap_config.op_norm_accept_p_den,
         )?;
         crate::sis::fold_witness_linf_tail_bound_sq(
             num_fold_blocks,
@@ -612,7 +570,6 @@ impl LevelParams {
         push_usize(bytes, self.m_vars);
         push_usize(bytes, self.r_vars);
         append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
-        bytes.push(u8::from(self.op_norm_rejection));
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
         push_u128(bytes, self.challenge_l2_sq_max());
@@ -894,7 +851,6 @@ impl LevelParams {
             m_vars,
             r_vars,
             stage1_config: self.stage1_config.clone(),
-            op_norm_rejection: self.op_norm_rejection,
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
             num_digits_open,
@@ -961,7 +917,6 @@ impl LevelParams {
             m_vars: other.m_vars,
             r_vars: other.r_vars,
             stage1_config: self.stage1_config.clone(),
-            op_norm_rejection: other.op_norm_rejection,
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
@@ -998,12 +953,10 @@ fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &Sparse
         SparseChallengeConfig::ExactShell {
             count_mag1,
             count_mag2,
-            operator_norm_threshold,
         } => {
             bytes.push(1);
             push_usize(bytes, *count_mag1);
             push_usize(bytes, *count_mag2);
-            push_u32(bytes, *operator_norm_threshold);
         }
         SparseChallengeConfig::BoundedL1Norm => {
             bytes.push(2);

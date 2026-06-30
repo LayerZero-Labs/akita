@@ -39,4 +39,4 @@ explicit.
 **Sources to fold in**
 
 - Paper §2.2 (commitment vs opening bases).
-- `crates/akita-types/src/sis/four_square.rs`, `specs/l2-msis-opnorm-folded-witness.md`.
+- `crates/akita-types/src/sis/decomposition_digits.rs`.

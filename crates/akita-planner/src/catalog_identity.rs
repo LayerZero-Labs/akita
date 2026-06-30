@@ -5,15 +5,56 @@
 //! Identity mismatch is a hard error; a row miss after validation falls back to
 //! the offline DP search.
 
+use std::cmp::Ordering;
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
+
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::AkitaScheduleInputs;
 
 use crate::generated::{
-    GeneratedDirectStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
+    catalog_key_cmp, GeneratedDirectStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
+
+static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn lock_validated_catalogs(
+) -> Result<std::sync::MutexGuard<'static, HashSet<CatalogValidationCacheKey>>, AkitaError> {
+    VALIDATED_CATALOGS
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("catalog validation cache poisoned".to_string()))
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CatalogValidationCacheKey {
+    entries_ptr: usize,
+    entries_len: usize,
+    identity_digest: [u8; 32],
+    policy_digest: [u8; 32],
+}
+
+/// Fixed-width digest of a [`PlannerPolicy`] for catalog validation caching.
+pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let mut h = Fnv64::new();
+    h.write_u64(sis_family_tag(policy.sis_family));
+    h.write_u64(policy.ring_dimension as u64);
+    write_decomposition(&mut h, policy.decomposition);
+    h.write_u64(u64::from(policy.ring_subfield_norm_bound));
+    h.write_u64(policy.claim_ext_degree as u64);
+    h.write_u64(policy.chal_ext_degree as u64);
+    h.write_u64(u64::from(policy.basis_range.0));
+    h.write_u64(u64::from(policy.basis_range.1));
+    h.write_u64(policy.onehot_chunk_size as u64);
+    h.write_u64(u64::from(policy.tiered));
+    let digest = h.finish();
+    out[..8].copy_from_slice(&digest.to_le_bytes());
+    out
+}
 
 /// Fixed-width digest of an identity for wiring guards (not a security primitive).
 pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] {
@@ -55,6 +96,12 @@ fn sis_family_tag(family: akita_types::SisModulusFamily) -> u64 {
 }
 
 /// Fields derived from policy, entries, and runtime hooks for identity checks.
+///
+/// The owned (non-`'static`) mirror of [`GeneratedScheduleCatalogIdentity`]; the
+/// derived equality is the single identity guard, so adding a field to either
+/// type (both are built with struct literals) is automatically covered by the
+/// comparison in [`validate_catalog_identity_impl`].
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct CatalogIdentityExpectation {
     family_name: &'static str,
     sis_family: akita_types::SisModulusFamily,
@@ -71,6 +118,29 @@ struct CatalogIdentityExpectation {
     ring_challenge_config_digest: u64,
     key_count: usize,
     key_digest: u64,
+}
+
+impl CatalogIdentityExpectation {
+    /// The owned mirror of a shipped catalog's embedded identity.
+    fn from_embedded(identity: &GeneratedScheduleCatalogIdentity) -> Self {
+        Self {
+            family_name: identity.family_name,
+            sis_family: identity.sis_family,
+            ring_dimension: identity.ring_dimension,
+            decomposition: identity.decomposition,
+            ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
+            claim_ext_degree: identity.claim_ext_degree,
+            chal_ext_degree: identity.chal_ext_degree,
+            basis_range: identity.basis_range,
+            onehot_chunk_size: identity.onehot_chunk_size,
+            tiered: identity.tiered,
+            root_fold_shape: identity.root_fold_shape,
+            ring_dimensions: identity.ring_dimensions.to_vec(),
+            ring_challenge_config_digest: identity.ring_challenge_config_digest,
+            key_count: identity.key_count,
+            key_digest: identity.key_digest,
+        }
+    }
 }
 
 fn intern_ring_dimensions(dimensions: Vec<usize>) -> &'static [usize] {
@@ -150,6 +220,38 @@ pub fn validate_catalog_identity(
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
+    let cache_key = CatalogValidationCacheKey {
+        entries_ptr: catalog.entries.as_ptr() as usize,
+        entries_len: catalog.entries.len(),
+        identity_digest: identity_digest(&catalog.identity),
+        policy_digest: policy_digest(policy),
+    };
+    if lock_validated_catalogs()?.contains(&cache_key) {
+        return verify_runtime_hooks_on_cache_hit(
+            catalog,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
+    }
+
+    validate_catalog_identity_impl(
+        catalog,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )?;
+
+    lock_validated_catalogs()?.insert(cache_key);
+    Ok(())
+}
+
+fn validate_catalog_identity_impl(
+    catalog: &GeneratedScheduleTable,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<(), AkitaError> {
+    validate_catalog_keys(catalog.entries)?;
     let embedded = catalog.identity;
     let expected = catalog_identity_expectation(
         embedded.family_name,
@@ -158,37 +260,65 @@ pub fn validate_catalog_identity(
         ring_challenge_config,
         fold_challenge_shape_at_level,
     )?;
-    macro_rules! check_field {
-        ($field:ident) => {
-            if embedded.$field != expected.$field {
-                return Err(catalog_identity_mismatch_error(
-                    embedded.family_name,
-                    stringify!($field),
-                ));
-            }
-        };
-    }
-
-    check_field!(family_name);
-    check_field!(sis_family);
-    check_field!(ring_dimension);
-    check_field!(decomposition);
-    check_field!(ring_subfield_norm_bound);
-    check_field!(claim_ext_degree);
-    check_field!(chal_ext_degree);
-    check_field!(basis_range);
-    check_field!(onehot_chunk_size);
-    check_field!(tiered);
-    check_field!(root_fold_shape);
-    if embedded.ring_dimensions != expected.ring_dimensions.as_slice() {
+    if CatalogIdentityExpectation::from_embedded(&embedded) != expected {
         return Err(catalog_identity_mismatch_error(
             embedded.family_name,
-            "ring_dimensions",
+            "policy or runtime-hook drift",
         ));
     }
-    check_field!(ring_challenge_config_digest);
-    check_field!(key_count);
-    check_field!(key_digest);
+    Ok(())
+}
+
+fn verify_runtime_hooks_on_cache_hit(
+    catalog: &GeneratedScheduleTable,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<(), AkitaError> {
+    verify_ring_challenge_config_digest_on_cache_hit(&catalog.identity, ring_challenge_config)?;
+    let root_fold_shape =
+        root_fold_shape_for_entries(catalog.entries, &fold_challenge_shape_at_level)?;
+    if root_fold_shape != catalog.identity.root_fold_shape {
+        return Err(catalog_identity_mismatch_error(
+            catalog.identity.family_name,
+            "root_fold_shape",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_ring_challenge_config_digest_on_cache_hit(
+    identity: &GeneratedScheduleCatalogIdentity,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+) -> Result<(), AkitaError> {
+    let recomputed = ring_challenge_config_digest(identity.ring_dimensions, ring_challenge_config)?;
+    if recomputed != identity.ring_challenge_config_digest {
+        return Err(catalog_identity_mismatch_error(
+            identity.family_name,
+            "ring_challenge_config_digest",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_catalog_keys(entries: &[GeneratedScheduleTableEntry]) -> Result<(), AkitaError> {
+    for pair in entries.windows(2) {
+        match catalog_key_cmp(pair[0].key, pair[1].key) {
+            Ordering::Less => {}
+            Ordering::Equal => {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "schedule catalog contains duplicate key {:?}",
+                    pair[0].key
+                )));
+            }
+            Ordering::Greater => {
+                return Err(AkitaError::InvalidSetup(
+                    "schedule catalog entries are not sorted for binary lookup \
+                     (num_polynomials, then num_vars)"
+                        .to_string(),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -389,6 +519,40 @@ mod tests {
     }
 
     #[test]
+    fn catalog_identity_cache_hit_revalidates_runtime_hooks() {
+        let policy = sample_policy();
+        let entries = sample_entries();
+        let catalog = GeneratedScheduleTable {
+            entries,
+            identity: expected_identity(&policy, entries),
+        };
+        validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+            .expect("first validation");
+        validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+            .expect("cached validation");
+    }
+
+    #[test]
+    fn catalog_identity_cache_hit_rejects_mismatched_root_fold_shape() {
+        let policy = sample_policy();
+        let entries = sample_entries();
+        let catalog = GeneratedScheduleTable {
+            entries,
+            identity: expected_identity(&policy, entries),
+        };
+        validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+            .expect("prime cache");
+        let tensor_fold = |_: AkitaScheduleInputs| TensorChallengeShape::Tensor;
+        let err =
+            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, tensor_fold)
+                .expect_err("cached path must reject fold-shape hook drift");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("root_fold_shape")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn identity_mismatch_returns_error() {
         let policy = sample_policy();
         let entries = sample_entries();
@@ -435,6 +599,47 @@ mod tests {
             validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
                 .expect_err("key digest mismatch should error");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn duplicate_catalog_keys_are_rejected() {
+        let policy = sample_policy();
+        let entries = Box::leak(Box::new([sample_entry(), sample_entry()]));
+        let catalog = GeneratedScheduleTable {
+            entries,
+            identity: expected_identity(&policy, entries),
+        };
+        let err =
+            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+                .expect_err("duplicate keys should error");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("duplicate key")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn unsorted_catalog_keys_are_rejected() {
+        let policy = sample_policy();
+        let mut batched = sample_entry();
+        let mut singleton = sample_entry();
+        batched.key.num_polynomials = 4;
+        batched.key.num_vars = 20;
+        singleton.key.num_polynomials = 1;
+        singleton.key.num_vars = 30;
+        // Binary lookup order is (num_polynomials, num_vars); batched before singleton.
+        let entries = Box::leak(Box::new([batched, singleton]));
+        let catalog = GeneratedScheduleTable {
+            entries,
+            identity: expected_identity(&policy, entries),
+        };
+        let err =
+            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+                .expect_err("unsorted keys should error");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("not sorted for binary lookup")),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

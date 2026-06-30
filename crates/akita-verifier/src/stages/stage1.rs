@@ -73,7 +73,6 @@ where
         &lp.fold_challenge_shape,
         stage1_fold_challenge_labels(),
         grind_nonce,
-        lp.op_norm_rejection,
     )
 }
 
@@ -286,7 +285,6 @@ mod fold_grind_nonce_tests {
             SparseChallengeConfig::ExactShell {
                 count_mag1: 30,
                 count_mag2: 12,
-                operator_norm_threshold: 0,
             },
         )
         .with_decomp(4, 2, 2, 2, 0)
