@@ -1,11 +1,20 @@
-use akita_sis_estimator::{estimate, scalar_sis_from_ring, AkitaModulusFamily, EstimateConfig};
+use akita_sis_estimator::{
+    estimate, scalar_sis_from_ring, AkitaModulusFamily, EstimateConfig, OptimizerConfig, SearchMode,
+};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 const CASES_CSV_ENV: &str = "AKITA_SIS_INFINITY_BENCH_CSV";
+const CASE_SET_ENV: &str = "AKITA_SIS_INFINITY_BENCH_SET";
+const PROFILES_ENV: &str = "AKITA_SIS_INFINITY_BENCH_PROFILES";
+const SAMPLE_SIZE_ENV: &str = "AKITA_SIS_INFINITY_BENCH_SAMPLE_SIZE";
+const WARM_UP_MS_ENV: &str = "AKITA_SIS_INFINITY_BENCH_WARM_UP_MS";
+const MEASUREMENT_MS_ENV: &str = "AKITA_SIS_INFINITY_BENCH_MEASUREMENT_MS";
+const MIN_SAMPLE_SIZE: usize = 10;
 
 #[derive(Clone, Debug)]
 struct InfinityCase {
@@ -17,30 +26,87 @@ struct InfinityCase {
     coeff_linf_bound: u64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RepresentativeCase {
+    family: AkitaModulusFamily,
+    d: u32,
+    rank: u32,
+    width: u32,
+    coeff_linf_bound: u64,
+}
+
+const REPRESENTATIVE_CASES: &[RepresentativeCase] = &[
+    RepresentativeCase {
+        family: AkitaModulusFamily::Q32,
+        d: 32,
+        rank: 1,
+        width: 2,
+        coeff_linf_bound: 15,
+    },
+    RepresentativeCase {
+        family: AkitaModulusFamily::Q128,
+        d: 32,
+        rank: 1,
+        width: 8,
+        coeff_linf_bound: 4095,
+    },
+    RepresentativeCase {
+        family: AkitaModulusFamily::Q64,
+        d: 64,
+        rank: 1,
+        width: 8,
+        coeff_linf_bound: 255,
+    },
+    RepresentativeCase {
+        family: AkitaModulusFamily::Q64,
+        d: 128,
+        rank: 1,
+        width: 8,
+        coeff_linf_bound: 15,
+    },
+];
+
 fn bench_infinity_optimizer(c: &mut Criterion) {
     let cases = load_cases();
+    let profiles = load_profiles();
     let mut group = c.benchmark_group("sis_infinity_optimizer");
-    for case in &cases {
-        let params = scalar_sis_from_ring(
-            case.family,
-            case.d,
-            case.rank,
-            case.width,
-            case.coeff_linf_bound,
-        )
-        .unwrap();
-        let config = EstimateConfig::default();
-
-        group.bench_function(BenchmarkId::new("estimate", &case.label), |bench| {
-            bench.iter(|| black_box(estimate(black_box(&params), black_box(&config)).unwrap()));
-        });
+    configure_group(&mut group);
+    for profile in &profiles {
+        let config = profile.config();
+        for case in &cases {
+            let params = scalar_sis_from_ring(
+                case.family,
+                case.d,
+                case.rank,
+                case.width,
+                case.coeff_linf_bound,
+            )
+            .unwrap();
+            group.bench_function(BenchmarkId::new(profile.label(), &case.label), |bench| {
+                bench.iter(|| black_box(estimate(black_box(&params), black_box(&config)).unwrap()));
+            });
+        }
     }
     group.finish();
 }
 
+fn configure_group<M: criterion::measurement::Measurement>(
+    group: &mut criterion::BenchmarkGroup<'_, M>,
+) {
+    if let Some(sample_size) = env_usize(SAMPLE_SIZE_ENV) {
+        group.sample_size(sample_size.max(MIN_SAMPLE_SIZE));
+    }
+    if let Some(warm_up_ms) = env_u64(WARM_UP_MS_ENV) {
+        group.warm_up_time(Duration::from_millis(warm_up_ms));
+    }
+    if let Some(measurement_ms) = env_u64(MEASUREMENT_MS_ENV) {
+        group.measurement_time(Duration::from_millis(measurement_ms));
+    }
+}
+
 fn load_cases() -> Vec<InfinityCase> {
     match env::var_os(CASES_CSV_ENV) {
-        Some(path) => load_cases_csv(&resolve_csv_path(Path::new(&path)), false),
+        Some(path) => load_cases_csv(&resolve_csv_path(Path::new(&path)), CaseSet::from_env()),
         None => default_cases(),
     }
 }
@@ -48,11 +114,106 @@ fn load_cases() -> Vec<InfinityCase> {
 fn default_cases() -> Vec<InfinityCase> {
     load_cases_csv(
         &resolve_csv_path(Path::new("scripts/sis_golden/infinity_golden.csv")),
-        true,
+        CaseSet::from_env(),
     )
 }
 
-fn load_cases_csv(path: &Path, defaults_only: bool) -> Vec<InfinityCase> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaseSet {
+    Representative,
+    ExhaustiveCi,
+    AllTrusted,
+}
+
+impl CaseSet {
+    fn from_env() -> Self {
+        match env::var(CASE_SET_ENV).as_deref() {
+            Ok("representative") | Err(_) => Self::Representative,
+            Ok("exhaustive-ci") => Self::ExhaustiveCi,
+            Ok("all-trusted") => Self::AllTrusted,
+            Ok(value) => panic!(
+                "{CASE_SET_ENV} must be one of representative, exhaustive-ci, all-trusted; got {value:?}"
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Profile {
+    LocalMinimum,
+    ExhaustiveSerial,
+    ExhaustiveParallel,
+}
+
+impl Profile {
+    fn label(self) -> &'static str {
+        match self {
+            Self::LocalMinimum => "local_minimum",
+            Self::ExhaustiveSerial => "exhaustive_serial",
+            Self::ExhaustiveParallel => "exhaustive_parallel",
+        }
+    }
+
+    fn config(self) -> EstimateConfig {
+        match self {
+            Self::LocalMinimum => EstimateConfig::lattice_estimator_parity(),
+            Self::ExhaustiveSerial => EstimateConfig::akita_infinity_table(),
+            Self::ExhaustiveParallel => EstimateConfig {
+                optimizer: OptimizerConfig::OptimizeZeta {
+                    beta: SearchMode::ExhaustiveParallel,
+                    zeta: SearchMode::ExhaustiveParallel,
+                },
+                ..EstimateConfig::default()
+            },
+        }
+    }
+}
+
+fn load_profiles() -> Vec<Profile> {
+    match env::var(PROFILES_ENV) {
+        Ok(value) => {
+            let profiles: Vec<_> = value
+                .split(',')
+                .filter(|value| !value.trim().is_empty())
+                .map(parse_profile)
+                .collect();
+            assert!(!profiles.is_empty(), "{PROFILES_ENV} produced no profiles");
+            profiles
+        }
+        Err(_) => default_profiles(),
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn default_profiles() -> Vec<Profile> {
+    vec![
+        Profile::LocalMinimum,
+        Profile::ExhaustiveSerial,
+        Profile::ExhaustiveParallel,
+    ]
+}
+
+#[cfg(not(feature = "parallel"))]
+fn default_profiles() -> Vec<Profile> {
+    vec![Profile::LocalMinimum, Profile::ExhaustiveSerial]
+}
+
+fn parse_profile(value: &str) -> Profile {
+    let profile = match value.trim() {
+        "local-minimum" | "local_minimum" => Profile::LocalMinimum,
+        "exhaustive-serial" | "exhaustive_serial" => Profile::ExhaustiveSerial,
+        "exhaustive-parallel" | "exhaustive_parallel" => Profile::ExhaustiveParallel,
+        value => panic!(
+            "{PROFILES_ENV} entries must be local-minimum, exhaustive-serial, or exhaustive-parallel; got {value:?}"
+        ),
+    };
+    if profile == Profile::ExhaustiveParallel && !cfg!(feature = "parallel") {
+        panic!("{PROFILES_ENV}=exhaustive-parallel requires `--features parallel`");
+    }
+    profile
+}
+
+fn load_cases_csv(path: &Path, case_set: CaseSet) -> Vec<InfinityCase> {
     let contents = fs::read_to_string(path).unwrap_or_else(|error| {
         panic!(
             "failed to read infinity optimizer bench CSV {}: {error}",
@@ -80,23 +241,26 @@ fn load_cases_csv(path: &Path, defaults_only: bool) -> Vec<InfinityCase> {
             "coeff_linf_bound",
             row,
         );
-        if defaults_only && !is_default_case(family, d, rank, width, coeff_linf_bound) {
-            continue;
-        }
-        let label = get_optional(&columns, &fields, "label")
-            .filter(|value| !value.is_empty())
-            .map_or_else(
-                || format_case_label(family, d, rank, width, coeff_linf_bound),
-                str::to_string,
-            );
-        cases.push(InfinityCase {
-            label,
+        let candidate = InfinityCase {
+            label: get_optional(&columns, &fields, "label")
+                .filter(|value| !value.is_empty())
+                .map_or_else(
+                    || format_case_label(family, d, rank, width, coeff_linf_bound),
+                    str::to_string,
+                ),
             family,
             d,
             rank,
             width,
             coeff_linf_bound,
-        });
+        };
+        if !case_set_includes(case_set, &candidate) {
+            continue;
+        }
+        cases.push(candidate);
+    }
+    if case_set == CaseSet::Representative {
+        cases = representative_cases(cases);
     }
     assert!(
         !cases.is_empty(),
@@ -106,21 +270,32 @@ fn load_cases_csv(path: &Path, defaults_only: bool) -> Vec<InfinityCase> {
     cases
 }
 
-fn is_default_case(
-    family: AkitaModulusFamily,
-    d: u32,
-    rank: u32,
-    width: u32,
-    coeff_linf_bound: u64,
-) -> bool {
-    matches!(
-        (family, d, rank, width, coeff_linf_bound),
-        (AkitaModulusFamily::Q32, 32, 1, 2, 15)
-            | (AkitaModulusFamily::Q32, 128, 1, 8, 2)
-            | (AkitaModulusFamily::Q64, 128, 1, 8, 15)
-            | (AkitaModulusFamily::Q128, 256, 1, 8, 2)
-            | (AkitaModulusFamily::Q32, 256, 5, 10, 4095)
-    )
+fn case_set_includes(case_set: CaseSet, case: &InfinityCase) -> bool {
+    match case_set {
+        CaseSet::Representative | CaseSet::AllTrusted => true,
+        CaseSet::ExhaustiveCi => {
+            let m = case.column_count();
+            m <= 512 || (m <= 1024 && case.coeff_linf_bound == 255)
+        }
+    }
+}
+
+fn representative_cases(cases: Vec<InfinityCase>) -> Vec<InfinityCase> {
+    REPRESENTATIVE_CASES
+        .iter()
+        .map(|spec| {
+            cases
+                .iter()
+                .find(|case| spec.matches(case))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "infinity optimizer bench fixture is missing representative case {}",
+                        spec.label()
+                    )
+                })
+                .clone()
+        })
+        .collect()
 }
 
 fn resolve_csv_path(path: &Path) -> PathBuf {
@@ -174,6 +349,40 @@ fn family_label(family: AkitaModulusFamily) -> &'static str {
         AkitaModulusFamily::Q64 => "q64",
         AkitaModulusFamily::Q128 => "q128",
     }
+}
+
+impl InfinityCase {
+    fn column_count(&self) -> u32 {
+        self.width.saturating_mul(self.d)
+    }
+}
+
+impl RepresentativeCase {
+    fn matches(self, case: &InfinityCase) -> bool {
+        case.family == self.family
+            && case.d == self.d
+            && case.rank == self.rank
+            && case.width == self.width
+            && case.coeff_linf_bound == self.coeff_linf_bound
+    }
+
+    fn label(self) -> String {
+        format_case_label(
+            self.family,
+            self.d,
+            self.rank,
+            self.width,
+            self.coeff_linf_bound,
+        )
+    }
+}
+
+fn env_usize(name: &str) -> Option<usize> {
+    env::var(name).ok().map(|value| parse(&value, name, 0))
+}
+
+fn env_u64(name: &str) -> Option<u64> {
+    env::var(name).ok().map(|value| parse(&value, name, 0))
 }
 
 criterion_group!(infinity_optimizer, bench_infinity_optimizer);

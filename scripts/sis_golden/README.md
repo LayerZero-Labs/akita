@@ -122,10 +122,12 @@ Benchmark the Rust optimizer paths with Criterion:
 cargo bench -p akita-sis-estimator --bench infinity_optimizer
 ```
 
-By default the optimizer bench uses a representative trusted-row ladder from
-`scripts/sis_golden/infinity_golden.csv` and runs the serial local-minimum and
-serial exhaustive profiles. With `--features parallel`, it also runs the
-parallel exhaustive profile in the same Criterion group:
+By default the optimizer bench uses an explicit representative trusted-row
+ladder from `scripts/sis_golden/infinity_golden.csv`: one small q32 row, one
+q128 row, and two q64 rows that cover medium and larger exhaustive searches.
+It runs the serial local-minimum and serial exhaustive profiles. With
+`--features parallel`, it also runs the parallel exhaustive profile in the same
+Criterion group:
 
 ```bash
 cargo bench -p akita-sis-estimator --features parallel --bench infinity_optimizer
