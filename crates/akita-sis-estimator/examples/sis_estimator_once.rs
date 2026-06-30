@@ -198,20 +198,6 @@ impl Mode {
     }
 }
 
-trait FamilyLabel {
-    fn label(self) -> &'static str;
-}
-
-impl FamilyLabel for AkitaModulusFamily {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Q32 => "q32",
-            Self::Q64 => "q64",
-            Self::Q128 => "q128",
-        }
-    }
-}
-
 fn parse_mode(value: &str) -> Mode {
     match value {
         "estimate" => Mode::Estimate,

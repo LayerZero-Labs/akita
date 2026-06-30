@@ -244,6 +244,11 @@ Audit focus:
 Goal: produce comparison-only infinity max-width tables without changing current
 runtime SIS sizing.
 
+Status: in progress. The first Slice 5 chunk adds a Rust-native generator for
+the planner-shaped infinity key `(family, ring_dimension, coeff_linf_bound)`.
+Generated rows record cap hits explicitly as lower bounds because the current
+Rust estimator still stores explicit scalar `m` as `u32`.
+
 Patch surface:
 
 1. Add a Rust or script-based table generator for

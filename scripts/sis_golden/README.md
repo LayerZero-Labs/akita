@@ -161,6 +161,45 @@ AKITA_SIS_INFINITY_BENCH_SET=all-trusted \
   cargo bench -p akita-sis-estimator --features parallel --bench infinity_optimizer
 ```
 
+## Infinity Width Table Comparison
+
+Slice 5 generates comparison-only max-width rows for the planner-shaped
+infinity key:
+
+```text
+(family, ring_dimension, coeff_linf_bound) -> max widths by rank
+```
+
+This is deliberately outside the production `generated_sis_table/` modules.
+Those modules still use the Euclidean key `(family, d, collision_l2_sq)` until
+the production cutover slice.
+
+Run a small smoke table:
+
+```bash
+cargo run -p akita-sis-estimator --example infinity_width_table -- \
+  --families q32 --dims 32 --bounds 15 --max-rank 2 --search-cap 8
+```
+
+Regenerate the committed smoke artifact:
+
+```bash
+cargo run -p akita-sis-estimator --example infinity_width_table -- \
+  --output scripts/sis_golden/infinity_width_table_smoke.csv \
+  --families q32,q64,q128 --dims 32 --bounds 15,255 --max-rank 3 --search-cap 8
+```
+
+Run the planner keyspace as a CSV artifact:
+
+```bash
+cargo run -p akita-sis-estimator --example infinity_width_table --release -- \
+  --output scripts/sis_golden/infinity_width_table.csv
+```
+
+The current Rust estimator stores explicit scalar `m` as `u32`, so each row is
+capped at `floor(u32::MAX / d)` unless `--search-cap` is smaller. Rows with
+`hit_cap=true` are lower bounds, not tight cutoffs.
+
 For Rust-vs-Sage single-shot timing, run:
 
 ```bash

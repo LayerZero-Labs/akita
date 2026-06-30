@@ -19,6 +19,7 @@ pub mod params;
 pub mod probability;
 pub mod reduction;
 pub mod simulator;
+pub mod width_table;
 
 pub use akita::{scalar_sis_from_ring, AkitaModulusFamily};
 pub use config::{

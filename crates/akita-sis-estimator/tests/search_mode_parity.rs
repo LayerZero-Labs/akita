@@ -12,7 +12,6 @@
 
 use akita_sis_estimator::{
     estimate, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig, NumericConfig,
-    OptimizerConfig, SearchMode,
 };
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/infinity_golden.csv");
@@ -37,9 +36,9 @@ fn exhaustive_config() -> EstimateConfig {
 #[cfg(feature = "parallel")]
 fn parallel_exhaustive_config() -> EstimateConfig {
     EstimateConfig {
-        optimizer: OptimizerConfig::OptimizeZeta {
-            beta: SearchMode::ExhaustiveParallel,
-            zeta: SearchMode::ExhaustiveParallel,
+        optimizer: akita_sis_estimator::OptimizerConfig::OptimizeZeta {
+            beta: akita_sis_estimator::SearchMode::ExhaustiveParallel,
+            zeta: akita_sis_estimator::SearchMode::ExhaustiveParallel,
         },
         ..EstimateConfig::default()
     }

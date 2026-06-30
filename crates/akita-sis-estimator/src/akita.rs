@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// Supported Akita modulus families for golden and table generation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AkitaModulusFamily {
     /// `2^32 - 99`.
     Q32,
@@ -43,6 +43,16 @@ impl AkitaModulusFamily {
             Self::Q32 => akita_q32(),
             Self::Q64 => akita_q64(),
             Self::Q128 => akita_q128(),
+        }
+    }
+
+    /// Return the stable lowercase table label for this family.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Q32 => "q32",
+            Self::Q64 => "q64",
+            Self::Q128 => "q128",
         }
     }
 }
