@@ -347,6 +347,21 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         }
     }
 
+    /// Reconstruct typed `v` as a vector, returning an empty vector for terminal levels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the intermediate `v` buffer
+    /// cannot be decoded under `D`.
+    pub fn v_as_ring_slice<const D: usize>(
+        &self,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        match self {
+            Self::Intermediate { v, .. } => v.try_to_vec::<D>(),
+            Self::Terminal { .. } => Ok(Vec::new()),
+        }
+    }
+
     /// Mutably borrow the intermediate `v` payload.
     ///
     /// # Panics
@@ -803,6 +818,20 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
             Self::Fold(fold) => fold.extension_opening_reduction.as_ref(),
             Self::Terminal(terminal) => terminal.extension_opening_reduction.as_ref(),
             Self::ZeroFold { .. } => None,
+        }
+    }
+
+    /// Reconstruct typed root `v` for fold proofs; terminal roots have no D-block rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] on zero-fold roots or when the fold
+    /// `v` buffer cannot be decoded under `D`.
+    pub fn fold_v<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        match self {
+            Self::Fold(fold) => fold.v.try_to_vec::<D>(),
+            Self::Terminal(_) => Ok(Vec::new()),
+            Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         }
     }
 

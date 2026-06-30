@@ -2,8 +2,8 @@
 
 use crate::compute::ComputeBackendSetup;
 use crate::compute::{
-    LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
-    UniformProverStack,
+    LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootPolyMeta,
+    RootProvePoly, UniformProverStack,
 };
 use crate::CommittedGroupHandle;
 use crate::ProverOpeningBatch;
@@ -18,13 +18,11 @@ use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
-/// Generic over base field `F` and cyclotomic ring degree `D`.
-/// Caller-provided root polynomials are source-typed and must satisfy the
-/// prover-facing root polynomial traits (`RootProvePoly` and related capability
-/// traits).
-/// Recursive `w` witnesses are internal to the protocol and no longer modelled
-/// through this trait.
-pub trait CommitmentProver<F, const D: usize>
+/// Generic over base field `F` only. The cyclotomic ring dimension `D` enters at
+/// kernel boundaries via the caller's prepared stack (`UniformProverStack<_, _, D>`)
+/// and the `const D` parameter on commit/prove methods, not as a trait-level type
+/// parameter.
+pub trait CommitmentProver<F>
 where
     F: FieldCore + CanonicalField,
 {
@@ -32,14 +30,15 @@ where
     type ProverSetup: Clone + Send + Sync;
     /// Verifier setup derived from prover setup.
     type VerifierSetup: Clone + Send + Sync;
-    /// Commitment object produced by the scheme.
-    type Commitment: Clone + Send + Sync;
+    /// Protocol-facing commitment storage.
+    type Commitment: Clone + PartialEq + Send + Sync;
     /// Public opening point, claimed-evaluation, and proof scalar field.
     type ExtField: ExtField<F>;
     /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
     type BatchedProof: Clone + Send + Sync;
+
     /// Build prover setup for maximum polynomial dimension, batch capacity,
     /// and distinct opening-point count.
     ///
@@ -74,7 +73,7 @@ where
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
-    fn commit<P, B>(
+    fn commit<P, B, const D: usize>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
@@ -95,7 +94,7 @@ where
     ///
     /// Returns an error if input validation, layout selection, or any
     /// per-point commitment fails.
-    fn batched_commit<P, B>(
+    fn batched_commit<P, B, const D: usize>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
@@ -117,7 +116,7 @@ where
     ///
     /// Returns an error if the group is empty, dense, exceeds setup capacity, or
     /// cannot be conservatively planned.
-    fn commit_group<P, B>(
+    fn commit_group<P, B, const D: usize>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
@@ -139,7 +138,7 @@ where
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
     #[allow(clippy::too_many_arguments)]
-    fn batched_prove<'a, T, P, B>(
+    fn batched_prove<'a, T, P, B, const D: usize>(
         setup: &Self::ProverSetup,
         claims: ProverOpeningBatch<'a, Self::ExtField, P, F>,
         stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
@@ -151,7 +150,7 @@ where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-        P: RootProvePoly<F, D>,
+        P: RootProvePoly<F, D> + RootPolyMeta<F>,
         B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
         <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'a;
 }

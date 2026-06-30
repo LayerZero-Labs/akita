@@ -21,7 +21,7 @@ use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    CommitmentProver, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
+    ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
     ProverCommitmentGroup, ProverOpeningBatch,
 };
 use akita_recursion_glue::AkitaJoltInputs;
@@ -211,7 +211,7 @@ fn verify_with_setup_mode(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
-    claims: VerifierOpeningBatch<'_, Claim, &akita_types::RingCommitment<F, D>>,
+    claims: VerifierOpeningBatch<'_, Claim, &akita_types::Commitment<F>>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _, D>(
@@ -317,10 +317,10 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let prover_setup = match setup_contribution_mode {
         SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1)
+            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
         }
         SetupContributionMode::Recursive => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover_recursion(
+            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(
                 nv, 1,
             )
         }
@@ -341,7 +341,7 @@ fn run() -> Result<(), String> {
     );
 
     let t0 = Instant::now();
-    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
         &prover_setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
@@ -363,7 +363,7 @@ fn run() -> Result<(), String> {
             commitment: (commitment.clone(), hint),
         }],
     };
-    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
         &prover_setup,
         prove_input,
         &stack,
@@ -375,7 +375,7 @@ fn run() -> Result<(), String> {
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
     let verifier_setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&prover_setup);
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup);
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();

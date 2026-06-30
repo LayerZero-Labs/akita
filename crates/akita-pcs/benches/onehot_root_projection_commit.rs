@@ -11,7 +11,7 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
-use akita_prover::{commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly};
+use akita_prover::{commit_with_params, OneHotPoly, RootTensorProjectionPoly};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{FpExtEncoding, OpeningBatchShape};
 use criterion::measurement::WallTime;
@@ -107,7 +107,7 @@ where
 {
     assert_eq!(D, Cfg::D);
 
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
+    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<Cfg>;
 
     let num_vars = env_usize("AKITA_ROOT_COMMIT_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_ROOT_COMMIT_NUM_POLYS", DEFAULT_NUM_POLYS);
@@ -126,7 +126,7 @@ where
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup =
-        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys).unwrap();
+        Scheme::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -193,7 +193,7 @@ where
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
                 let committed =
-                    <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
+                    Scheme::commit(&setup, &polys, &stack)
                         .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);

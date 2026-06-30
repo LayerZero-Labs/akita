@@ -87,7 +87,7 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// Claimed opening value at `opening_point`.
     pub opening: F,
     /// Single committed-poly group: one ring commitment per (poly, point) pair.
-    pub commitment: RingCommitment<F, D>,
+    pub commitment: Commitment<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
     /// Proof shape descriptor; needed to deserialize `proof` without
@@ -107,7 +107,7 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> VerifierOpeningBatch<'static, F, &'a RingCommitment<F, D>> {
+    ) -> VerifierOpeningBatch<'static, F, &'a Commitment<F>> {
         VerifierOpeningBatch::from_groups(
             self.opening_point.clone(),
             vec![CommitmentGroup {
@@ -492,7 +492,7 @@ where
 }
 
 // `akita-algebra` is pulled in only so that downstream consumers can rely on
-// `RingCommitment<F, D>` having all of its trait bounds satisfied; declare it
+// `Commitment<F>` having all of its trait bounds satisfied; declare it
 // here to avoid a `cargo machete` style trim.
 #[doc(hidden)]
 pub use akita_algebra as _akita_algebra_dep;

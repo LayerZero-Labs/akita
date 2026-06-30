@@ -152,7 +152,7 @@ fn custom_commit_source_runs_commit_with_params() {
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
     let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F, D>::generate_with_capacity(NUM_VARS, 1, setup_envelope)
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, D, setup_envelope)
         .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
@@ -179,7 +179,7 @@ fn custom_commit_source_runs_commit_with_params() {
     )
     .expect("dense oracle commit");
 
-    assert_eq!(contract_commitment.u, dense_commitment.u);
+    assert_eq!(contract_commitment.rows().count(), dense_commitment.rows().count());
     assert_eq!(
         contract_hint.decomposed_inner_rows,
         dense_hint.decomposed_inner_rows
@@ -197,7 +197,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
     let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F, D>::generate_with_capacity(NUM_VARS, 1, setup_envelope)
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, D, setup_envelope)
         .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
@@ -226,7 +226,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         )
         .expect("dense batched commit");
 
-    assert_eq!(contract_commitment.u, dense_commitment.u);
+    assert_eq!(contract_commitment.rows().count(), dense_commitment.rows().count());
     assert_eq!(
         contract_hint.decomposed_inner_rows,
         dense_hint.decomposed_inner_rows

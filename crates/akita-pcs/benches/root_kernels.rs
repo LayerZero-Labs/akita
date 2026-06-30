@@ -9,7 +9,6 @@ use akita_prover::kernels::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row,
 };
-use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::rngs::StdRng;
@@ -44,7 +43,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     )
     .expect("layout");
     let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
+        AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
     let total = setup
         .expanded
         .shared_matrix

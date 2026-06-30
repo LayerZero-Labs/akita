@@ -134,7 +134,7 @@ where
         .chunks_exact(D)
         .map(CyclotomicRing::from_slice)
         .collect();
-    let v_typed = proof.v().try_to_vec::<D>()?;
+    let v_typed = proof.fold_v::<D>()?;
 
     if extension_opening_reduction.is_none() {
         let prepared_point = prepare_opening_point::<F, E, D>(

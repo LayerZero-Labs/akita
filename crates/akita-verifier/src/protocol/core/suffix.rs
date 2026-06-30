@@ -49,7 +49,7 @@ where
     // `v` and the current commitment are read D-free from their flat buffers;
     // the typed reinterpretation under `D` happens here at the fold kernel
     // boundary. `try_to_vec` validates the buffer is an exact multiple of `D`.
-    let v_typed = proof.v().try_to_vec::<D>()?;
+    let v_typed = proof.v_as_ring_slice::<D>()?;
     let commitment_u = commitment_rings;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
@@ -147,7 +147,7 @@ where
         lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed.to_vec(),
+        v: v_typed,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

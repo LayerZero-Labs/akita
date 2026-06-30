@@ -90,7 +90,7 @@ mod tests {
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
-    use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
+    use akita_pcs::{CanonicalField, Transcript};
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
@@ -103,10 +103,9 @@ mod tests {
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
     use akita_types::relation_claim_from_rows;
-    use akita_types::AppendToTranscript;
     use akita_types::{
-        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, MRowLayout,
-        PointVariableSelection, RingCommitment, RingMultiplierOpeningPoint,
+        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, Commitment,
+        MRowLayout, PointVariableSelection, RingCommitment, RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -115,12 +114,12 @@ mod tests {
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
-    fn prover_fold_claims<'a, F: FieldCore + Clone, P, const D: usize>(
+    fn prover_fold_claims<'a, F: FieldCore + Clone, P>(
         point: &'a [F],
         polynomials: &'a [&'a P],
-        commitment: &'a RingCommitment<F, D>,
-        hint: AkitaCommitmentHint<F, D>,
-    ) -> ProverOpeningBatch<'a, F, P, F, D> {
+        commitment: &'a Commitment<F>,
+        hint: AkitaCommitmentHint<F>,
+    ) -> ProverOpeningBatch<'a, F, P, F> {
         ProverOpeningBatch {
             point: point.into(),
             groups: vec![ProverCommitmentGroup {
@@ -290,7 +289,7 @@ mod tests {
         let point = vec![F::zero(); NV];
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
+            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -298,10 +297,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            F,
-            D,
-        >>::commit(
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit(
             &setup, std::slice::from_ref(&poly), &stack
         )
         .expect("commitment");
@@ -336,7 +332,9 @@ mod tests {
         let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-ring-multiplier-regression");
-        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        commitment
+            .append_to_transcript(ABSORB_COMMITMENT, D, &mut transcript)
+            .expect("commitment transcript");
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
@@ -402,7 +400,12 @@ mod tests {
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
             let expected =
-                relation_claim_from_rows::<F, D>(&tau1, alpha, &instance.v, &commitment.u)
+                relation_claim_from_rows::<F, D>(
+                    &tau1,
+                    alpha,
+                    &instance.v,
+                    &commitment.rows().try_to_vec::<D>().expect("commitment rows"),
+                )
                     .expect("relation claim");
             assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
         }
@@ -430,7 +433,7 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
+            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -438,10 +441,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            F,
-            D,
-        >>::commit(
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit(
             &setup, std::slice::from_ref(&poly), &stack
         )
         .expect("commitment");
@@ -471,7 +471,9 @@ mod tests {
         let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-row-regression");
-        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        commitment
+            .append_to_transcript(ABSORB_COMMITMENT, D, &mut transcript)
+            .expect("commitment transcript");
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
@@ -535,7 +537,12 @@ mod tests {
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
             let expected =
-                relation_claim_from_rows::<F, D>(&tau1, alpha, &instance.v, &commitment.u).unwrap();
+                relation_claim_from_rows::<F, D>(
+                    &tau1,
+                    alpha,
+                    &instance.v,
+                    &commitment.rows().try_to_vec::<D>().expect("commitment rows"),
+                ).unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
         }
     }
@@ -598,7 +605,7 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
+            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -606,10 +613,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            F,
-            D,
-        >>::commit(
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit(
             &setup, std::slice::from_ref(&poly), &stack
         )
         .expect("commitment");
@@ -639,7 +643,9 @@ mod tests {
         let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"prepared-m-eval-test");
-        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        commitment
+            .append_to_transcript(ABSORB_COMMITMENT, D, &mut transcript)
+            .expect("commitment transcript");
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
@@ -752,7 +758,7 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
+            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -760,10 +766,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            F,
-            D,
-        >>::commit(
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit(
             &setup, std::slice::from_ref(&poly), &stack
         )
         .expect("commitment");
@@ -793,7 +796,9 @@ mod tests {
         let e_folded = opening.folded;
 
         let mut transcript = AkitaTranscript::<F>::new(b"segment-typed-expand-test");
-        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        commitment
+            .append_to_transcript(ABSORB_COMMITMENT, D, &mut transcript)
+            .expect("commitment transcript");
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }

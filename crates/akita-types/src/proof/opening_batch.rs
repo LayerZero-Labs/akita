@@ -11,6 +11,7 @@
 //! flattened slot/routing vocabulary.
 
 use super::OpeningPoints;
+use crate::proof::{Commitment, RingVec};
 use crate::AppendToTranscript;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{
@@ -430,6 +431,24 @@ impl<'a, F: Clone, C> VerifierOpeningBatch<'a, F, C> {
     /// Total number of polynomials opened across all commitment groups.
     pub fn num_polynomials(&self) -> usize {
         self.shape.num_polynomials()
+    }
+}
+
+impl<'a, E: Clone, F: FieldCore> VerifierOpeningBatch<'a, E, &'a Commitment<F>> {
+    /// Rebind protocol [`Commitment`] claims to flat coefficient rows for verifier replay.
+    pub fn as_row_batch(&self) -> VerifierOpeningBatch<'a, E, &'a RingVec<F>> {
+        VerifierOpeningBatch {
+            shape: self.shape.clone(),
+            point: self.point.clone(),
+            groups: self
+                .groups
+                .iter()
+                .map(|group| CommitmentGroup {
+                    claims: group.claims.clone(),
+                    commitment: group.commitment.rows(),
+                })
+                .collect(),
+        }
     }
 }
 
