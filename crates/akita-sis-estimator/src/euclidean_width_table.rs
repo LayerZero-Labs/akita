@@ -61,6 +61,17 @@ impl Default for EuclideanWidthTableConfig {
     }
 }
 
+/// Return whether `config` is the complete production L2 SIS width-table job.
+#[must_use]
+pub fn is_full_euclidean_width_table_config(config: &EuclideanWidthTableConfig) -> bool {
+    same_set(&config.families, FAMILIES)
+        && same_set(&config.ring_dims, RING_DIMS)
+        && same_set(&config.collision_l2_sq, &l2_table_collision_keys())
+        && config.max_rank == DEFAULT_MAX_RANK
+        && config.target_bits == DEFAULT_EUCLIDEAN_TARGET_BITS
+        && config.search_cap.is_none()
+}
+
 /// One generated Euclidean comparison row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EuclideanWidthRow {
@@ -474,6 +485,15 @@ fn format_u64_underscored(value: u64) -> String {
     out.chars().rev().collect()
 }
 
+fn same_set<T>(left: &[T], right: &[T]) -> bool
+where
+    T: Copy + Ord,
+{
+    left.len() == right.len()
+        && left.iter().copied().collect::<BTreeSet<_>>()
+            == right.iter().copied().collect::<BTreeSet<_>>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,5 +519,30 @@ mod tests {
         let rows = generate_euclidean_width_rows(&config).unwrap();
         assert_eq!(rows.len(), 1);
         validate_euclidean_width_rows(&rows).unwrap();
+    }
+
+    #[test]
+    fn production_config_detection_rejects_partial_tables() {
+        assert!(is_full_euclidean_width_table_config(
+            &EuclideanWidthTableConfig::default()
+        ));
+        assert!(!is_full_euclidean_width_table_config(
+            &EuclideanWidthTableConfig {
+                families: vec![AkitaModulusFamily::Q32],
+                ..EuclideanWidthTableConfig::default()
+            }
+        ));
+        assert!(!is_full_euclidean_width_table_config(
+            &EuclideanWidthTableConfig {
+                target_bits: 138.0,
+                ..EuclideanWidthTableConfig::default()
+            }
+        ));
+        assert!(!is_full_euclidean_width_table_config(
+            &EuclideanWidthTableConfig {
+                search_cap: Some(DEFAULT_SEARCH_CAP),
+                ..EuclideanWidthTableConfig::default()
+            }
+        ));
     }
 }

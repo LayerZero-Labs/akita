@@ -1,7 +1,7 @@
 use akita_sis_estimator::{
     euclidean_width_table::{
-        generate_euclidean_width_rows, rust_table_arms, validate_euclidean_width_rows,
-        EuclideanWidthRow, EuclideanWidthTableConfig,
+        generate_euclidean_width_rows, is_full_euclidean_width_table_config, rust_table_arms,
+        validate_euclidean_width_rows, EuclideanWidthRow, EuclideanWidthTableConfig,
     },
     AkitaModulusFamily,
 };
@@ -31,6 +31,12 @@ enum OutputFormat {
 
 fn main() {
     let args = Args::parse_or_exit();
+    if args.format == OutputFormat::RustSplit && !is_full_euclidean_width_table_config(&args.config)
+    {
+        fatal(
+            "rust-split output requires the complete production table config; use CSV for partial comparison jobs",
+        );
+    }
     let t0 = Instant::now();
     let rows = generate_euclidean_width_rows(&args.config)
         .unwrap_or_else(|error| fatal(&format!("width-table generation failed: {error}")));
