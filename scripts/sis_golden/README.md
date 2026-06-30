@@ -116,3 +116,30 @@ as a full trusted-cell input:
 AKITA_SIS_FIXED_INFINITY_BENCH_CSV=scripts/sis_golden/fixed_infinity_golden.csv \
   cargo bench -p akita-sis-estimator --bench fixed_infinity
 ```
+
+Benchmark the Rust optimizer path with Criterion:
+
+```bash
+cargo bench -p akita-sis-estimator --bench infinity_optimizer
+```
+
+By default the optimizer bench runs a small representative subset of trusted
+infinity cells. To bench a custom optimizer grid, point
+`AKITA_SIS_INFINITY_BENCH_CSV` at a CSV with `family`, `d`, `rank`, `width`, and
+`coeff_linf_bound` columns. The committed fixture works as a full trusted-cell
+input:
+
+```bash
+AKITA_SIS_INFINITY_BENCH_CSV=scripts/sis_golden/infinity_golden.csv \
+  cargo bench -p akita-sis-estimator --bench infinity_optimizer
+```
+
+For Rust-vs-Sage single-shot timing, run:
+
+```bash
+sage -python scripts/sis_golden/bench_infinity.py \
+  --estimator-path /path/to/lattice-estimator-pr217
+```
+
+Add `--case label:family:d:rank:width:coeff_linf_bound` to benchmark specific
+trusted golden rows without Criterion's repeated sampling loop.

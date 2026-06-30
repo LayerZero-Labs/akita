@@ -31,5 +31,9 @@ parallel = []
 name = "fixed_infinity"
 harness = false
 
+[[bench]]
+name = "infinity_optimizer"
+harness = false
+
 [lints]
 workspace = true
