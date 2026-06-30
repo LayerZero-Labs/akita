@@ -5,6 +5,9 @@
 //! Identity mismatch is a hard error; a row miss after validation falls back to
 //! the offline DP search.
 
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
+
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::AkitaScheduleInputs;
@@ -14,6 +17,36 @@ use crate::generated::{
     GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
+
+static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CatalogValidationCacheKey {
+    entries_ptr: usize,
+    entries_len: usize,
+    identity_digest: [u8; 32],
+    policy_digest: [u8; 32],
+}
+
+/// Fixed-width digest of a [`PlannerPolicy`] for catalog validation caching.
+pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let mut h = Fnv64::new();
+    h.write_u64(sis_family_tag(policy.sis_family));
+    h.write_u64(policy.ring_dimension as u64);
+    write_decomposition(&mut h, policy.decomposition);
+    h.write_u64(u64::from(policy.ring_subfield_norm_bound));
+    h.write_u64(policy.claim_ext_degree as u64);
+    h.write_u64(policy.chal_ext_degree as u64);
+    h.write_u64(u64::from(policy.basis_range.0));
+    h.write_u64(u64::from(policy.basis_range.1));
+    h.write_u64(policy.onehot_chunk_size as u64);
+    h.write_u64(u64::from(policy.tiered));
+    let digest = h.finish();
+    out[..8].copy_from_slice(&digest.to_le_bytes());
+    out
+}
 
 /// Fixed-width digest of an identity for wiring guards (not a security primitive).
 pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] {
@@ -150,6 +183,43 @@ pub fn validate_catalog_identity(
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
+    let cache_key = CatalogValidationCacheKey {
+        entries_ptr: catalog.entries.as_ptr() as usize,
+        entries_len: catalog.entries.len(),
+        identity_digest: identity_digest(&catalog.identity),
+        policy_digest: policy_digest(policy),
+    };
+    if VALIDATED_CATALOGS
+        .lock()
+        .expect("catalog validation cache poisoned")
+        .contains(&cache_key)
+    {
+        return verify_ring_challenge_config_digest_on_cache_hit(
+            &catalog.identity,
+            ring_challenge_config,
+        );
+    }
+
+    validate_catalog_identity_impl(
+        catalog,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )?;
+
+    VALIDATED_CATALOGS
+        .lock()
+        .expect("catalog validation cache poisoned")
+        .insert(cache_key);
+    Ok(())
+}
+
+fn validate_catalog_identity_impl(
+    catalog: &GeneratedScheduleTable,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<(), AkitaError> {
     validate_catalog_keys(catalog.entries)?;
     let embedded = catalog.identity;
     let expected = catalog_identity_expectation(
@@ -190,6 +260,20 @@ pub fn validate_catalog_identity(
     check_field!(ring_challenge_config_digest);
     check_field!(key_count);
     check_field!(key_digest);
+    Ok(())
+}
+
+fn verify_ring_challenge_config_digest_on_cache_hit(
+    identity: &GeneratedScheduleCatalogIdentity,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+) -> Result<(), AkitaError> {
+    let recomputed = ring_challenge_config_digest(identity.ring_dimensions, ring_challenge_config)?;
+    if recomputed != identity.ring_challenge_config_digest {
+        return Err(catalog_identity_mismatch_error(
+            identity.family_name,
+            "ring_challenge_config_digest",
+        ));
+    }
     Ok(())
 }
 
@@ -401,6 +485,20 @@ mod tests {
             flat_fold,
         )
         .expect("expected identity")
+    }
+
+    #[test]
+    fn catalog_identity_cache_hit_revalidates_ring_challenge_digest() {
+        let policy = sample_policy();
+        let entries = sample_entries();
+        let catalog = GeneratedScheduleTable {
+            entries,
+            identity: expected_identity(&policy, entries),
+        };
+        validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+            .expect("first validation");
+        validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+            .expect("cached validation");
     }
 
     #[test]
