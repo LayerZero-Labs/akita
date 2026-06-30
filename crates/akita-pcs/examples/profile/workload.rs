@@ -386,7 +386,7 @@ fn run_prove<
 >(
     label: &str,
     setup: &AkitaProverSetup<Cfg::Field>,
-    stack: &akita_prover::UniformProverStack<'_, FF, CpuBackend, D>,
+    stack: &akita_prover::UniformProverStack<'_, FF, CpuBackend>,
     poly: &P,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,

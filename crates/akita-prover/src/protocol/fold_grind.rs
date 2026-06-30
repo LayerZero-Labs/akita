@@ -105,7 +105,7 @@ fn grind_probe_nonces(
 /// presets that do not reroll on linf cap).
 pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     backend: &B,
-    prepared: Option<&B::PreparedSetup<D>>,
+    prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
     polys: &[&P],
     lp: &LevelParams,

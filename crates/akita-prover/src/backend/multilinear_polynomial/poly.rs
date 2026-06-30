@@ -105,7 +105,7 @@ where
     pub(super) fn column_partials_per_poly<E>(
         self,
         backend: &CpuBackend,
-        prepared: Option<&CpuPreparedSetup<F, D>>,
+        prepared: Option<&CpuPreparedSetup<F>>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where

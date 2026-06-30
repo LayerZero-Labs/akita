@@ -76,7 +76,7 @@ where
     fn commit<P, B, const D: usize>(
         setup: &Self::ProverSetup,
         polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
+        stack: &UniformProverStack<'_, F, B>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -97,7 +97,7 @@ where
     fn batched_commit<P, B, const D: usize>(
         setup: &Self::ProverSetup,
         polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
+        stack: &UniformProverStack<'_, F, B>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -119,7 +119,7 @@ where
     fn commit_group<P, B, const D: usize>(
         setup: &Self::ProverSetup,
         polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
+        stack: &UniformProverStack<'_, F, B>,
     ) -> Result<CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -141,7 +141,7 @@ where
     fn batched_prove<'a, T, P, B, const D: usize>(
         setup: &Self::ProverSetup,
         claims: ProverOpeningBatch<'a, Self::ExtField, P, F>,
-        stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
+        stacks: &'a impl LevelProveStacks<'a, F, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
@@ -152,5 +152,5 @@ where
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
         P: RootProvePoly<F, D> + RootPolyMeta<F>,
         B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
-        <B as ComputeBackendSetup<F>>::PreparedSetup<D>: 'a;
+        <B as ComputeBackendSetup<F>>::PreparedSetup: 'a;
 }

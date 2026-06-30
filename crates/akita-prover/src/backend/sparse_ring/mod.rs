@@ -419,7 +419,7 @@ where
     pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        prepared: &B::PreparedSetup,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
@@ -527,7 +527,7 @@ where
     fn commit_inner_rows<B>(
         &self,
         backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        prepared: &B::PreparedSetup,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,

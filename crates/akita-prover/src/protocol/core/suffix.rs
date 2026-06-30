@@ -55,10 +55,7 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
-    stacks: &'stack impl LevelProveStacks<
-        'stack,
-        Cfg::Field,
-        D,
+    stacks: &'stack impl LevelProveStacks<'stack, Cfg::Field,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -102,10 +99,10 @@ where
         + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
-    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
-    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
-    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
-    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'stack,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
 {
     let planned_num_levels = schedule_num_fold_levels(schedule);
     if planned_num_levels < 2 {
@@ -143,28 +140,21 @@ where
         } else {
             None
         };
-        let out = if level_d == D {
+        let out = {
             let stack = stacks.prove_stack_at_level(level);
-            let prepared_fold = prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, D>(
-                stack,
-                transcript,
-                current_state,
-                level,
-                level_params,
-                m_row_layout,
-                tail_t_vectors,
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
-            })?;
-            prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, D>(
+            stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), level_d)?;
+            super::fold::prove_suffix_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
                 expanded,
                 prefix_slots,
                 stack,
                 transcript,
                 level,
+                level_d,
+                current_state,
+                level_params,
                 &scheduled,
-                prepared_fold,
+                m_row_layout,
+                tail_t_vectors,
                 setup_contribution_mode,
                 is_terminal_level,
                 if is_terminal_level {
@@ -174,69 +164,11 @@ where
                 },
             )
             .map_err(|err| {
-                AkitaError::InvalidInput(format!("suffix prove_fold level {level} failed: {err:?}"))
-            })
-        } else {
-            dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                let tier_stack = stacks.prove_stack_at_level(level);
-                let expanded_cloned = Arc::clone(expanded);
-                let commit_backend = tier_stack.commit().backend();
-                let opening_backend = tier_stack.opening().backend();
-                let tensor_backend = tier_stack.tensor().backend();
-                let ring_backend = tier_stack.ring_switch().backend();
-                let commit_prepared =
-                    commit_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let opening_prepared =
-                    opening_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let tensor_prepared =
-                    tensor_backend.prepare_expanded::<D_LEVEL>(Arc::clone(&expanded_cloned))?;
-                let ring_prepared = ring_backend.prepare_expanded::<D_LEVEL>(expanded_cloned)?;
-                let level_stack = ProverComputeStack::<Cfg::Field, D_LEVEL, C, O, TS, R>::new(
-                    (commit_backend, &commit_prepared),
-                    (opening_backend, &opening_prepared),
-                    (tensor_backend, &tensor_prepared),
-                    (ring_backend, &ring_prepared),
-                    expanded.as_ref(),
-                )?;
-                let level_prefix_slots = prefix_slots;
-                let prepared_fold =
-                    prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
-                        &level_stack,
-                        transcript,
-                        current_state,
-                        level,
-                        level_params,
-                        m_row_layout,
-                        tail_t_vectors,
-                    )
-                    .map_err(|err| {
-                        AkitaError::InvalidInput(format!(
-                            "suffix prepare level {level} D{D_LEVEL} failed: {err:?}"
-                        ))
-                    })?;
-                prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
-                    expanded,
-                    &level_prefix_slots,
-                    &level_stack,
-                    transcript,
-                    level,
-                    &scheduled,
-                    prepared_fold,
-                    setup_contribution_mode,
-                    is_terminal_level,
-                    if is_terminal_level {
-                        Some(terminal_direct_witness_shape)
-                    } else {
-                        None
-                    },
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!(
-                        "suffix prove_fold level {level} D{D_LEVEL} failed: {err:?}"
-                    ))
-                })
-            })
-        }?;
+                AkitaError::InvalidInput(format!(
+                    "suffix fold level {level} D{level_d} failed: {err:?}"
+                ))
+            })?
+        };
         if is_terminal_level {
             break out.get_terminal()?;
         }
@@ -277,8 +209,8 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
-    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
+pub(in crate::protocol::core) fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
+    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     current_state: SuffixProverState<F, L>,
     _level: usize,

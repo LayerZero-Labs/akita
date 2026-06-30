@@ -119,7 +119,7 @@ where
 {
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: ContractCommitView<'_>,
         plan: CommitInnerPlan,
     ) -> Result<akita_prover::CommitInnerWitness<F, D>, AkitaError> {

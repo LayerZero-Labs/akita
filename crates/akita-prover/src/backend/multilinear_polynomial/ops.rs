@@ -34,7 +34,7 @@ where
 {
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
@@ -67,7 +67,7 @@ where
 {
     fn evaluate_and_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -93,7 +93,7 @@ where
 
     fn decompose_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
@@ -126,7 +126,7 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -185,7 +185,7 @@ where
 {
     fn column_partials(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
@@ -214,7 +214,7 @@ where
 
     fn packed_witness(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         source.dispatch(
@@ -237,7 +237,7 @@ where
 
     fn root_projection(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
     ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
     where
@@ -271,7 +271,7 @@ where
 {
     fn column_partials_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialBatchView<'_, F, D, I>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -311,7 +311,7 @@ where
 
     fn sparse_linear_combination(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialBatchView<'_, F, D, I>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {

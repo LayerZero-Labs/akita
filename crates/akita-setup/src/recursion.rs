@@ -18,7 +18,7 @@ use akita_types::{
 fn commit_setup_prefix_for_level<F, const D: usize, B>(
     setup: &mut AkitaProverSetup<F>,
     backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    prepared: &B::PreparedSetup,
     commitment_params: &LevelParams,
     natural_len: usize,
     n_prefix: usize,
@@ -84,7 +84,7 @@ where
     let terminal_fold_idx = folds.len().saturating_sub(1);
 
     let backend = CpuBackend;
-    let prepared = backend.prepare_setup::<D>(setup)?;
+    let prepared = backend.prepare_setup(setup)?;
     for (idx, fold) in folds.iter().enumerate() {
         if idx >= terminal_fold_idx {
             continue;
@@ -101,7 +101,7 @@ where
         if n_prefix > available_field_len {
             continue;
         }
-        commit_setup_prefix_for_level(
+        commit_setup_prefix_for_level::<F, D, CpuBackend>(
             setup,
             &backend,
             &prepared,

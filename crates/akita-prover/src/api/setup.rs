@@ -26,6 +26,38 @@ pub struct AkitaProverSetup<F: FieldCore> {
 }
 
 impl<F: FieldCore> AkitaProverSetup<F> {
+    /// Setup envelope ring degree.
+    #[must_use]
+    pub fn gen_ring_dim(&self) -> usize {
+        self.expanded.seed().gen_ring_dim
+    }
+
+    /// Reject use of this setup when the root envelope ring degree mismatches.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `root_d` does not match [`Self::gen_ring_dim`].
+    #[inline]
+    pub fn ensure_root_ring_dim(&self, root_d: usize) -> Result<(), AkitaError> {
+        if self.gen_ring_dim() != root_d {
+            return Err(AkitaError::InvalidInput(format!(
+                "setup gen_ring_dim={} does not match scheme root ring degree {root_d}",
+                self.gen_ring_dim()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Reject use of this setup with a mismatched compile-time ring degree.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `D` does not match [`Self::gen_ring_dim`].
+    #[inline]
+    pub fn ensure_compile_time_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        self.ensure_root_ring_dim(D)
+    }
+
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// The caller supplies config-derived capacity bounds, including the

@@ -157,7 +157,7 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
 
 pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
     backend: &B,
-    prepared: Option<&B::PreparedSetup<D>>,
+    prepared: Option<&B::PreparedSetup>,
     challenges: &Challenges,
     point_polys: &[&P],
     point_indices: &[usize],
@@ -266,7 +266,7 @@ where
 
 fn compute_v_rows<F, B, const D: usize>(
     backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    prepared: &B::PreparedSetup,
     row_len: usize,
     e_hat: &FlatDigitBlocks<D>,
     log_basis: u32,
@@ -283,7 +283,7 @@ where
 }
 
 fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
-    ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
+    ring_switch_ctx: &OperationCtx<'_, F, RB>,
     transcript: &mut T,
     lp: &LevelParams,
     e_hat: &FlatDigitBlocks<D>,
@@ -345,8 +345,8 @@ impl RingRelationProver {
     #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
     #[inline(never)]
     pub fn new<'a, F, PointF, const D: usize, T, P, OB, RB>(
-        opening_ctx: &OperationCtx<'_, F, OB, D>,
-        ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
+        opening_ctx: &OperationCtx<'_, F, OB>,
+        ring_switch_ctx: &OperationCtx<'_, F, RB>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
         fold_claims: ProverOpeningBatch<'a, PointF, P, F>,

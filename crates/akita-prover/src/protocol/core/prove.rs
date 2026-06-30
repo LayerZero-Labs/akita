@@ -91,10 +91,7 @@ where
 pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
-    stacks: &'a impl LevelProveStacks<
-        'a,
-        Cfg::Field,
-        D,
+    stacks: &'a impl LevelProveStacks<'a, Cfg::Field,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -142,10 +139,10 @@ where
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
-    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
     let group_sizes = claims.group_sizes();
     validate_batched_inputs(expanded.as_ref(), claims.point(), &group_sizes, true)?;
@@ -158,7 +155,13 @@ where
     )?;
     let schedule =
         effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
-    ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
+    let schedule_ctx =
+        ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
+    for shape in schedule_ctx.level_shapes() {
+        stacks
+            .prove_stack_at_level(shape.level)
+            .ensure_fold_level_envelope_ntt(expanded.as_ref(), shape.ring_dimension)?;
+    }
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => {
             validate_level_dispatch::<D>(&root.params)?;
@@ -239,10 +242,7 @@ where
 pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
-    stacks: &'a impl LevelProveStacks<
-        'a,
-        Cfg::Field,
-        D,
+    stacks: &'a impl LevelProveStacks<'a, Cfg::Field,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -291,10 +291,10 @@ where
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
-    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
-    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
     validate_level_dispatch::<D>(&root_scheduled.params)?;

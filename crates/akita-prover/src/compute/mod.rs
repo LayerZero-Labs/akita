@@ -66,8 +66,8 @@ pub use poly::{
     RingSwitchProveBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
     RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProveFlowBackend,
     RootProvePoly, RootTensorSource, SuffixDispatchOpeningProveBackendFor,
-    SuffixDispatchTensorProveBackendFor, SuffixRingSwitchProveBackend,
-    SuffixRootTensorOpeningProveBackendFor, SuffixRootTensorTensorProveBackendFor,
+    SuffixDispatchTensorProveBackendFor, SuffixOpeningProveBackend, SuffixRingSwitchProveBackend,
+    SuffixTensorProveBackend, SuffixRootTensorOpeningProveBackendFor, SuffixRootTensorTensorProveBackendFor,
     SuffixWitnessOpeningProveBackendFor, SuffixWitnessTensorProveBackendFor, TensorBackendFor,
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };

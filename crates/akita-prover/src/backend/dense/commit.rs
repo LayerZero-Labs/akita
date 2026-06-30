@@ -12,7 +12,7 @@ where
     pub(super) fn commit_rows<B>(
         &self,
         backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        prepared: &B::PreparedSetup,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,

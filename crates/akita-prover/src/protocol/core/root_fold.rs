@@ -39,7 +39,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
-    stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
+    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     claims: ProverOpeningBatch<'_, E, P, F>,
     root_params: &LevelParams,
@@ -129,10 +129,7 @@ where
 pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
-    stacks: &'stack impl LevelProveStacks<
-        'stack,
-        F,
-        D,
+    stacks: &'stack impl LevelProveStacks<'stack, F,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -175,10 +172,10 @@ where
         + 'stack,
     R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <O as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <TS as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.to_opening_shape::<F>()?;
@@ -237,10 +234,7 @@ where
 #[inline(never)]
 pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    stacks: &'stack impl LevelProveStacks<
-        'stack,
-        F,
-        D,
+    stacks: &'stack impl LevelProveStacks<'stack, F,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -284,10 +278,10 @@ where
         + 'stack,
     R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    <C as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <O as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <TS as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
-    <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
+    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.to_opening_shape::<F>()?;

@@ -343,7 +343,7 @@ where
     pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        prepared: &B::PreparedSetup,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where

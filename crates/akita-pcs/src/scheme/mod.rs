@@ -108,7 +108,7 @@ where
     pub fn commit<P, B, const D: usize>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
-        stack: &UniformProverStack<'_, Cfg::Field, B, D>,
+        stack: &UniformProverStack<'_, Cfg::Field, B>,
     ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -129,7 +129,7 @@ where
     pub fn batched_commit<P, B, const D: usize>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
-        stack: &UniformProverStack<'_, Cfg::Field, B, D>,
+        stack: &UniformProverStack<'_, Cfg::Field, B>,
     ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -150,7 +150,7 @@ where
     pub fn commit_group<P, B, const D: usize>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
-        stack: &UniformProverStack<'_, Cfg::Field, B, D>,
+        stack: &UniformProverStack<'_, Cfg::Field, B>,
     ) -> Result<CommittedGroupHandle<Commitment<Cfg::Field>, AkitaCommitmentHint<Cfg::Field>>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -172,10 +172,7 @@ where
     pub fn batched_prove<'a, T, P, B, const D: usize>(
         setup: &AkitaProverSetup<Cfg::Field>,
         claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
-        stacks: &'a impl LevelProveStacks<
-            'a,
-            Cfg::Field,
-            D,
+        stacks: &'a impl LevelProveStacks<'a, Cfg::Field,
             Commit = B,
             Opening = B,
             Tensor = B,
@@ -191,7 +188,7 @@ where
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
         P: RootProvePoly<Cfg::Field, D> + RootPolyMeta<Cfg::Field>,
         B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D> + ComputeBackendSetup<Cfg::Field> + 'a,
-        <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
+        <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     {
         let t_prove_total = Instant::now();
         validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;

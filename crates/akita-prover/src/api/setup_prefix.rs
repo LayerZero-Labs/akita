@@ -30,7 +30,7 @@ use akita_types::{
 pub fn commit_setup_prefix<F, const D: usize, B>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    prepared: &B::PreparedSetup,
     level_params: &LevelParams,
     setup_seed_digest: [u8; 32],
     n_prefix: usize,
@@ -326,7 +326,7 @@ mod tests {
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
-        let prepared = backend.prepare_setup::<D>(&setup).expect("prepared setup");
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let seed_digest = setup_seed_digest(setup.expanded.seed()).expect("digest");
         let slot = commit_setup_prefix::<F, D, _>(
             &setup.expanded,
