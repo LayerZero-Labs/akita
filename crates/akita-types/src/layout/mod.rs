@@ -22,7 +22,8 @@ pub use opening_point::{
 };
 pub use params::{AjtaiKeyParams, GroupRootParams, LevelParams, MRowLayout, SisModulusFamily};
 pub use proof_size::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
+    direct_witness_bytes, extension_opening_reduction_level_bytes,
+    extension_opening_reduction_proof_bytes, field_bytes, padded_boolean_opening_vars,
     packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
     sumcheck_rounds,
 };

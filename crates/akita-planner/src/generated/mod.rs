@@ -99,6 +99,7 @@ pub struct GeneratedScheduleTable {
 
 pub mod expand;
 pub mod validate;
+pub(crate) mod walk;
 pub use akita_types::SisModulusFamily;
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
 
