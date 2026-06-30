@@ -212,6 +212,11 @@ Audit focus:
 Goal: match lattice-estimator's infinity optimizer behavior for the target
 profile.
 
+Status: complete. The serial optimizer matches the trusted infinity goldens, and
+Slice 4b adds deterministic `ExhaustiveParallel` search behind the `parallel`
+feature, serial-vs-parallel parity tests, and a durable Criterion benchmark for
+local-minimum, serial exhaustive, and parallel exhaustive optimizer profiles.
+
 Patch surface:
 
 1. Implement beta search.
