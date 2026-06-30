@@ -128,7 +128,7 @@ where
 #[inline(never)]
 pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixProverRegistry<F>,
     stacks: &'stack impl LevelProveStacks<
         'stack,
         F,

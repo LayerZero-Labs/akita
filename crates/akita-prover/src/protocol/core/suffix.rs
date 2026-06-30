@@ -54,7 +54,7 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 #[allow(clippy::too_many_arguments)]
 pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'stack impl LevelProveStacks<
         'stack,
         Cfg::Field,

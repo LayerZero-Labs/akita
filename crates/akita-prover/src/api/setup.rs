@@ -3,9 +3,9 @@
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
-    derive_public_matrix_flat, sample_public_matrix_seed, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixVerifierRegistry,
+    derive_public_matrix_flat, dispatch_ring_dim_result, sample_public_matrix_seed,
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, SetupMatrixEnvelope,
+    SetupPrefixProverRegistry, SetupPrefixVerifierRegistry,
 };
 use std::sync::Arc;
 
@@ -14,28 +14,35 @@ use std::sync::Arc;
 /// Backend-prepared compute state is intentionally not stored here. Host code
 /// prepares a compute backend from the expanded setup when it wants to prove.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaProverSetup<F: FieldCore, const D: usize> {
+pub struct AkitaProverSetup<F: FieldCore> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
-    pub prefix_slots: SetupPrefixProverRegistry<F, D>,
+    ///
+    /// D-free (S4): the registry stores flat ring-coefficient commitment rows and
+    /// D-free hints; concrete-D selection happens at backend-prepare /
+    /// per-operation time, not on this artifact.
+    pub prefix_slots: SetupPrefixProverRegistry<F>,
 }
 
-impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
+impl<F: FieldCore> AkitaProverSetup<F> {
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
-    /// The caller supplies config-derived capacity bounds. This constructor
+    /// The caller supplies config-derived capacity bounds, including the
+    /// setup-time generation ring dimension `gen_ring_dim` (the max ring
+    /// dimension across the config's schedule policy/catalog). This constructor
     /// owns only the concrete prover artifact: matrix expansion for the chosen
     /// capacity envelope.
     ///
     /// # Errors
     ///
-    /// Returns an error if the capacity calculation overflows or the setup
-    /// descriptor cannot be built.
+    /// Returns an error if the capacity calculation overflows, `gen_ring_dim` is
+    /// unsupported, or the setup descriptor cannot be built.
     #[tracing::instrument(skip_all, name = "AkitaProverSetup::generate_with_capacity")]
     pub fn generate_with_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
+        gen_ring_dim: usize,
         setup_envelope: SetupMatrixEnvelope,
     ) -> Result<Self, AkitaError>
     where
@@ -45,7 +52,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         let seed = AkitaSetupSeed {
             max_num_vars,
             max_num_batched_polys,
-            gen_ring_dim: D,
+            gen_ring_dim,
             max_setup_len: setup_envelope.max_setup_len,
             public_matrix_seed,
         };
@@ -53,11 +60,21 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             AkitaError::InvalidSetup(format!("setup seed validation failed: {err}"))
         })?;
 
-        let shared_flat =
-            derive_public_matrix_flat::<F, D>(setup_envelope.max_setup_len, &public_matrix_seed);
-        let expanded = Arc::new(
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
-        );
+        // Matrix expansion still needs the concrete generation ring dimension;
+        // dispatch on the runtime `gen_ring_dim` at this single kernel-entry
+        // boundary (the canonical akita-types dispatcher; D-free `Self` result).
+        let expanded = dispatch_ring_dim_result!(gen_ring_dim, |D| {
+            let shared_flat = derive_public_matrix_flat::<F, D>(
+                setup_envelope.max_setup_len,
+                &public_matrix_seed,
+            );
+            Ok::<_, AkitaError>(Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    seed.clone(),
+                    shared_flat,
+                ),
+            ))
+        })?;
 
         Ok(Self {
             expanded,
@@ -108,8 +125,8 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the setup's generation dimension does not match
-    /// `D` or its internal shape metadata is malformed.
+    /// Returns an error if the setup's generation dimension is unsupported, the
+    /// seed and matrix disagree, or its internal shape metadata is malformed.
     pub fn from_seed_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
         F: CanonicalField + Valid,
@@ -120,12 +137,6 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         expanded.shared_matrix().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup matrix validation failed: {err}"))
         })?;
-        if expanded.seed().gen_ring_dim != D {
-            return Err(AkitaError::InvalidSetup(format!(
-                "expanded setup ring dimension {} does not match prover D={D}",
-                expanded.seed().gen_ring_dim
-            )));
-        }
         if expanded.shared_matrix().gen_ring_dim() != expanded.seed().gen_ring_dim {
             return Err(AkitaError::InvalidSetup(
                 "expanded setup matrix generation dimension does not match setup seed".to_string(),
@@ -137,17 +148,53 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             ));
         }
         let expanded = Arc::new(expanded);
-        expanded.shared_matrix().total_ring_elements_at::<D>()?;
+        // Re-assert that the generation ring dimension is one we can actually
+        // materialize a typed matrix view at (the invariant the const generic
+        // `D` used to enforce at compile time). The dispatcher rejects an
+        // unsupported `gen_ring_dim`; `total_ring_elements_at::<D>` re-checks the
+        // matrix is an exact multiple of the ring dimension.
+        let gen_ring_dim = expanded.seed().gen_ring_dim;
+        dispatch_ring_dim_result!(gen_ring_dim, |D| {
+            expanded.shared_matrix().total_ring_elements_at::<D>()?;
+            Ok::<_, AkitaError>(())
+        })?;
         Ok(Self {
             expanded,
             prefix_slots: SetupPrefixProverRegistry::new(),
         })
     }
+
+    /// Assert that this setup's generation ring dimension is compatible with a
+    /// schedule level's ring dimension.
+    ///
+    /// Re-asserts the §6 invariant the const generic `D` used to enforce: the
+    /// setup was generated at `gen_ring_dim` (the max ring dimension across the
+    /// config's schedule policy), and every level's ring dimension must divide
+    /// it so the level can view a typed slice of the shared matrix. For uniform-D
+    /// presets `gen_ring_dim == level_ring_dim`; this generalizes the former
+    /// `gen_ring_dim == D` equality to the divisibility relation a future mixed-D
+    /// catalog needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `level_ring_dim` is zero or does not divide the
+    /// setup's `gen_ring_dim`.
+    pub fn assert_level_ring_dim_compatible(
+        &self,
+        level_ring_dim: usize,
+    ) -> Result<(), AkitaError> {
+        let gen_ring_dim = self.expanded.seed().gen_ring_dim;
+        if level_ring_dim == 0 || !gen_ring_dim.is_multiple_of(level_ring_dim) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule level ring dimension {level_ring_dim} is not compatible with setup \
+                 generation ring dimension {gen_ring_dim}"
+            )));
+        }
+        Ok(())
+    }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize, const D: usize> Valid
-    for AkitaProverSetup<F, D>
-{
+impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
         self.prefix_slots.check()
@@ -160,26 +207,11 @@ mod tests {
     use akita_field::Prime128Offset275;
 
     #[test]
-    fn validated_expanded_setup_rejects_mismatched_ring_dimension() {
-        let setup = AkitaProverSetup::<Prime128Offset275, 64>::generate_with_capacity(
-            8,
-            1,
-            SetupMatrixEnvelope { max_setup_len: 1 },
-        )
-        .expect("generate D=64 setup");
-        let expanded = (*setup.expanded).clone();
-
-        let err = AkitaProverSetup::<Prime128Offset275, 32>::from_validated_expanded(expanded)
-            .expect_err("D=64 setup must not be reinterpreted as D=32");
-
-        assert!(err.to_string().contains("ring dimension 64"));
-    }
-
-    #[test]
     fn generate_with_capacity_rejects_zero_setup_len() {
-        let zero_len = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
+        let zero_len = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
             8,
             1,
+            32,
             SetupMatrixEnvelope { max_setup_len: 0 },
         )
         .expect_err("zero setup length must not produce an undecodable setup");
@@ -187,23 +219,61 @@ mod tests {
     }
 
     #[test]
-    fn prover_setup_check_validates_prefix_slots() {
-        use akita_algebra::CyclotomicRing;
-        use akita_types::{
-            AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, SetupPrefixSlot,
-            SetupPrefixSlotId,
-        };
-
-        let mut setup = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
+    fn generate_with_capacity_rejects_unsupported_gen_ring_dim() {
+        let err = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
             8,
             1,
+            48,
+            SetupMatrixEnvelope { max_setup_len: 1 },
+        )
+        .expect_err("unsupported gen_ring_dim must be rejected");
+        assert!(
+            matches!(err, AkitaError::InvalidInput(_))
+                || matches!(err, AkitaError::InvalidSetup(_))
+        );
+    }
+
+    #[test]
+    fn assert_level_ring_dim_compatible_enforces_divisibility() {
+        let setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            8,
+            1,
+            64,
+            SetupMatrixEnvelope { max_setup_len: 1 },
+        )
+        .expect("generate D=64 setup");
+        // Uniform-D: level dim equals gen_ring_dim.
+        setup
+            .assert_level_ring_dim_compatible(64)
+            .expect("matching level ring dimension");
+        // A divisor is compatible (future mixed-D); a non-divisor is not.
+        setup
+            .assert_level_ring_dim_compatible(32)
+            .expect("divisor level ring dimension");
+        setup
+            .assert_level_ring_dim_compatible(128)
+            .expect_err("non-divisor level ring dimension must be rejected");
+        setup
+            .assert_level_ring_dim_compatible(0)
+            .expect_err("zero level ring dimension must be rejected");
+    }
+
+    #[test]
+    fn prover_setup_check_validates_prefix_slots() {
+        use akita_types::{
+            AkitaCommitmentHint, DigitBlocks, RingVec, SetupPrefixPublicCommitment,
+            SetupPrefixSlot, SetupPrefixSlotId,
+        };
+
+        let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            8,
+            1,
+            32,
             SetupMatrixEnvelope { max_setup_len: 1 },
         )
         .expect("generate setup");
-        let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
-        let recomposed = vec![Vec::new()];
-        let hint =
-            AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
+        let decomposed = DigitBlocks::empty(32);
+        let hint = AkitaCommitmentHint::singleton(decomposed);
         setup
             .prefix_slots
             .insert(SetupPrefixSlot {
@@ -216,8 +286,8 @@ mod tests {
                 },
                 natural_len: 1,
                 padded_len: 3,
-                commitment: RingCommitment {
-                    u: vec![CyclotomicRing::zero()],
+                commitment: SetupPrefixPublicCommitment {
+                    rows: vec![RingVec::from_coeffs(vec![Prime128Offset275::default(); 32])],
                 },
                 hint,
             })

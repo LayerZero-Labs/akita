@@ -25,7 +25,9 @@
 mod backend;
 mod cpu;
 pub mod delegating_cpu;
+mod digit_blocks;
 mod dispatch;
+mod hint_recompose;
 mod kernels;
 mod operation_plans;
 mod plans;
@@ -38,7 +40,11 @@ pub use backend::{
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
+pub use digit_blocks::{FlatDigitBlockIter, FlatDigitBlocks};
 pub(crate) use dispatch::tensor_root_projection;
+pub use hint_recompose::{
+    recompose_flat_hint_inner_rows, recompose_hint_inner_rows, recompose_inner_rows,
+};
 pub use kernels::{
     BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel,
     RingSwitchRelationKernel, RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel,
@@ -58,11 +64,12 @@ pub use poly::{
     CommitBackendFor, DirectRootWitnessSource, OpeningProveBackendFor, ProjectBackendFor,
     ProveBackendFor, ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend,
     RingSwitchProveBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
-    RootTensorSource, SuffixDispatchOpeningProveBackendFor, SuffixDispatchTensorProveBackendFor,
-    SuffixRingSwitchProveBackend, SuffixRootTensorOpeningProveBackendFor,
-    SuffixRootTensorTensorProveBackendFor, SuffixWitnessOpeningProveBackendFor,
-    SuffixWitnessTensorProveBackendFor, TensorBackendFor, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProveFlowBackend,
+    RootProvePoly, RootTensorSource, SuffixDispatchOpeningProveBackendFor,
+    SuffixDispatchTensorProveBackendFor, SuffixRingSwitchProveBackend,
+    SuffixRootTensorOpeningProveBackendFor, SuffixRootTensorTensorProveBackendFor,
+    SuffixWitnessOpeningProveBackendFor, SuffixWitnessTensorProveBackendFor, TensorBackendFor,
+    RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use stack::{
     LevelProveStacks, OperationCtx, ProverComputeStack, TieredProveStacks, UniformProverStack,

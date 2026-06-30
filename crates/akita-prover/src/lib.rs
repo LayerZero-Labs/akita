@@ -7,7 +7,6 @@
 pub mod api;
 pub mod backend;
 pub mod compute;
-pub mod dispatch_dim;
 pub mod kernels;
 pub mod protocol;
 mod validation;
@@ -16,9 +15,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AppendToTranscript,
-    FlatDigitBlocks, OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection,
-    RingCommitment, RingVec,
+    padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, Commitment,
+    OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection, RingVec,
 };
 
 pub use api::{
@@ -37,13 +35,14 @@ pub use backend::{
 pub use compute::{
     BatchDecomposeFoldOutcome, CommitBackendFor, CommitCluster, CommitmentComputeBackend,
     ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput,
-    DenseCommitRowsPlan, DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks,
-    OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster, OpeningProveBackendFor, OperationCtx,
-    PreparedCrtNttProfile, ProveBackendFor, ProveFlowBackendFor, ProveStackFor, ProverComputeStack,
-    RecursiveProveBackend, RecursiveWitnessCommitRowsPlan, RingSwitchCluster,
-    RingSwitchComputeBackend, RingSwitchProveBackend, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    DenseCommitRowsPlan, DigitRowsComputeBackend, FlatBlockTable, FlatDigitBlocks,
+    LevelProveStacks, OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster,
+    OpeningProveBackendFor, OperationCtx, PreparedCrtNttProfile, ProveBackendFor,
+    ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
+    RecursiveWitnessCommitRowsPlan, RingSwitchCluster, RingSwitchComputeBackend,
+    RingSwitchProveBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
     SparseRingCommitRowsPlan, SuffixDispatchOpeningProveBackendFor,
     SuffixDispatchTensorProveBackendFor, SuffixRingSwitchProveBackend, TensorBackendFor,
     TensorCluster, TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
@@ -63,41 +62,39 @@ pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness
 /// `commitment` is the corresponding commitment output plus prover-side hint
 /// for that bundle.
 #[derive(Debug, Clone)]
-pub struct ProverCommitmentGroup<'a, P, F: FieldCore, const D: usize> {
+pub struct ProverCommitmentGroup<'a, P, F: FieldCore> {
     /// Coordinates of [`ProverOpeningBatch::point`] used by every polynomial in this group.
     pub point_vars: PointVariableSelection,
     /// Polynomials addressable by claim `poly_idx` values at this point.
     pub polynomials: &'a [&'a P],
-    /// Commitment output for `polynomials`.
-    pub commitment: CommitmentWithHint<F, D>,
+    /// Commitment output for `polynomials` (D-free flat storage plus hint).
+    pub commitment: CommitmentWithHint<F>,
 }
 
 /// Batched prover input: one shared opening point plus prover commitment groups.
 #[derive(Debug, Clone)]
-pub struct ProverOpeningBatch<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize> {
+pub struct ProverOpeningBatch<'a, PointF: Clone, P, CommitF: FieldCore> {
     /// Padded/shared opening point.
     pub point: OpeningPoints<'a, PointF>,
     /// Commitment groups in transcript order.
-    pub groups: Vec<ProverCommitmentGroup<'a, P, CommitF, D>>,
+    pub groups: Vec<ProverCommitmentGroup<'a, P, CommitF>>,
 }
 
-impl<'a, P, F: FieldCore, const D: usize> ProverCommitmentGroup<'a, P, F, D> {
+impl<'a, P, F: FieldCore> ProverCommitmentGroup<'a, P, F> {
     /// Number of polynomials addressable by opening-batch claims at this point.
     pub fn poly_count(&self) -> usize {
         self.polynomials.len()
     }
 }
 
-impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
-    ProverOpeningBatch<'a, PointF, P, CommitF, D>
-{
+impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningBatch<'a, PointF, P, CommitF> {
     /// Shared opening point.
     pub fn point(&self) -> &[PointF] {
         self.point.as_ref()
     }
 
     /// Commitment groups in transcript order.
-    pub fn groups(&self) -> &[ProverCommitmentGroup<'a, P, CommitF, D>] {
+    pub fn groups(&self) -> &[ProverCommitmentGroup<'a, P, CommitF>] {
         &self.groups
     }
 
@@ -113,7 +110,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     pub fn to_opening_shape<PolyF>(&self) -> Result<OpeningBatchShape, AkitaError>
     where
         PolyF: FieldCore,
-        P: RootPolyShape<PolyF, D>,
+        P: RootPolyMeta<PolyF>,
     {
         let padded_num_vars = padded_scalar_batch_num_vars(
             self.groups()
@@ -141,8 +138,8 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
             .collect()
     }
 
-    /// Commitments in commitment-group order.
-    pub fn commitments(&self) -> Vec<&RingCommitment<CommitF, D>> {
+    /// Commitments in commitment-group order (D-free flat storage).
+    pub fn commitments(&self) -> Vec<&Commitment<CommitF>> {
         self.groups
             .iter()
             .map(|group| &group.commitment.0)
@@ -150,19 +147,31 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     }
 
     /// Absorb the normalized batch shape, commitments, and shared point.
-    pub fn append_to_transcript<T>(&self, transcript: &mut T) -> Result<(), AkitaError>
+    ///
+    /// Commitments are absorbed through the D-free flat coefficient encoder
+    /// keyed on the schedule-derived `ring_dim`; this is byte-identical to the
+    /// former typed `RingCommitment::append_to_transcript` path for the matching
+    /// dimension (S2 byte-identity test).
+    pub fn append_to_transcript<T>(
+        &self,
+        ring_dim: usize,
+        transcript: &mut T,
+    ) -> Result<(), AkitaError>
     where
         CommitF: CanonicalField,
         PointF: ExtField<CommitF>,
-        P: RootPolyShape<CommitF, D>,
+        P: RootPolyMeta<CommitF>,
         T: Transcript<CommitF>,
     {
         let shape = self.to_opening_shape::<CommitF>()?;
         let commitments = self.commitments();
         shape.append_to_transcript::<CommitF, T>(transcript)?;
         for commitment in commitments {
-            commitment
-                .append_to_transcript(akita_transcript::labels::ABSORB_COMMITMENT, transcript);
+            commitment.append_to_transcript(
+                akita_transcript::labels::ABSORB_COMMITMENT,
+                ring_dim,
+                transcript,
+            )?;
         }
         for coord in self.point() {
             akita_transcript::append_ext_field::<CommitF, PointF, T>(
@@ -175,12 +184,12 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     }
 
     /// Return the only group when the current implementation's single-group path applies.
-    pub fn single_group(&self) -> Option<&ProverCommitmentGroup<'a, P, CommitF, D>> {
+    pub fn single_group(&self) -> Option<&ProverCommitmentGroup<'a, P, CommitF>> {
         self.groups.first().filter(|_| self.groups.len() == 1)
     }
 
     /// Consume the batch and return its only group when the current single-group path applies.
-    pub fn into_single_group(self) -> Option<ProverCommitmentGroup<'a, P, CommitF, D>> {
+    pub fn into_single_group(self) -> Option<ProverCommitmentGroup<'a, P, CommitF>> {
         let Self { mut groups, .. } = self;
         if groups.len() != 1 {
             return None;
@@ -193,14 +202,14 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         let group = self.single_group().ok_or_else(|| {
             AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
         })?;
-        Ok(RingVec::from_ring_elems(&group.commitment.0.u))
+        Ok(group.commitment.0.rows().clone())
     }
 
     /// Preserve this batch's grouping metadata while replacing its flat polynomial stream.
     pub(crate) fn regroup_polynomial_refs<'b, Q>(
         self,
         polynomials: &'b [&'b Q],
-    ) -> Result<ProverOpeningBatch<'b, PointF, Q, CommitF, D>, AkitaError>
+    ) -> Result<ProverOpeningBatch<'b, PointF, Q, CommitF>, AkitaError>
     where
         'a: 'b,
     {
@@ -239,7 +248,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         opening_point: &[PointF],
         recursive_num_vars: usize,
         polynomials: &'a [&'a P],
-        commitment: CommitmentWithHint<CommitF, D>,
+        commitment: CommitmentWithHint<CommitF>,
     ) -> Result<Self, AkitaError>
     where
         PointF: FieldCore,

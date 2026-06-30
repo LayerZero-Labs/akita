@@ -5,8 +5,8 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
     OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
 
@@ -30,6 +30,24 @@ pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> 
 #[derive(Debug, Clone, Copy)]
 pub struct OneHotBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a OneHotPoly<F, D, I>],
+}
+
+impl<F, const D: usize, I> RootPolyMeta<F> for OneHotPoly<F, D, I>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    fn num_ring_elems(&self) -> usize {
+        self.total_ring_elems
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        Some(self.onehot_k)
+    }
 }
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for OneHotPoly<F, D, I>
@@ -574,7 +592,7 @@ where
     where
         E: akita_field::ExtField<F>,
     {
-        let num_vars = self.num_vars();
+        let num_vars = self.num_vars;
         let witness = DirectRootWitnessSource::direct_root_witness(self)?;
         let field_elems = witness.as_field_elements().ok_or_else(|| {
             AkitaError::InvalidInput(

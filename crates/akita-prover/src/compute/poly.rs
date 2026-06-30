@@ -13,11 +13,43 @@ use akita_field::RandomSampling;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_types::CleartextWitnessProof;
 
-/// Shape metadata every root polynomial exposes.
+/// D-free shape metadata every root polynomial exposes.
 ///
-/// This is the base capability: it carries no view and no backend work, so
-/// shape-only APIs can require just `RootPolyShape` without pulling in commit,
-/// opening, tensor, or direct-witness capabilities.
+/// This is the **PCS/batch-facing** capability bound: it names a polynomial's
+/// variable count and ring-element count *without* a const ring dimension `D`,
+/// so D-free entry points (e.g. [`crate::ProverOpeningBatch`]) can require just
+/// `RootPolyMeta` while the const-D kernel-entry traits ([`RootPolyShape`] and
+/// the commit/opening/tensor/direct-witness family) carry `D`.
+///
+/// `num_vars` is the polynomial's own (schedule/representation-derived) variable
+/// count — **not** `log2(num_ring_elems() * D)`. Every input root polynomial
+/// stores it directly, so the count is independent of the ring dimension chosen
+/// to commit it.
+pub trait RootPolyMeta<F>: Clone + Send + Sync
+where
+    F: FieldCore,
+{
+    /// Total number of ring elements in the polynomial.
+    fn num_ring_elems(&self) -> usize;
+
+    /// Total number of variables (representation-derived, D-independent).
+    fn num_vars(&self) -> usize;
+
+    /// One-hot chunk size for sparse one-hot backends.
+    ///
+    /// `None` means this backend is not a one-hot root representation.
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        None
+    }
+}
+
+/// Shape metadata every root polynomial exposes, keyed on the const ring
+/// dimension `D`.
+///
+/// This is the base **kernel-entry** capability: it carries no view and no
+/// backend work, so shape-only kernel APIs can require just `RootPolyShape`
+/// without pulling in commit, opening, tensor, or direct-witness capabilities.
+/// PCS/batch-facing code should prefer the D-free [`RootPolyMeta`] instead.
 pub trait RootPolyShape<F, const D: usize>: Clone + Send + Sync
 where
     F: FieldCore,
@@ -750,5 +782,23 @@ where
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         RootPolyShape::onehot_chunk_size(*self)
+    }
+}
+
+impl<F, P> RootPolyMeta<F> for &P
+where
+    F: FieldCore,
+    P: RootPolyMeta<F>,
+{
+    fn num_ring_elems(&self) -> usize {
+        RootPolyMeta::num_ring_elems(*self)
+    }
+
+    fn num_vars(&self) -> usize {
+        RootPolyMeta::num_vars(*self)
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        RootPolyMeta::onehot_chunk_size(*self)
     }
 }

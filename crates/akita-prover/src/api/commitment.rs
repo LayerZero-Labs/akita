@@ -1,9 +1,9 @@
 //! Prover-owned commitment kernels.
 
 use crate::compute::{
-    tensor_root_projection, CommitInnerPlan, DigitRowsComputeBackend, OperationCtx,
-    RootCommitBackend, RootCommitKernel, RootCommitPoly, RootCommitSource, RootPolyShape,
-    UniformProverStack,
+    tensor_root_projection, CommitInnerPlan, DigitRowsComputeBackend, FlatDigitBlocks,
+    OperationCtx, RootCommitBackend, RootCommitKernel, RootCommitPoly, RootCommitSource,
+    RootPolyShape, UniformProverStack,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
@@ -14,16 +14,20 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaScheduleLookupKey, CommitmentGroupLayout, FlatDigitBlocks,
-    FpExtEncoding, LevelParams, OpeningBatchShape, RingCommitment, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentGroupLayout, DigitBlocks,
+    FpExtEncoding, LevelParams, OpeningBatchShape, GROUPED_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
-pub type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F, D>);
+///
+/// D-free protocol storage: a flat [`Commitment`] plus the D-free
+/// [`AkitaCommitmentHint`] (decomposed digit stream only; recomposed inner rows
+/// are recomputed on demand, see [`crate::compute::recompose_hint_inner_rows`]).
+pub type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
-/// Commitment group handle specialized to Akita's native commitment and hint types.
-pub type CommittedGroupWithHint<F, const D: usize> =
-    CommittedGroupHandle<RingCommitment<F, D>, AkitaCommitmentHint<F, D>>;
+/// Commitment group handle specialized to Akita's native D-free commitment and
+/// hint types.
+pub type CommittedGroupWithHint<F> = CommittedGroupHandle<Commitment<F>, AkitaCommitmentHint<F>>;
 
 /// Schedule metadata returned by a standalone commitment-group precommit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -380,7 +384,7 @@ fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B, D>,
     params: &LevelParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
@@ -397,32 +401,29 @@ where
     )?;
     let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
     let mut b_input_digits = vec![[0i8; D]; total_b_input_len];
+    // Typed digit planes are a kernel-internal carrier; the protocol hint stores
+    // the D-free `DigitBlocks` and recomposed inner rows are recomputed on
+    // demand from the digit stream (S5 re-home), not cached here.
     let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
         .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
         .collect::<Result<_, _>>()?;
-    let mut recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
-        vec![Vec::new(); polys.len()];
     cfg_chunks_mut!(b_input_digits, b_input_len_per_poly)
         .zip(cfg_iter!(polys))
         .zip(cfg_iter_mut!(decomposed_inner_rows))
-        .zip(cfg_iter_mut!(recomposed_inner_rows))
-        .try_for_each(
-            |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
-                let inner =
-                    RootCommitKernel::commit_inner(backend, prepared, poly.commit_view()?, plan)?;
-                validate_commit_inner_shape(
-                    &inner,
-                    params.num_blocks,
-                    params.a_key.row_len(),
-                    params.num_digits_open,
-                    params.log_basis,
-                )?;
-                dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
-                *decomposed = inner.decomposed_inner_rows;
-                *recomposed = inner.recomposed_inner_rows;
-                Ok(())
-            },
-        )?;
+        .try_for_each(|((dst, poly), decomposed)| -> Result<(), AkitaError> {
+            let inner =
+                RootCommitKernel::commit_inner(backend, prepared, poly.commit_view()?, plan)?;
+            validate_commit_inner_shape(
+                &inner,
+                params.num_blocks,
+                params.a_key.row_len(),
+                params.num_digits_open,
+                params.log_basis,
+            )?;
+            dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
+            *decomposed = inner.decomposed_inner_rows;
+            Ok(())
+        })?;
     validate_commit_outer_input_nonempty(b_input_digits.len())?;
     let u: Vec<CyclotomicRing<F, D>> = if params.f_key.is_some() {
         // Tiered: the sent commitment is the second-tier image
@@ -445,11 +446,12 @@ where
         }
         u
     };
-    let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
-        decomposed_inner_rows,
-        recomposed_inner_rows,
-    );
-    Ok((RingCommitment { u }, hint))
+    let decomposed_digit_blocks: Vec<DigitBlocks> = decomposed_inner_rows
+        .into_iter()
+        .map(FlatDigitBlocks::into_digit_blocks)
+        .collect();
+    let hint = AkitaCommitmentHint::new(decomposed_digit_blocks);
+    Ok((Commitment::from_ring_elems(&u), hint))
 }
 
 /// Commit a group of polynomials using already-selected level parameters.
@@ -466,7 +468,7 @@ pub fn commit_with_params<F, const D: usize, P, B>(
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B, D>,
     params: &LevelParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
@@ -528,13 +530,7 @@ pub fn commit<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B, D>,
-) -> Result<
-    (
-        RingCommitment<Cfg::Field, D>,
-        AkitaCommitmentHint<Cfg::Field, D>,
-    ),
-    AkitaError,
->
+) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -653,7 +649,7 @@ pub fn commit_group<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B, D>,
-) -> Result<CommittedGroupWithHint<Cfg::Field, D>, AkitaError>
+) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -710,7 +706,7 @@ pub fn batched_commit<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B, D>,
-) -> Result<CommitmentWithHint<Cfg::Field, D>, AkitaError>
+) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -762,7 +758,7 @@ pub fn batched_commit_with_params<F, const D: usize, P, B>(
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B, D>,
     params: &LevelParams,
-) -> Result<CommitmentWithHint<F, D>, AkitaError>
+) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
@@ -854,9 +850,10 @@ mod tests {
 
     #[test]
     fn commit_level_params_reject_log_basis_above_i8_range() {
-        let expanded = AkitaProverSetup::<F, D>::generate_with_capacity(
+        let expanded = AkitaProverSetup::<F>::generate_with_capacity(
             5,
             1,
+            D,
             SetupMatrixEnvelope { max_setup_len: 8 },
         )
         .unwrap()

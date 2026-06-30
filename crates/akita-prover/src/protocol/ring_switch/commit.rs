@@ -30,7 +30,7 @@ pub fn commit_w<F, B, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     commit_ctx: &OperationCtx<'_, F, B, D>,
     commit_layout: &LevelParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+) -> Result<(RingVec<F>, AkitaCommitmentHint<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
@@ -100,13 +100,10 @@ where
         }
         u
     };
-    let hint = {
-        AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-            inner.decomposed_inner_rows,
-            inner.recomposed_inner_rows,
-        )
-    };
-    Ok((RingCommitment { u }, hint))
+    // Protocol storage is D-free: the typed digit planes flatten into a
+    // `DigitBlocks` hint; recomposed rows are recomputed on demand downstream.
+    let hint = AkitaCommitmentHint::singleton(inner.decomposed_inner_rows.into_digit_blocks());
+    Ok((RingVec::from_ring_elems(&u), hint))
 }
 
 /// Dispatch a recursive `w` commitment to the selected ring dimension under
@@ -144,8 +141,8 @@ where
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
-                commitment: RingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                commitment: wc,
+                hint: RecursiveCommitmentHintCache::from_hint(wh),
             })
         } else {
             // The tensor pack is length-preserving (it redistributes the same
@@ -163,8 +160,8 @@ where
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
-                commitment: RingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                commitment: wc,
+                hint: RecursiveCommitmentHintCache::from_hint(wh),
             })
         }
     })
@@ -203,8 +200,8 @@ where
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
-                commitment: RingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                commitment: wc,
+                hint: RecursiveCommitmentHintCache::from_hint(wh),
             })
         } else {
             // The tensor pack is length-preserving, so the committed witness
@@ -219,8 +216,8 @@ where
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
-                commitment: RingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                commitment: wc,
+                hint: RecursiveCommitmentHintCache::from_hint(wh),
             })
         }
     } else {

@@ -12,8 +12,8 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
     OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -63,6 +63,25 @@ pub struct RootTensorProjectionView<'a, F: FieldCore, const D: usize> {
 #[derive(Debug, Clone, Copy)]
 pub struct RootTensorProjectionBatchView<'a, F: FieldCore, const D: usize> {
     polys: &'a [&'a RootTensorProjectionPoly<F, D>],
+}
+
+impl<F, const D: usize> RootPolyMeta<F> for RootTensorProjectionPoly<F, D>
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        match self {
+            Self::Dense(poly) => RootPolyMeta::num_ring_elems(poly),
+            Self::Sparse(poly) => RootPolyMeta::num_ring_elems(poly.as_ref()),
+        }
+    }
+
+    fn num_vars(&self) -> usize {
+        match self {
+            Self::Dense(poly) => RootPolyMeta::num_vars(poly),
+            Self::Sparse(poly) => RootPolyMeta::num_vars(poly.as_ref()),
+        }
+    }
 }
 
 impl<F, const D: usize> RootPolyShape<F, D> for RootTensorProjectionPoly<F, D>

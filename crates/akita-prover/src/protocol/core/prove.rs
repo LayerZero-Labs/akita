@@ -87,7 +87,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
@@ -229,7 +229,7 @@ where
 #[inline(never)]
 pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
-    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,

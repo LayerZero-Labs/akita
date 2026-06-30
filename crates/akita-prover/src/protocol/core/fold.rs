@@ -582,7 +582,7 @@ type BoundNextWitness<F> = (
 #[inline(never)]
 pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixProverRegistry<F>,
     stack: &'stack ProverComputeStack<'stack, F, D, C, O, TS, R>,
     transcript: &mut T,
     level: usize,
@@ -975,7 +975,7 @@ where
 pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &LevelParams,
     next_level_params: &LevelParams,
     instance: &RingRelationInstance<F, D>,

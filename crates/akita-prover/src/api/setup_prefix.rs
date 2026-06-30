@@ -4,7 +4,9 @@ use crate::api::commitment::{
     commit_inner_block_digit_count, commit_inner_flat_digit_count,
     validate_commit_outer_input_nonempty,
 };
-use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
+use crate::compute::{
+    CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan, FlatDigitBlocks,
+};
 use crate::kernels::linear::decompose_rows_i8_into;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
@@ -12,7 +14,7 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     digest_level_params, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
-    FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
+    LevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -33,7 +35,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     setup_seed_digest: [u8; 32],
     n_prefix: usize,
     natural_len: usize,
-) -> Result<SetupPrefixSlot<F, D>, AkitaError>
+) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
@@ -150,10 +152,12 @@ where
         )));
     }
 
-    let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-        decomposed_inner_rows,
-        recomposed_inner_rows,
-    );
+    // `recomposed_inner_rows` was only needed to decompose into the digit
+    // stream above; the protocol slot stores the D-free decomposed digits and a
+    // D-free flat commitment. Recomposed rows are recomputed on demand
+    // downstream (S5 re-home), not cached on the slot.
+    let _ = &recomposed_inner_rows;
+    let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows.into_digit_blocks());
     let id = setup_prefix_slot_id(
         setup_seed_digest,
         D,
@@ -165,7 +169,9 @@ where
         id,
         natural_len,
         padded_len: n_prefix,
-        commitment: RingCommitment { u },
+        commitment: SetupPrefixPublicCommitment {
+            rows: vec![RingVec::from_ring_elems(&u)],
+        },
         hint,
     })
 }
@@ -269,10 +275,11 @@ mod tests {
     fn test_setup<const D: usize>(
         level_params: &LevelParams,
         n_prefix: usize,
-    ) -> AkitaProverSetup<F, D> {
-        AkitaProverSetup::<F, D>::generate_with_capacity(
+    ) -> AkitaProverSetup<F> {
+        AkitaProverSetup::<F>::generate_with_capacity(
             8,
             1,
+            D,
             SetupMatrixEnvelope {
                 max_setup_len: setup_capacity_for(level_params, n_prefix).max(1),
             },

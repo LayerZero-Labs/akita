@@ -13,8 +13,8 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
     OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -32,6 +32,19 @@ pub struct SparseRingView<'a, F: FieldCore, const D: usize> {
 #[derive(Debug, Clone, Copy)]
 pub struct SparseRingBatchView<'a, F: FieldCore, const D: usize> {
     pub(super) polys: &'a [&'a SparseRingPoly<F, D>],
+}
+
+impl<F, const D: usize> RootPolyMeta<F> for SparseRingPoly<F, D>
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        self.total_ring_elems
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
 }
 
 impl<F, const D: usize> RootPolyShape<F, D> for SparseRingPoly<F, D>

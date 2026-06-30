@@ -2,7 +2,8 @@
 
 use super::poly::DensePoly;
 use crate::compute::{
-    DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource,
+    DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{CleartextWitnessProof, RingVec};
@@ -20,6 +21,19 @@ pub struct DenseView<'a, F: FieldCore, const D: usize> {
 #[derive(Debug, Clone, Copy)]
 pub struct DenseBatchView<'a, F: FieldCore, const D: usize> {
     pub(super) polys: &'a [&'a DensePoly<F, D>],
+}
+
+impl<F, const D: usize> RootPolyMeta<F> for DensePoly<F, D>
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        self.coeffs.len()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
 }
 
 impl<F, const D: usize> RootPolyShape<F, D> for DensePoly<F, D>

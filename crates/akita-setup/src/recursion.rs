@@ -10,13 +10,13 @@ use akita_prover::{
 };
 use akita_serialization::Valid;
 use akita_types::{
-    active_setup_field_len, digest_level_params, padded_setup_prefix_len,
+    active_setup_field_len, digest_level_params, dispatch_ring_dim_result, padded_setup_prefix_len,
     setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams,
     OpeningBatchShape, SETUP_OFFLOAD_D_SETUP,
 };
 
 fn commit_setup_prefix_for_level<F, const D: usize, B>(
-    setup: &mut AkitaProverSetup<F, D>,
+    setup: &mut AkitaProverSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     commitment_params: &LevelParams,
@@ -56,7 +56,7 @@ where
 }
 
 fn populate_recursive_setup_prefixes<F, const D: usize, Cfg>(
-    setup: &mut AkitaProverSetup<F, D>,
+    setup: &mut AkitaProverSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
@@ -128,23 +128,29 @@ where
 /// Returns an error if setup construction fails or recursive prefix population
 /// cannot materialize a requested slot.
 #[tracing::instrument(skip_all, name = "new_prover_setup_recursion")]
-pub fn new_prover_setup_recursion<F, const D: usize, Cfg>(
+pub fn new_prover_setup_recursion<F, Cfg>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-) -> Result<AkitaProverSetup<F, D>, AkitaError>
+) -> Result<AkitaProverSetup<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
-    let mut setup = new_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys)?;
-    populate_recursive_setup_prefixes::<F, D, Cfg>(
-        &mut setup,
-        max_num_vars,
-        max_num_batched_polys,
-    )?;
+    let mut setup = new_prover_setup::<F, Cfg>(max_num_vars, max_num_batched_polys)?;
+    // Recursive setup-prefix population is keyed on the setup generation ring
+    // dimension; dispatch on the runtime `gen_ring_dim` at this single
+    // kernel-entry boundary (the const-D prefix kernels stay `<D>`).
+    let gen_ring_dim = setup.expanded.seed().gen_ring_dim;
+    dispatch_ring_dim_result!(gen_ring_dim, |D| {
+        populate_recursive_setup_prefixes::<F, D, Cfg>(
+            &mut setup,
+            max_num_vars,
+            max_num_batched_polys,
+        )
+    })?;
 
     #[cfg(feature = "disk-persistence")]
-    save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys)?;
+    save_prover_setup::<F, Cfg>(&setup, max_num_vars, max_num_batched_polys)?;
 
     Ok(setup)
 }
@@ -159,8 +165,8 @@ mod tests {
 
     #[test]
     fn recursive_d64_setup_populates_prefix_slots() {
-        let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(20, 1)
-            .expect("recursive D64 setup");
+        let setup =
+            new_prover_setup_recursion::<F, fp128::D64OneHot>(20, 1).expect("recursive D64 setup");
 
         assert!(
             !setup.prefix_slots.is_empty(),
@@ -182,8 +188,8 @@ mod tests {
 
     #[test]
     fn recursive_d32_setup_skips_prefix_slots() {
-        let setup = new_prover_setup_recursion::<F, 32, fp128::D32OneHot>(20, 1)
-            .expect("recursive D32 setup");
+        let setup =
+            new_prover_setup_recursion::<F, fp128::D32OneHot>(20, 1).expect("recursive D32 setup");
 
         assert!(
             setup.prefix_slots.is_empty(),

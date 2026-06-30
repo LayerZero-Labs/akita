@@ -9,7 +9,7 @@ use akita_types::CleartextWitnessProof;
 
 use crate::compute::{
     CpuBackend, CpuPreparedSetup, DirectRootWitnessSource, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorProjectionKernel,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorProjectionKernel,
 };
 use crate::{DensePoly, OneHotIndex, OneHotPoly};
 
@@ -123,6 +123,33 @@ where
                 )
             })
             .collect()
+    }
+}
+
+impl<F, const D: usize, I> RootPolyMeta<F> for MultilinearPolynomial<F, D, I>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    fn num_ring_elems(&self) -> usize {
+        match self {
+            Self::Dense(poly) => RootPolyMeta::num_ring_elems(poly),
+            Self::OneHot(poly) => RootPolyMeta::num_ring_elems(poly),
+        }
+    }
+
+    fn num_vars(&self) -> usize {
+        match self {
+            Self::Dense(poly) => RootPolyMeta::num_vars(poly),
+            Self::OneHot(poly) => RootPolyMeta::num_vars(poly),
+        }
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        match self {
+            Self::Dense(_) => None,
+            Self::OneHot(poly) => RootPolyMeta::onehot_chunk_size(poly),
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
+use crate::compute::FlatDigitBlocks;
 use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
 use crate::{
@@ -26,9 +27,8 @@ use akita_types::dispatch_ring_dim_result;
 use akita_types::RingRelationInstance;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths,
-    AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks, FpExtEncoding, LevelParams,
-    MRowLayout, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationOpeningCounts, RingVec,
+    AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams, MRowLayout,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationOpeningCounts, RingVec,
 };
 
 mod coeffs;

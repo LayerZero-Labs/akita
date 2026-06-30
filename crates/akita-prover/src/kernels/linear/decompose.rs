@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::FlatDigitBlocks;
+use crate::compute::FlatDigitBlocks;
 
 /// Convert a field element to a centered signed byte when it fits.
 #[inline(always)]

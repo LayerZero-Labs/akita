@@ -66,7 +66,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
     #[allow(clippy::too_many_arguments)]
     pub fn new<F, T, const D: usize>(
         expanded: &AkitaExpandedSetup<F>,
-        prefix_slots: &SetupPrefixProverRegistry<F, D>,
+        prefix_slots: &SetupPrefixProverRegistry<F>,
         lp: &LevelParams,
         next_fold_level_params: &LevelParams,
         relation: &RingRelationInstance<F, D>,
@@ -236,7 +236,7 @@ fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
 #[allow(clippy::too_many_arguments)]
 fn build_setup_product_term<F, E, T, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &LevelParams,
     next_fold_level_params: &LevelParams,
     relation: &RingRelationInstance<F, D>,

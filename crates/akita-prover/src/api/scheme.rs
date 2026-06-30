@@ -141,7 +141,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        claims: ProverOpeningBatch<'a, Self::ExtField, P, F, D>,
+        claims: ProverOpeningBatch<'a, Self::ExtField, P, F>,
         stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,

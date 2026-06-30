@@ -52,14 +52,17 @@ where
         fold_grind_nonce: _,
         e_hat,
         e_folded,
-        mut hint,
+        hint,
     } = witness;
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-    hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
-    let (decomposed_inner_rows, recomposed_inner_rows) = hint.into_flat_parts();
-    let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
-        AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
-    })?;
+    // Recompose the inner rows on demand from the D-free decomposed digit stream
+    // (S5 re-home); the flattened decomposed view feeds the relation quotient.
+    let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
+        &hint,
+        lp.num_digits_open,
+        lp.log_basis,
+    )?;
+    let decomposed_inner_rows = FlatDigitBlocks::<D>::from_digit_blocks(&hint.into_flat_parts()?)?;
     let opening_batch = instance.opening_batch();
 
     let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(

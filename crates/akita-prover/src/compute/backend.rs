@@ -19,9 +19,13 @@ where
     type PreparedSetup<const D: usize>: Send + Sync;
 
     /// Prepare backend state from a prover setup wrapper.
+    ///
+    /// The setup artifact is D-free; the concrete ring dimension `D` is selected
+    /// here at the backend-prepare boundary (the `<D>` lives on this method, not
+    /// on the setup).
     fn prepare_setup<const D: usize>(
         &self,
-        setup: &AkitaProverSetup<F, D>,
+        setup: &AkitaProverSetup<F>,
     ) -> Result<Self::PreparedSetup<D>, AkitaError> {
         self.prepare_expanded::<D>(setup.expanded.clone())
     }

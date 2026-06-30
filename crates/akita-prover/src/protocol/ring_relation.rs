@@ -3,8 +3,8 @@
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
 use crate::compute::{
-    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OperationCtx, RootOpeningSource,
+    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, FlatDigitBlocks,
+    OpeningBatchKernel, OpeningFoldKernel, OperationCtx, RootOpeningSource, RootPolyMeta,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{
@@ -18,9 +18,7 @@ use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
-use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
-};
+use akita_types::{gadget_row_scalars, AkitaCommitmentHint, MRowLayout};
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
@@ -74,12 +72,16 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     Ok(e_hat)
 }
 
-fn flatten_commitment_hints_for_ring_relation<F, const D: usize>(
-    hints: Vec<AkitaCommitmentHint<F, D>>,
+/// Concatenate per-group D-free commitment hints into one batched hint covering
+/// all claims in claim order.
+///
+/// Recomposed inner rows are no longer cached on the hint (S4/S5): they are
+/// recomputed on demand from the decomposed digit stream
+/// ([`recompose_hint_inner_rows`] / [`crate::compute::recompose_flat_hint_inner_rows`]).
+fn flatten_commitment_hints_for_ring_relation<F>(
+    hints: Vec<AkitaCommitmentHint<F>>,
     group_sizes: &[usize],
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<AkitaCommitmentHint<F, D>, AkitaError>
+) -> Result<AkitaCommitmentHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
@@ -90,26 +92,17 @@ where
     }
 
     let mut decomposed_inner_rows = Vec::new();
-    let mut t_rows_by_poly = Vec::new();
-    for (mut hint, &group_size) in hints.into_iter().zip(group_sizes.iter()) {
-        if hint.decomposed_inner_rows.len() != group_size {
+    for (hint, &group_size) in hints.into_iter().zip(group_sizes.iter()) {
+        let digits_by_poly = hint.into_parts();
+        if digits_by_poly.len() != group_size {
             return Err(AkitaError::InvalidInput(
                 "prover hint group sizes do not match polynomial groups".to_string(),
             ));
         }
-        hint.ensure_recomposed_inner_rows(num_digits_open, log_basis)?;
-        let (digits_by_poly, rows_by_poly) = hint.into_parts();
         decomposed_inner_rows.extend(digits_by_poly);
-        let rows_by_poly = rows_by_poly.ok_or_else(|| {
-            AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
-        })?;
-        t_rows_by_poly.extend(rows_by_poly);
     }
 
-    Ok(AkitaCommitmentHint::with_recomposed_inner_rows(
-        decomposed_inner_rows,
-        t_rows_by_poly,
-    ))
+    Ok(AkitaCommitmentHint::new(decomposed_inner_rows))
 }
 
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
@@ -311,7 +304,13 @@ where
             )
             .entered();
             let v = compute_v_rows(backend, prepared, lp.d_key.row_len(), e_hat, lp.log_basis)?;
-            transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+            // Absorb `v` via the canonical D-free flat encoder (byte-identical to
+            // the former `RingSliceSerializer` typed path; S2 byte-identity test).
+            akita_types::RingVec::from_ring_elems(&v).append_flat_to_transcript(
+                ABSORB_PROVER_V,
+                D,
+                transcript,
+            )?;
             Ok(v)
         }
         MRowLayout::WithoutDBlock => Ok(Vec::new()),
@@ -350,7 +349,7 @@ impl RingRelationProver {
         ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        fold_claims: ProverOpeningBatch<'a, PointF, P, F, D>,
+        fold_claims: ProverOpeningBatch<'a, PointF, P, F>,
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
         transcript: &mut T,
@@ -362,7 +361,7 @@ impl RingRelationProver {
         F: FieldCore + CanonicalField,
         PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,
-        P: RootOpeningSource<F, D>,
+        P: RootOpeningSource<F, D> + RootPolyMeta<F>,
         OB: DigitRowsComputeBackend<F>
             + for<'b> OpeningBatchKernel<P::OpeningBatchView<'b>, F, D>
             + for<'b> OpeningFoldKernel<P::OpeningView<'b>, F, D>,
@@ -376,12 +375,15 @@ impl RingRelationProver {
         let mut commitment_rows = Vec::new();
         for group in fold_claims.groups {
             let (group_commitment, group_hint) = group.commitment;
-            if group_commitment.u.len() != lp.effective_commit_rows() {
+            // Foundation storage is D-free flat coefficients; re-interpret as the
+            // level's typed ring rows for the kernel-side relation work.
+            let group_commitment_rows = group_commitment.rows().try_to_vec::<D>()?;
+            if group_commitment_rows.len() != lp.effective_commit_rows() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
-            commitment_rows.extend_from_slice(&group_commitment.u);
+            commitment_rows.extend_from_slice(&group_commitment_rows);
             hints.push(group_hint.clone());
         }
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
@@ -421,12 +423,7 @@ impl RingRelationProver {
             let _span = tracing::info_span!("decompose_batched_e_hat").entered();
             decompose_e_hat::<F, D>(&pre_folded_e_by_poly, lp.num_digits_open, lp.log_basis)?
         };
-        let flattened_hint = flatten_commitment_hints_for_ring_relation::<F, D>(
-            hints,
-            &group_sizes,
-            lp.num_digits_open,
-            lp.log_basis,
-        )?;
+        let flattened_hint = flatten_commitment_hints_for_ring_relation::<F>(hints, &group_sizes)?;
 
         // Terminal layout drops the D-block from the M-matrix entirely:
         // `v = D · e_hat` never travels on the wire, the verifier never

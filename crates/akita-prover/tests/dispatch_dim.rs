@@ -1,9 +1,14 @@
-//! Integration tests for [`akita_prover::dispatch_ring_d!`] and
-//! [`akita_types::ValidatedScheduleContext`] against real generated schedules.
+//! Integration tests for [`akita_types::ValidatedScheduleContext`] against real
+//! generated schedules.
 //!
 //! These tests exercise the S3 building blocks from Tier 2 of the runtime
 //! ring-dimension cutover plan.  They require real schedules from
 //! `akita-config` presets and a hand-built mixed-D schedule.
+//!
+//! Runtime→const-D dispatch is provided by the canonical
+//! [`akita_types::dispatch_ring_dim_result!`]; the prover-local duplicate
+//! `dispatch_ring_d!` was removed in Slice A. Its routing/rejection coverage
+//! lives in `akita-types` (`dispatch.rs` unit tests).
 //!
 //! Gate condition from the plan:
 //! `cargo test -p akita-prover dispatch` must pass.
@@ -61,30 +66,6 @@ fn mixed_d_schedule(dims: &[(usize, usize, usize)]) -> Schedule {
         steps,
         total_bytes: 0,
     }
-}
-
-// ---------------------------------------------------------------------------
-// dispatch_ring_d! tests — routing and rejection
-// ---------------------------------------------------------------------------
-
-#[test]
-fn dispatch_ring_d_routes_all_supported_dimensions() {
-    for d in [32usize, 64, 128, 256] {
-        let got: Result<usize, AkitaError> = akita_prover::dispatch_ring_d!(d, |D| Ok(D));
-        assert_eq!(got.unwrap(), d, "wrong arm for d={d}");
-    }
-}
-
-#[test]
-fn dispatch_ring_d_rejects_unsupported_48() {
-    let err = akita_prover::dispatch_ring_d!(48usize, |D| Ok(D)).expect_err("48 is not supported");
-    assert!(matches!(err, AkitaError::InvalidInput(_)));
-}
-
-#[test]
-fn dispatch_ring_d_rejects_zero() {
-    let err = akita_prover::dispatch_ring_d!(0usize, |D| Ok(D)).expect_err("0 is not supported");
-    assert!(matches!(err, AkitaError::InvalidInput(_)));
 }
 
 // ---------------------------------------------------------------------------

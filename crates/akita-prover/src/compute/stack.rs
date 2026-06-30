@@ -364,9 +364,9 @@ mod tests {
 
     #[test]
     fn operation_ctx_rejects_mismatched_expanded_setup() {
-        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
             .expect("setup b");
         assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
 
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn operation_ctx_accepts_matching_expanded_setup() {
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn heterogeneous_stack_accepts_distinct_operation_clusters() {
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let commit_backend = CommitClusterBackend;
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn heterogeneous_stack_implements_level_prove_stacks() {
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let commit_backend = CommitClusterBackend;
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_rejects_length_mismatch() {
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -514,9 +514,9 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_rejects_non_increasing_bounds() {
-        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
             .expect("setup b");
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
         let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
@@ -533,9 +533,9 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_selects_by_fold_level() {
-        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
             .expect("setup b");
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
         let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
