@@ -432,48 +432,24 @@ where
         })
         .collect();
 
-    if num_chunks <= 1 {
-        out.extend(z_segment);
-        out.extend(w_segment);
-        out.extend(t_segment);
-        out.extend(u_segment);
-        out.extend(r_tail);
-    } else {
-        // Chunked column layout `[z|e_i|t_i]…[u][r]`: `z` replicated, `e`/`t`
-        // partitioned by global block (the same per-cell values as the
-        // single-chunk segments, only repositioned). `e`: order
-        // (digit, claim, block_local); `t`: (a_row, digit, t_vector, block_local).
-        let blocks_per_chunk = num_blocks / num_chunks;
-        for i in 0..num_chunks {
-            out.extend_from_slice(&z_segment);
-            for dig in 0..depth_open {
-                for claim in 0..num_claims {
-                    for bl in 0..blocks_per_chunk {
-                        let gb = i * blocks_per_chunk + bl;
-                        out.push(w_segment[(dig * num_claims + claim) * num_blocks + gb]);
-                    }
-                }
-            }
-            for a_idx in 0..n_a {
-                for digit in 0..depth_open {
-                    for tvec in 0..num_t_vectors {
-                        for bl in 0..blocks_per_chunk {
-                            let compound = a_idx * depth_open + digit;
-                            let gb = i * blocks_per_chunk + bl;
-                            out.push(
-                                t_segment[compound * (num_t_vectors * num_blocks)
-                                    + tvec * num_blocks
-                                    + gb],
-                            );
-                        }
-                    }
-                }
-            }
+    // Chunked column layout `[z|e_i|t_i]…[u][r]`: `z` is replicated per window
+    // and `e`/`t` are partitioned by global block (same per-cell values as the
+    // flat segments, only repositioned).
+    let blocks_per_chunk = num_blocks / num_chunks;
+    for i in 0..num_chunks {
+        out.extend_from_slice(&z_segment);
+        let block_lo = i * blocks_per_chunk;
+        for outer in w_segment.chunks_exact(num_blocks) {
+            out.extend_from_slice(&outer[block_lo..block_lo + blocks_per_chunk]);
         }
-        // Tiered `û` is rejected for chunked layouts, so `u_segment` is empty.
-        out.extend(u_segment);
-        out.extend(r_tail);
+        for outer in t_segment.chunks_exact(num_blocks) {
+            out.extend_from_slice(&outer[block_lo..block_lo + blocks_per_chunk]);
+        }
     }
+    // Tiered `û` is rejected for chunked layouts; for the single-chunk layout it
+    // is the contiguous segment after `t̂`. Either way it follows the windows.
+    out.extend(u_segment);
+    out.extend(r_tail);
     out.resize(x_len, E::zero());
     Ok(out)
 }

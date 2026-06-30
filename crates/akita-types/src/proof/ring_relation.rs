@@ -239,7 +239,8 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         } = lens;
 
         let num_blocks = lp.num_blocks;
-        let num_chunks = lp.witness_chunk.num_chunks;
+        // `0` (unset) and `1` are both the single-chunk layout.
+        let num_chunks = lp.witness_chunk.num_chunks.max(1);
 
         // Shared, single-machine quotient tail: never scales with the chunk count.
         let r_levels = r_decomp_levels::<F>(lp.log_basis);
@@ -253,39 +254,10 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         // and is unsupported alongside multi-chunk layouts (rejected below).
         let u_present = lp.tier_split > 1 && u_len > 0;
 
-        let layout = if num_chunks <= 1 {
-            let offset_z = 0usize;
-            let offset_e = z_len;
-            let offset_t = z_len
-                .checked_add(e_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("t offset overflow".to_string()))?;
-            let offset_u = offset_t
-                .checked_add(t_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("u offset overflow".to_string()))?;
-            let offset_r = offset_u
-                .checked_add(if u_present { u_len } else { 0 })
-                .ok_or_else(|| AkitaError::InvalidSetup("r offset overflow".to_string()))?;
-            let chunk = WitnessChunkLayout {
-                offset_z,
-                offset_e,
-                offset_t,
-                offset_u: u_present.then_some(offset_u),
-                offset_r: Some(offset_r),
-                global_block_base: 0,
-            };
-            let lengths = WitnessChunkLengths {
-                z_len,
-                e_len,
-                t_len,
-                u_len: u_present.then_some(u_len),
-                r_len: Some(r_len_total),
-            };
-            WitnessLayout {
-                blocks_per_chunk: num_blocks,
-                chunks: vec![chunk],
-                chunk_lengths: vec![lengths],
-            }
-        } else {
+        // The single-chunk layout is the `num_chunks = 1` case of the chunked
+        // construction below; only multi-chunk needs the extra well-formedness
+        // checks (and forbids the tiered `û` segment).
+        if num_chunks > 1 {
             if !num_chunks.is_power_of_two() {
                 return Err(AkitaError::InvalidSetup(
                     "witness chunk count must be a power of two".to_string(),
@@ -307,8 +279,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
                         .to_string(),
                 ));
             }
-            let blocks_per_chunk = num_blocks / num_chunks;
-            if !blocks_per_chunk.is_power_of_two() {
+            if !(num_blocks / num_chunks).is_power_of_two() {
                 return Err(AkitaError::InvalidSetup(
                     "witness chunk block window must be a power of two".to_string(),
                 ));
@@ -319,54 +290,68 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
                         .to_string(),
                 ));
             }
-            let z_len_j = z_len;
-            let e_len_j = e_len / num_chunks;
-            let t_len_j = t_len / num_chunks;
-            let stride = z_len_j
-                .checked_add(e_len_j)
-                .and_then(|s| s.checked_add(t_len_j))
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk stride overflow".to_string()))?;
-            let r_offset = stride
-                .checked_mul(num_chunks)
-                .ok_or_else(|| AkitaError::InvalidSetup("r offset overflow".to_string()))?;
+        }
 
-            let mut chunks = Vec::with_capacity(num_chunks);
-            let mut chunk_lengths = Vec::with_capacity(num_chunks);
-            for j in 0..num_chunks {
-                let is_last = j == num_chunks - 1;
-                let base = j
-                    .checked_mul(stride)
-                    .ok_or_else(|| AkitaError::InvalidSetup("chunk base overflow".to_string()))?;
-                let offset_e = base.checked_add(z_len_j).ok_or_else(|| {
-                    AkitaError::InvalidSetup("chunk e offset overflow".to_string())
-                })?;
-                let offset_t = offset_e.checked_add(e_len_j).ok_or_else(|| {
-                    AkitaError::InvalidSetup("chunk t offset overflow".to_string())
-                })?;
-                let global_block_base = j.checked_mul(blocks_per_chunk).ok_or_else(|| {
-                    AkitaError::InvalidSetup("global block base overflow".to_string())
-                })?;
-                chunks.push(WitnessChunkLayout {
-                    offset_z: base,
-                    offset_e,
-                    offset_t,
-                    offset_u: None,
-                    offset_r: is_last.then_some(r_offset),
-                    global_block_base,
-                });
-                chunk_lengths.push(WitnessChunkLengths {
-                    z_len: z_len_j,
-                    e_len: e_len_j,
-                    t_len: t_len_j,
-                    u_len: None,
-                    r_len: is_last.then_some(r_len_total),
-                });
-            }
-            WitnessLayout {
-                blocks_per_chunk,
-                chunks,
-                chunk_lengths,
-            }
+        // `ê`/`t̂` are partitioned across windows; `ẑ` is replicated full-width
+        // in every window. The shared `r̂` (and the tiered `û`, which exists only
+        // for the single-chunk layout) tail the last window.
+        let blocks_per_chunk = num_blocks / num_chunks;
+        let e_len_j = e_len / num_chunks;
+        let t_len_j = t_len / num_chunks;
+        let stride = z_len
+            .checked_add(e_len_j)
+            .and_then(|s| s.checked_add(t_len_j))
+            .ok_or_else(|| AkitaError::InvalidSetup("chunk stride overflow".to_string()))?;
+
+        let mut chunks = Vec::with_capacity(num_chunks);
+        let mut chunk_lengths = Vec::with_capacity(num_chunks);
+        for j in 0..num_chunks {
+            let is_last = j == num_chunks - 1;
+            let base = j
+                .checked_mul(stride)
+                .ok_or_else(|| AkitaError::InvalidSetup("chunk base overflow".to_string()))?;
+            let offset_e = base
+                .checked_add(z_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("chunk e offset overflow".to_string()))?;
+            let offset_t = offset_e
+                .checked_add(e_len_j)
+                .ok_or_else(|| AkitaError::InvalidSetup("chunk t offset overflow".to_string()))?;
+            let after_t = offset_t
+                .checked_add(t_len_j)
+                .ok_or_else(|| AkitaError::InvalidSetup("chunk u/r offset overflow".to_string()))?;
+            let has_u = is_last && u_present;
+            let offset_r = if is_last {
+                Some(
+                    after_t
+                        .checked_add(if u_present { u_len } else { 0 })
+                        .ok_or_else(|| AkitaError::InvalidSetup("r offset overflow".to_string()))?,
+                )
+            } else {
+                None
+            };
+            let global_block_base = j.checked_mul(blocks_per_chunk).ok_or_else(|| {
+                AkitaError::InvalidSetup("global block base overflow".to_string())
+            })?;
+            chunks.push(WitnessChunkLayout {
+                offset_z: base,
+                offset_e,
+                offset_t,
+                offset_u: has_u.then_some(after_t),
+                offset_r,
+                global_block_base,
+            });
+            chunk_lengths.push(WitnessChunkLengths {
+                z_len,
+                e_len: e_len_j,
+                t_len: t_len_j,
+                u_len: has_u.then_some(u_len),
+                r_len: is_last.then_some(r_len_total),
+            });
+        }
+        let layout = WitnessLayout {
+            blocks_per_chunk,
+            chunks,
+            chunk_lengths,
         };
 
         if let Some(witness_ring_len) = witness_ring_len {
