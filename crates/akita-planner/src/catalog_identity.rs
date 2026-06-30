@@ -96,6 +96,12 @@ fn sis_family_tag(family: akita_types::SisModulusFamily) -> u64 {
 }
 
 /// Fields derived from policy, entries, and runtime hooks for identity checks.
+///
+/// The owned (non-`'static`) mirror of [`GeneratedScheduleCatalogIdentity`]; the
+/// derived equality is the single identity guard, so adding a field to either
+/// type (both are built with struct literals) is automatically covered by the
+/// comparison in [`validate_catalog_identity_impl`].
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct CatalogIdentityExpectation {
     family_name: &'static str,
     sis_family: akita_types::SisModulusFamily,
@@ -112,6 +118,29 @@ struct CatalogIdentityExpectation {
     ring_challenge_config_digest: u64,
     key_count: usize,
     key_digest: u64,
+}
+
+impl CatalogIdentityExpectation {
+    /// The owned mirror of a shipped catalog's embedded identity.
+    fn from_embedded(identity: &GeneratedScheduleCatalogIdentity) -> Self {
+        Self {
+            family_name: identity.family_name,
+            sis_family: identity.sis_family,
+            ring_dimension: identity.ring_dimension,
+            decomposition: identity.decomposition,
+            ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
+            claim_ext_degree: identity.claim_ext_degree,
+            chal_ext_degree: identity.chal_ext_degree,
+            basis_range: identity.basis_range,
+            onehot_chunk_size: identity.onehot_chunk_size,
+            tiered: identity.tiered,
+            root_fold_shape: identity.root_fold_shape,
+            ring_dimensions: identity.ring_dimensions.to_vec(),
+            ring_challenge_config_digest: identity.ring_challenge_config_digest,
+            key_count: identity.key_count,
+            key_digest: identity.key_digest,
+        }
+    }
 }
 
 fn intern_ring_dimensions(dimensions: Vec<usize>) -> &'static [usize] {
@@ -231,37 +260,12 @@ fn validate_catalog_identity_impl(
         ring_challenge_config,
         fold_challenge_shape_at_level,
     )?;
-    macro_rules! check_field {
-        ($field:ident) => {
-            if embedded.$field != expected.$field {
-                return Err(catalog_identity_mismatch_error(
-                    embedded.family_name,
-                    stringify!($field),
-                ));
-            }
-        };
-    }
-
-    check_field!(family_name);
-    check_field!(sis_family);
-    check_field!(ring_dimension);
-    check_field!(decomposition);
-    check_field!(ring_subfield_norm_bound);
-    check_field!(claim_ext_degree);
-    check_field!(chal_ext_degree);
-    check_field!(basis_range);
-    check_field!(onehot_chunk_size);
-    check_field!(tiered);
-    check_field!(root_fold_shape);
-    if embedded.ring_dimensions != expected.ring_dimensions.as_slice() {
+    if CatalogIdentityExpectation::from_embedded(&embedded) != expected {
         return Err(catalog_identity_mismatch_error(
             embedded.family_name,
-            "ring_dimensions",
+            "policy or runtime-hook drift",
         ));
     }
-    check_field!(ring_challenge_config_digest);
-    check_field!(key_count);
-    check_field!(key_digest);
     Ok(())
 }
 

@@ -17,21 +17,13 @@ use akita_types::{
 };
 
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTableEntry,
-    GeneratedStep,
+    GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
 
-/// Whether the walker validates only or also materializes a runtime [`Schedule`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GeneratedEntryWalkMode {
-    Validate,
-    Materialize,
-}
-
 pub(crate) struct GeneratedEntryWalkOutput {
     pub total_bytes: usize,
-    pub schedule: Option<Schedule>,
+    pub schedule: Schedule,
 }
 
 pub(crate) fn walk_generated_schedule_entry(
@@ -40,7 +32,6 @@ pub(crate) fn walk_generated_schedule_entry(
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    mode: GeneratedEntryWalkMode,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
     key.validate()?;
     validate_entry_key(entry, key)?;
@@ -58,11 +49,7 @@ pub(crate) fn walk_generated_schedule_entry(
         .checked_shl(key.num_vars as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
 
-    let mut steps = if mode == GeneratedEntryWalkMode::Materialize {
-        Vec::with_capacity(entry.steps.len())
-    } else {
-        Vec::new()
-    };
+    let mut steps = Vec::with_capacity(entry.steps.len());
     let mut fold_level = 0usize;
     let mut current_w_len = expected_root_w_len;
     let mut terminal_witness_field_len: Option<usize> = None;
@@ -159,25 +146,22 @@ pub(crate) fn walk_generated_schedule_entry(
                     AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
                 })?;
 
-                if mode == GeneratedEntryWalkMode::Materialize {
-                    steps.push(Step::Fold(FoldStep {
-                        params: lp.clone(),
-                        current_w_len,
-                        next_w_len,
-                        level_bytes,
-                    }));
-                    last_fold_lp = Some(lp);
-                } else {
-                    last_fold_lp = Some(lp);
-                }
+                steps.push(Step::Fold(FoldStep {
+                    params: lp.clone(),
+                    current_w_len,
+                    next_w_len,
+                    level_bytes,
+                }));
+                last_fold_lp = Some(lp);
                 fold_level += 1;
                 current_w_len = next_w_len;
             }
             GeneratedStep::Direct(direct) => {
-                if mode == GeneratedEntryWalkMode::Materialize {
-                    let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
-                        let params = match direct.commit {
-                            Some(commit) => Some(expand_validated_fold_level(
+                let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
+                    let params = direct
+                        .commit
+                        .map(|commit| {
+                            expand_validated_fold_level(
                                 &commit,
                                 key,
                                 policy,
@@ -186,107 +170,55 @@ pub(crate) fn walk_generated_schedule_entry(
                                 0,
                                 expected_root_w_len,
                                 key.num_polynomials,
-                            )?),
-                            None => None,
-                        };
-                        (
-                            CleartextWitnessShape::FieldElements(expected_root_w_len),
-                            expected_root_w_len,
-                            params,
-                        )
-                    } else {
-                        let len = terminal_witness_field_len.ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "terminal direct step missing precomputed witness length"
-                                    .to_string(),
                             )
-                        })?;
-                        let terminal_fold_level = fold_level.saturating_sub(1);
-                        let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "terminal direct step missing predecessor fold params".to_string(),
-                            )
-                        })?;
-                        let num_polynomials = if terminal_fold_level == 0 {
-                            key.num_polynomials
-                        } else {
-                            1
-                        };
-                        let witness_shape = segment_typed_witness_shape(
-                            terminal_lp,
-                            field_bits,
-                            num_polynomials,
-                            num_polynomials,
-                            1,
-                            1,
-                        )?;
-                        (witness_shape, len, None)
-                    };
-                    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-                    total_bytes = total_bytes.checked_add(direct_bytes).ok_or_else(|| {
-                        AkitaError::InvalidSetup("proof byte total overflow".to_string())
-                    })?;
-                    steps.push(Step::Direct(DirectStep {
-                        current_w_len: direct_current_w_len,
-                        witness_shape,
-                        direct_bytes,
+                        })
+                        .transpose()?;
+                    (
+                        CleartextWitnessShape::FieldElements(expected_root_w_len),
+                        expected_root_w_len,
                         params,
-                    }));
+                    )
                 } else {
-                    let (direct_current_w_len, direct_bytes) = if fold_level == 0 {
-                        let params = validate_root_direct_commit(
-                            direct,
-                            key,
-                            policy,
-                            ring_challenge_config,
-                            fold_challenge_shape_at_level,
-                            expected_root_w_len,
-                        )?;
-                        let _ = params;
-                        (
-                            expected_root_w_len,
-                            direct_witness_bytes(
-                                field_bits,
-                                &CleartextWitnessShape::FieldElements(expected_root_w_len),
-                            ),
+                    let len = terminal_witness_field_len.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing precomputed witness length".to_string(),
                         )
-                    } else {
-                        let len = terminal_witness_field_len.ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "terminal direct step missing precomputed witness length"
-                                    .to_string(),
-                            )
-                        })?;
-                        let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "terminal direct step missing predecessor fold params".to_string(),
-                            )
-                        })?;
-                        let terminal_fold_level = fold_level.saturating_sub(1);
-                        let num_polynomials = if terminal_fold_level == 0 {
-                            key.num_polynomials
-                        } else {
-                            1
-                        };
-                        let witness_shape = segment_typed_witness_shape(
-                            terminal_lp,
-                            field_bits,
-                            num_polynomials,
-                            num_polynomials,
-                            1,
-                            1,
-                        )?;
-                        (len, direct_witness_bytes(field_bits, &witness_shape))
-                    };
-                    if direct_current_w_len == 0 {
-                        return Err(AkitaError::InvalidSetup(
-                            "generated direct step has zero witness length".to_string(),
-                        ));
-                    }
-                    total_bytes = total_bytes.checked_add(direct_bytes).ok_or_else(|| {
-                        AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
                     })?;
+                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing predecessor fold params".to_string(),
+                        )
+                    })?;
+                    let num_polynomials = if fold_level == 1 {
+                        key.num_polynomials
+                    } else {
+                        1
+                    };
+                    let witness_shape = segment_typed_witness_shape(
+                        terminal_lp,
+                        field_bits,
+                        num_polynomials,
+                        num_polynomials,
+                        1,
+                        1,
+                    )?;
+                    (witness_shape, len, None)
+                };
+                if direct_current_w_len == 0 {
+                    return Err(AkitaError::InvalidSetup(
+                        "generated direct step has zero witness length".to_string(),
+                    ));
                 }
+                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+                total_bytes = total_bytes.checked_add(direct_bytes).ok_or_else(|| {
+                    AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
+                })?;
+                steps.push(Step::Direct(DirectStep {
+                    current_w_len: direct_current_w_len,
+                    witness_shape,
+                    direct_bytes,
+                    params,
+                }));
             }
         }
     }
@@ -297,11 +229,7 @@ pub(crate) fn walk_generated_schedule_entry(
         ));
     }
 
-    let schedule = if mode == GeneratedEntryWalkMode::Materialize {
-        Some(Schedule { steps, total_bytes })
-    } else {
-        None
-    };
+    let schedule = Schedule { steps, total_bytes };
 
     Ok(GeneratedEntryWalkOutput {
         total_bytes,
@@ -336,31 +264,6 @@ fn expand_validated_fold_level(
         num_claims,
     )?;
     validate_expanded_level_params(&lp, step, policy, fold_level, num_claims)
-}
-
-fn validate_root_direct_commit(
-    direct: &GeneratedDirectStep,
-    key: AkitaScheduleLookupKey,
-    policy: &PlannerPolicy,
-    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    expected_root_w_len: usize,
-) -> Result<Option<LevelParams>, AkitaError> {
-    direct
-        .commit
-        .map(|commit| {
-            expand_validated_fold_level(
-                &commit,
-                key,
-                policy,
-                ring_challenge_config,
-                fold_challenge_shape_at_level,
-                0,
-                expected_root_w_len,
-                key.num_polynomials,
-            )
-        })
-        .transpose()
 }
 
 fn validate_entry_key(

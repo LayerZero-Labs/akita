@@ -8,7 +8,7 @@ use akita_field::AkitaError;
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey};
 
 use crate::catalog_identity::validate_catalog_identity;
-use crate::generated::walk::{walk_generated_schedule_entry, GeneratedEntryWalkMode};
+use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{GeneratedScheduleTable, GeneratedScheduleTableEntry};
 use crate::PlannerPolicy;
 
@@ -52,7 +52,6 @@ pub fn validate_generated_schedule_entry(
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,
-        GeneratedEntryWalkMode::Validate,
     )
     .map(|_| ())
 }

@@ -13,7 +13,7 @@ use akita_types::{
 };
 
 use crate::catalog_identity::validate_catalog_identity;
-use crate::generated::walk::{walk_generated_schedule_entry, GeneratedEntryWalkMode};
+use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{
     table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
 };
@@ -104,20 +104,14 @@ pub fn schedule_from_entry(
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    walk_generated_schedule_entry(
+    Ok(walk_generated_schedule_entry(
         entry,
         key,
         policy,
         &ring_challenge_config,
         &fold_challenge_shape_at_level,
-        GeneratedEntryWalkMode::Materialize,
     )?
-    .schedule
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "generated schedule materialization produced no schedule".to_string(),
-        )
-    })
+    .schedule)
 }
 
 pub fn estimate_proof_bytes(
@@ -133,7 +127,6 @@ pub fn estimate_proof_bytes(
         policy,
         &ring_challenge_config,
         &fold_challenge_shape_at_level,
-        GeneratedEntryWalkMode::Validate,
     )?
     .total_bytes)
 }

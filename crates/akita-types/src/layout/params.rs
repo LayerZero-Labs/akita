@@ -406,22 +406,6 @@ impl LevelParams {
         Ok(self)
     }
 
-    /// Squared `‖z‖_inf` tail bound `t*²` for tail-bound-with-grind levels.
-    ///
-    /// The prover reroll loop (F7) and planner DP (F5) must read this accessor so
-    /// digit sizing and acceptance use the same value (invariant 4).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] for deterministic policies, zero
-    /// `num_fold_coeffs`, or overflow in the tail-bound formula.
-    /// Fiat–Shamir grind contract for this fold level (prover reroll + verifier nonce check).
-    ///
-    /// `max_grind_attempts` must match the active
-    /// [`crate::FoldLinfProtocolBinding::max_grind_attempts`] bound in setup.
-    ///
-    /// # Errors
-    ///
     /// Honest-prover per-coefficient `‖z‖_inf` target for fold digit sizing, grind,
     /// and terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
     ///
