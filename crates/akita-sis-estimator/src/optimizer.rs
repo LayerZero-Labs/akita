@@ -122,11 +122,6 @@ fn cost_zeta_with_mode(
                     // tried is rough_beta + 1, not rough_beta + 2. Do not widen this window
                     // for parity goldens: a strictly cheaper β+1 neighbor can exist but Sage
                     // skips it when coarse search lands two below; exhaustive search may find it.
-                    // Refinement window matches lattice-estimator `it.neighborhood`:
-                    // range(x - precision, min(stop_bound, x + precision)) with precision=2,
-                    // i.e. half-open [beta-2, beta+2) capped by the coarse-search stop.
-                    // Do not evaluate beta+2 here: Sage never does, and doing so can pick a
-                    // strictly cheaper beta while breaking PR217 golden parity.
                     let start = beta.saturating_sub(2).max(MIN_BETA);
                     let stop = beta.saturating_add(2).min(stop);
                     best_in_range(start, stop, |candidate| {
