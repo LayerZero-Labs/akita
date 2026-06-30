@@ -421,8 +421,8 @@ impl LevelParams {
     ///
     /// # Errors
     ///
-    /// Per-coefficient `‖z‖_inf` cap for fold digit sizing, grind acceptance, and
-    /// terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
+    /// Honest-prover per-coefficient `‖z‖_inf` target for fold digit sizing, grind,
+    /// and terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
     ///
     /// # Errors
     ///
@@ -432,7 +432,7 @@ impl LevelParams {
         let witness = self.fold_witness_norms();
         let challenge =
             crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
-        crate::sis::folded_witness_public_linf_cap(
+        crate::sis::folded_witness_honest_prover_linf_cap(
             challenge,
             witness,
             self.r_vars,
