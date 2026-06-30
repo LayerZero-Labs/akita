@@ -168,6 +168,8 @@ def main() -> int:
             for row in rows
         ],
     }
+    # codeql[py/clear-text-storage-sensitive-data]: this golden metadata contains
+    # only public estimator provenance and non-secret grid coordinates.
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
 
     print(
