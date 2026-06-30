@@ -22,7 +22,7 @@ fn direct_witness_shape_rejects_oversized_allocations() {
 fn flat_ring_vec_deserialization_rejects_shape_before_allocation() {
     let coeffs = DEFAULT_MAX_SEQUENCE_LEN + 1;
 
-    let err = FlatRingVec::<Prime128Offset275>::deserialize_compressed(&[][..], &coeffs)
+    let err = RingVec::<Prime128Offset275>::deserialize_compressed(&[][..], &coeffs)
         .expect_err("shape exceeds cap");
     assert!(matches!(
         err,
@@ -32,7 +32,7 @@ fn flat_ring_vec_deserialization_rejects_shape_before_allocation() {
 
 #[test]
 fn flat_ring_vec_checked_decoders_reject_zero_dimension() {
-    let flat = FlatRingVec::<Prime128Offset275>::from_coeffs(vec![]);
+    let flat = RingVec::<Prime128Offset275>::from_coeffs(vec![]);
 
     assert!(!flat.can_decode_single(0));
     assert!(!flat.can_decode_vec(0));
@@ -150,7 +150,7 @@ fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
         },
-        next_w_commitment: FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()])
+        next_w_commitment: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()])
             .into_compact(),
         next_w_eval: F::zero(),
     })
@@ -200,7 +200,7 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
         SumcheckProof {
             round_polys: Vec::new(),
         },
-        FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
         F::zero(),
     );
     let reduction_bytes = extension_opening_reduction_serialized_size(
@@ -234,7 +234,7 @@ fn tiny_terminal_stage2() -> SumcheckProof<F> {
 
 #[test]
 fn terminal_level_proof_serde_round_trip() {
-    let final_witness = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
+    let final_witness = CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![
         F::one(),
         -F::one(),
         F::zero(),

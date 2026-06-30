@@ -39,9 +39,9 @@ use akita_types::{
     trace_weight_layout_from_segment, w_ring_element_count_with_counts_for_layout,
     AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
     BasisMode, BlockOrder, CleartextWitnessProof, CommitmentGroup, ExecutionSchedule,
-    ExtensionOpeningReductionProof, FlatRingVec, FoldLinfProtocolBinding, FpExtEncoding,
-    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RelationOnlyStage2Inputs,
-    RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, Schedule,
+    ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding, LevelParams,
+    MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
     SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts, TraceClaim, VerifierOpeningBatch,
 };

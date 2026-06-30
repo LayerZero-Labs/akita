@@ -19,7 +19,7 @@ use crate::golomb_rice::{
 use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::layout::field_bytes;
 use crate::proof::CleartextWitnessShape;
-use crate::proof::{FlatRingVec, TerminalWitnessTranscriptParts};
+use crate::proof::{RingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
 use crate::{LevelParams, MRowLayout};
@@ -49,9 +49,9 @@ pub struct SegmentTypedWitnessShape {
 pub struct SegmentTypedWitness<F: FieldCore> {
     pub layout: TailSegmentLayout,
     pub z_payload: Vec<u8>,
-    pub e_fields: FlatRingVec<F>,
-    pub t_fields: FlatRingVec<F>,
-    pub r_fields: FlatRingVec<F>,
+    pub e_fields: RingVec<F>,
+    pub t_fields: RingVec<F>,
+    pub r_fields: RingVec<F>,
 }
 
 impl TailSegmentLayout {
@@ -275,19 +275,19 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         }
         let mut z_payload = vec![0u8; z_len];
         reader.read_exact(&mut z_payload)?;
-        let e_fields = FlatRingVec::deserialize_with_mode(
+        let e_fields = RingVec::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
             &ctx.layout.e_field_elems,
         )?;
-        let t_fields = FlatRingVec::deserialize_with_mode(
+        let t_fields = RingVec::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
             &ctx.layout.t_field_elems,
         )?;
-        let r_fields = FlatRingVec::deserialize_with_mode(
+        let r_fields = RingVec::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -375,7 +375,7 @@ fn append_field_coeffs_vec<F: FieldCore + AkitaSerialize>(
     Ok(())
 }
 
-fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &FlatRingVec<F>) -> Vec<u8> {
+fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &RingVec<F>) -> Vec<u8> {
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs()).expect("in-memory field serialization");
     out
@@ -396,7 +396,7 @@ pub fn e_folded_segment_bytes<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
 {
-    let fields = FlatRingVec::from_ring_elems(e_folded).into_compact();
+    let fields = RingVec::from_ring_elems(e_folded).into_compact();
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs())?;
     Ok(out)
@@ -803,7 +803,7 @@ where
         rice_low_bits,
         zigzag_w_z,
     )?;
-    let e_fields = FlatRingVec::from_ring_elems(e_folded).into_compact();
+    let e_fields = RingVec::from_ring_elems(e_folded).into_compact();
     if e_fields.coeff_len() != layout.e_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed e segment length mismatch".to_string(),
@@ -813,13 +813,13 @@ where
     for block in recomposed_inner_rows {
         t_rings.extend_from_slice(block);
     }
-    let t_fields = FlatRingVec::from_ring_elems(&t_rings).into_compact();
+    let t_fields = RingVec::from_ring_elems(&t_rings).into_compact();
     if t_fields.coeff_len() != layout.t_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed t segment length mismatch".to_string(),
         ));
     }
-    let r_fields = FlatRingVec::from_ring_elems(r).into_compact();
+    let r_fields = RingVec::from_ring_elems(r).into_compact();
     if r_fields.coeff_len() != layout.r_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed r segment length mismatch".to_string(),
@@ -1123,9 +1123,9 @@ mod tests {
         let witness = SegmentTypedWitness {
             layout,
             z_payload,
-            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
-            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
-            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+            e_fields: RingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: RingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
         };
         let scheduled_shape = SegmentTypedWitnessShape {
             layout,
@@ -1182,9 +1182,9 @@ mod tests {
         let witness = SegmentTypedWitness {
             layout,
             z_payload,
-            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
-            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
-            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+            e_fields: RingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: RingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
         };
         assert!(expand_segment_typed_to_i8_digits::<8, F>(&witness, &lp, 1).is_err());
     }

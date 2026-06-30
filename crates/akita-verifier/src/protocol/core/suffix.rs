@@ -9,7 +9,7 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
     /// Claimed opening value for the current commitment.
     pub opening: L,
     /// Current suffix witness commitment.
-    pub commitment: &'a FlatRingVec<F>,
+    pub commitment: &'a RingVec<F>,
     /// Basis used to interpret the current opening point.
     pub basis: BasisMode,
     /// Current suffix witness length in field elements.

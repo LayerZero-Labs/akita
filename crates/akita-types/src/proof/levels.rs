@@ -31,7 +31,7 @@ pub struct AkitaIntermediateStage2Proof<F: FieldCore, L: FieldCore> {
     pub sumcheck_proof: SumcheckProof<L>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from `v`).
-    pub next_w_commitment: FlatRingVec<F>,
+    pub next_w_commitment: RingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: L,
 }
@@ -195,7 +195,7 @@ pub enum AkitaLevelProof<F: FieldCore, L: FieldCore> {
         /// openings and proof paths that do not use extension-opening reduction.
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         /// `v = D · ŵ` (ring dim = current level's D).
-        v: FlatRingVec<F>,
+        v: RingVec<F>,
         /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
         fold_grind_nonce: u32,
         /// Stage-1 norm-check payload.
@@ -228,7 +228,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     ) -> Self {
         Self::Intermediate {
             extension_opening_reduction: None,
-            v: FlatRingVec::from_ring_elems(&v).into_compact(),
+            v: RingVec::from_ring_elems(&v).into_compact(),
             fold_grind_nonce: 0,
             stage1,
             stage2,
@@ -242,7 +242,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
         stage2_sumcheck_proof: SumcheckProof<L>,
-        next_w_commitment: FlatRingVec<F>,
+        next_w_commitment: RingVec<F>,
         next_w_eval: L,
     ) -> Self {
         Self::new::<D>(
@@ -264,12 +264,12 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
         stage2_sumcheck_proof: SumcheckProof<L>,
-        next_w_commitment: FlatRingVec<F>,
+        next_w_commitment: RingVec<F>,
         next_w_eval: L,
     ) -> Self {
         Self::Intermediate {
             extension_opening_reduction,
-            v: FlatRingVec::from_ring_elems(&v).into_compact(),
+            v: RingVec::from_ring_elems(&v).into_compact(),
             fold_grind_nonce: 0,
             stage1,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
@@ -340,7 +340,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// # Panics
     ///
     /// Panics if called on a terminal proof.
-    pub fn v(&self) -> &FlatRingVec<F> {
+    pub fn v(&self) -> &RingVec<F> {
         match self {
             Self::Intermediate { v, .. } => v,
             Self::Terminal { .. } => panic!("v() called on terminal level proof"),
@@ -361,7 +361,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// # Panics
     ///
     /// Panics if called on a terminal proof.
-    pub fn v_mut(&mut self) -> &mut FlatRingVec<F> {
+    pub fn v_mut(&mut self) -> &mut RingVec<F> {
         match self {
             Self::Intermediate { v, .. } => v,
             Self::Terminal { .. } => panic!("v_mut() called on terminal level proof"),
@@ -472,7 +472,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     }
 
     /// Commitment to the next witness `w`.
-    pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
+    pub fn next_w_commitment(&self) -> &RingVec<F> {
         &self
             .stage2()
             .as_intermediate()
@@ -481,7 +481,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     }
 
     /// Borrow the next witness commitment if this is an intermediate level.
-    pub fn next_w_commitment_opt(&self) -> Option<&FlatRingVec<F>> {
+    pub fn next_w_commitment_opt(&self) -> Option<&RingVec<F>> {
         match self {
             Self::Intermediate { .. } => Some(self.next_w_commitment()),
             Self::Terminal { .. } => None,
@@ -679,7 +679,7 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
     /// extension-opening reduction cutover is wired into the root path.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     /// Aggregated `v = D · ŵ`.
-    pub v: FlatRingVec<F>,
+    pub v: RingVec<F>,
     /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
     pub fold_grind_nonce: u32,
     /// Stage-1 norm-check payload.
@@ -859,7 +859,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Borrow the root next-witness commitment for fold proofs.
-    pub fn fold_next_w_commitment(&self) -> Result<Option<&FlatRingVec<F>>, AkitaError> {
+    pub fn fold_next_w_commitment(&self) -> Result<Option<&RingVec<F>>, AkitaError> {
         match self {
             Self::Fold(fold) => Ok(Some(
                 &fold
@@ -919,7 +919,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// # Panics
     ///
     /// Panics on terminal-root and zero-fold batched proofs.
-    pub fn v(&self) -> &FlatRingVec<F> {
+    pub fn v(&self) -> &RingVec<F> {
         &self
             .as_fold()
             .expect("v() called on a non-fold root proof")
@@ -931,7 +931,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// # Panics
     ///
     /// Panics on terminal-root and zero-fold batched proofs.
-    pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
+    pub fn next_w_commitment(&self) -> &RingVec<F> {
         &self
             .as_fold()
             .expect("next_w_commitment() called on a non-fold root proof")

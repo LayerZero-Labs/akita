@@ -15,13 +15,13 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 
-fn bump_flat_ring_vec(flat: &mut akita_types::FlatRingVec<F>) {
+fn bump_flat_ring_vec(flat: &mut akita_types::RingVec<F>) {
     let mut coeffs = flat.coeffs().to_vec();
     let first = coeffs
         .first_mut()
         .expect("tamper target must contain at least one coefficient");
     *first += F::one();
-    *flat = akita_types::FlatRingVec::from_coeffs(coeffs);
+    *flat = akita_types::RingVec::from_coeffs(coeffs);
 }
 
 fn assert_invalid_proof(case: &str, result: Result<(), AkitaError>) {

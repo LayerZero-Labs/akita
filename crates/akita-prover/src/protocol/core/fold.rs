@@ -86,7 +86,7 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
 }
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
-    pub(in crate::protocol::core) commitment: FlatRingVec<F>,
+    pub(in crate::protocol::core) commitment: RingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
     pub(in crate::protocol::core) extension_opening_reduction:
@@ -798,7 +798,7 @@ where
         let w_commitment_proof = committed_commitment.clone();
         let level_proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: prepared_fold.extension_opening_reduction,
-            v: FlatRingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
+            v: RingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
             fold_grind_nonce,
             stage1: stage1_proof,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {

@@ -26,9 +26,9 @@ use akita_types::dispatch_ring_dim_result;
 use akita_types::RingRelationInstance;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths,
-    AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, FpExtEncoding,
-    LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationOpeningCounts,
+    AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks, FpExtEncoding, LevelParams,
+    MRowLayout, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationOpeningCounts, RingVec,
 };
 
 mod coeffs;

@@ -354,13 +354,13 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
-fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::FlatRingVec<FField>) {
+fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>) {
     let mut coeffs = flat.coeffs().to_vec();
     let first = coeffs
         .first_mut()
         .expect("tamper target must contain at least one coefficient");
     *first += FField::one();
-    *flat = akita_types::FlatRingVec::from_coeffs(coeffs);
+    *flat = akita_types::RingVec::from_coeffs(coeffs);
 }
 
 fn mutate_terminal_e_hat_digit<FField: FieldCore>(

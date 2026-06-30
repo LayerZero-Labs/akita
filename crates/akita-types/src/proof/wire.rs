@@ -81,7 +81,7 @@ fn fold_grind_nonce_serialized_size(compress: Compress) -> usize {
 fn serialize_intermediate_fold_wire_prefix<F, L, W>(
     mut writer: W,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
-    v: &FlatRingVec<F>,
+    v: &RingVec<F>,
     fold_grind_nonce: u32,
     compress: Compress,
 ) -> Result<(), SerializationError>
@@ -97,7 +97,7 @@ where
 
 fn intermediate_fold_wire_prefix_serialized_size<F, L>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
-    v: &FlatRingVec<F>,
+    v: &RingVec<F>,
     compress: Compress,
 ) -> usize
 where
@@ -109,18 +109,15 @@ where
         + fold_grind_nonce_serialized_size(compress)
 }
 
-type IntermediateFoldWirePrefix<F, L> = (
-    Option<ExtensionOpeningReductionProof<L>>,
-    FlatRingVec<F>,
-    u32,
-);
+type IntermediateFoldWirePrefix<F, L> =
+    (Option<ExtensionOpeningReductionProof<L>>, RingVec<F>, u32);
 
 fn deserialize_intermediate_fold_wire_prefix<F, L, R>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
     extension_shape: Option<&ExtensionOpeningReductionShape>,
-    v_shape: &<FlatRingVec<F> as AkitaDeserialize>::Context,
+    v_shape: &<RingVec<F> as AkitaDeserialize>::Context,
 ) -> Result<IntermediateFoldWirePrefix<F, L>, SerializationError>
 where
     F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
@@ -129,7 +126,7 @@ where
 {
     let extension_opening_reduction =
         deserialize_extension_opening_reduction(&mut reader, compress, validate, extension_shape)?;
-    let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, v_shape)?;
+    let v = RingVec::deserialize_with_mode(&mut reader, compress, validate, v_shape)?;
     let fold_grind_nonce = deserialize_fold_grind_nonce(&mut reader, compress, validate)?;
     Ok((extension_opening_reduction, v, fold_grind_nonce))
 }
@@ -487,7 +484,7 @@ impl<
         )?;
         let stage2 = AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
             sumcheck_proof: stage2_sumcheck_proof,
-            next_w_commitment: FlatRingVec::deserialize_with_mode(
+            next_w_commitment: RingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -777,7 +774,7 @@ impl<
         )?;
         let stage2 = AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
             sumcheck_proof: stage2_sumcheck_proof,
-            next_w_commitment: FlatRingVec::deserialize_with_mode(
+            next_w_commitment: RingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,

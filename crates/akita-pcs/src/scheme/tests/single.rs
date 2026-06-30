@@ -122,7 +122,7 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
         .expect("expected a fold-rooted batched proof");
     let mut coeffs = root_fold.v.coeffs().to_vec();
     let _ = coeffs.pop().expect("expected non-empty v");
-    root_fold.v = FlatRingVec::from_coeffs(coeffs);
+    root_fold.v = RingVec::from_coeffs(coeffs);
 
     let commitments = [commitment];
     let openings = [opening];
@@ -174,7 +174,7 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
 
 #[test]
 fn folded_payload_commitments_and_digits_stay_base_field() {
-    fn assert_base_flat_ring_vec(_: &FlatRingVec<F>) {}
+    fn assert_base_flat_ring_vec(_: &RingVec<F>) {}
     fn assert_base_direct_witness(_: &akita_types::CleartextWitnessProof<F>) {}
 
     let (_, _, proof, _, _, _) = make_verify_fixture(16);

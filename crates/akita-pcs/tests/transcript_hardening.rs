@@ -258,7 +258,7 @@ impl TerminalTamper {
                         .first_mut()
                         .expect("segment-typed terminal must carry e field coeffs");
                     *first += F::one();
-                    segment.e_fields = akita_types::FlatRingVec::from_coeffs(coeffs);
+                    segment.e_fields = akita_types::RingVec::from_coeffs(coeffs);
                 }
                 Self::RemainderDigit => {
                     segment.z_payload[0] ^= 1;

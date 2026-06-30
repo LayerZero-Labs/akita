@@ -422,7 +422,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     terminal.stage2 =
         akita_types::AkitaStage2Proof::Intermediate(akita_types::AkitaIntermediateStage2Proof {
             sumcheck_proof,
-            next_w_commitment: akita_types::FlatRingVec::from_coeffs(Vec::<SmallF>::new()),
+            next_w_commitment: akita_types::RingVec::from_coeffs(Vec::<SmallF>::new()),
             next_w_eval: SmallE::zero(),
         });
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

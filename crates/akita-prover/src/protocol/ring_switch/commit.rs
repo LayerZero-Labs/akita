@@ -6,7 +6,7 @@ pub struct NextWitnessCommitment<F: FieldCore> {
     /// Physical witness representation when extension packing changes the logical witness.
     pub witness: Option<RecursiveWitnessFlat>,
     /// Commitment to the physical next-level witness.
-    pub commitment: FlatRingVec<F>,
+    pub commitment: RingVec<F>,
     /// Prover hint for `commitment`.
     pub hint: RecursiveCommitmentHintCache<F>,
 }
@@ -144,7 +144,7 @@ where
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
-                commitment: FlatRingVec::from_commitment(&wc),
+                commitment: RingVec::from_commitment(&wc),
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         } else {
@@ -163,7 +163,7 @@ where
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
-                commitment: FlatRingVec::from_commitment(&wc),
+                commitment: RingVec::from_commitment(&wc),
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         }
@@ -203,7 +203,7 @@ where
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
-                commitment: FlatRingVec::from_commitment(&wc),
+                commitment: RingVec::from_commitment(&wc),
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         } else {
@@ -219,7 +219,7 @@ where
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
-                commitment: FlatRingVec::from_commitment(&wc),
+                commitment: RingVec::from_commitment(&wc),
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         }

@@ -19,7 +19,7 @@ pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
     /// Logical suffix witness when it differs from the committed representation.
     pub logical_w: Option<RecursiveWitnessFlat>,
     /// Current suffix witness commitment.
-    pub commitment: FlatRingVec<F>,
+    pub commitment: RingVec<F>,
     /// D-erased suffix commitment hint cache.
     pub hint: RecursiveCommitmentHintCache<F>,
     /// Current digit basis, as `log2(b)`.

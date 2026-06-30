@@ -12,9 +12,10 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
-    LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-    RingRelationSegmentLayout, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+    RingRelationSegmentLayout, RingVec, SetupContributionPlanInputs,
+    TerminalWitnessTranscriptParts,
 };
 
 use super::slice_mle::{
@@ -149,7 +150,7 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E, D>,
     w_len: usize,
-    w_commitment: &FlatRingVec<F>,
+    w_commitment: &RingVec<F>,
     transcript: &mut T,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where

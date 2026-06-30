@@ -665,7 +665,7 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily};
+    use akita_types::{AjtaiKeyParams, RingVec, SisModulusFamily};
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -698,9 +698,9 @@ mod tests {
                 .with_decomp(1, 0, 2, 1, 0)
                 .expect("valid direct layout");
         let setup_seed = setup_seed(3);
-        let witnesses = vec![CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(vec![F::zero(); 64]),
-        )];
+        let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            vec![F::zero(); 64],
+        ))];
         let err = validate_root_direct_recommitment_shape::<F, D>(
             &witnesses,
             &setup_seed,
@@ -719,9 +719,9 @@ mod tests {
                 .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, 1, 128, 0, D);
         let setup_seed = setup_seed(128);
-        let witnesses = vec![CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(vec![F::zero(); 32]),
-        )];
+        let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            vec![F::zero(); 32],
+        ))];
         let err = validate_root_direct_recommitment_shape::<F, D>(
             &witnesses,
             &setup_seed,

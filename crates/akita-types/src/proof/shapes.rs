@@ -152,7 +152,7 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
 
 pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
-    v: &FlatRingVec<F>,
+    v: &RingVec<F>,
     stage1: &AkitaStage1Proof<L>,
     stage2: &AkitaStage2Proof<F, L>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<L>>,

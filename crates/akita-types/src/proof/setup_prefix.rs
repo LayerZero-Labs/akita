@@ -8,7 +8,7 @@
 use crate::instance_descriptor::{digest_level_params, setup_seed_digest, DescriptorDigest};
 use crate::proof::{
     setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
-    AkitaCommitmentHint, FlatRingVec, RingCommitment,
+    AkitaCommitmentHint, RingCommitment, RingVec,
 };
 use crate::{LevelParams, OpeningBatchShape};
 use akita_algebra::CyclotomicRing;
@@ -127,7 +127,7 @@ impl AkitaDeserialize for SetupPrefixSlotId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixPublicCommitment<F: FieldCore> {
     /// Commitment rows in flattened ring-coefficient form.
-    pub rows: Vec<FlatRingVec<F>>,
+    pub rows: Vec<RingVec<F>>,
 }
 
 impl<F: FieldCore + Valid> Valid for SetupPrefixPublicCommitment<F> {
@@ -231,7 +231,7 @@ where
                     max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
                 });
             }
-            rows.push(FlatRingVec::deserialize_with_mode(
+            rows.push(RingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
@@ -252,7 +252,7 @@ impl<F: FieldCore, const D: usize> From<RingCommitment<F, D>> for SetupPrefixPub
             rows: commitment
                 .u
                 .into_iter()
-                .map(|row| FlatRingVec::from_coeffs(row.coeffs.to_vec()))
+                .map(|row| RingVec::from_coeffs(row.coeffs.to_vec()))
                 .collect(),
         }
     }
@@ -1015,7 +1015,7 @@ mod tests {
             natural_len,
             padded_len: n_prefix,
             commitment: SetupPrefixPublicCommitment {
-                rows: vec![FlatRingVec::from_coeffs(vec![F::zero()])],
+                rows: vec![RingVec::from_coeffs(vec![F::zero()])],
             },
         };
         let mut registry = SetupPrefixVerifierRegistry::<F>::new();
@@ -1113,7 +1113,7 @@ mod tests {
             natural_len: id.natural_len,
             padded_len: id.n_prefix,
             commitment: SetupPrefixPublicCommitment {
-                rows: vec![FlatRingVec::from_coeffs(vec![F::zero()])],
+                rows: vec![RingVec::from_coeffs(vec![F::zero()])],
             },
         };
 

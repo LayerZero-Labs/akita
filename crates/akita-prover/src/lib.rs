@@ -16,8 +16,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AppendToTranscript,
-    FlatDigitBlocks, FlatRingVec, OpeningBatchShape, OpeningGroupShape, OpeningPoints,
-    PointVariableSelection, RingCommitment,
+    FlatDigitBlocks, OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection,
+    RingCommitment, RingVec,
 };
 
 pub use api::{
@@ -188,11 +188,11 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     }
 
     /// Borrow the current single-group fold batch's commitment rows as flat proof storage.
-    pub(crate) fn single_fold_commitment(&self) -> Result<FlatRingVec<CommitF>, AkitaError> {
+    pub(crate) fn single_fold_commitment(&self) -> Result<RingVec<CommitF>, AkitaError> {
         let group = self.single_group().ok_or_else(|| {
             AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
         })?;
-        Ok(FlatRingVec::from_ring_elems(&group.commitment.0.u))
+        Ok(RingVec::from_ring_elems(&group.commitment.0.u))
     }
 
     /// Preserve this batch's grouping metadata while replacing its flat polynomial stream.

@@ -192,7 +192,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
     pub(in crate::protocol::core) w_len: usize,
     pub(in crate::protocol::core) stage1: Option<&'a AkitaStage1Proof<E>>,
     pub(in crate::protocol::core) stage2: &'a AkitaStage2Proof<F, E>,
-    pub(in crate::protocol::core) next_w_commitment: Option<&'a FlatRingVec<F>>,
+    pub(in crate::protocol::core) next_w_commitment: Option<&'a RingVec<F>>,
     pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
     pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E, D>>,

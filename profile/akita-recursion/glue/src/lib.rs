@@ -502,7 +502,7 @@ mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
     use akita_types::{
-        derive_public_matrix_flat, sample_public_matrix_seed, FlatRingVec,
+        derive_public_matrix_flat, sample_public_matrix_seed, RingVec,
         SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierSlot,
     };
 
@@ -591,7 +591,7 @@ mod tests {
                 natural_len: 1,
                 padded_len: TEST_D,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![FlatRingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
+                    rows: vec![RingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
                 },
             })
             .expect("insert prefix slot");

@@ -141,9 +141,9 @@ where
             }
             evals[field_pos] = F::one();
         }
-        Ok(CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(evals),
-        ))
+        Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            evals,
+        )))
     }
 }
 

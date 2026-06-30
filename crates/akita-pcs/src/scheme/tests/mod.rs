@@ -21,8 +21,7 @@ use akita_types::{
 };
 use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
-    AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
-    TerminalLevelProofShape,
+    AkitaBatchedProofShape, AkitaProofStepShape, LevelProofShape, RingVec, TerminalLevelProofShape,
 };
 use akita_types::{
     CommitmentGroup, OpeningBatchShape, PointVariableSelection, VerifierOpeningBatch,

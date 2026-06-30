@@ -5,7 +5,7 @@ use crate::compute::{
     DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootPolyShape, RootTensorSource,
 };
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{CleartextWitnessProof, FlatRingVec};
+use akita_types::{CleartextWitnessProof, RingVec};
 
 /// Borrowed single-polynomial view over dense ring storage.
 ///
@@ -113,8 +113,8 @@ where
                 break;
             }
         }
-        Ok(CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(coeffs),
-        ))
+        Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            coeffs,
+        )))
     }
 }

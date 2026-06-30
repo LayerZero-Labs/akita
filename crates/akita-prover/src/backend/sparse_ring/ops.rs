@@ -5,7 +5,7 @@ use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
     MulBaseUnreduced,
 };
-use akita_types::{CleartextWitnessProof, FlatRingVec, FpExtEncoding};
+use akita_types::{CleartextWitnessProof, FpExtEncoding, RingVec};
 
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
@@ -125,9 +125,9 @@ where
                 })?;
             coeffs[idx] += F::from_i8(entry.value);
         }
-        Ok(CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(coeffs),
-        ))
+        Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            coeffs,
+        )))
     }
 }
 

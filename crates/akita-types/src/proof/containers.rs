@@ -11,7 +11,7 @@ use super::*;
 /// is not known to this container and must be supplied externally (e.g. from
 /// the public schedule). This is the mode used inside serialised proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlatRingVec<F> {
+pub struct RingVec<F> {
     coeffs: Vec<F>,
     ring_dim: usize,
 }
@@ -41,7 +41,7 @@ impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize
     }
 }
 
-impl<F: FieldCore> FlatRingVec<F> {
+impl<F: FieldCore> RingVec<F> {
     /// Wrap a single ring element.
     pub fn from_single<const D: usize>(r: &CyclotomicRing<F, D>) -> Self {
         Self {
@@ -277,7 +277,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FlatRingVec<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingVec<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -297,13 +297,13 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FlatRingVec<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for FlatRingVec<F> {
+impl<F: FieldCore + Valid> Valid for RingVec<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs.check()
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for FlatRingVec<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for RingVec<F> {
     /// Number of field-element coefficients to read.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -330,6 +330,86 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+/// A borrowed, schedule-shaped view over a flat coefficient slice.
+///
+/// `RingView<'a, F>` pairs a coefficient slice from a [`RingVec`] (or any
+/// contiguous field-element buffer) with an explicit `ring_dim` that comes
+/// from the runtime schedule rather than a compile-time const. This is the
+/// canonical borrowed accessor for ring-shaped protocol data: use it wherever
+/// a callee needs to interpret a flat coefficient buffer under a known
+/// schedule-derived ring dimension without taking ownership.
+///
+/// # Invariant
+///
+/// `ring_dim > 0` and `coeffs.len()` is a multiple of `ring_dim`.
+/// The constructors enforce this; there is no way to build a `RingView` that
+/// violates it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingView<'a, F> {
+    coeffs: &'a [F],
+    ring_dim: usize,
+}
+
+impl<'a, F> RingView<'a, F> {
+    /// Construct a `RingView` from a coefficient slice and a ring dimension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` or if
+    /// `coeffs.len()` is not a multiple of `ring_dim`.
+    pub fn new(coeffs: &'a [F], ring_dim: usize) -> Result<Self, AkitaError> {
+        if ring_dim == 0 || !coeffs.len().is_multiple_of(ring_dim) {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(Self { coeffs, ring_dim })
+    }
+
+    /// The ring dimension (number of field-element coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// The number of ring elements in this view.
+    pub fn num_rings(&self) -> usize {
+        self.coeffs.len() / self.ring_dim
+    }
+
+    /// Alias for [`num_rings`](Self::num_rings).
+    pub fn count(&self) -> usize {
+        self.num_rings()
+    }
+
+    /// The flat coefficient slice.
+    pub fn coeffs(&self) -> &[F] {
+        self.coeffs
+    }
+}
+
+impl<F: FieldCore> RingVec<F> {
+    /// Borrow this `RingVec` as a [`RingView`] using the stored `ring_dim`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` (compact mode)
+    /// or if `coeffs.len()` is not a multiple of `ring_dim`. Compact-mode
+    /// vectors must use [`view_as`](Self::view_as) instead.
+    pub fn view(&self) -> Result<RingView<'_, F>, AkitaError> {
+        RingView::new(&self.coeffs, self.ring_dim)
+    }
+
+    /// Borrow this `RingVec` as a [`RingView`] under an externally supplied
+    /// `ring_dim` (e.g. from the schedule). Use this for compact-mode vectors
+    /// where `ring_dim` was not stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` or if
+    /// `coeffs.len()` is not a multiple of `ring_dim`.
+    pub fn view_as(&self, ring_dim: usize) -> Result<RingView<'_, F>, AkitaError> {
+        RingView::new(&self.coeffs, ring_dim)
     }
 }
 
