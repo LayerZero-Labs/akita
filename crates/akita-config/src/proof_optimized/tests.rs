@@ -5,6 +5,8 @@ use akita_field::{CanonicalField, One};
 #[cfg(feature = "schedules-default")]
 use akita_planner::generated::GeneratedScheduleTable;
 #[cfg(feature = "schedules-default")]
+use akita_planner::schedule_from_entry;
+#[cfg(feature = "schedules-default")]
 use akita_schedules::{
     fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
 };
@@ -20,6 +22,7 @@ use akita_types::SisModulusFamily;
 const MAX_I8_LOG_BASIS: u32 = 6;
 #[cfg(feature = "schedules-default")]
 const RAW_I8_RHS_MAX_ABS: u64 = 128;
+
 #[test]
 fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
     // Terminal-direct steps ship the cleartext witness without
@@ -443,9 +446,17 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
 
 #[cfg(feature = "schedules-default")]
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
+    let policy = crate::policy_of::<Cfg>();
     for entry in table.entries {
         let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
-        Cfg::runtime_schedule(key).expect("config schedule should succeed");
+        schedule_from_entry(
+            entry,
+            key,
+            &policy,
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+        )
+        .expect("shipped entry should materialize");
     }
 }
 
@@ -514,9 +525,17 @@ fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
 fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) {
+    let policy = crate::policy_of::<Cfg>();
     for entry in table.entries {
         let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
-        let schedule = Cfg::runtime_schedule(key).expect("config schedule should succeed");
+        let schedule = schedule_from_entry(
+            entry,
+            key,
+            &policy,
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+        )
+        .expect("shipped entry should materialize");
         let levels = setup_level_params_from_runtime_schedule(&schedule.steps);
         for level in &levels {
             assert_level_has_crt_i8_capacity::<Cfg>(key, level);
@@ -526,6 +545,7 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "schedules-default")]
 fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
+    let policy = crate::policy_of::<Cfg>();
     let mut checked_folded_entry = false;
     for entry in table
         .entries
@@ -533,7 +553,14 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         .filter(|entry| entry.key.num_polynomials > 1)
     {
         let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
-        let generated = Cfg::runtime_schedule(key).expect("config schedule should succeed");
+        let generated = schedule_from_entry(
+            entry,
+            key,
+            &policy,
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+        )
+        .expect("shipped entry should materialize");
         let Some(root) = generated.fold_steps().next() else {
             continue;
         };
@@ -594,17 +621,6 @@ fn generated_batched_roots_restore_scaled_widths() {
     assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
     assert_generated_batched_roots_are_scaled::<fp128::D128OneHot>(fp128_d128_onehot_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
-}
-
-#[test]
-#[cfg(feature = "schedules-default")]
-fn generated_d128_full_table_materializes_valid_plans() {
-    let table = fp128_d128_full_table();
-    for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
-        <fp128::D128Full as CommitmentConfig>::runtime_schedule(key)
-            .expect("config schedule should succeed");
-    }
 }
 
 #[test]
