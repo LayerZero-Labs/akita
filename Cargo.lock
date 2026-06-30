@@ -176,6 +176,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-sis-estimator"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror",
+]
+
+[[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
 dependencies = [
