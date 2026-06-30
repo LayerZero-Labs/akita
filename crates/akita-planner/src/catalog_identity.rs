@@ -23,9 +23,9 @@ static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
 
 fn lock_validated_catalogs(
 ) -> Result<std::sync::MutexGuard<'static, HashSet<CatalogValidationCacheKey>>, AkitaError> {
-    VALIDATED_CATALOGS.lock().map_err(|_| {
-        AkitaError::InvalidSetup("catalog validation cache poisoned".to_string())
-    })
+    VALIDATED_CATALOGS
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("catalog validation cache poisoned".to_string()))
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -197,9 +197,10 @@ pub fn validate_catalog_identity(
         policy_digest: policy_digest(policy),
     };
     if lock_validated_catalogs()?.contains(&cache_key) {
-        return verify_ring_challenge_config_digest_on_cache_hit(
-            &catalog.identity,
+        return verify_runtime_hooks_on_cache_hit(
+            catalog,
             ring_challenge_config,
+            fold_challenge_shape_at_level,
         );
     }
 
@@ -260,6 +261,23 @@ fn validate_catalog_identity_impl(
     check_field!(ring_challenge_config_digest);
     check_field!(key_count);
     check_field!(key_digest);
+    Ok(())
+}
+
+fn verify_runtime_hooks_on_cache_hit(
+    catalog: &GeneratedScheduleTable,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<(), AkitaError> {
+    verify_ring_challenge_config_digest_on_cache_hit(&catalog.identity, ring_challenge_config)?;
+    let root_fold_shape =
+        root_fold_shape_for_entries(catalog.entries, &fold_challenge_shape_at_level)?;
+    if root_fold_shape != catalog.identity.root_fold_shape {
+        return Err(catalog_identity_mismatch_error(
+            catalog.identity.family_name,
+            "root_fold_shape",
+        ));
+    }
     Ok(())
 }
 
@@ -488,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_identity_cache_hit_revalidates_ring_challenge_digest() {
+    fn catalog_identity_cache_hit_revalidates_runtime_hooks() {
         let policy = sample_policy();
         let entries = sample_entries();
         let catalog = GeneratedScheduleTable {
@@ -499,6 +517,26 @@ mod tests {
             .expect("first validation");
         validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
             .expect("cached validation");
+    }
+
+    #[test]
+    fn catalog_identity_cache_hit_rejects_mismatched_root_fold_shape() {
+        let policy = sample_policy();
+        let entries = sample_entries();
+        let catalog = GeneratedScheduleTable {
+            entries,
+            identity: expected_identity(&policy, entries),
+        };
+        validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+            .expect("prime cache");
+        let tensor_fold = |_: AkitaScheduleInputs| TensorChallengeShape::Tensor;
+        let err =
+            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, tensor_fold)
+                .expect_err("cached path must reject fold-shape hook drift");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("root_fold_shape")),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
