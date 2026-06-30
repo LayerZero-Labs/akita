@@ -314,18 +314,27 @@ pub fn schedule_from_entry(
                     } else {
                         1
                     };
-                    // Chunked terminal: `ê`/`t̂` partitioned (totals unchanged),
-                    // `ẑ` replicated and shared `r`-tail priced with `num_chunks`
-                    // commitments — modeled via the segment/public-row multiplicity.
-                    // `num_chunks == 1` is byte-identical to the single-chunk shape.
-                    let terminal_num_chunks = terminal_lp.witness_chunk.num_chunks.max(1);
+                    // The terminal-direct (cleartext) witness is single-chunk by
+                    // construction: the prover emits the global folded response
+                    // and one shared `r̂` tail (`build_segment_typed_witness` uses
+                    // a single `z` and `num_segments = 1`). Chunking the cleartext
+                    // tail is unsupported, so the last fold level must be
+                    // single-chunk — the leading activated levels are chunked,
+                    // never the tail. Reject loudly here instead of letting the
+                    // prover hit a cryptic layout-mismatch at prove time.
+                    if terminal_lp.witness_chunk.num_chunks > 1 {
+                        return Err(AkitaError::InvalidSetup(
+                            "terminal-direct witness does not support a multi-chunk last fold level"
+                                .to_string(),
+                        ));
+                    }
                     let witness_shape = segment_typed_witness_shape(
                         terminal_lp,
                         field_bits,
                         num_polynomials,
                         num_polynomials,
-                        terminal_num_chunks,
-                        terminal_num_chunks,
+                        1,
+                        1,
                     )?;
                     (witness_shape, len, None)
                 };
@@ -413,36 +422,25 @@ mod tests {
     }
 
     #[test]
-    fn multi_chunk_policy_sets_witness_chunk_per_level() {
+    fn multi_chunk_rejects_chunked_terminal_fold_level() {
+        // The terminal-direct (cleartext) witness is single-chunk only. Activating
+        // chunking far enough that the schedule's last fold level is chunked must
+        // be rejected at plan time rather than emitting an unprovable schedule.
+        // (`flat_policy` produces short schedules at NV=24, so the last fold is
+        // chunked here.) The supported chunked-leading + single-chunk-tail shape
+        // is exercised end-to-end by the production multi-chunk presets.
         let mut policy = flat_policy();
-        policy.witness_chunk = ChunkedWitnessCfg::d64_production(); // (8, 3)
+        policy.witness_chunk = ChunkedWitnessCfg {
+            num_chunks: 8,
+            num_activated_levels: 2,
+        };
         let key = AkitaScheduleLookupKey::new(24, 1);
-        let sched = find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find");
-
-        let mut fold_idx = 0usize;
-        let mut saw_chunked = false;
-        for step in &sched.steps {
-            if let Step::Fold(f) = step {
-                let nc = f.params.witness_chunk.num_chunks;
-                if fold_idx < 3 {
-                    assert_eq!(nc, 8, "fold level {fold_idx} should be chunked");
-                    saw_chunked = true;
-                } else {
-                    assert_eq!(nc, 1, "fold level {fold_idx} should be single-chunk");
-                }
-                // Root fold num_blocks must be divisible by num_chunks.
-                if nc > 1 {
-                    assert_eq!(f.params.num_blocks % 8, 0);
-                }
-                fold_idx += 1;
-            }
-        }
-        assert!(saw_chunked, "expected at least one chunked fold level");
-
-        // Table-free resolution must match the DP for the same policy.
-        let via_resolve = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
-            .expect("resolve");
-        assert_eq!(via_resolve.total_bytes, sched.total_bytes);
+        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
+            .expect_err("chunked terminal must be rejected");
+        assert!(
+            format!("{err:?}").contains("multi-chunk last fold level"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

@@ -421,19 +421,23 @@ fn make_terminal_direct_step(
     field_bits: u32,
     num_polynomials: usize,
 ) -> Result<DirectStep, AkitaError> {
-    // Chunked terminal: `ê`/`t̂` partitioned (totals unchanged), `ẑ` replicated
-    // and shared `r`-tail priced with `num_chunks` commitments — modeled via the
-    // segment/public-row multiplicity. `num_chunks == 1` is byte-identical to the
-    // single-chunk shape, so non-chunked levels are unaffected. Must match the
-    // table-walk terminal pricing in `resolve.rs`.
-    let terminal_num_chunks = terminal_lp.witness_chunk.num_chunks.max(1);
+    // The terminal-direct (cleartext) witness is single-chunk by construction:
+    // the prover emits the global folded response and one shared `r̂` tail, so
+    // chunking the cleartext tail is unsupported. The last fold level must be
+    // single-chunk (only the leading activated levels are chunked). Reject here
+    // to match `resolve.rs` and avoid a cryptic prover-side layout mismatch.
+    if terminal_lp.witness_chunk.num_chunks > 1 {
+        return Err(AkitaError::InvalidSetup(
+            "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
+        ));
+    }
     let witness_shape = segment_typed_witness_shape(
         terminal_lp,
         field_bits,
         num_polynomials,
         num_polynomials,
-        terminal_num_chunks,
-        terminal_num_chunks,
+        1,
+        1,
     )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
     Ok(DirectStep {

@@ -84,14 +84,19 @@ pub struct PlannerPolicy {
 }
 
 impl PlannerPolicy {
-    /// Resolved **input** chunk count for the witness consumed at absolute fold
-    /// level `fold_level`.
+    /// Chunk count of fold level `fold_level`'s own fold: the number of
+    /// per-chunk folded responses `zᵢ` this level produces, hence the chunk
+    /// count of the witness it emits. `build_w_coeffs` lays that witness out as
+    /// `zᵢ ‖ eᵢ ‖ t̂ᵢ` per chunk, and `next_w_len(L)` is priced with
+    /// `chunks_at_level(L)` to match it (the verifier sizes the same witness
+    /// from `lp.witness_chunk.num_chunks`).
     ///
     /// Returns `num_chunks` for the leading `num_activated_levels` fold levels
-    /// when multi-chunk layout is active, and `1` (single chunk) otherwise. The
-    /// **output** chunk count of the fold at level `L` is
-    /// `chunks_at_level(L + 1)` (the input of the next level), so the cutover to
-    /// single-chunk sizing falls out at the output of level `R - 1`.
+    /// when multi-chunk layout is active, and `1` (single chunk) otherwise.
+    /// There is no cross-level chunk handoff: level `L+1` folds level `L`'s
+    /// emitted witness as a flat vector into its own `chunks_at_level(L+1)`
+    /// windows, so a single-chunk level stays byte-identical regardless of its
+    /// predecessor's chunk count.
     pub fn chunks_at_level(&self, fold_level: usize) -> usize {
         let mc = self.witness_chunk;
         if mc.uses_multi_chunk() && fold_level < mc.num_activated_levels {
