@@ -66,7 +66,10 @@ mod tests {
         ];
         assert_eq!(log2_squared.len(), expected.len());
         for (actual, expected) in log2_squared.iter().zip(expected) {
-            assert!((actual - expected).abs() < 1e-9, "actual={actual}, expected={expected}");
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "actual={actual}, expected={expected}"
+            );
         }
     }
 

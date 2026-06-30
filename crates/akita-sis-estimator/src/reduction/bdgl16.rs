@@ -1,9 +1,6 @@
 //! BDGL16 reduction cost model from lattice-estimator `estimator.reduction.BDGL16`.
 
-use crate::{
-    math::log2_positive,
-    reduction::short_vectors::{sieve_short_vectors, ShortVectors},
-};
+use crate::{math::log2_positive, reduction::short_vectors::ShortVectors};
 
 /// Number of SVP calls in BKZ-β (Chen13 experiments, loosely).
 #[must_use]

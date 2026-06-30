@@ -34,7 +34,7 @@ pub fn estimate_infinity(params: &SisParameters, config: &EstimateConfig) -> Res
 
 /// Estimate the best beta for one fixed zeta.
 pub fn cost_zeta_infinity(
-    zeta: u32,
+    zeta: u64,
     params: &SisParameters,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
@@ -78,8 +78,8 @@ fn cost_zeta_search(
                 None => zero,
             })
         }
-        SearchMode::Exhaustive => best_in_range(0, zeta_stop, |zeta| {
-            cost_zeta_with_mode(zeta, beta_mode, params, config)
+        SearchMode::Exhaustive => best_in_range(0, exhaustive_zeta_stop(zeta_stop)?, |zeta| {
+            cost_zeta_with_mode(u64::from(zeta), beta_mode, params, config)
         })?
         .ok_or_else(empty_range_error("zeta")),
         SearchMode::ExhaustiveParallel => {
@@ -87,8 +87,8 @@ fn cost_zeta_search(
                 SearchMode::ExhaustiveParallel => SearchMode::Exhaustive,
                 mode => mode,
             };
-            best_in_range_parallel(0, zeta_stop, |zeta| {
-                cost_zeta_with_mode(zeta, inner_beta_mode, params, config)
+            best_in_range_parallel(0, exhaustive_zeta_stop(zeta_stop)?, |zeta| {
+                cost_zeta_with_mode(u64::from(zeta), inner_beta_mode, params, config)
             })?
             .ok_or_else(empty_range_error("zeta"))
         }
@@ -99,7 +99,7 @@ fn cost_zeta_search(
 }
 
 fn cost_zeta_with_mode(
-    zeta: u32,
+    zeta: u64,
     beta_mode: SearchMode,
     params: &SisParameters,
     config: &EstimateConfig,
@@ -107,7 +107,11 @@ fn cost_zeta_with_mode(
     match beta_mode {
         SearchMode::PythonLocalMinimum => {
             let stop = beta_search_stop(params, config)?;
-            let rough = local_minimum(MIN_BETA, stop, 2, |beta| {
+            let rough = local_minimum(u64::from(MIN_BETA), u64::from(stop), 2, |beta| {
+                let beta = u32::try_from(beta).map_err(|_| EstimatorError::InvalidParameter {
+                    field: "beta",
+                    reason: "beta search candidate exceeded u32".to_string(),
+                })?;
                 cost_infinity_fixed(beta, params, zeta, config)
             })?;
             match rough {
@@ -165,9 +169,9 @@ fn cost_zeta_with_mode(
     }
 }
 
-fn local_minimum<F>(start: u32, stop: u32, precision: u32, mut f: F) -> Result<Option<LatticeCost>>
+fn local_minimum<F>(start: u64, stop: u64, precision: u64, mut f: F) -> Result<Option<LatticeCost>>
 where
-    F: FnMut(u32) -> Result<LatticeCost>,
+    F: FnMut(u64) -> Result<LatticeCost>,
 {
     if stop < start || precision == 0 {
         return Ok(None);
@@ -241,11 +245,11 @@ where
 }
 
 fn next_search_x(
-    next_x: Option<u32>,
-    seen: &HashSet<u32>,
-    initial_low: u32,
-    initial_high: u32,
-) -> Option<u32> {
+    next_x: Option<u64>,
+    seen: &HashSet<u64>,
+    initial_low: u64,
+    initial_high: u64,
+) -> Option<u64> {
     let x = next_x?;
     if !seen.contains(&x) && initial_low <= x && x <= initial_high {
         Some(x)
@@ -322,14 +326,20 @@ fn empty_range_error(field: &'static str) -> impl FnOnce() -> EstimatorError {
     }
 }
 
-fn explicit_m(params: &SisParameters) -> Result<u32> {
+fn exhaustive_zeta_stop(stop: u64) -> Result<u32> {
+    u32::try_from(stop).map_err(|_| EstimatorError::Unsupported {
+        feature: "wide exhaustive zeta search",
+    })
+}
+
+fn explicit_m(params: &SisParameters) -> Result<u64> {
     params.m.ok_or(EstimatorError::InvalidParameter {
         field: "m",
         reason: "optimizer requires an explicit column count m".to_string(),
     })
 }
 
-fn zeta_search_stop(params: &SisParameters, config: &EstimateConfig) -> Result<u32> {
+fn zeta_search_stop(params: &SisParameters, config: &EstimateConfig) -> Result<u64> {
     let m = explicit_m(params)?;
     let lattice_dimension = config.lattice_dimension.unwrap_or(m);
     if lattice_dimension == 0 {
@@ -353,14 +363,18 @@ fn euclidean_baseline_beta(params: &SisParameters, config: &EstimateConfig) -> R
     let length_bound = euclidean_baseline_length_bound(&params.length_bound)?;
     let target_delta = euclidean_target_delta(params, d, length_bound)?;
     let beta = if target_delta >= 1.0 {
-        beta_from_delta(target_delta).unwrap_or(d)
+        beta_from_delta(target_delta).map(u64::from).unwrap_or(d)
     } else {
         d
     };
-    Ok(beta.min(d))
+    let capped = beta.min(d).min(u64::from(BETA_SEARCH_MAX));
+    u32::try_from(capped).map_err(|_| EstimatorError::InvalidParameter {
+        field: "beta",
+        reason: "Euclidean baseline beta exceeded u32".to_string(),
+    })
 }
 
-fn euclidean_default_dimension(params: &SisParameters, m: u32) -> Result<u32> {
+fn euclidean_default_dimension(params: &SisParameters, m: u64) -> Result<u64> {
     let length_bound = euclidean_baseline_length_bound(&params.length_bound)?;
     let log_bound = log2_positive(length_bound);
     if !log_bound.is_finite() || log_bound == 0.0 {
@@ -369,11 +383,11 @@ fn euclidean_default_dimension(params: &SisParameters, m: u32) -> Result<u32> {
 
     let log_q = log2_biguint(&params.q);
     let log_delta = log_bound.powi(2) / (4.0 * params.n as f64 * log_q);
-    let d = ((params.n as f64 * log_q / log_delta).sqrt().floor() as u32).max(1);
+    let d = ((params.n as f64 * log_q / log_delta).sqrt().floor() as u64).max(1);
     Ok(d.min(m))
 }
 
-fn euclidean_target_delta(params: &SisParameters, d: u32, length_bound: f64) -> Result<f64> {
+fn euclidean_target_delta(params: &SisParameters, d: u64, length_bound: f64) -> Result<f64> {
     if d <= 1 {
         return Err(EstimatorError::InvalidParameter {
             field: "d",
@@ -427,7 +441,7 @@ fn beta_from_delta(target_delta: f64) -> Option<u32> {
     Some(low)
 }
 
-fn ceil_div(numerator: u32, denominator: u32) -> u32 {
+fn ceil_div(numerator: u64, denominator: u64) -> u64 {
     numerator.div_ceil(denominator)
 }
 

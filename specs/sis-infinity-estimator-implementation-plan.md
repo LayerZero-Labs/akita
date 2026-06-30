@@ -244,10 +244,12 @@ Audit focus:
 Goal: produce comparison-only infinity max-width tables without changing current
 runtime SIS sizing.
 
-Status: in progress. The first Slice 5 chunk adds a Rust-native generator for
-the planner-shaped infinity key `(family, ring_dimension, coeff_linf_bound)`.
-Generated rows record cap hits explicitly as lower bounds because the current
-Rust estimator still stores explicit scalar `m` as `u32`.
+Status: complete for comparison artifacts. The Rust-native generator emits the
+planner-shaped infinity key `(family, ring_dimension, coeff_linf_bound)` and
+supports planner-scale explicit scalar `m` with wide `u64` dimensions.
+Generated rows record true search-cap hits explicitly as lower bounds. Width
+search reports the secure prefix boundary, so later secure islands caused by
+infinity-probability branch changes do not make the planner table optimistic.
 
 Patch surface:
 

@@ -13,15 +13,15 @@ struct FixedGoldenRow {
     width: u32,
     coeff_linf_bound: u64,
     beta_input: u32,
-    zeta_input: u32,
+    zeta_input: u64,
     rop_log2: f64,
     red_log2: f64,
     sieve_log2: ExpectedLog2,
     repetitions_log2: f64,
     beta: u32,
     eta: u32,
-    zeta: u32,
-    lattice_dimension: u32,
+    zeta: u64,
+    lattice_dimension: u64,
     trust: String,
 }
 

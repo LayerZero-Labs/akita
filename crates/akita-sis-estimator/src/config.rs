@@ -87,12 +87,12 @@ pub enum OptimizerConfig {
         /// BKZ block size.
         beta: u32,
         /// Number of zeroed coordinates.
-        zeta: u32,
+        zeta: u64,
     },
     /// Optimize beta while keeping zeta fixed.
     OptimizeBeta {
         /// Fixed zeta.
-        zeta: u32,
+        zeta: u64,
         /// Beta search strategy.
         beta: SearchMode,
     },
@@ -155,7 +155,7 @@ pub struct EstimateConfig {
     pub success_probability: Probability,
     /// Optional lattice dimension override matching lattice-estimator's `d`
     /// argument on fixed-cost calls.
-    pub lattice_dimension: Option<u32>,
+    pub lattice_dimension: Option<u64>,
     /// Numeric precision and tolerance policy.
     pub numeric: NumericConfig,
 }

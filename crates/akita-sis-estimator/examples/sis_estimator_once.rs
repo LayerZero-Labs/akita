@@ -21,13 +21,13 @@ struct Args {
     mode: Mode,
     family: AkitaModulusFamily,
     raw_n: Option<u32>,
-    raw_m: Option<u32>,
+    raw_m: Option<u64>,
     d: u32,
     rank: u32,
     width: u32,
     coeff_linf_bound: u64,
     beta: Option<u32>,
-    zeta: Option<u32>,
+    zeta: Option<u64>,
     iterations: u32,
 }
 
@@ -101,7 +101,7 @@ fn main() {
         seconds_per_iter,
         log2_text(cost.rop),
         optional_u32_text(cost.beta),
-        optional_u32_text(cost.zeta),
+        optional_u64_text(cost.zeta),
         cost.d
     );
 }
@@ -225,6 +225,10 @@ fn log2_text(value: CostValue) -> String {
 }
 
 fn optional_u32_text(value: Option<u32>) -> String {
+    value.map_or_else(String::new, |value| value.to_string())
+}
+
+fn optional_u64_text(value: Option<u64>) -> String {
     value.map_or_else(String::new, |value| value.to_string())
 }
 

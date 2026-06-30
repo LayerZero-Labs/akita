@@ -83,9 +83,9 @@ pub struct LatticeCost {
     /// Final short-vector/sieve dimension.
     pub eta: Option<u32>,
     /// Number of zeroed coordinates.
-    pub zeta: Option<u32>,
+    pub zeta: Option<u64>,
     /// Effective lattice dimension after zeta handling.
-    pub d: u32,
+    pub d: u64,
     /// One-shot or amplified success probability.
     pub prob: Option<Probability>,
     /// Repetition count in log space.

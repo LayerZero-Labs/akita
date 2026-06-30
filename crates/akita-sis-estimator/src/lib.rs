@@ -21,7 +21,7 @@ pub mod reduction;
 pub mod simulator;
 pub mod width_table;
 
-pub use akita::{scalar_sis_from_ring, AkitaModulusFamily};
+pub use akita::{scalar_sis_from_ring, scalar_sis_from_ring_wide, AkitaModulusFamily};
 pub use config::{
     Adps16Mode, EstimateConfig, NearestNeighborModel, OptimizerConfig, ReductionCostModel,
     SearchMode, ShapeModel,
@@ -61,7 +61,7 @@ pub fn estimate(params: &SisParameters, config: &EstimateConfig) -> Result<Latti
 pub fn cost_infinity(
     beta: u32,
     params: &SisParameters,
-    zeta: u32,
+    zeta: u64,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
     params.validate()?;
@@ -84,7 +84,7 @@ pub fn cost_infinity(
 /// estimates support serial beta search. Unsupported search modes return
 /// [`EstimatorError::Unsupported`].
 pub fn cost_zeta(
-    zeta: u32,
+    zeta: u64,
     params: &SisParameters,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
@@ -120,7 +120,7 @@ pub fn cost_euclidean(params: &SisParameters, config: &EstimateConfig) -> Result
     })
 }
 
-fn validate_beta_zeta(beta: u32, zeta: u32) -> Result<()> {
+fn validate_beta_zeta(beta: u32, zeta: u64) -> Result<()> {
     if beta < 2 {
         return Err(EstimatorError::InvalidParameter {
             field: "beta",

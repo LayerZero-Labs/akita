@@ -10,12 +10,14 @@
 //! infinity estimator without changing the production Euclidean SIS table.
 
 use crate::{
-    akita::{scalar_sis_from_ring, AkitaModulusFamily},
+    akita::{scalar_sis_from_ring_wide, AkitaModulusFamily},
     config::{EstimateConfig, OptimizerConfig, SearchMode},
     cost::{CostValue, LatticeCost},
     error::{EstimatorError, Result},
     estimate,
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 
 /// Coefficient-L∞ buckets needed by Akita planner envelopes.
@@ -42,6 +44,12 @@ pub const DEFAULT_INFINITY_TARGET_BITS: f64 = 138.0;
 
 /// Default maximum rank emitted by the current Euclidean SIS table.
 pub const DEFAULT_MAX_RANK: u32 = 20;
+
+/// Default ring-width search cap used by the legacy Euclidean generator.
+pub const DEFAULT_SEARCH_CAP: u64 = 10_000_000_000;
+
+/// Wider legacy cap for `d=128`, where shipped schedules have needed it.
+pub const D128_SEARCH_CAP: u64 = 50_000_000_000;
 
 /// Optimizer profile used while generating the infinity width table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,7 +104,7 @@ pub struct InfinityWidthTableConfig {
     /// Security threshold for `rop_log2`.
     pub target_bits: f64,
     /// Optional caller cap on ring-element width.
-    pub search_cap: Option<u32>,
+    pub search_cap: Option<u64>,
     /// Optimizer profile.
     pub profile: InfinityWidthProfile,
 }
@@ -127,11 +135,11 @@ pub struct InfinityWidthRow {
     /// Coefficient-L∞ bound.
     pub coeff_linf_bound: u64,
     /// Largest secure ring-element width found within the search cap.
-    pub max_width: u32,
+    pub max_width: u64,
     /// Security threshold.
     pub target_bits: f64,
     /// Actual cap used for this row.
-    pub search_cap: u32,
+    pub search_cap: u64,
     /// Whether `max_width == search_cap`, so the row is a lower bound.
     pub hit_cap: bool,
     /// Optimizer profile label.
@@ -172,9 +180,9 @@ impl InfinityWidthRow {
             cost_log2_text(self.max_cost.as_ref().map(|cost| cost.rop)),
             cost_log2_text(self.next_cost.as_ref().map(|cost| cost.rop)),
             optional_u32_text(self.max_cost.as_ref().and_then(|cost| cost.beta)),
-            optional_u32_text(self.max_cost.as_ref().and_then(|cost| cost.zeta)),
+            optional_u64_text(self.max_cost.as_ref().and_then(|cost| cost.zeta)),
             optional_u32_text(self.next_cost.as_ref().and_then(|cost| cost.beta)),
-            optional_u32_text(self.next_cost.as_ref().and_then(|cost| cost.zeta)),
+            optional_u64_text(self.next_cost.as_ref().and_then(|cost| cost.zeta)),
         )
     }
 }
@@ -189,24 +197,43 @@ pub fn generate_infinity_width_rows(
 ) -> Result<Vec<InfinityWidthRow>> {
     validate_table_config(config)?;
     let estimator_config = config.profile.config();
-    let mut rows = Vec::new();
+    let mut work = Vec::new();
     for &family in &config.families {
         for &d in &config.ring_dims {
             for &coeff_linf_bound in &config.coeff_linf_bounds {
                 for rank in 1..=config.max_rank {
-                    rows.push(max_secure_width_row(
-                        family,
-                        d,
-                        rank,
-                        coeff_linf_bound,
-                        config,
-                        &estimator_config,
-                    )?);
+                    work.push((family, d, rank, coeff_linf_bound));
                 }
             }
         }
     }
-    Ok(rows)
+    generate_rows_from_work(work, config, &estimator_config)
+}
+
+#[cfg(feature = "parallel")]
+fn generate_rows_from_work(
+    work: Vec<(AkitaModulusFamily, u32, u32, u64)>,
+    config: &InfinityWidthTableConfig,
+    estimator_config: &EstimateConfig,
+) -> Result<Vec<InfinityWidthRow>> {
+    work.into_par_iter()
+        .map(|(family, d, rank, coeff_linf_bound)| {
+            max_secure_width_row(family, d, rank, coeff_linf_bound, config, estimator_config)
+        })
+        .collect()
+}
+
+#[cfg(not(feature = "parallel"))]
+fn generate_rows_from_work(
+    work: Vec<(AkitaModulusFamily, u32, u32, u64)>,
+    config: &InfinityWidthTableConfig,
+    estimator_config: &EstimateConfig,
+) -> Result<Vec<InfinityWidthRow>> {
+    work.into_iter()
+        .map(|(family, d, rank, coeff_linf_bound)| {
+            max_secure_width_row(family, d, rank, coeff_linf_bound, config, estimator_config)
+        })
+        .collect()
 }
 
 /// Validate monotonicity and security brackets for generated rows.
@@ -245,14 +272,26 @@ fn validate_rank_monotonicity(rows: &[InfinityWidthRow]) -> Result<()> {
     }
     for group in groups.values_mut() {
         group.sort_by_key(|row| row.rank);
-        let mut prior = None;
+        let mut prior = None::<&InfinityWidthRow>;
         for row in group {
-            if let Some(prior_width) = prior {
-                if row.max_width < prior_width {
-                    return invalid_config("rows", "max_width decreased as rank increased");
+            if let Some(prior_row) = prior {
+                if row.max_width < prior_row.max_width {
+                    return invalid_config(
+                        "rows",
+                        &format!(
+                            "max_width decreased as rank increased for family={} d={} coeff_linf_bound={}: rank {} width {} -> rank {} width {}",
+                            row.family.label(),
+                            row.d,
+                            row.coeff_linf_bound,
+                            prior_row.rank,
+                            prior_row.max_width,
+                            row.rank,
+                            row.max_width,
+                        ),
+                    );
                 }
             }
-            prior = Some(row.max_width);
+            prior = Some(row);
         }
     }
     Ok(())
@@ -268,17 +307,26 @@ fn validate_bound_monotonicity(rows: &[InfinityWidthRow]) -> Result<()> {
     }
     for group in groups.values_mut() {
         group.sort_by_key(|row| row.coeff_linf_bound);
-        let mut prior = None;
+        let mut prior = None::<&InfinityWidthRow>;
         for row in group {
-            if let Some(prior_width) = prior {
-                if row.max_width > prior_width {
+            if let Some(prior_row) = prior {
+                if row.max_width > prior_row.max_width {
                     return invalid_config(
                         "rows",
-                        "max_width increased as coeff_linf_bound increased",
+                        &format!(
+                            "max_width increased as coeff_linf_bound increased for family={} d={} rank={}: bound {} width {} -> bound {} width {}",
+                            row.family.label(),
+                            row.d,
+                            row.rank,
+                            prior_row.coeff_linf_bound,
+                            prior_row.max_width,
+                            row.coeff_linf_bound,
+                            row.max_width,
+                        ),
                     );
                 }
             }
-            prior = Some(row.max_width);
+            prior = Some(row);
         }
     }
     Ok(())
@@ -351,19 +399,23 @@ fn max_secure_width_row(
     })
 }
 
-fn row_search_cap(d: u32, requested_cap: Option<u32>) -> Result<u32> {
+fn row_search_cap(d: u32, requested_cap: Option<u64>) -> Result<u64> {
     if d == 0 {
         return Err(EstimatorError::InvalidParameter {
             field: "d",
             reason: "ring dimension must be positive".to_string(),
         });
     }
-    let representable_cap = u32::MAX / d;
-    let cap = requested_cap.map_or(representable_cap, |cap| cap.min(representable_cap));
+    let default_cap = if d == 128 {
+        D128_SEARCH_CAP
+    } else {
+        DEFAULT_SEARCH_CAP
+    };
+    let cap = requested_cap.unwrap_or(default_cap);
     if cap == 0 {
         return Err(EstimatorError::InvalidParameter {
             field: "search_cap",
-            reason: "search cap is below one representable ring column".to_string(),
+            reason: "search cap must be positive".to_string(),
         });
     }
     Ok(cap)
@@ -373,11 +425,11 @@ fn estimate_width(
     family: AkitaModulusFamily,
     d: u32,
     rank: u32,
-    width: u32,
+    width: u64,
     coeff_linf_bound: u64,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
-    let params = scalar_sis_from_ring(family, d, rank, width, coeff_linf_bound)?;
+    let params = scalar_sis_from_ring_wide(family, d, rank, width, coeff_linf_bound)?;
     estimate(&params, config)
 }
 
@@ -390,14 +442,14 @@ fn security_met(rop: CostValue, target_bits: f64) -> bool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PrefixSearchResult {
-    max_value: u32,
-    next_value: Option<u32>,
+    max_value: u64,
+    next_value: Option<u64>,
     hit_cap: bool,
 }
 
-fn max_true_in_prefix<F>(cap: u32, mut predicate: F) -> Result<PrefixSearchResult>
+fn max_true_in_prefix<F>(cap: u64, mut predicate: F) -> Result<PrefixSearchResult>
 where
-    F: FnMut(u32) -> Result<bool>,
+    F: FnMut(u64) -> Result<bool>,
 {
     if cap == 0 {
         return invalid_config("cap", "cap must be positive");
@@ -409,7 +461,15 @@ where
             hit_cap: false,
         });
     }
-    if predicate(cap)? {
+
+    let mut low = 1;
+    let mut high = 2.min(cap);
+    while high < cap && predicate(high)? {
+        low = high;
+        high = high.saturating_mul(2).min(cap);
+    }
+
+    if high == cap && predicate(cap)? {
         return Ok(PrefixSearchResult {
             max_value: cap,
             next_value: None,
@@ -417,8 +477,6 @@ where
         });
     }
 
-    let mut low = 1;
-    let mut high = cap;
     while low + 1 < high {
         let mid = low + (high - low) / 2;
         if predicate(mid)? {
@@ -443,6 +501,10 @@ fn cost_log2_text(value: Option<CostValue>) -> String {
 }
 
 fn optional_u32_text(value: Option<u32>) -> String {
+    value.map_or_else(String::new, |value| value.to_string())
+}
+
+fn optional_u64_text(value: Option<u64>) -> String {
     value.map_or_else(String::new, |value| value.to_string())
 }
 
@@ -477,6 +539,19 @@ mod tests {
     }
 
     #[test]
+    fn prefix_search_ignores_late_secure_islands() {
+        let result = max_true_in_prefix(32, |value| Ok(value <= 9 || value >= 17)).unwrap();
+        assert_eq!(
+            result,
+            PrefixSearchResult {
+                max_value: 9,
+                next_value: Some(10),
+                hit_cap: false,
+            }
+        );
+    }
+
+    #[test]
     fn default_buckets_cover_planner_digit_bounds() {
         for bound in [3, 7, 15, 31, 63] {
             assert!(COEFF_LINF_BUCKETS.contains(&bound));
@@ -484,10 +559,14 @@ mod tests {
     }
 
     #[test]
-    fn row_search_cap_respects_u32_scalar_dimension_limit() {
-        assert_eq!(row_search_cap(32, None).unwrap(), u32::MAX / 32);
+    fn row_search_cap_uses_durable_generation_defaults() {
+        assert_eq!(row_search_cap(32, None).unwrap(), DEFAULT_SEARCH_CAP);
+        assert_eq!(row_search_cap(128, None).unwrap(), D128_SEARCH_CAP);
         assert_eq!(row_search_cap(32, Some(100)).unwrap(), 100);
-        assert_eq!(row_search_cap(32, Some(u32::MAX)).unwrap(), u32::MAX / 32);
+        assert_eq!(
+            row_search_cap(32, Some(u64::from(u32::MAX))).unwrap(),
+            u64::from(u32::MAX)
+        );
     }
 
     #[test]

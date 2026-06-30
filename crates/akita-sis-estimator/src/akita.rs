@@ -72,6 +72,31 @@ pub fn scalar_sis_from_ring(
     width: u32,
     coeff_linf_bound: u64,
 ) -> Result<SisParameters> {
+    scalar_sis_from_ring_wide(
+        family,
+        ring_dimension,
+        rank,
+        u64::from(width),
+        coeff_linf_bound,
+    )
+}
+
+/// Build scalar SIS parameters from Akita ring coordinates with a wide width.
+///
+/// Uses the same mapping as [`scalar_sis_from_ring`], but accepts planner-scale
+/// ring widths whose scalar column count exceeds `u32::MAX`.
+///
+/// # Errors
+///
+/// Returns validation errors when any dimension is zero or the scalar row count
+/// overflows `u32`.
+pub fn scalar_sis_from_ring_wide(
+    family: AkitaModulusFamily,
+    ring_dimension: u32,
+    rank: u32,
+    width: u64,
+    coeff_linf_bound: u64,
+) -> Result<SisParameters> {
     if ring_dimension == 0 || rank == 0 || width == 0 || coeff_linf_bound == 0 {
         return Err(EstimatorError::InvalidParameter {
             field: "ring",
@@ -85,12 +110,13 @@ pub fn scalar_sis_from_ring(
             field: "n",
             reason: "rank * ring_dimension overflowed u32".to_string(),
         })?;
-    let m = width
-        .checked_mul(ring_dimension)
-        .ok_or(EstimatorError::InvalidParameter {
-            field: "m",
-            reason: "width * ring_dimension overflowed u32".to_string(),
-        })?;
+    let m =
+        width
+            .checked_mul(u64::from(ring_dimension))
+            .ok_or(EstimatorError::InvalidParameter {
+                field: "m",
+                reason: "width * ring_dimension overflowed u64".to_string(),
+            })?;
     SisParameters::try_new(
         n,
         family.modulus(),

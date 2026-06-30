@@ -19,7 +19,7 @@ struct FixedInfinityCase {
     width: u32,
     coeff_linf_bound: u64,
     beta: u32,
-    zeta: u32,
+    zeta: u64,
 }
 
 fn bench_fixed_infinity(c: &mut Criterion) {
@@ -85,7 +85,7 @@ fn case(
     width: u32,
     coeff_linf_bound: u64,
     beta: u32,
-    zeta: u32,
+    zeta: u64,
 ) -> FixedInfinityCase {
     FixedInfinityCase {
         label: format_case_label(family, d, rank, width, coeff_linf_bound, beta, zeta),
@@ -193,7 +193,7 @@ fn format_case_label(
     width: u32,
     coeff_linf_bound: u64,
     beta: u32,
-    zeta: u32,
+    zeta: u64,
 ) -> String {
     format!(
         "{}_d{d}_r{rank}_w{width}_linf{coeff_linf_bound}_beta{beta}_zeta{zeta}",

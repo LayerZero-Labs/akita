@@ -1,9 +1,6 @@
 //! Short-vector sieve output shared across reduction cost models.
 
-use crate::{
-    math::log2_positive,
-    reduction::delta::delta,
-};
+use crate::{math::log2_positive, reduction::delta::delta};
 
 /// Output of a reduction model's short-vector sieve path.
 #[derive(Clone, Copy, Debug, PartialEq)]

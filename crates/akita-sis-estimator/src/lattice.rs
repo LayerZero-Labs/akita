@@ -4,7 +4,7 @@ use num_bigint::BigUint;
 use num_traits::{ToPrimitive, Zero};
 
 use crate::{
-    config::EstimateConfig,
+    config::{EstimateConfig, ShapeModel},
     cost::{CostValue, EstimateTag, LatticeCost},
     error::{EstimatorError, Result},
     math::{erf, log2_positive, sis_trivially_easy},
@@ -13,7 +13,7 @@ use crate::{
     reduction::{
         log2_bkz_cost, log2_to_cost_value, short_vectors_for, validate_infinity_reduction,
     },
-    simulator::{infinity_shape_profile, validate_infinity_shape},
+    simulator::{infinity_shape_profile, lgsa_summary, validate_infinity_shape, LgsaSummary},
 };
 
 const Q_VECTOR_TOLERANCE: f64 = 1e-8;
@@ -22,6 +22,7 @@ const MIN_SIEVE_LOG2: f64 = -100.0 * std::f64::consts::LOG2_10;
 // Pinned lattice-estimator computes the sieve floor as Sage RR(1e-100), which
 // overflows to oo once repeated past the binary64 exponent range.
 const SAGE_RR_MAX_LOG2: f64 = 1024.0;
+const MAX_DENSE_PROFILE_DIM: u64 = 1_000_000;
 
 /// Cached numeric values reused across optimizer probes for one modulus.
 #[derive(Clone, Copy, Debug)]
@@ -41,7 +42,7 @@ impl EvalScratch {
 pub fn cost_infinity_fixed(
     beta: u32,
     params: &SisParameters,
-    zeta: u32,
+    zeta: u64,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
     validate_infinity_profile(config)?;
@@ -65,30 +66,54 @@ pub fn cost_infinity_fixed(
                 field: "zeta",
                 reason: "zeta must not exceed the lattice dimension".to_string(),
             })?;
-    if effective_dimension < beta {
+    if effective_dimension < u64::from(beta) {
         return Ok(infinite_cost(params, beta, zeta, effective_dimension));
     }
 
-    let identity_vectors = effective_dimension as i64 - params.n as i64;
-    let profile = infinity_shape_profile(
-        config.red_shape_model,
-        effective_dimension,
-        identity_vectors,
-        &params.q,
-        beta,
-    )?;
-    let short = short_vectors_for(config.red_cost_model, beta, effective_dimension)?;
-    let bkz_log2 = log2_bkz_cost(config.red_cost_model, beta, effective_dimension)?;
+    let identity_vectors = effective_dimension as i128 - params.n as i128;
+    let reduction_dimension = u32::try_from(effective_dimension).unwrap_or(u32::MAX);
+    let short = short_vectors_for(config.red_cost_model, beta, reduction_dimension)?;
+    let bkz_log2 = log2_bkz_cost(config.red_cost_model, beta, reduction_dimension)?;
 
-    let log_trial_prob = infinity_log_trial_probability(
-        scratch.log_q,
-        length_bound,
-        lattice_dimension,
-        effective_dimension,
-        profile.squared_norms(),
-        short.rho,
-        short.sieve_dim,
-    )?;
+    let log_trial_prob = if config.red_shape_model == ShapeModel::Lgsa
+        && effective_dimension > MAX_DENSE_PROFILE_DIM
+    {
+        let summary = lgsa_summary(effective_dimension, identity_vectors, &params.q, beta)?;
+        infinity_log_trial_probability_lgsa_summary(
+            scratch.log_q,
+            length_bound,
+            lattice_dimension,
+            &summary,
+            short.rho,
+            short.sieve_dim,
+        )?
+    } else {
+        let effective_dimension_u32 =
+            u32::try_from(effective_dimension).map_err(|_| EstimatorError::Unsupported {
+                feature: "wide non-compact shape profile",
+            })?;
+        let identity_vectors_i64 =
+            i64::try_from(identity_vectors).map_err(|_| EstimatorError::InvalidParameter {
+                field: "d",
+                reason: "identity vector count exceeded i64".to_string(),
+            })?;
+        let profile = infinity_shape_profile(
+            config.red_shape_model,
+            effective_dimension_u32,
+            identity_vectors_i64,
+            &params.q,
+            beta,
+        )?;
+        infinity_log_trial_probability(
+            scratch.log_q,
+            length_bound,
+            lattice_dimension,
+            effective_dimension,
+            profile.squared_norms(),
+            short.rho,
+            short.sieve_dim,
+        )?
+    };
     let log_probability = (log_trial_prob + log2_positive(short.count)).min(0.0);
     if !log_probability.is_finite() {
         return Ok(infinite_cost(params, beta, zeta, effective_dimension));
@@ -154,8 +179,8 @@ fn length_bound_as_f64(bound: &Bound) -> Result<f64> {
 fn infinity_log_trial_probability(
     log_q: f64,
     length_bound: f64,
-    lattice_dimension: u32,
-    effective_dimension: u32,
+    lattice_dimension: u64,
+    effective_dimension: u64,
     profile: &[f64],
     rho: f64,
     sieve_dim: u32,
@@ -169,6 +194,43 @@ fn infinity_log_trial_probability(
     } else {
         dilithium_log_trial_probability(log_q, length_bound, profile, sieve_dim)
     }
+}
+
+fn infinity_log_trial_probability_lgsa_summary(
+    log_q: f64,
+    length_bound: f64,
+    lattice_dimension: u64,
+    summary: &LgsaSummary,
+    rho: f64,
+    sieve_dim: u32,
+) -> Result<f64> {
+    let d_ = summary.effective_dimension as f64;
+    if ((lattice_dimension as f64).sqrt() * length_bound) <= 2.0_f64.powf(log_q) {
+        let vector_length = rho * summary.first_squared_norm.sqrt();
+        let sigma = vector_length / d_.sqrt();
+        let erf_arg = length_bound / (2.0_f64.sqrt() * sigma);
+        Ok(d_ * log2_positive(erf(erf_arg)))
+    } else {
+        dilithium_log_trial_probability_lgsa_summary(log_q, length_bound, summary, sieve_dim)
+    }
+}
+
+fn dilithium_log_trial_probability_lgsa_summary(
+    log_q: f64,
+    length_bound: f64,
+    summary: &LgsaSummary,
+    sieve_dim: u32,
+) -> Result<f64> {
+    let q_f = 2.0_f64.powf(log_q);
+    let idx_start = summary.idx_start;
+    let idx_end = summary.idx_end.max(idx_start);
+    let vector_length = summary.vector_length_at_idx_start;
+    let gaussian_coords = (idx_end - idx_start + 1).max(u64::from(sieve_dim)) as f64;
+    let sigma = vector_length / gaussian_coords.sqrt();
+    let erf_arg = length_bound / (2.0_f64.sqrt() * sigma);
+    let mut log_trial_prob = log2_positive(erf(erf_arg)) * gaussian_coords;
+    log_trial_prob += log2_positive((2.0 * length_bound + 1.0) / q_f) * idx_start as f64;
+    Ok(log_trial_prob)
 }
 
 fn dilithium_log_trial_probability(
@@ -241,8 +303,8 @@ fn probability_from_log2(log_probability: f64) -> Option<crate::numeric::Probabi
 fn infinite_cost(
     params: &SisParameters,
     beta: u32,
-    zeta: u32,
-    effective_dimension: u32,
+    zeta: u64,
+    effective_dimension: u64,
 ) -> LatticeCost {
     LatticeCost {
         rop: CostValue::Infinity,

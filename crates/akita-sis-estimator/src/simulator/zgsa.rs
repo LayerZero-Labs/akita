@@ -37,7 +37,8 @@ pub fn zgsa_squared_norms(
     if n < 0 || n > d_i {
         return Err(EstimatorError::InvalidParameter {
             field: "identity_vectors",
-            reason: "ZGSA requires 0 <= identity_vectors <= effective lattice dimension".to_string(),
+            reason: "ZGSA requires 0 <= identity_vectors <= effective lattice dimension"
+                .to_string(),
         });
     }
 
@@ -73,10 +74,7 @@ pub fn zgsa_squared_norms(
     }
 
     l_log.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(l_log
-        .into_iter()
-        .map(|entry| (2.0 * entry).exp())
-        .collect())
+    Ok(l_log.into_iter().map(|entry| (2.0 * entry).exp()).collect())
 }
 
 fn zgsa_slope(beta: u32) -> f64 {
@@ -97,7 +95,7 @@ fn zgsa_delta(k: u32) -> f64 {
 
 fn log_gh(d: f64) -> f64 {
     if d < 49.0 {
-        GH_CONSTANT[(d as usize) - 1] 
+        GH_CONSTANT[(d as usize) - 1]
     } else {
         (0.0 - ball_log_vol(d)) / d
     }
@@ -116,7 +114,13 @@ mod tests {
     #[test]
     fn zgsa_profile_matches_lattice_estimator_smoke_cells() {
         let cases = [
-            (213_u32, 128_i64, BigUint::from(2048_u32), 40_u32, 17.512310987622374_f64),
+            (
+                213_u32,
+                128_i64,
+                BigUint::from(2048_u32),
+                40_u32,
+                17.512310987622374_f64,
+            ),
             (
                 64_u32,
                 32_i64,

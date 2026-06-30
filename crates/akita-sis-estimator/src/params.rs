@@ -86,7 +86,7 @@ pub struct SisParameters {
     pub q: BigUint,
     /// Number of SIS columns, or `None` to let a later estimator path choose
     /// the lattice-estimator-compatible default.
-    pub m: Option<u32>,
+    pub m: Option<u64>,
     /// Short-vector length bound.
     pub length_bound: Bound,
     /// Norm used to interpret `length_bound`.
@@ -104,7 +104,7 @@ impl SisParameters {
     pub fn try_new(
         n: u32,
         q: BigUint,
-        m: Option<u32>,
+        m: Option<u64>,
         length_bound: Bound,
         norm: SisNorm,
     ) -> Result<Self> {
@@ -129,7 +129,7 @@ impl SisParameters {
 
     /// Return a copy with a different column count.
     #[must_use]
-    pub const fn with_m(mut self, m: Option<u32>) -> Self {
+    pub const fn with_m(mut self, m: Option<u64>) -> Self {
         self.m = m;
         self
     }
@@ -191,7 +191,7 @@ pub struct SisParameterUpdate {
     /// Replacement `q`.
     pub q: Option<BigUint>,
     /// Replacement `m`; `Some(None)` clears `m`.
-    pub m: Option<Option<u32>>,
+    pub m: Option<Option<u64>>,
     /// Replacement length bound.
     pub length_bound: Option<Bound>,
     /// Replacement norm.

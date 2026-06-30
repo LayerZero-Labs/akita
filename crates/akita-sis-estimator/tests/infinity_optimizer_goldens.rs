@@ -17,8 +17,8 @@ struct OptimizerGoldenRow {
     repetitions_log2: ExpectedLog2,
     beta: u32,
     eta: u32,
-    zeta: u32,
-    lattice_dimension: u32,
+    zeta: u64,
+    lattice_dimension: u64,
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn infinity_optimizer_goldens_match_pr217_trusted_rows() {
         }
         record_eq_mismatch("beta", row.beta, cost.beta, &row, &mut mismatches);
         record_eq_mismatch("eta", row.eta, cost.eta, &row, &mut mismatches);
-        record_eq_mismatch("zeta", row.zeta, cost.zeta, &row, &mut mismatches);
+        record_eq_mismatch_u64("zeta", row.zeta, cost.zeta, &row, &mut mismatches);
         if cost.d != row.lattice_dimension {
             mismatches.push(format!(
                 "d: expected {}, got {} for {row:?}",
@@ -176,6 +176,20 @@ fn record_eq_mismatch(
     field: &str,
     expected: u32,
     actual: Option<u32>,
+    row: &OptimizerGoldenRow,
+    mismatches: &mut Vec<String>,
+) {
+    if actual != Some(expected) {
+        mismatches.push(format!(
+            "{field}: expected {expected}, got {actual:?} for {row:?}"
+        ));
+    }
+}
+
+fn record_eq_mismatch_u64(
+    field: &str,
+    expected: u64,
+    actual: Option<u64>,
     row: &OptimizerGoldenRow,
     mismatches: &mut Vec<String>,
 ) {

@@ -7,7 +7,7 @@ pub mod zgsa;
 pub mod zgsa_tables;
 
 pub use gsa::gsa_squared_norms;
-pub use lgsa::lgsa_squared_norms;
+pub use lgsa::{lgsa_squared_norms, lgsa_summary, LgsaSummary};
 pub use profile::ShapeProfile;
 pub use zgsa::zgsa_squared_norms;
 
