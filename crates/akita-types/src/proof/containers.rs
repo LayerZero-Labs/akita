@@ -19,6 +19,16 @@ pub struct RingVec<F> {
 /// Serializer for a borrowed slice of ring elements without a length header.
 pub struct RingSliceSerializer<'a, F: FieldCore, const D: usize>(pub &'a [CyclotomicRing<F, D>]);
 
+/// D-free serializer for a flat coefficient buffer without a length header.
+///
+/// Serializes each field element in order using `serialize_with_mode`, producing
+/// byte-identical output to [`RingSliceSerializer`] for the same coefficient data.
+/// This is the D-free equivalent: the caller supplies `ring_dim` at the call site
+/// rather than baking it into a const generic.
+///
+/// Used by [`append_flat_coefficients`] and [`RingVec::append_flat_to_transcript`].
+pub struct FlatCoeffSerializer<'a, F: FieldCore>(pub &'a [F]);
+
 impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize
     for RingSliceSerializer<'_, F, D>
 {
@@ -39,6 +49,53 @@ impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize
             .map(|ring| ring.serialized_size(compress))
             .sum()
     }
+}
+
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FlatCoeffSerializer<'_, F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        for coeff in self.0 {
+            coeff.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.0.iter().map(|c| c.serialized_size(compress)).sum()
+    }
+}
+
+/// Absorb a flat coefficient buffer into `transcript` using the same canonical
+/// encoding as the typed [`RingSliceSerializer`] / [`RingCommitment::append_to_transcript`]
+/// path.
+///
+/// The buffer must contain `n_rings * ring_dim` coefficients in coefficient-major
+/// order (ring element 0 first, coefficients 0..ring_dim−1 within each element).
+/// This function derives the total absorption length from `ring_dim` at runtime,
+/// not from a const generic `D`.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0` or if
+/// `coeffs.len()` is not a multiple of `ring_dim`.
+pub fn append_flat_coefficients<F, T>(
+    label: &[u8],
+    coeffs: &[F],
+    ring_dim: usize,
+    transcript: &mut T,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + AkitaSerialize + CanonicalField,
+    T: Transcript<F>,
+{
+    if ring_dim == 0 || !coeffs.len().is_multiple_of(ring_dim) {
+        return Err(AkitaError::InvalidProof);
+    }
+    transcript.append_serde(label, &FlatCoeffSerializer(coeffs));
+    Ok(())
 }
 
 impl<F: FieldCore> RingVec<F> {
@@ -253,6 +310,34 @@ impl<F: FieldCore> RingVec<F> {
         Ok(())
     }
 
+    /// Absorb the stored coefficients into `transcript` using the D-free flat
+    /// encoding — byte-identical to the typed
+    /// [`append_as_ring_commitment`](Self::append_as_ring_commitment) path.
+    ///
+    /// `ring_dim` is the schedule-derived ring dimension.  When `self.ring_dim`
+    /// is non-zero the supplied value must match it (mismatches are detected and
+    /// returned as `InvalidProof` rather than panicked).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] if `ring_dim == 0`, if
+    /// `coeffs.len()` is not a multiple of `ring_dim`, or (when stored
+    /// `ring_dim > 0`) if the stored and supplied `ring_dim` disagree.
+    pub fn append_flat_to_transcript<T: Transcript<F>>(
+        &self,
+        label: &[u8],
+        ring_dim: usize,
+        transcript: &mut T,
+    ) -> Result<(), AkitaError>
+    where
+        F: AkitaSerialize + CanonicalField,
+    {
+        if self.ring_dim > 0 && self.ring_dim != ring_dim {
+            return Err(AkitaError::InvalidProof);
+        }
+        append_flat_coefficients(label, &self.coeffs, ring_dim, transcript)
+    }
+
     /// Reconstruct a `RingCommitment`.
     ///
     /// # Panics
@@ -385,6 +470,23 @@ impl<'a, F> RingView<'a, F> {
     /// The flat coefficient slice.
     pub fn coeffs(&self) -> &[F] {
         self.coeffs
+    }
+
+    /// Absorb this view's coefficients into `transcript` using the D-free flat
+    /// encoding — byte-identical to the typed
+    /// [`RingCommitment::append_to_transcript`] path.
+    ///
+    /// The `ring_dim` stored in this view is used directly; no external dimension
+    /// is needed since `RingView` always carries a valid, non-zero `ring_dim`.
+    pub fn append_flat_to_transcript<T>(&self, label: &[u8], transcript: &mut T)
+    where
+        F: FieldCore + AkitaSerialize + CanonicalField,
+        T: Transcript<F>,
+    {
+        // RingView invariant: ring_dim > 0 and coeffs.len() is a multiple of
+        // ring_dim, so the free function cannot fail here.
+        append_flat_coefficients(label, self.coeffs, self.ring_dim, transcript)
+            .expect("RingView invariant guarantees valid flat absorption");
     }
 }
 

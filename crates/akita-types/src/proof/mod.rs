@@ -36,7 +36,10 @@ pub use batch::{
     validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, ProverCommitmentRows, RingCommitment};
-pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, RingSliceSerializer, RingVec, RingView};
+pub use containers::{
+    append_flat_coefficients, FlatCoeffSerializer, FlatDigitBlockIter, FlatDigitBlocks,
+    RingSliceSerializer, RingVec, RingView,
+};
 pub use direct_witness::{
     segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape,
 };

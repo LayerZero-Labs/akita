@@ -1,9 +1,11 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
 use akita_algebra::CompressedUniPoly;
-use akita_field::Prime128Offset275;
+use akita_field::{Prime128Offset275, RandomSampling};
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
+use akita_transcript::{labels, AkitaTranscript};
+use rand::SeedableRng;
 
 type F = Prime128Offset275;
 
@@ -291,4 +293,166 @@ fn terminal_level_proof_serde_round_trip() {
         .shape()
         .check()
         .expect("terminal shape with reduction passes Valid::check()");
+}
+
+/// Helper: absorb `ring_elems` via the existing typed path and return the
+/// challenge bytes squeezed immediately afterwards.
+fn typed_challenge<const D: usize>(
+    ring_elems: &[CyclotomicRing<F, D>],
+    label: &[u8],
+    challenge_label: &[u8],
+    challenge_len: usize,
+) -> Vec<u8>
+where
+    F: CanonicalField,
+{
+    let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let commitment = RingCommitment::<F, D> {
+        u: ring_elems.to_vec(),
+    };
+    use crate::AppendToTranscript;
+    commitment.append_to_transcript(label, &mut t);
+    t.challenge_bytes(challenge_label, challenge_len)
+}
+
+/// Helper: absorb the same ring elements via the D-free flat path and return
+/// the challenge bytes squeezed immediately afterwards.
+fn flat_challenge<const D: usize>(
+    ring_elems: &[CyclotomicRing<F, D>],
+    label: &[u8],
+    challenge_label: &[u8],
+    challenge_len: usize,
+) -> Vec<u8>
+where
+    F: AkitaSerialize + CanonicalField,
+{
+    let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let rv = RingVec::from_ring_elems(ring_elems);
+    rv.append_flat_to_transcript(label, D, &mut t)
+        .expect("well-formed flat absorption must succeed");
+    t.challenge_bytes(challenge_label, challenge_len)
+}
+
+/// Prove that the D-free flat transcript absorber produces a byte-identical
+/// transcript state to the typed `RingSliceSerializer` / `RingCommitment`
+/// absorption path, for D ∈ {32, 64, 128, 256} and a fixed number of ring
+/// elements.
+///
+/// Both paths absorb the same field-element bytes in the same order (no
+/// length header, coefficient-major within each ring element). The comparison
+/// is via the first 64 challenge bytes squeezed after absorption — any
+/// divergence in the absorbed stream would produce a different challenge.
+#[test]
+fn flat_absorption_byte_identical_to_typed() {
+    const N_RINGS: usize = 3;
+    const CHALLENGE_LABEL: &[u8] = b"test_challenge";
+    const ABSORB_LABEL: &[u8] = b"commitment";
+    const CHALLENGE_LEN: usize = 64;
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0xdead_beef_cafe_1234);
+
+    // D = 32
+    {
+        const D: usize = 32;
+        let elems: Vec<CyclotomicRing<F, D>> = (0..N_RINGS)
+            .map(|_| CyclotomicRing::<F, D>::random(&mut rng))
+            .collect();
+        let typed = typed_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+        let flat = flat_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+        assert_eq!(
+            typed, flat,
+            "D=32: flat absorption must be byte-identical to typed path"
+        );
+    }
+
+    // D = 64
+    {
+        const D: usize = 64;
+        let elems: Vec<CyclotomicRing<F, D>> = (0..N_RINGS)
+            .map(|_| CyclotomicRing::<F, D>::random(&mut rng))
+            .collect();
+        let typed = typed_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+        let flat = flat_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+        assert_eq!(
+            typed, flat,
+            "D=64: flat absorption must be byte-identical to typed path"
+        );
+    }
+
+    // D = 128
+    {
+        const D: usize = 128;
+        let elems: Vec<CyclotomicRing<F, D>> = (0..N_RINGS)
+            .map(|_| CyclotomicRing::<F, D>::random(&mut rng))
+            .collect();
+        let typed = typed_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+        let flat = flat_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+        assert_eq!(
+            typed, flat,
+            "D=128: flat absorption must be byte-identical to typed path"
+        );
+    }
+
+    // D = 256
+    {
+        const D: usize = 256;
+        let elems: Vec<CyclotomicRing<F, D>> = (0..N_RINGS)
+            .map(|_| CyclotomicRing::<F, D>::random(&mut rng))
+            .collect();
+        let typed = typed_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+        let flat = flat_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+        assert_eq!(
+            typed, flat,
+            "D=256: flat absorption must be byte-identical to typed path"
+        );
+    }
+}
+
+/// Prove that the free-function form `append_flat_coefficients` also matches
+/// the typed path, and that `RingView::append_flat_to_transcript` does too.
+#[test]
+fn flat_absorption_free_fn_and_ring_view_match_typed() {
+    const D: usize = 64;
+    const N_RINGS: usize = 4;
+    const ABSORB_LABEL: &[u8] = b"commitment";
+    const CHALLENGE_LABEL: &[u8] = b"ch";
+    const CHALLENGE_LEN: usize = 32;
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0x1234_5678_9abc_def0);
+
+    let elems: Vec<CyclotomicRing<F, D>> = (0..N_RINGS)
+        .map(|_| CyclotomicRing::<F, D>::random(&mut rng))
+        .collect();
+
+    // Typed reference.
+    let typed = typed_challenge::<D>(&elems, ABSORB_LABEL, CHALLENGE_LABEL, CHALLENGE_LEN);
+
+    // Free function `append_flat_coefficients`.
+    let flat_coeffs: Vec<F> = elems
+        .iter()
+        .flat_map(|r| r.coefficients().iter().copied())
+        .collect();
+    let free_fn = {
+        let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        append_flat_coefficients(ABSORB_LABEL, &flat_coeffs, D, &mut t)
+            .expect("free fn flat absorption must succeed");
+        t.challenge_bytes(CHALLENGE_LABEL, CHALLENGE_LEN)
+    };
+    assert_eq!(
+        typed, free_fn,
+        "append_flat_coefficients must match typed path"
+    );
+
+    // `RingView::append_flat_to_transcript`.
+    let ring_view = {
+        let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let rv = RingVec::from_ring_elems(&elems);
+        let view = rv.view().expect("ring_dim = D is valid");
+        view.append_flat_to_transcript(ABSORB_LABEL, &mut t);
+        t.challenge_bytes(CHALLENGE_LABEL, CHALLENGE_LEN)
+    };
+    assert_eq!(
+        typed, ring_view,
+        "RingView::append_flat_to_transcript must match typed path"
+    );
 }
