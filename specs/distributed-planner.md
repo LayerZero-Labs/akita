@@ -342,6 +342,7 @@ impl ChunkedWitnessCfg {
 | Rule | Error | Where |
 |------|-------|-------|
 | `num_chunks == 0` | `InvalidSetup` | `validate` |
+| `num_chunks > MAX_WITNESS_CHUNKS` (64) | `InvalidSetup` | `validate` |
 | `num_chunks > 1` and not power of two | `InvalidSetup` | `validate` |
 | `num_activated_levels > 0` and `num_chunks == 1` | `InvalidSetup` | `validate` |
 | `num_chunks > 1` and `num_activated_levels == 0` | `InvalidSetup` (must specify level count) | `validate` |

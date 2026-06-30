@@ -111,6 +111,11 @@ impl WitnessLayout {
     }
 }
 
+/// Upper bound on [`ChunkedWitnessCfg::num_chunks`] enforced at layout validation
+/// and planner policy entry. Replicated `ẑ` scales witness width linearly in the
+/// chunk count; this cap closes a DoS vector from arbitrarily large layouts.
+pub const MAX_WITNESS_CHUNKS: usize = 64;
+
 /// Indexed multi-chunk preset on the shipped `num_chunks × num_activated_levels`
 /// grid (`num_chunks ∈ {2, 4, 8}`, `num_activated_levels ∈ {1, 2}`).
 ///
@@ -255,14 +260,20 @@ impl ChunkedWitnessCfg {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] for `num_chunks == 0`, a
-    /// non-power-of-two `num_chunks > 1`, or an inconsistent
-    /// `(num_chunks, num_activated_levels)` pair.
+    /// Returns [`AkitaError::InvalidSetup`] for `num_chunks == 0`,
+    /// `num_chunks > [`MAX_WITNESS_CHUNKS`]`, a non-power-of-two `num_chunks > 1`,
+    /// or an inconsistent `(num_chunks, num_activated_levels)` pair.
     pub fn validate(self) -> Result<(), AkitaError> {
         if self.num_chunks == 0 {
             return Err(AkitaError::InvalidSetup(
                 "ChunkedWitnessCfg: num_chunks must be >= 1".to_string(),
             ));
+        }
+        if self.num_chunks > MAX_WITNESS_CHUNKS {
+            return Err(AkitaError::InvalidSetup(format!(
+                "ChunkedWitnessCfg: num_chunks={} exceeds cap {MAX_WITNESS_CHUNKS}",
+                self.num_chunks
+            )));
         }
         if self.num_chunks > 1 && !self.num_chunks.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
@@ -354,6 +365,18 @@ mod tests {
         }
         .validate()
         .is_err());
+        assert!(ChunkedWitnessCfg {
+            num_chunks: 128,
+            num_activated_levels: 1,
+        }
+        .validate()
+        .is_err());
+        ChunkedWitnessCfg {
+            num_chunks: MAX_WITNESS_CHUNKS,
+            num_activated_levels: 1,
+        }
+        .validate()
+        .expect("max chunk count is valid");
         for n in [2usize, 4, 8, 16] {
             ChunkedWitnessCfg {
                 num_chunks: n,
