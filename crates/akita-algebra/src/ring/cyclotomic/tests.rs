@@ -117,6 +117,20 @@ fn wide_shift_sub_matches_narrow_fp64() {
 }
 
 #[test]
+fn mul_accumulate_all_ones_matches_schoolbook_product() {
+    let mut rng = StdRng::seed_from_u64(0xA11_0E5);
+    let ones = CyclotomicRing::<F64, D>::from_coefficients([F64::one(); D]);
+    for _ in 0..32 {
+        let src = CyclotomicRing::<F64, D>::random(&mut rng);
+        let schoolbook = src * ones;
+        let mut fast = CyclotomicRing::<F64, D>::zero();
+        src.mul_accumulate_all_ones_into(&mut fast);
+        assert_eq!(schoolbook, fast, "mul_accumulate_all_ones_into");
+        assert_eq!(schoolbook, src.mul_all_ones(), "mul_all_ones");
+    }
+}
+
+#[test]
 fn wide_mul_by_monomial_sum_matches_narrow_fp64() {
     let mut rng = StdRng::seed_from_u64(0xabcd);
     let src = CyclotomicRing::<F64, D>::random(&mut rng);

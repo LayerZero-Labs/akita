@@ -25,6 +25,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
+    a_ones_table: &FoldAOnesTable<F>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -187,5 +188,5 @@ where
         trace_claim_scales,
         trace_basis: basis,
     };
-    verify_fold::<F, E, T, D>(setup, transcript, prepared)
+    verify_fold::<F, E, T, D>(setup, transcript, prepared, a_ones_table)
 }

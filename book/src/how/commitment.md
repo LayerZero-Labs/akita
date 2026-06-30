@@ -14,8 +14,10 @@ cached.
 
 **Sources to fold in**
 
-- `crates/akita-setup/src/lib.rs:39-67`.
-- Paper §3.9 `sec:akita-setup` (packed shared setup), §3.8 `Setup`.
+- `crates/akita-setup/src/lib.rs` (setup construction, disk cache, `fold_a_ones` warm).
+- `crates/akita-types/src/proof/fold_response_rhs.rs` (`FoldAOnesTable`).
+- `specs/shifted-fold-response.md` (shifted fold response + setup warm).
+- Paper §4 `sec:akita-shifted-z`, `sec:akita-setup` (packed shared setup).
 - `specs/setup-layout-repack.md` (packed-setup direction — roadmap).
 
 ## Ajtai commitment mechanics

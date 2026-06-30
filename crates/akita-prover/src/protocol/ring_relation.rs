@@ -20,7 +20,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
+    fold_shift_consistency_row, AkitaCommitmentHint, FlatDigitBlocks, FoldAOnesTable, MRowLayout,
+    RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -347,65 +348,6 @@ where
     }
 }
 
-fn all_coeffs_one_ring<F: FieldCore, const D: usize>() -> CyclotomicRing<F, D> {
-    CyclotomicRing::from_coefficients([F::one(); D])
-}
-
-fn fold_shift_consistency_row<F, const D: usize>(
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
-    block_len: usize,
-    depth_commit: usize,
-    log_basis: u32,
-    committed_shift: u128,
-) -> Result<CyclotomicRing<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-{
-    if ring_multiplier_point.a_len() < block_len {
-        return Err(AkitaError::InvalidInput(format!(
-            "ring-multiplier a length mismatch: actual={} expected_at_least={block_len}",
-            ring_multiplier_point.a_len()
-        )));
-    }
-    let shift = F::from_u128(committed_shift);
-    let gadget_sum = gadget_row_scalars::<F>(depth_commit, log_basis)
-        .into_iter()
-        .fold(F::zero(), |acc, g| acc + g);
-    let ones = all_coeffs_one_ring::<F, D>().scale(&gadget_sum);
-    let mut acc = CyclotomicRing::<F, D>::zero();
-    for block_idx in 0..block_len {
-        if let Some(scalar) = ring_multiplier_point.a_constant_coeff(block_idx) {
-            acc += ones.scale(&scalar);
-        } else {
-            let a_rings = ring_multiplier_point
-                .a_rings()
-                .ok_or(AkitaError::InvalidProof)?;
-            let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
-            acc += *multiplier * ones;
-        }
-    }
-    Ok(acc.scale(&shift))
-}
-
-fn fold_shift_a_rows<F, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
-    lp: &LevelParams,
-    committed_shift: u128,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    B: DigitRowsComputeBackend<F>,
-{
-    let ones = vec![[1i8; D]; lp.inner_width()];
-    let mut rows = backend.digit_rows::<D>(prepared, lp.a_key.row_len(), &ones, lp.log_basis)?;
-    let shift = F::from_u128(committed_shift);
-    for row in &mut rows {
-        *row = row.scale(&shift);
-    }
-    Ok(rows)
-}
-
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
 pub struct RingRelationProver;
 
@@ -445,6 +387,7 @@ impl RingRelationProver {
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
+        a_ones_table: &FoldAOnesTable<F>,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
     where
         F: FieldCore + CanonicalField + FromPrimitiveInt,
@@ -563,12 +506,7 @@ impl RingRelationProver {
             lp.log_basis,
             z_folded_rings.committed_shift,
         )?;
-        let a_shift_rows = fold_shift_a_rows::<F, RB, D>(
-            ring_switch_ctx.backend(),
-            ring_switch_ctx.prepared(),
-            &lp,
-            z_folded_rings.committed_shift,
-        )?;
+        let a_shift_rows = a_ones_table.a_shift_rows::<D>(&lp, z_folded_rings.committed_shift)?;
         let y = generate_y::<F, D>(
             consistency_shift_row,
             y_v_slice,

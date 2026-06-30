@@ -1,8 +1,8 @@
 //! Config-backed prover setup construction.
 //!
 //! With `disk-persistence`, setup cache files store the expanded setup followed
-//! by setup-prefix slots. Caches written before setup-prefix persistence will
-//! fail to deserialize and should be regenerated.
+//! by setup-prefix slots and the warmed fold `A · 1` table. Caches written before
+//! fold A-ones persistence omit the trailing section and are warmed on load.
 
 mod recursion;
 
@@ -22,7 +22,7 @@ use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
-    FlatMatrix, SetupPrefixProverRegistry,
+    FlatMatrix, FoldAOnesTable, SetupPrefixProverRegistry,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -115,11 +115,12 @@ where
         }
     }
 
-    let setup = AkitaProverSetup::generate_with_capacity(
+    let mut setup = AkitaProverSetup::generate_with_capacity(
         max_num_vars,
         max_num_batched_polys,
         setup_envelope,
     )?;
+    setup.fold_a_ones = Cfg::warm_fold_a_ones_at_setup(setup.expanded.as_ref())?;
 
     #[cfg(feature = "disk-persistence")]
     if let Err(err) = save_prover_setup::<F, D, Cfg>(&setup, max_num_vars, max_num_batched_polys) {
@@ -262,6 +263,13 @@ pub(crate) fn save_prover_setup<
             storage_path.display()
         )));
     }
+    if let Err(e) = setup.fold_a_ones.serialize_compressed(&mut writer) {
+        let _ = fs::remove_file(&storage_path);
+        return Err(AkitaError::InvalidSetup(format!(
+            "failed to serialize fold A-ones cache {}: {e}",
+            storage_path.display()
+        )));
+    }
 
     tracing::info!("Successfully saved setup to disk");
     Ok(())
@@ -269,7 +277,7 @@ pub(crate) fn save_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: FieldCore + Valid + CanonicalField + RandomSampling,
+    F: FieldCore + Valid + CanonicalField + RandomSampling + akita_serialization::AkitaDeserialize<Context = ()>,
     const D: usize,
     Cfg: CommitmentConfig<Field = F>,
 >(
@@ -308,6 +316,30 @@ pub(crate) fn load_prover_setup<
     .map_err(|e| {
         AkitaError::InvalidSetup(format!("Failed to deserialize setup-prefix slots: {e}"))
     })?;
+    use std::io::BufRead;
+    let fold_a_ones = if reader.fill_buf().map_err(|e| {
+        AkitaError::InvalidSetup(format!("Failed to peek setup cache tail: {e}"))
+    })?.is_empty()
+    {
+        tracing::info!("Cached setup has no fold A-ones section; warming at load");
+        Cfg::warm_fold_a_ones_at_setup(&setup)?
+    } else {
+        let table = FoldAOnesTable::<F>::deserialize_with_mode(
+            &mut reader,
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .map_err(|e| {
+            AkitaError::InvalidSetup(format!("Failed to deserialize fold A-ones cache: {e}"))
+        })?;
+        if table.setup_seed() != &setup.seed().public_matrix_seed {
+            return Err(AkitaError::InvalidSetup(
+                "cached fold A-ones table seed does not match setup public_matrix_seed".to_string(),
+            ));
+        }
+        table
+    };
     let mut trailing = [0u8; 1];
     if reader
         .read(&mut trailing)
@@ -327,6 +359,7 @@ pub(crate) fn load_prover_setup<
     Ok(AkitaProverSetup {
         expanded: Arc::new(setup),
         prefix_slots,
+        fold_a_ones,
     })
 }
 
@@ -426,6 +459,7 @@ mod tests {
         let derived_verifier = AkitaVerifierSetup {
             expanded: Arc::new(decoded.clone()),
             prefix_slots: SetupPrefixVerifierRegistry::new(),
+            fold_a_ones: prover_setup.fold_a_ones.clone(),
         };
         assert_eq!(derived_verifier, verifier_setup);
     }
@@ -469,6 +503,32 @@ mod tests {
                 None => std::env::remove_var("LOCALAPPDATA"),
             }
             out
+        }
+
+        #[test]
+        fn fold_a_ones_roundtrip_through_setup_cache() {
+            with_test_cache_dir("fold-a-ones", || {
+                const MAX_VARS: usize = 12;
+
+                cleanup_setup_file_shape(MAX_VARS, 1);
+
+                let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
+
+                let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
+                let mut fresh_bytes = Vec::new();
+                prover_setup
+                    .fold_a_ones
+                    .serialize_compressed(&mut fresh_bytes)
+                    .unwrap();
+                let mut loaded_bytes = Vec::new();
+                loaded
+                    .fold_a_ones
+                    .serialize_compressed(&mut loaded_bytes)
+                    .unwrap();
+                assert_eq!(fresh_bytes, loaded_bytes);
+
+                cleanup_setup_file_shape(MAX_VARS, 1);
+            });
         }
 
         #[test]
@@ -569,6 +629,9 @@ mod tests {
                 let corrupt = AkitaProverSetup {
                     expanded: Arc::new(corrupt),
                     prefix_slots: SetupPrefixProverRegistry::new(),
+                    fold_a_ones: FoldAOnesTable::empty_for_seed(
+                        prover_setup.expanded.seed().public_matrix_seed,
+                    ),
                 };
                 save_prover_setup::<TestF, TEST_D, Cfg>(&corrupt, MAX_VARS, 1).unwrap();
 
@@ -624,6 +687,7 @@ mod tests {
                 let stale = AkitaProverSetup {
                     expanded: Arc::new(stale),
                     prefix_slots: SetupPrefixProverRegistry::new(),
+                    fold_a_ones: FoldAOnesTable::default(),
                 };
                 save_prover_setup::<TestF, TEST_D, Cfg>(&stale, MAX_VARS, MAX_BATCH).unwrap();
 

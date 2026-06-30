@@ -582,6 +582,7 @@ where
                 setup_contribution_mode,
                 None,
                 root_step.next_w_len,
+                &setup.fold_a_ones,
             )?;
             Ok(())
         }
@@ -627,6 +628,7 @@ where
                 setup_contribution_mode,
                 Some(&first_recursive_params),
                 root_step.next_w_len,
+                &setup.fold_a_ones,
             )?;
 
             let first_level_d = first_recursive_params.ring_dimension;
@@ -652,6 +654,7 @@ where
                 schedule,
                 current_state,
                 setup_contribution_mode,
+                &setup.fold_a_ones,
             )?;
             Ok(())
         }

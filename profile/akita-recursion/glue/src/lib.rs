@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, RingCommitment, SetupContributionMode,
-    SetupPrefixVerifierRegistry, VerifierOpeningBatch,
+    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, FoldAOnesTable, RingCommitment,
+    SetupContributionMode, SetupPrefixVerifierRegistry, VerifierOpeningBatch,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
@@ -444,6 +444,7 @@ where
                 shared_matrix,
             )?),
             prefix_slots,
+            fold_a_ones: FoldAOnesTable::empty_for_seed(seed.public_matrix_seed),
         })
     }
 
@@ -475,6 +476,7 @@ where
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
             ),
             prefix_slots,
+            fold_a_ones: FoldAOnesTable::empty_for_seed(seed.public_matrix_seed),
         })
     }
 

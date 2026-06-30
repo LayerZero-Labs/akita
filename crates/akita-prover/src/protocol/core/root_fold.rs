@@ -46,6 +46,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
     basis: BasisMode,
+    a_ones_table: &FoldAOnesTable<F>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore
@@ -110,6 +111,7 @@ where
         BlockOrder::RowMajor,
         m_row_layout,
         terminal_tail_t_vectors,
+        a_ones_table,
     )
 }
 
@@ -143,6 +145,7 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
     scheduled: &ExecutionSchedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
+    a_ones_table: &FoldAOnesTable<F>,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
     F: FieldCore
@@ -201,6 +204,7 @@ where
         MRowLayout::WithDBlock,
         None,
         basis,
+        a_ones_table,
     )?;
 
     prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
@@ -249,6 +253,7 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
     terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
+    a_ones_table: &FoldAOnesTable<F>,
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
     F: FieldCore
@@ -312,6 +317,7 @@ where
         MRowLayout::WithoutDBlock,
         terminal_tail_t_vectors,
         basis,
+        a_ones_table,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
     let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(

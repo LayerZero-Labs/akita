@@ -78,8 +78,17 @@ fn akita_verify(input: &[u8]) -> u32 {
     )))]
     let decoded_result = AkitaJoltInputs::<F, D>::read_from_bytes(input);
 
-    let decoded = match decoded_result {
+    let mut decoded = match decoded_result {
         Ok(decoded) => decoded,
+        Err(_) => {
+            end_cycle_tracking("deserialize_input");
+            return 1;
+        }
+    };
+    decoded.verifier_setup.fold_a_ones = match Cfg::warm_fold_a_ones_at_setup(
+        decoded.verifier_setup.expanded.as_ref(),
+    ) {
+        Ok(table) => table,
         Err(_) => {
             end_cycle_tracking("deserialize_input");
             return 1;

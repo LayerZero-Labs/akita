@@ -173,6 +173,24 @@ pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<us
     }
 }
 
+/// Schedule lookup keys scanned by [`proof_optimized_max_setup_matrix_size`].
+pub(crate) fn envelope_schedule_lookup_keys(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Vec<AkitaScheduleLookupKey> {
+    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
+    let mut keys = Vec::new();
+    for num_vars in 1..=max_num_vars {
+        for &num_polys in &poly_counts {
+            let key = AkitaScheduleLookupKey::new(num_vars, num_polys);
+            if key.validate().is_ok() {
+                keys.push(key);
+            }
+        }
+    }
+    keys
+}
+
 /// Worst-case opening batch for a `(num_vars, num_polynomials)` shape.
 pub fn worst_case_grouped_opening_batch_for_shape(
     num_vars: usize,

@@ -4,7 +4,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_flat, sample_public_matrix_seed, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixProverRegistry,
+    AkitaVerifierSetup, FoldAOnesTable, SetupMatrixEnvelope, SetupPrefixProverRegistry,
     SetupPrefixVerifierRegistry,
 };
 use std::sync::Arc;
@@ -13,13 +13,23 @@ use std::sync::Arc;
 ///
 /// Backend-prepared compute state is intentionally not stored here. Host code
 /// prepares a compute backend from the expanded setup when it wants to prove.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AkitaProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
     pub prefix_slots: SetupPrefixProverRegistry<F, D>,
+    /// Schedule-warm `A · 1` rows derived from `expanded` (not disk-serialized).
+    pub fold_a_ones: FoldAOnesTable<F>,
 }
+
+impl<F: FieldCore, const D: usize> PartialEq for AkitaProverSetup<F, D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expanded == other.expanded && self.prefix_slots == other.prefix_slots
+    }
+}
+
+impl<F: FieldCore, const D: usize> Eq for AkitaProverSetup<F, D> {}
 
 impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     /// Generate a prover setup from already-computed setup capacity bounds.
@@ -62,6 +72,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         Ok(Self {
             expanded,
             prefix_slots: SetupPrefixProverRegistry::new(),
+            fold_a_ones: FoldAOnesTable::empty_for_seed(public_matrix_seed),
         })
     }
 
@@ -77,6 +88,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         Ok(AkitaVerifierSetup {
             expanded: self.expanded.clone(),
             prefix_slots,
+            fold_a_ones: self.fold_a_ones.clone(),
         })
     }
 
@@ -136,11 +148,13 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
                 "expanded setup matrix length does not match setup seed".to_string(),
             ));
         }
+        let public_matrix_seed = expanded.seed().public_matrix_seed;
         let expanded = Arc::new(expanded);
         expanded.shared_matrix().total_ring_elements_at::<D>()?;
         Ok(Self {
             expanded,
             prefix_slots: SetupPrefixProverRegistry::new(),
+            fold_a_ones: FoldAOnesTable::empty_for_seed(public_matrix_seed),
         })
     }
 }

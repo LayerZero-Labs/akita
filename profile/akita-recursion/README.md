@@ -73,7 +73,10 @@ trace done
 
 Most of `deserialize_input` is decoding the ≈ 576 MiB expanded
 verifier-setup matrix that lives inside the blob; the proof itself is
-a tiny fraction.
+a tiny fraction. The blob does **not** carry the warmed `FoldAOnesTable`
+(`A · 1` rows for shifted-fold RHS constants). Guest and host re-warm it
+after decode via `CommitmentConfig::warm_fold_a_ones_at_setup` (~0.2–0.3s
+for wide envelopes; dominated by matrix decode at nv=32).
 
 ## Running the full prove pipeline
 

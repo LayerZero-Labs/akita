@@ -272,6 +272,30 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         }
     }
 
+    /// Fused multiply-by-all-ones + accumulate:
+    /// `dst += self * (1 + X + ... + X^{D-1})`.
+    ///
+    /// In the negacyclic model, coefficient `k` of the product is
+    /// `2 * sum_{i=0}^k self_i - sum_i self_i`, so this costs `O(D)` field
+    /// additions instead of `O(D^2)` for a generic multiply.
+    #[inline]
+    pub fn mul_accumulate_all_ones_into(&self, dst: &mut Self) {
+        let total = self.coeffs.iter().fold(F::zero(), |acc, coeff| acc + *coeff);
+        let mut prefix = F::zero();
+        for (dst_coeff, coeff) in dst.coeffs.iter_mut().zip(self.coeffs.iter()) {
+            prefix += *coeff;
+            *dst_coeff += prefix + prefix - total;
+        }
+    }
+
+    /// `self * (1 + X + ... + X^{D-1})` in `O(D)` field additions.
+    #[must_use]
+    pub fn mul_all_ones(&self) -> Self {
+        let mut result = Self::zero();
+        self.mul_accumulate_all_ones_into(&mut result);
+        result
+    }
+
     /// Fused `dst += self * rhs` when `rhs` is coefficient-sparse.
     ///
     /// This is exact for any field coefficients in `rhs`, but runs in

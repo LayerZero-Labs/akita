@@ -10,14 +10,17 @@
 //! [`policy_of`] bridge. Fallback is the default for every preset.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
-use akita_planner::PlannerPolicy;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
+use akita_planner::{
+    fold_level_params_from_entry, generated::table_entry, generated_schedule_lookup_key,
+    validate_catalog_identity, PlannerPolicy,
+};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams,
-    GroupBatchAkitaScheduleLookupKey, LevelParams, OpeningBatchShape, Schedule,
-    SetupMatrixEnvelope, SisModulusFamily, Step,
+    AjtaiKeyParams, AkitaExpandedSetup, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    DecompositionParams, FoldAOnesTable, GroupBatchAkitaScheduleLookupKey, LevelParams,
+    OpeningBatchShape, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
 pub mod generated_families;
@@ -226,6 +229,67 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             Self::fold_challenge_shape_at_level,
             Self::schedule_catalog(),
         )
+    }
+
+    /// Precompute schedule-warm `A · 1` rows for setup load.
+    ///
+    /// Warms every `(num_vars, num_polynomials)` shape scanned by
+    /// [`Self::max_setup_matrix_size`], so fold geometries match the setup
+    /// envelope the caller already generated.
+    ///
+    /// # Errors
+    ///
+    /// Propagates schedule resolution or matrix-view failures while warming.
+    fn warm_fold_a_ones_at_setup(
+        setup: &AkitaExpandedSetup<Self::Field>,
+    ) -> Result<FoldAOnesTable<Self::Field>, AkitaError>
+    where
+        Self::Field: FromPrimitiveInt,
+    {
+        let policy = policy_of::<Self>();
+        let keys = proof_optimized::envelope_schedule_lookup_keys(
+            setup.seed().max_num_vars,
+            setup.seed().max_num_batched_polys,
+        );
+        let catalog = Self::schedule_catalog();
+        if let Some(ref table) = catalog {
+            validate_catalog_identity(
+                table,
+                &policy,
+                Self::ring_challenge_config,
+                Self::fold_challenge_shape_at_level,
+            )?;
+        }
+        let mut table =
+            FoldAOnesTable::empty_for_seed(setup.seed().public_matrix_seed);
+        let mut miss_schedules = Vec::new();
+        for key in keys {
+            let mut warmed = false;
+            if let Some(ref catalog_table) = catalog {
+                if let Some(entry) =
+                    table_entry(*catalog_table, generated_schedule_lookup_key(key))
+                {
+                    let level_params = fold_level_params_from_entry(
+                        entry,
+                        key,
+                        &policy,
+                        Self::ring_challenge_config,
+                        Self::fold_challenge_shape_at_level,
+                    )?;
+                    table.warm_level_params(setup, &level_params)?;
+                    warmed = true;
+                }
+            }
+            if !warmed {
+                if let Ok(schedule) = Self::runtime_schedule(key) {
+                    miss_schedules.push(schedule);
+                }
+            }
+        }
+        if !miss_schedules.is_empty() {
+            table.warm_schedules(setup, miss_schedules.iter())?;
+        }
+        Ok(table)
     }
 
     /// Schedule used to derive the standalone conservative layout for `commit_group`.

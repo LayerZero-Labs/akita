@@ -10,6 +10,7 @@
 pub mod batch;
 pub mod commitment;
 pub mod opening_batch;
+pub mod fold_response_rhs;
 pub mod relation;
 pub mod ring_relation;
 pub mod scheme;
@@ -52,6 +53,12 @@ pub use opening_batch::{
     OpeningBatchLimits, OpeningBatchShape, OpeningGroupShape, PointVariableSelection,
     VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
     GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
+};
+pub use fold_response_rhs::{
+    a_ones_from_setup, all_coeffs_one_ring, fold_a_shift_rows_from_setup, fold_shift_consistency_row,
+    relation_claim_from_fold_active_rows_for_level,
+    relation_claim_from_fold_active_rows_for_level_extension, scale_a_shift_rows,
+    FoldAOnesGeometryKey, FoldAOnesTable,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{

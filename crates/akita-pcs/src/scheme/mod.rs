@@ -151,6 +151,7 @@ where
         let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B, D>(
             &setup.expanded,
             &setup.prefix_slots,
+            &setup.fold_a_ones,
             stacks,
             claims,
             transcript,

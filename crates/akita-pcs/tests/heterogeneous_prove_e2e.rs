@@ -99,6 +99,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let proof = batched_prove::<Cfg, _, DensePoly<F, D>, _, _, _, _, D>(
         &setup.expanded,
         &setup.prefix_slots,
+        &setup.fold_a_ones,
         &stack,
         ProverOpeningBatch {
             point: opening_point[..].into(),

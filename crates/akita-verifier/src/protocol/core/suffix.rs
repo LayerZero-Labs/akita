@@ -178,6 +178,7 @@ pub(super) fn verify_suffix<'a, F, L, T>(
     schedule: &Schedule,
     mut current_state: SuffixVerifierState<'a, F, L>,
     setup_contribution_mode: SetupContributionMode,
+    a_ones_table: &FoldAOnesTable<F>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -214,7 +215,7 @@ where
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
+                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared, a_ones_table)
                 })?;
 
                 let next_level_d = next_params.ring_dimension;
@@ -265,7 +266,7 @@ where
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
+                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared, a_ones_table)
                 })?;
                 // The trailing-Direct witness shape is already validated in
                 // `verify_folded_batched_proof` before this loop.

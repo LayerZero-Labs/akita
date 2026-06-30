@@ -105,8 +105,9 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
     use akita_types::{
-        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, MRowLayout,
-        PointVariableSelection, RingCommitment, RingMultiplierOpeningPoint,
+        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, FoldAOnesTable,
+        FoldStep, LevelParams, MRowLayout, PointVariableSelection, RingCommitment,
+        RingMultiplierOpeningPoint, Schedule, Step,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -114,6 +115,22 @@ mod tests {
     use std::array::from_fn;
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
+
+    fn fold_a_ones_table_for_lp<F: FieldCore + CanonicalField + FromPrimitiveInt>(
+        setup: &akita_types::AkitaExpandedSetup<F>,
+        lp: &LevelParams,
+    ) -> FoldAOnesTable<F> {
+        let schedule = Schedule {
+            steps: vec![Step::Fold(FoldStep {
+                params: lp.clone(),
+                current_w_len: 64,
+                next_w_len: 32,
+                level_bytes: 0,
+            })],
+            total_bytes: 0,
+        };
+        FoldAOnesTable::build_from_schedule(setup, &schedule).expect("fold A-ones table")
+    }
 
     fn prover_fold_claims<'a, F: FieldCore + Clone, P, const D: usize>(
         point: &'a [F],
@@ -345,6 +362,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let a_ones_table = fold_a_ones_table_for_lp(setup.expanded.as_ref(), &lp);
         let (instance, witness) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
@@ -358,6 +376,7 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
                 None,
+                &a_ones_table,
             )
             .expect("ring relation");
 
@@ -479,6 +498,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let a_ones_table = fold_a_ones_table_for_lp(setup.expanded.as_ref(), &lp);
         let (instance, witness) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
@@ -492,6 +512,7 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
                 None,
+                &a_ones_table,
             )
             .expect("ring relation");
 
@@ -646,6 +667,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let a_ones_table = fold_a_ones_table_for_lp(setup.expanded.as_ref(), &level_params);
         let (instance, witness) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
@@ -659,6 +681,7 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
                 None,
+                &a_ones_table,
             )
             .expect("ring relation");
 
@@ -800,6 +823,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let a_ones_table = fold_a_ones_table_for_lp(setup.expanded.as_ref(), &level_params);
         let (instance, witness) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
@@ -813,6 +837,7 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithoutDBlock,
                 None,
+                &a_ones_table,
             )
             .expect("ring relation");
 

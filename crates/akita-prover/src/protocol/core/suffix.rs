@@ -68,6 +68,7 @@ pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
     starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
+    a_ones_table: &FoldAOnesTable<Cfg::Field>,
 ) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -153,6 +154,7 @@ where
                 level_params,
                 m_row_layout,
                 tail_t_vectors,
+                a_ones_table,
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
@@ -208,6 +210,7 @@ where
                         level_params,
                         m_row_layout,
                         tail_t_vectors,
+                        a_ones_table,
                     )
                     .map_err(|err| {
                         AkitaError::InvalidInput(format!(
@@ -285,6 +288,7 @@ fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
+    a_ones_table: &FoldAOnesTable<F>,
 ) -> Result<PreparedFold<F, L, D>, AkitaError>
 where
     F: FieldCore
@@ -362,6 +366,7 @@ where
         BlockOrder::ColumnMajor,
         m_row_layout,
         terminal_tail_t_vectors,
+        a_ones_table,
     )
 }
 

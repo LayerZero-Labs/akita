@@ -1,5 +1,6 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
+use super::fold_response_rhs::FoldAOnesTable;
 use super::setup_prefix::SetupPrefixVerifierRegistry;
 use crate::FlatMatrix;
 #[cfg(test)]
@@ -86,13 +87,23 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 }
 
 /// Verifier setup artifact derived from prover setup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
     pub prefix_slots: SetupPrefixVerifierRegistry<F>,
+    /// Schedule-warm `A · 1` rows derived from `expanded` (not serialized).
+    pub fold_a_ones: FoldAOnesTable<F>,
 }
+
+impl<F: FieldCore> PartialEq for AkitaVerifierSetup<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expanded == other.expanded && self.prefix_slots == other.prefix_slots
+    }
+}
+
+impl<F: FieldCore> Eq for AkitaVerifierSetup<F> {}
 
 impl<F: FieldCore> AkitaExpandedSetup<F> {
     /// Build an expanded setup from a trusted matrix the caller has already
@@ -499,19 +510,22 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let mut reader = reader;
+        let expanded = Arc::new(AkitaExpandedSetup::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?);
+        let prefix_slots = SetupPrefixVerifierRegistry::deserialize_with_mode(
+            reader,
+            compress,
+            validate,
+            &(),
+        )?;
         Ok(Self {
-            expanded: Arc::new(AkitaExpandedSetup::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?),
-            prefix_slots: SetupPrefixVerifierRegistry::deserialize_with_mode(
-                reader,
-                compress,
-                validate,
-                &(),
-            )?,
+            fold_a_ones: FoldAOnesTable::empty_for_seed(expanded.seed().public_matrix_seed),
+            expanded,
+            prefix_slots,
         })
     }
 }
@@ -560,6 +574,7 @@ mod tests {
             },
         };
         prefix_slots.insert(slot).expect("insert prefix slot");
+        let public_matrix_seed = setup_seed.public_matrix_seed;
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
@@ -568,6 +583,7 @@ mod tests {
                 ),
             ),
             prefix_slots,
+            fold_a_ones: FoldAOnesTable::empty_for_seed(public_matrix_seed),
         };
 
         let mut bytes = Vec::new();
@@ -584,6 +600,7 @@ mod tests {
         let setup_seed = seed([7u8; 32]);
         let wrong_seed = [9u8; 32];
         let wrong_matrix = derive_public_matrix_flat::<F, D>(2, &wrong_seed);
+        let public_matrix_seed = setup_seed.public_matrix_seed;
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
@@ -592,6 +609,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(),
+            fold_a_ones: FoldAOnesTable::empty_for_seed(public_matrix_seed),
         };
 
         let mut bytes = Vec::new();
@@ -607,6 +625,7 @@ mod tests {
     fn strict_verifier_setup_decode_rejects_truncated_seed_prefix_matrix() {
         let setup_seed = seed([7u8; 32]);
         let short_matrix = derive_public_matrix_flat::<F, D>(1, &setup_seed.public_matrix_seed);
+        let public_matrix_seed = setup_seed.public_matrix_seed;
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
@@ -615,6 +634,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(),
+            fold_a_ones: FoldAOnesTable::empty_for_seed(public_matrix_seed),
         };
 
         let mut bytes = Vec::new();

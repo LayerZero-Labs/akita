@@ -268,6 +268,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     block_order: BlockOrder,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
+    a_ones_table: &FoldAOnesTable<F>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -337,6 +338,7 @@ where
                 transcript,
                 m_row_layout,
                 terminal_tail_t_vectors,
+                a_ones_table,
             })
         } else {
             let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
@@ -372,6 +374,7 @@ where
                     transcript,
                     m_row_layout,
                     terminal_tail_t_vectors,
+                    a_ones_table,
                 },
             )
         }
@@ -393,6 +396,7 @@ where
             transcript,
             m_row_layout,
             terminal_tail_t_vectors,
+            a_ones_table,
         })
     }
 }
@@ -422,6 +426,7 @@ where
     transcript: &'p mut T,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
+    a_ones_table: &'a FoldAOnesTable<F>,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
@@ -463,6 +468,7 @@ where
         transcript,
         m_row_layout,
         terminal_tail_t_vectors,
+        a_ones_table,
     } = args;
     let opening = stack.opening();
     let prepared_point = prepare_opening_point::<F, E, D>(
@@ -511,6 +517,7 @@ where
         row_coefficient_rings,
         m_row_layout,
         terminal_tail_t_vectors,
+        a_ones_table,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let row_coefficients = if pad_base_evals {

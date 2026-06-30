@@ -88,6 +88,7 @@ where
 pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    fold_a_ones: &FoldAOnesTable<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
@@ -203,6 +204,7 @@ where
     prove::<Cfg, T, P, C, O, TS, R, D>(
         expanded,
         prefix_slots,
+        fold_a_ones,
         stacks,
         transcript,
         claims,
@@ -230,6 +232,7 @@ where
 pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, D>,
+    fold_a_ones: &FoldAOnesTable<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
@@ -326,6 +329,7 @@ where
             terminal_shape,
             basis,
             setup_contribution_mode,
+            fold_a_ones,
         )?;
         return Ok((
             AkitaBatchedProof {
@@ -345,6 +349,7 @@ where
         &root_scheduled,
         basis,
         setup_contribution_mode,
+        fold_a_ones,
     )?;
     let next_state = root.next_state;
     let root = AkitaBatchedRootProof::new(root.level_proof);
@@ -357,6 +362,7 @@ where
         next_state,
         schedule,
         setup_contribution_mode,
+        fold_a_ones,
     )?;
     Ok((
         AkitaBatchedProof {

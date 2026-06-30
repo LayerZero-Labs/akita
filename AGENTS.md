@@ -58,3 +58,4 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | Transcript hardening | [`specs/transcript-hardening.md`](specs/transcript-hardening.md) |
 | Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --format rust-split` |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |
+| Shifted fold response (`z_comm`, RHS `A·1`) | [`specs/shifted-fold-response.md`](specs/shifted-fold-response.md), [`crates/akita-types/src/proof/fold_response_rhs.rs`](crates/akita-types/src/proof/fold_response_rhs.rs) |

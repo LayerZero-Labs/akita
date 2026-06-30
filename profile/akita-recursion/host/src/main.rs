@@ -142,8 +142,12 @@ fn load_blob(input: &Path) -> Result<Vec<u8>, String> {
 
 fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
     info!("strictly decoding and verifying verifier-input blob before trusted benchmark replay");
-    let decoded = AkitaJoltInputs::<F, D>::read_from_bytes(blob)
+    let mut decoded = AkitaJoltInputs::<F, D>::read_from_bytes(blob)
         .map_err(|err| format!("strict input decode failed: {err}"))?;
+    decoded.verifier_setup.fold_a_ones = Cfg::warm_fold_a_ones_at_setup(
+        decoded.verifier_setup.expanded.as_ref(),
+    )
+    .map_err(|err| format!("fold A-ones warmup failed: {err}"))?;
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let openings = [decoded.opening];
     batched_verify::<Cfg, _, D>(

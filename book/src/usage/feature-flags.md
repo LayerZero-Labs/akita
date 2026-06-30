@@ -17,7 +17,7 @@ Disable parallel locally: `cargo build --no-default-features` (or add only the f
 
 | Feature | Enables |
 |---------|---------|
-| `disk-persistence` | Disk-backed setup cache paths (`akita-setup/disk-persistence`) |
+| `disk-persistence` | Disk-backed setup cache (`akita-setup/disk-persistence`): expanded matrix, prefix slots, and warmed `FoldAOnesTable` (`A · 1` rows for shifted fold RHS). Legacy caches without the fold section warm on load. |
 | `logging-transcript` | `LoggingTranscript` schedule events and wire-before-squeeze smell checks in transcript tests |
 | `profile-ci` | Schedule features needed for the CI profile-bench matrix (see [Profiling](./profiling.md)) |
 

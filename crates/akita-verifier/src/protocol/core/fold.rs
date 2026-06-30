@@ -374,74 +374,13 @@ where
     Ok(None)
 }
 
-fn all_coeffs_one_ring<F: FieldCore, const D: usize>() -> CyclotomicRing<F, D> {
-    CyclotomicRing::from_coefficients([F::one(); D])
-}
-
-fn fold_shift_consistency_row<F, const D: usize>(
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
-    block_len: usize,
-    depth_commit: usize,
-    log_basis: u32,
-    committed_shift: u128,
-) -> Result<CyclotomicRing<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-{
-    if ring_multiplier_point.a_len() < block_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    let shift = F::from_u128(committed_shift);
-    let gadget_sum = gadget_row_scalars::<F>(depth_commit, log_basis)
-        .into_iter()
-        .fold(F::zero(), |acc, g| acc + g);
-    let ones = all_coeffs_one_ring::<F, D>().scale(&gadget_sum);
-    let mut acc = CyclotomicRing::<F, D>::zero();
-    for block_idx in 0..block_len {
-        if let Some(scalar) = ring_multiplier_point.a_constant_coeff(block_idx) {
-            acc += ones.scale(&scalar);
-        } else {
-            let a_rings = ring_multiplier_point
-                .a_rings()
-                .ok_or(AkitaError::InvalidProof)?;
-            let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
-            acc += *multiplier * ones;
-        }
-    }
-    Ok(acc.scale(&shift))
-}
-
-fn fold_shift_a_rows<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
-    lp: &LevelParams,
-    committed_shift: u128,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-{
-    let a_view = setup
-        .expanded
-        .shared_matrix()
-        .ring_view::<D>(lp.a_key.row_len(), lp.inner_width())?;
-    let ones = all_coeffs_one_ring::<F, D>();
-    let shift = F::from_u128(committed_shift);
-    let mut rows = Vec::with_capacity(lp.a_key.row_len());
-    for setup_row in a_view.rows() {
-        let mut acc = CyclotomicRing::<F, D>::zero();
-        for entry in setup_row {
-            acc += *entry * ones;
-        }
-        rows.push(acc.scale(&shift));
-    }
-    Ok(rows)
-}
-
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub(in crate::protocol::core) fn verify_fold<F, E, T, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     prepared: PreparedFoldReplay<'_, F, E, D>,
+    a_ones_table: &FoldAOnesTable<F>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
@@ -452,7 +391,6 @@ where
     let commitment_rows = prepared
         .opening_batch
         .single_group_commitment()
-        .copied()
         .ok_or(AkitaError::InvalidProof)?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
@@ -493,12 +431,12 @@ where
         prepared.lp.log_basis,
         committed_shift,
     )?;
-    let a_shift_rows = fold_shift_a_rows::<F, D>(setup, prepared.lp, committed_shift)?;
+    let a_shift_rows = a_ones_table.a_shift_rows::<D>(prepared.lp, committed_shift)?;
     let relation_y = generate_y::<F, D>(
         consistency_shift_row,
         y_v_slice,
         commitment_rows,
-        &a_shift_rows,
+        a_shift_rows.as_ref(),
         n_d_active,
         prepared.lp.effective_commit_rows(),
         prepared.lp.b_inner_rows_per_group(),
@@ -543,8 +481,18 @@ where
             )?
         }
     };
-    let relation_claim =
-        relation_claim_from_rows_extension::<F, E, D>(&rs.tau1, rs.alpha, relation_instance.y())?;
+    let num_commitments = commitment_rows.len() / prepared.lp.effective_commit_rows();
+    let relation_claim = relation_claim_from_fold_active_rows_for_level_extension::<F, E, D>(
+        prepared.lp,
+        prepared.m_row_layout,
+        num_commitments,
+        &rs.tau1,
+        rs.alpha,
+        &consistency_shift_row,
+        &relation_instance.v,
+        commitment_rows,
+        a_shift_rows.as_ref(),
+    )?;
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
     let is_terminal_stage2 = matches!(prepared.stage2, AkitaStage2Proof::Terminal(_));
     let trace_gamma = if is_terminal_stage2 {

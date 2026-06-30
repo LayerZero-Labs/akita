@@ -33,8 +33,8 @@ pub use generated::{
 };
 pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
-    estimate_proof_bytes, generated_schedule_lookup_key, resolve_group_batch_schedule,
-    resolve_schedule, schedule_from_entry,
+    estimate_proof_bytes, fold_level_params_from_entry, generated_schedule_lookup_key,
+    resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
 };
 pub use schedule_params::find_schedule;
 

@@ -2,6 +2,7 @@ use super::repeated_b::repeated_b_commitment_rows;
 use super::*;
 use crate::compute::{OperationCtx, RingSwitchProveBackend};
 use crate::validation::validate_i8_setup_log_basis;
+use akita_types::gadget_row_scalars;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///

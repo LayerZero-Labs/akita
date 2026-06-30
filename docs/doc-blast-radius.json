@@ -112,12 +112,17 @@
       "code": [
         "crates/akita-setup/**",
         "crates/akita-prover/src/api/commitment.rs",
-        "crates/akita-prover/src/backend/**"
+        "crates/akita-prover/src/api/setup.rs",
+        "crates/akita-prover/src/backend/**",
+        "crates/akita-types/src/proof/fold_response_rhs.rs",
+        "crates/akita-config/src/lib.rs"
       ],
       "consider_updating": [
         "book/src/how/commitment.md",
         "book/src/usage/commitment-api.md",
-        "specs/setup-*.md"
+        "book/src/usage/feature-flags.md",
+        "specs/setup-*.md",
+        "specs/shifted-fold-response.md"
       ]
     },
     {

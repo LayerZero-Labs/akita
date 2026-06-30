@@ -2,7 +2,8 @@
 
 ## Status
 
-Draft implementation spec for a PR stacked on `fix/a-role-public-fold-cap`.
+Implemented on PR #254 (`quang/shifted-z-fold-response`), stacked on
+`fix/a-role-public-fold-cap`.
 
 ## Motivation
 
@@ -316,6 +317,51 @@ Add focused tests for:
 - End-to-end fold proof still verifies for dense and one-hot roots.
 - Terminal segment-typed witness encodes semantic `z` but expands to committed
   shifted digit planes.
+
+## Setup artifacts and performance
+
+The affine fold rows need public constants `eta * <a, G 1>` and `eta * A 1`.
+Both depend only on the public setup matrix prefix, the fold level geometry
+(`n_a`, `inner_width`, ring dimension), and the schedule-derived `eta`. They do
+not depend on the proof witness.
+
+### `FoldAOnesTable`
+
+`akita-types::proof::fold_response_rhs::FoldAOnesTable` stores **unscaled**
+`A · 1` rows keyed by `(a_row_len, inner_width)` per ring-dimension bucket.
+The public shift `eta` is applied at lookup time.
+
+Warming happens once at prover setup:
+
+1. `CommitmentConfig::warm_fold_a_ones_at_setup` scans the same
+   `(num_vars, num_polynomials)` envelope as `max_setup_matrix_size`.
+2. For catalog presets, fold geometries come from
+   `akita_planner::fold_level_params_from_entry` (no full `Schedule`
+   materialization). Catalog misses fall back to `runtime_schedule`.
+3. Infeasible envelope shapes are skipped (same semantics as setup-matrix
+   sizing).
+4. Each new geometry row uses `CyclotomicRing::mul_accumulate_all_ones_into`
+   (O(D) prefix formula per setup row, row-parallel).
+
+The table lives on `AkitaProverSetup` and `AkitaVerifierSetup`. It is **not**
+part of the wire-format verifier setup blob. Jolt recursion guest/host re-warm
+after decoding the expanded matrix.
+
+`PartialEq` on setup compares only `expanded` and `prefix_slots`; the table is
+a derived cache.
+
+### Disk cache (`disk-persistence`)
+
+With `akita-setup/disk-persistence`, `.setup` cache files append the serialized
+`FoldAOnesTable` after `prefix_slots`. On load:
+
+- trailing section present: deserialize and bind to `public_matrix_seed`;
+- legacy caches (EOF after prefix slots): call `warm_fold_a_ones_at_setup`.
+
+For large presets the warm step is ~0.2–0.3s on a fresh build; a cache hit
+still spends most of setup load time deserializing the expanded matrix (hundreds
+of MB for production one-hot envelopes). The fold table removes repeat warm work
+on subsequent process starts, not the matrix I/O.
 
 ## PR Shape
 
