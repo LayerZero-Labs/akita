@@ -42,3 +42,40 @@ third_party/lattice-estimator` to every shard, and rejects any estimator checkou
 whose `HEAD` does not match `metadata.json`.
 
 Manual workflow only. Rust CI does not require Sage or an initialized submodule.
+
+## Infinity-norm goldens
+
+The infinity-norm harness is separate from the Euclidean table generator. It
+targets lattice-estimator PR 217:
+
+```text
+quangvdao:quang/fix-amplify-tiny-success
+c667a48546f140c3a5454c7503c3ca44a264cce2
+```
+
+Profile:
+
+```text
+norm = infinity
+red_cost_model = ADPS16
+red_shape_model = LGSA
+zeta = full optimizer
+target_bits = 138
+```
+
+Refresh:
+
+```bash
+sage -python scripts/sis_golden/refresh_infinity_golden.py \
+  --estimator-path /path/to/lattice-estimator-pr217
+```
+
+Replay:
+
+```bash
+sage -python scripts/sis_golden/check_infinity.py \
+  --estimator-path /path/to/lattice-estimator-pr217
+```
+
+For quick local smoke tests, use the same script with filters such as
+`--families q32 --dims 32 --ranks 1 --limit 2`.

@@ -87,7 +87,7 @@ d = 32, 64, 128, 256
 rank = 1, 5, 20
 width = fixed small values plus one width-search bracket per family
 coeff_linf_bound = representative Akita buckets, including small and large cells
-target_bits = 128
+target_bits = 138
 profile = ADPS16 + LGSA + norm infinity + full zeta optimizer
 ```
 
