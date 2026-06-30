@@ -99,3 +99,20 @@ Replay:
 sage -python scripts/sis_golden/check_fixed_infinity.py \
   --estimator-path /path/to/lattice-estimator-pr217
 ```
+
+Benchmark the Rust fixed-cell estimator:
+
+```bash
+cargo bench -p akita-sis-estimator --bench fixed_infinity
+```
+
+By default the bench runs a representative subset of fixed infinity cells. To
+bench a custom fixed-cell grid, point `AKITA_SIS_FIXED_INFINITY_BENCH_CSV` at a
+CSV with the fixed golden columns `family`, `d`, `rank`, `width`,
+`coeff_linf_bound`, `beta_input`, and `zeta_input`. The committed fixture works
+as a full trusted-cell input:
+
+```bash
+AKITA_SIS_FIXED_INFINITY_BENCH_CSV=scripts/sis_golden/fixed_infinity_golden.csv \
+  cargo bench -p akita-sis-estimator --bench fixed_infinity
+```
