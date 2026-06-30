@@ -10,7 +10,7 @@ use akita_field::AkitaError;
 
 use super::ajtai_key::{collision_l2_sq_for_linf_envelope, min_secure_rank, SisModulusFamily};
 use super::decomposition_digits::{
-    folded_witness_verifier_linf_bound, num_digits_fold, num_digits_for_bound,
+    fold_witness_verifier_linf_bound, num_digits_fold, num_digits_for_bound,
 };
 use crate::DecompositionParams;
 
@@ -138,17 +138,15 @@ impl FoldWitnessNorms {
 
 /// Honest-prover coefficient-`L∞` target for the folded witness `z`.
 ///
-/// This cap drives completeness (grind retries) and sizes `δ_fold` via
-/// [`super::decomposition_digits::num_digits_fold`]. It may be below the
-/// worst-case envelope `β_inf` when tail-bound-with-grind is enabled
-/// (`min(β_inf, t*)`). Soundness does not read this value directly: the verifier
-/// enforces only `δ_fold` balanced digits per coefficient, and A-role binding
-/// must price at [`folded_witness_verifier_linf_bound`] of that same depth.
+/// Drives grind retries and sizes `δ_fold` via [`super::decomposition_digits::num_digits_fold`].
+/// May be below `β_inf` when tail-bound-with-grind is enabled (`min(β_inf, t*)`).
+/// Soundness prices A-role collision at [`fold_witness_verifier_linf_bound`] of the
+/// resulting `δ_fold`, not at this cap directly.
 ///
 /// # Errors
 ///
-/// Propagates [`fold_witness_beta`] / [`fold_witness_linf_cap`] setup errors.
-pub fn folded_witness_honest_prover_linf_cap(
+/// Propagates [`fold_witness_beta`] / tail-bound setup errors.
+pub fn fold_witness_honest_prover_linf_cap(
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
     r_vars: usize,
@@ -158,82 +156,45 @@ pub fn folded_witness_honest_prover_linf_cap(
     let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
     if beta == 0 {
         return Err(AkitaError::InvalidSetup(
-            "folded_witness_honest_prover_linf_cap: folded-witness bound β = 0".to_string(),
+            "fold_witness_honest_prover_linf_cap: folded-witness bound β = 0".to_string(),
         ));
     }
     let num_fold_blocks = (num_claims as u128)
         .checked_mul(1u128 << r_vars)
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "folded_witness_honest_prover_linf_cap: num_fold_blocks overflows u128".to_string(),
+                "fold_witness_honest_prover_linf_cap: num_fold_blocks overflows u128".to_string(),
             )
         })?;
     let witness_linf_sq = witness
         .infinity_norm()
         .saturating_mul(witness.infinity_norm());
-    fold_witness_linf_cap(beta, num_fold_blocks, witness_linf_sq, cap_config)
-}
-
-/// Verifier-enforced coefficient-`L∞` envelope on folded witness `z` at one level.
-///
-/// Derives `δ_fold` from [`folded_witness_honest_prover_linf_cap`] and returns the
-/// maximum `‖z‖_∞` passable under that digit depth.
-///
-/// # Errors
-///
-/// Propagates [`super::decomposition_digits::num_digits_fold`] rejections.
-pub fn folded_witness_verifier_linf_bound_for_level(
-    r_vars: usize,
-    num_claims: usize,
-    field_bits: u32,
-    log_basis: u32,
-    challenge: FoldChallengeNorms,
-    witness: FoldWitnessNorms,
-    cap_config: &FoldWitnessLinfCapConfig,
-) -> Result<u128, AkitaError> {
-    let delta_fold = num_digits_fold(
-        r_vars,
-        num_claims,
-        field_bits,
-        log_basis,
-        challenge,
-        witness,
-        *cap_config,
-    )?;
-    Ok(folded_witness_verifier_linf_bound(log_basis, delta_fold))
-}
-
-/// A-role committed-level coefficient-`L∞` collision before L2 table conversion.
-///
-/// Lemma 7 gives `‖z_A‖_∞ ≤ 8 · ω · ‖z‖_∞ · ν` with `‖z‖_∞` bounded by the
-/// verifier digit envelope from [`folded_witness_verifier_linf_bound_for_level`].
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn committed_fold_collision_linf(
-    challenge_l1_mass: u128,
-    z_verifier_linf_bound: u128,
-    ring_subfield_norm_bound: u32,
-) -> Option<u128> {
-    8u128
-        .checked_mul(challenge_l1_mass)?
-        .checked_mul(z_verifier_linf_bound)?
-        .checked_mul(u128::from(ring_subfield_norm_bound))
+    match cap_config.policy {
+        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok(beta),
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
+            let t_sq = fold_witness_linf_tail_bound_sq(
+                num_fold_blocks,
+                cap_config.challenge_l2_sq_max,
+                witness_linf_sq,
+                cap_config.grind_union_ln,
+            )?;
+            Ok(beta.min(isqrt_ceil(t_sq)))
+        }
+    }
 }
 
 /// A-role committed-level per-ring-row squared Euclidean collision bucket.
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L2 MSIS table. Lemma 7
 /// bounds the extracted kernel by challenge mass; the verifier accepts folded
-/// witnesses only inside the digit envelope induced by
-/// [`folded_witness_honest_prover_linf_cap`], and A-role binding uses that same
-/// `δ_fold` depth. MSIS accounting converts the resulting L∞ collision via
-/// `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:
+/// witnesses only inside [`fold_witness_verifier_linf_bound`] at the `δ_fold`
+/// depth induced by [`fold_witness_honest_prover_linf_cap`]. MSIS accounting
+/// converts the resulting L∞ collision via `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:
 ///
 /// ```text
-/// collision_A_inf = 8 · challenge_l1_mass · z_verifier_linf_bound · nu,
+/// collision_A_inf = 8 · challenge_l1_mass · fold_witness_verifier_linf_bound · nu,
 /// collision_l2_sq   = ceil_bucket(d · collision_A_inf^2),
 ///   challenge_l1_mass = ω (effective L1 mass per logical block),
-///   z_verifier_linf_bound = folded_witness_verifier_linf_bound_for_level(...),
 ///   nu     = ring_subfield_norm_bound.
 /// ```
 ///
@@ -253,21 +214,22 @@ pub fn committed_fold_collision_l2_sq(
     decomposition: DecompositionParams,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Option<u128> {
-    let z_verifier_linf_bound = folded_witness_verifier_linf_bound_for_level(
+    let log_basis = decomposition.log_basis;
+    let delta_fold = num_digits_fold(
         r_vars,
         num_claims,
         decomposition.field_bits(),
-        decomposition.log_basis,
+        log_basis,
         challenge,
         witness,
-        cap_config,
+        *cap_config,
     )
     .ok()?;
-    let collision_linf = committed_fold_collision_linf(
-        challenge_l1_mass,
-        z_verifier_linf_bound,
-        ring_subfield_norm_bound,
-    )?;
+    let z_verifier_linf_bound = fold_witness_verifier_linf_bound(log_basis, delta_fold);
+    let collision_linf = 8u128
+        .checked_mul(challenge_l1_mass)?
+        .checked_mul(z_verifier_linf_bound)?
+        .checked_mul(u128::from(ring_subfield_norm_bound))?;
     collision_l2_sq_for_linf_envelope(sis_family, d, collision_linf)
 }
 
@@ -601,7 +563,8 @@ pub fn fold_witness_linf_tail_bound_sq(
         })
 }
 
-/// Level-static configuration for [`fold_witness_linf_cap`] inside [`crate::sis::num_digits_fold`].
+/// Level-static configuration for [`fold_witness_honest_prover_linf_cap`] inside
+/// [`crate::sis::num_digits_fold`].
 ///
 /// When the policy is [`WorstCaseBetaOnly`](FoldWitnessLinfCapPolicy::WorstCaseBetaOnly),
 /// tail-bound fields are ignored and sizing uses `β_inf` alone.
@@ -712,32 +675,6 @@ impl FoldWitnessLinfCapConfig {
     }
 }
 
-/// `‖z‖_inf` cap used for fold digit sizing: `β_inf` or `min(β_inf, ⌈√(t*²)⌉)`
-/// under the tail-bound-with-grind policy.
-///
-/// # Errors
-///
-/// Propagates [`fold_witness_linf_ln_term`] / [`fold_witness_linf_tail_bound_sq`] rejections.
-pub fn fold_witness_linf_cap(
-    beta: u128,
-    num_fold_blocks: u128,
-    witness_linf_sq: u128,
-    config: &FoldWitnessLinfCapConfig,
-) -> Result<u128, AkitaError> {
-    match config.policy {
-        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok(beta),
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
-            let t_sq = fold_witness_linf_tail_bound_sq(
-                num_fold_blocks,
-                config.challenge_l2_sq_max,
-                witness_linf_sq,
-                config.grind_union_ln,
-            )?;
-            Ok(beta.min(isqrt_ceil(t_sq)))
-        }
-    }
-}
-
 // --- L2 MSIS accounting (`l2_sq_from_linf`) ---------------------------------
 //
 // A-role table lookup uses Lemma 7 plus [`l2_sq_from_linf`] (see
@@ -817,16 +754,17 @@ mod tests {
             log_open_bound: None,
         };
         let cap_config = FoldWitnessLinfCapConfig::worst_case_beta_only();
-        let z_bound = folded_witness_verifier_linf_bound_for_level(
+        let delta_fold = num_digits_fold(
             2,
             1,
             decomposition.field_bits(),
             decomposition.log_basis,
             challenge,
             witness,
-            &cap_config,
+            cap_config,
         )
         .unwrap();
+        let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
         let collision_linf = 8u128 * challenge.l1_norm * z_bound;
         let envelope =
             collision_l2_sq_for_linf_envelope(SisModulusFamily::Q32, 64, collision_linf).unwrap();
@@ -879,17 +817,18 @@ mod tests {
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&stage1_config, fold_shape, 64, 2).unwrap();
         let honest_cap =
-            folded_witness_honest_prover_linf_cap(challenge, witness, 4, 1, &cap_config).unwrap();
-        let z_bound = folded_witness_verifier_linf_bound_for_level(
+            fold_witness_honest_prover_linf_cap(challenge, witness, 4, 1, &cap_config).unwrap();
+        let delta_fold = num_digits_fold(
             4,
             1,
             decomposition.field_bits(),
             decomposition.log_basis,
             challenge,
             witness,
-            &cap_config,
+            cap_config,
         )
         .unwrap();
+        let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
         assert!(
             z_bound > honest_cap,
             "verifier envelope {z_bound} must exceed honest cap {honest_cap}"
@@ -910,7 +849,11 @@ mod tests {
         let cap_priced = collision_l2_sq_for_linf_envelope(
             SisModulusFamily::Q64,
             64,
-            committed_fold_collision_linf(challenge.l1_norm, honest_cap, 1).unwrap(),
+            8u128
+                .checked_mul(challenge.l1_norm)
+                .unwrap()
+                .checked_mul(honest_cap)
+                .unwrap(),
         )
         .unwrap();
         assert!(
@@ -920,8 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_fold_collision_uses_same_delta_fold_as_num_digits_fold() {
-        use super::super::decomposition_digits::num_digits_fold;
+    fn committed_fold_collision_uses_num_digits_fold_verifier_bound() {
         use crate::DecompositionParams;
 
         let challenge = FoldChallengeNorms {
@@ -945,13 +887,28 @@ mod tests {
             cap_config,
         )
         .unwrap();
-        let z_bound = super::super::decomposition_digits::folded_witness_verifier_linf_bound(
-            decomposition.log_basis,
-            delta_fold,
-        );
+        let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
+        let priced = committed_fold_collision_l2_sq(
+            SisModulusFamily::Q32,
+            64,
+            challenge.l1_norm,
+            challenge,
+            witness,
+            2,
+            1,
+            1,
+            decomposition,
+            &cap_config,
+        )
+        .unwrap();
         assert_eq!(
-            committed_fold_collision_linf(challenge.l1_norm, z_bound, 1).unwrap(),
-            8u128 * challenge.l1_norm * z_bound,
+            priced,
+            collision_l2_sq_for_linf_envelope(
+                SisModulusFamily::Q32,
+                64,
+                8 * challenge.l1_norm * z_bound
+            )
+            .unwrap(),
         );
     }
 

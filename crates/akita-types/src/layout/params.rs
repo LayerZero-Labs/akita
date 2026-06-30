@@ -346,7 +346,8 @@ impl LevelParams {
         )
     }
 
-    /// Level-static config for [`crate::sis::fold_witness_linf_cap`] inside [`crate::sis::num_digits_fold`].
+    /// Level-static config for [`crate::sis::fold_witness_honest_prover_linf_cap`] inside
+    /// [`crate::sis::num_digits_fold`].
     #[inline]
     pub fn fold_witness_linf_cap_config(&self) -> crate::sis::FoldWitnessLinfCapConfig {
         self.fold_linf_cap_config
@@ -426,13 +427,12 @@ impl LevelParams {
     ///
     /// # Errors
     ///
-    /// Propagates [`crate::sis::fold_witness_beta`] and
-    /// [`crate::sis::fold_witness_linf_cap`] setup errors.
+    /// Propagates [`crate::sis::fold_witness_honest_prover_linf_cap`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let witness = self.fold_witness_norms();
         let challenge =
             crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
-        crate::sis::folded_witness_honest_prover_linf_cap(
+        crate::sis::fold_witness_honest_prover_linf_cap(
             challenge,
             witness,
             self.r_vars,

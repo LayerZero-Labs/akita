@@ -34,7 +34,7 @@
 use akita_field::AkitaError;
 
 use super::norm_bound::{
-    folded_witness_honest_prover_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    fold_witness_honest_prover_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
     FoldWitnessNorms,
 };
 use crate::DecompositionParams;
@@ -45,10 +45,10 @@ use crate::DecompositionParams;
 ///
 /// Stage-1 digit membership is the only norm-shaped constraint on `z`; A-role
 /// weak binding must price at this envelope, not at
-/// [`super::norm_bound::folded_witness_honest_prover_linf_cap`] alone.
+/// [`super::norm_bound::fold_witness_honest_prover_linf_cap`] alone.
 #[inline]
 #[must_use]
-pub fn folded_witness_verifier_linf_bound(log_basis: u32, num_digits_fold: usize) -> u128 {
+pub fn fold_witness_verifier_linf_bound(log_basis: u32, num_digits_fold: usize) -> u128 {
     balanced_digit_max(log_basis, num_digits_fold.max(1))
 }
 
@@ -180,7 +180,7 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
 /// (via [`fold_witness_beta`]) from the per-level fold challenge and witness
 /// norms. Under [`crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind`], `δ_fold`
-/// is sized from [`super::norm_bound::folded_witness_honest_prover_linf_cap`]
+/// is sized from [`super::norm_bound::fold_witness_honest_prover_linf_cap`]
 /// (`min(β_inf, t*)`); deterministic policies use `β_inf` alone.
 ///
 /// # Errors
@@ -199,7 +199,7 @@ pub fn num_digits_fold(
     cap_config: FoldWitnessLinfCapConfig,
 ) -> Result<usize, AkitaError> {
     let cap =
-        folded_witness_honest_prover_linf_cap(challenge, witness, r_vars, num_claims, &cap_config)?;
+        fold_witness_honest_prover_linf_cap(challenge, witness, r_vars, num_claims, &cap_config)?;
     if cap == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_digits_fold: fold witness L∞ cap is zero".to_string(),
