@@ -85,7 +85,11 @@ pub fn cost_infinity_fixed(
     Ok(LatticeCost {
         rop: log2_to_cost_value(rop_log2),
         red: Some(log2_to_cost_value(red_log2)),
-        sieve: Some(sieve_cost_value(pre_repeat_sieve, sieve_log2)),
+        sieve: Some(sieve_cost_value(
+            pre_repeat_sieve,
+            repetitions_log2,
+            sieve_log2,
+        )),
         delta: Some(delta(beta)),
         beta: Some(beta),
         eta: Some(short.sieve_dim),
@@ -214,8 +218,12 @@ fn pre_repeat_sieve_log2(cost_red_log2: f64, bkz_log2: f64) -> PreRepeatSieve {
     }
 }
 
-fn sieve_cost_value(pre_repeat: PreRepeatSieve, repeated_log2: f64) -> CostValue {
-    if pre_repeat.used_floor && repeated_log2 >= SAGE_RR_MAX_LOG2 {
+fn sieve_cost_value(
+    pre_repeat: PreRepeatSieve,
+    repetitions_log2: f64,
+    repeated_log2: f64,
+) -> CostValue {
+    if pre_repeat.used_floor && repetitions_log2 >= SAGE_RR_MAX_LOG2 {
         CostValue::Infinity
     } else {
         log2_to_cost_value(repeated_log2)

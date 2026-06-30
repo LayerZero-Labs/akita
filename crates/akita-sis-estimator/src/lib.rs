@@ -14,6 +14,7 @@ pub mod error;
 pub mod lattice;
 pub mod math;
 pub mod numeric;
+pub mod optimizer;
 pub mod params;
 pub mod probability;
 pub mod reduction;
@@ -35,15 +36,18 @@ pub use params::{
 ///
 /// # Errors
 ///
-/// Returns validation errors for malformed inputs. The actual estimator math is
-/// implemented in later slices, so valid inputs currently return
-/// [`EstimatorError::Unsupported`].
+/// Returns validation errors for malformed inputs. Infinity-norm ADPS16 + LGSA
+/// estimates support fixed cells, beta search, and zeta search. Other profiles
+/// return [`EstimatorError::Unsupported`].
 pub fn estimate(params: &SisParameters, config: &EstimateConfig) -> Result<LatticeCost> {
     params.validate()?;
     config.validate()?;
-    Err(EstimatorError::Unsupported {
-        feature: "estimate",
-    })
+    if params.norm != SisNorm::Infinity {
+        return Err(EstimatorError::Unsupported {
+            feature: "estimate for non-infinity norm",
+        });
+    }
+    optimizer::estimate_infinity(params, config)
 }
 
 /// Evaluate a fixed-beta, fixed-zeta infinity-norm SIS lattice cost.
@@ -75,8 +79,8 @@ pub fn cost_infinity(
 ///
 /// # Errors
 ///
-/// Returns validation errors for malformed inputs. The actual estimator math is
-/// implemented in later slices, so valid inputs currently return
+/// Returns validation errors for malformed inputs. Infinity-norm ADPS16 + LGSA
+/// estimates support serial beta search. Unsupported search modes return
 /// [`EstimatorError::Unsupported`].
 pub fn cost_zeta(
     zeta: u32,
@@ -85,10 +89,13 @@ pub fn cost_zeta(
 ) -> Result<LatticeCost> {
     params.validate()?;
     config.validate()?;
-    let _ = zeta;
-    Err(EstimatorError::Unsupported {
-        feature: "cost_zeta",
-    })
+    if params.norm != SisNorm::Infinity {
+        return Err(EstimatorError::InvalidParameter {
+            field: "norm",
+            reason: "cost_zeta requires SisNorm::Infinity".to_string(),
+        });
+    }
+    optimizer::cost_zeta_infinity(zeta, params, config)
 }
 
 /// Evaluate the Euclidean-norm SIS lattice cost.
@@ -141,15 +148,10 @@ mod tests {
     }
 
     #[test]
-    fn optimizer_entry_point_is_explicitly_unsupported_for_now() {
+    fn optimizer_entry_point_estimates_infinity_profile() {
         let params = sample_params(SisNorm::Infinity);
         let config = EstimateConfig::default();
-        assert!(matches!(
-            estimate(&params, &config),
-            Err(EstimatorError::Unsupported {
-                feature: "estimate"
-            })
-        ));
+        assert!(estimate(&params, &config).is_ok());
         assert!(cost_infinity(64, &params, 0, &config).is_ok());
     }
 

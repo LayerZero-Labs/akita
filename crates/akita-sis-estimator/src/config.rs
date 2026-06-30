@@ -123,8 +123,8 @@ impl OptimizerConfig {
 impl Default for OptimizerConfig {
     fn default() -> Self {
         Self::OptimizeZeta {
-            beta: SearchMode::Exhaustive,
-            zeta: SearchMode::Exhaustive,
+            beta: SearchMode::PythonLocalMinimum,
+            zeta: SearchMode::PythonLocalMinimum,
         }
     }
 }
@@ -205,8 +205,8 @@ mod tests {
         assert_eq!(
             config.optimizer,
             OptimizerConfig::OptimizeZeta {
-                beta: SearchMode::Exhaustive,
-                zeta: SearchMode::Exhaustive
+                beta: SearchMode::PythonLocalMinimum,
+                zeta: SearchMode::PythonLocalMinimum
             }
         );
         assert!(config.validate().is_ok());
