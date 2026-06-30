@@ -365,7 +365,7 @@ fn run_profile_onehot_fp128_d64_multi_chunk(nv: usize, num_polys: usize) {
     let prime = fp128_prime_label();
     let onehot_k = onehot_k_for_num_vars(nv);
     let title = format!(
-        "=== onehot_fp128_d64_multi_chunk (fp128, {prime}, D=64, 1-of-{onehot_k}, distributed chunked relation, num_chunks=8 x 3 leading levels) ==="
+        "=== onehot_fp128_d64_multi_chunk (fp128, {prime}, D=64, 1-of-{onehot_k}, distributed chunked relation, num_chunks=8 x 2 leading levels) ==="
     );
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_multi_chunk", &title, nv, num_polys);
 }

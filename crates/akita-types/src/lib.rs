@@ -131,4 +131,7 @@ pub use trace_weight::{
     TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
-pub use witness::{ChunkedWitnessCfg, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
+pub use witness::{
+    ChunkedWitnessCfg, MultiChunkProfileId, WitnessChunkLayout, WitnessChunkLengths,
+    WitnessLayout,
+};

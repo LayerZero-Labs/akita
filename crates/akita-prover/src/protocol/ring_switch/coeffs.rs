@@ -92,7 +92,7 @@ where
             &r,
             lp,
             num_claims,
-        )
+        )?
     };
     let terminal_artifacts = if retain_terminal_artifacts {
         Some(RingSwitchTerminalArtifacts {
@@ -225,6 +225,11 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// and recomposition. This function transposes opening digits to digit-major at
 /// the ring-to-field boundary.
 ///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `lp.witness_chunk` fails
+/// [`ChunkedWitnessCfg::validate`].
+///
 /// # Panics
 ///
 /// Panics if the caller supplies digit blocks whose plane counts do not match
@@ -238,7 +243,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
     num_claims: usize,
-) -> RecursiveWitnessFlat {
+) -> Result<RecursiveWitnessFlat, AkitaError> {
     let log_basis = lp.log_basis;
     let num_digits_fold = lp
         .num_digits_fold(num_claims, F::modulus_bits())
@@ -250,9 +255,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let levels = r_decomp_levels::<F>(log_basis);
 
     // Chunk geometry: `num_chunks = 1` is the single-chunk (historical) layout.
-    lp.witness_chunk
-        .validate()
-        .expect("build_w_coeffs: witness_chunk layout invalid in validated level params");
+    lp.witness_chunk.validate()?;
     let num_chunks = lp.witness_chunk.num_chunks;
     let blocks_per_chunk = num_blocks.checked_div(num_chunks).unwrap_or(num_blocks);
 
@@ -353,5 +356,5 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             out.extend_from_slice(plane);
         }
     }
-    RecursiveWitnessFlat::from_i8_digits(out)
+    Ok(RecursiveWitnessFlat::from_i8_digits(out))
 }

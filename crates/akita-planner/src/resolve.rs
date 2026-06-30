@@ -378,7 +378,7 @@ pub fn estimate_proof_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusFamily};
+    use akita_types::{ChunkedWitnessCfg, DecompositionParams, MultiChunkProfileId, SisModulusFamily};
 
     fn flat_policy() -> PlannerPolicy {
         PlannerPolicy {
@@ -458,6 +458,33 @@ mod tests {
             find_schedule(key, &explicit_default, ring_challenge_config, fold_shape).expect("b");
         assert_eq!(a.total_bytes, b.total_bytes);
         assert_eq!(a.steps.len(), b.steps.len());
+    }
+
+    #[test]
+    fn all_multi_chunk_profiles_find_schedule_with_single_chunk_terminal() {
+        let key = AkitaScheduleLookupKey::new(24, 1);
+        for profile in MultiChunkProfileId::ALL {
+            let mut policy = flat_policy();
+            policy.witness_chunk = profile.cfg();
+            let schedule =
+                find_schedule(key, &policy, ring_challenge_config, fold_shape).unwrap_or_else(
+                    |err| panic!("profile {profile:?} must plan at nv=24: {err:?}"),
+                );
+            let last_fold = schedule
+                .steps
+                .iter()
+                .rev()
+                .find_map(|step| match step {
+                    Step::Fold(fold) => Some(fold),
+                    _ => None,
+                })
+                .expect("fold-then-direct schedule");
+            assert_eq!(
+                last_fold.params.witness_chunk.num_chunks,
+                1,
+                "profile {profile:?} must end with a single-chunk terminal fold"
+            );
+        }
     }
 
     #[test]

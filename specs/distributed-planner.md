@@ -332,7 +332,7 @@ impl ChunkedWitnessCfg {
 
     /// Preset helper for the initial D64 multi-chunk tables (book example: 8 nodes).
     pub const fn d64_production() -> Self {
-        Self { num_chunks: 8, num_activated_levels: 3 }
+        MultiChunkProfileId::PRODUCTION.cfg()
     }
 }
 ```
@@ -717,7 +717,7 @@ Each multi-chunk `Cfg`:
 
 - `D = 64`, same field / decomposition / one-hot settings as its base.
 - `chunked_witness_cfg()` returns e.g.
-  `ChunkedWitnessCfg { num_chunks: 8, num_activated_levels: 3 }` (initial
+  `ChunkedWitnessCfg::d64_production()` (`MultiChunkProfileId::W8R2`: 8 chunks, 2
   production constants — document on the preset).
 - `policy_of::<Cfg>()` picks up the config via the trait method (no override).
 - `schedule_catalog()` points at the `_multi_chunk.rs` table.
@@ -818,7 +818,7 @@ Non-zk only in this spec phase.
   delegate at `num_chunks == 1`, and reject invalid `(num_chunks, num_blocks)`
   pairs with `AkitaError`.
 - [ ] `find_schedule` with `policy.witness_chunk =
-  ChunkedWitnessCfg { num_chunks: 8, num_activated_levels: 3 }` produces
+  `ChunkedWitnessCfg::d64_production()` (`W8R2`) produces
   `LevelParams.witness_chunk.num_chunks == 8` on fold levels `0..=2` and
   `== 1` from level `3` onward for a smoke `num_vars` key.
 - [ ] Root DP skips `(log_basis, r_vars)` whose `num_blocks % 8 != 0` when

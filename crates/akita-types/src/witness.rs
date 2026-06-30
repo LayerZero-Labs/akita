@@ -111,6 +111,84 @@ impl WitnessLayout {
     }
 }
 
+/// Indexed multi-chunk preset on the shipped `num_chunks × num_activated_levels`
+/// grid (`num_chunks ∈ {2, 4, 8}`, `num_activated_levels ∈ {1, 2}`).
+///
+/// `num_chunks` must be a power of two; non-power-of-two chunk counts are rejected
+/// by [`ChunkedWitnessCfg::validate`] and are not part of this grid.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MultiChunkProfileId {
+    /// `num_chunks = 2`, `num_activated_levels = 1`.
+    W2R1 = 0,
+    /// `num_chunks = 2`, `num_activated_levels = 2`.
+    W2R2 = 1,
+    /// `num_chunks = 4`, `num_activated_levels = 1`.
+    W4R1 = 2,
+    /// `num_chunks = 4`, `num_activated_levels = 2`.
+    W4R2 = 3,
+    /// `num_chunks = 8`, `num_activated_levels = 1`.
+    W8R1 = 4,
+    /// `num_chunks = 8`, `num_activated_levels = 2` (D64 production default).
+    W8R2 = 5,
+}
+
+impl MultiChunkProfileId {
+    /// Number of profiles in [`Self::ALL`].
+    pub const COUNT: usize = 6;
+
+    /// Every supported profile, in stable index order.
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::W2R1,
+        Self::W2R2,
+        Self::W4R1,
+        Self::W4R2,
+        Self::W8R1,
+        Self::W8R2,
+    ];
+
+    /// Shipped D64 multi-chunk preset (`8` chunks, `2` leading fold levels).
+    pub const PRODUCTION: Self = Self::W8R2;
+
+    /// Stable dense index in `0 .. COUNT`.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Resolve a profile from its stable index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= COUNT` (test-only helper; presets use the named
+    /// variants or [`Self::PRODUCTION`]).
+    pub const fn from_index(index: usize) -> Self {
+        assert!(index < Self::COUNT);
+        Self::ALL[index]
+    }
+
+    pub const fn num_chunks(self) -> usize {
+        match self {
+            Self::W2R1 | Self::W2R2 => 2,
+            Self::W4R1 | Self::W4R2 => 4,
+            Self::W8R1 | Self::W8R2 => 8,
+        }
+    }
+
+    pub const fn num_activated_levels(self) -> usize {
+        match self {
+            Self::W2R1 | Self::W4R1 | Self::W8R1 => 1,
+            Self::W2R2 | Self::W4R2 | Self::W8R2 => 2,
+        }
+    }
+
+    pub const fn cfg(self) -> ChunkedWitnessCfg {
+        ChunkedWitnessCfg {
+            num_chunks: self.num_chunks(),
+            num_activated_levels: self.num_activated_levels(),
+        }
+    }
+}
+
 /// Chunk-based witness layout parameters.
 ///
 /// `num_chunks = 1` is the single-chunk (standard) case; `num_chunks` must be a
@@ -153,13 +231,21 @@ impl ChunkedWitnessCfg {
         self.num_chunks > 1 && self.num_activated_levels > 0
     }
 
-    /// Preset helper for the initial D64 multi-chunk tables (book example: 8
-    /// nodes, three leading chunked fold levels).
+    /// Shipped D64 multi-chunk preset (`8` chunks, `2` leading fold levels).
     pub const fn d64_production() -> Self {
-        Self {
-            num_chunks: 8,
-            num_activated_levels: 3,
-        }
+        MultiChunkProfileId::PRODUCTION.cfg()
+    }
+
+    /// Build a config from a canonical [`MultiChunkProfileId`].
+    pub const fn from_profile(profile: MultiChunkProfileId) -> Self {
+        profile.cfg()
+    }
+
+    /// Recover the profile id when this config matches a grid entry.
+    pub fn profile_id(self) -> Option<MultiChunkProfileId> {
+        MultiChunkProfileId::ALL
+            .into_iter()
+            .find(|profile| profile.cfg() == self)
     }
 
     /// Layout-only validation (no dependency on planner internals).
@@ -224,10 +310,22 @@ mod tests {
     #[test]
     fn d64_production_uses_multi_chunk() {
         let cfg = ChunkedWitnessCfg::d64_production();
+        assert_eq!(cfg, MultiChunkProfileId::PRODUCTION.cfg());
         assert_eq!(cfg.num_chunks, 8);
-        assert_eq!(cfg.num_activated_levels, 3);
+        assert_eq!(cfg.num_activated_levels, 2);
         assert!(cfg.uses_multi_chunk());
         cfg.validate().expect("d64_production is valid");
+    }
+
+    #[test]
+    fn multi_chunk_profile_grid_roundtrip() {
+        for (index, profile) in MultiChunkProfileId::ALL.into_iter().enumerate() {
+            assert_eq!(profile.index(), index);
+            assert_eq!(MultiChunkProfileId::from_index(index), profile);
+            let cfg = ChunkedWitnessCfg::from_profile(profile);
+            assert_eq!(cfg.profile_id(), Some(profile));
+            cfg.validate().expect("grid profile is valid");
+        }
     }
 
     #[test]
