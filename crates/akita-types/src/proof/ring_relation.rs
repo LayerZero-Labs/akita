@@ -256,8 +256,57 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         })
     }
 
-    /// Witness layout for the multi-chunk layout.
+    /// Resolve the witness column layout. Single-chunk (including tiered)
+    /// delegates to the legacy `segment_layout`; multi-chunk uses the chunked
+    /// `[ẑ|ê|t̂]`-per-machine layout, which rejects tiered commitments.
     pub fn witness_layout(&self, lp: &LevelParams) -> Result<WitnessLayout, AkitaError> {
+        if lp.witness_chunk.num_chunks == 1 {
+            return self.single_chunk_layout(lp);
+        }
+        self.multi_chunk_layout(lp)
+    }
+
+    /// Single-chunk layout sourced from the legacy `segment_layout`, so it stays
+    /// byte-identical to today and supports the tiered `û` segment
+    /// (`offset_u` is `Some` exactly when `u_len > 0`).
+    fn single_chunk_layout(&self, lp: &LevelParams) -> Result<WitnessLayout, AkitaError> {
+        let opening_counts = RingRelationOpeningCounts {
+            num_claims: self.opening_batch.num_polynomials(),
+            num_t_vectors: self.opening_batch.num_polynomials(),
+        };
+        let legacy = self.segment_layout(lp)?;
+        let lens = ring_relation_segment_lengths::<F, D>(lp, opening_counts, self.m_row_layout)?;
+        // Same r-tail formula as witness_chunk_lengths — keep them in sync.
+        let r_chunk_len = lp
+            .m_row_count_for(1, 0, self.m_row_layout)?
+            .checked_mul(crate::sis::compute_num_digits_full_field(
+                F::modulus_bits(),
+                lp.log_basis,
+            ))
+            .ok_or_else(|| AkitaError::InvalidSetup("single-chunk r-tail overflow".to_string()))?;
+        Ok(WitnessLayout {
+            blocks_per_chunk: lp.num_blocks,
+            chunks: vec![WitnessChunkLayout {
+                global_block_base: 0,
+                offset_z: legacy.offset_z,
+                offset_e: legacy.offset_e,
+                offset_t: legacy.offset_t,
+                offset_u: (lens.u_len > 0).then_some(legacy.offset_u),
+                offset_r: Some(legacy.offset_r),
+            }],
+            chunk_lengths: WitnessChunkLengths {
+                z_chunk_len: lens.z_len,
+                e_chunk_len: lens.e_len,
+                t_chunk_len: lens.t_len,
+                u_chunk_len: lens.u_len,
+                r_chunk_len,
+            },
+        })
+    }
+
+    /// Multi-chunk `[ẑ|ê|t̂]`-per-machine layout (tiered rejected in
+    /// `witness_chunk_lengths`).
+    fn multi_chunk_layout(&self, lp: &LevelParams) -> Result<WitnessLayout, AkitaError> {
         let chunk_lengths = witness_chunk_lengths::<F, D>(
             lp,
             RingRelationOpeningCounts {

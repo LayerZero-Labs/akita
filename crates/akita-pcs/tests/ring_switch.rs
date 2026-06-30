@@ -705,7 +705,7 @@ mod tests {
             .expect("prepare_ring_switch_row_eval");
 
         let got = prepared
-            .eval_at_point::<F, D>(
+            .legacy_eval_at_point::<F, D>(
                 &x_challenges,
                 &setup.expanded,
                 &ring_opening_point,
@@ -715,9 +715,24 @@ mod tests {
             )
             .expect("eval_at_point");
 
+        let got_chunked = prepared
+            .eval_at_point::<F, D>(
+                &x_challenges,
+                &setup.expanded,
+                &ring_opening_point,
+                &ring_multiplier_point,
+                alpha,
+                None,
+            )
+            .expect("eval_at_point (chunk fold)");
+
         assert_eq!(
             got, expected,
             "RingSwitchDeferredRowEval::eval_at_point must match materialized multilinear_eval"
+        );
+        assert_eq!(
+            got_chunked, got,
+            "chunk-fold eval_at_point must match legacy at num_chunks = 1"
         );
     }
 

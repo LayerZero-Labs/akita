@@ -21,6 +21,63 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn summarize_chunk_block_carries<Base, const D: usize>(
+        &self,
+        num_claims: usize,
+        x_low_challenges: &[F],
+        eq_low: &[F],             // length == blocks_per_chunk
+        offset_low: usize,        // chunk.offset_e & (blocks_per_chunk - 1)
+        global_block_base: usize, // chunk.global_block_base
+        blocks_per_chunk: usize,
+        num_blocks: usize,
+    ) -> Result<Vec<[F; 2]>, AkitaError>
+    where
+        Base: FieldCore + FromPrimitiveInt,
+        F: MulBase<Base>,
+    {
+        match self {
+            Self::Flat(c_alphas) => (0..num_claims)
+                .map(|claim_idx| {
+                    let claim_start = claim_idx.checked_mul(num_blocks).ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "flat chunk summary claim offset overflow".to_string(),
+                        )
+                    })?;
+                    let start = claim_start.checked_add(global_block_base).ok_or_else(|| {
+                        AkitaError::InvalidSetup("flat chunk summary start overflow".to_string())
+                    })?;
+                    let end = start.checked_add(blocks_per_chunk).ok_or_else(|| {
+                        AkitaError::InvalidSetup("flat chunk summary end overflow".to_string())
+                    })?;
+                    let values = c_alphas.get(start..end).ok_or(AkitaError::InvalidSize {
+                        expected: end,
+                        actual: c_alphas.len(),
+                    })?;
+                    summarize_pow2_block_carries(eq_low, offset_low, values)
+                })
+                .collect(),
+            // Full range only → legacy tensor summary. Call the helper DIRECTLY to
+            // avoid recursion with the wrapper below.
+            Self::Tensor {
+                challenges,
+                alpha_pows,
+            } if global_block_base == 0 && blocks_per_chunk == num_blocks => {
+                summarize_tensor_all_block_carries::<Base, F, D>(
+                    challenges,
+                    num_claims,
+                    x_low_challenges,
+                    offset_low,
+                    num_blocks,
+                    alpha_pows,
+                )
+            }
+            Self::Tensor { .. } => Err(AkitaError::InvalidInput(
+                "chunked tensor challenge summaries are not implemented".to_string(),
+            )),
+        }
+    }
+
     pub(crate) fn summarize_all_block_carries<Base, const D: usize>(
         &self,
         num_claims: usize,
