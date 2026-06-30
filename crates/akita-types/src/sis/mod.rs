@@ -21,6 +21,7 @@
 
 pub mod ajtai_key;
 pub mod decomposition_digits;
+pub mod fold_linf_cap;
 pub mod fold_witness_grind;
 mod generated_sis_table;
 pub mod norm_bound;

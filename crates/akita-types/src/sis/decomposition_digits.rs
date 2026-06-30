@@ -33,9 +33,9 @@
 
 use akita_field::AkitaError;
 
+use super::fold_linf_cap::FoldWitnessLinfCapConfig;
 use super::norm_bound::{
-    fold_witness_honest_prover_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
-    FoldWitnessNorms,
+    fold_witness_honest_prover_linf_cap, FoldChallengeNorms, FoldWitnessNorms,
 };
 use crate::DecompositionParams;
 
