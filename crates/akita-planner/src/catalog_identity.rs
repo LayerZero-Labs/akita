@@ -21,6 +21,13 @@ use crate::PlannerPolicy;
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+fn lock_validated_catalogs(
+) -> Result<std::sync::MutexGuard<'static, HashSet<CatalogValidationCacheKey>>, AkitaError> {
+    VALIDATED_CATALOGS.lock().map_err(|_| {
+        AkitaError::InvalidSetup("catalog validation cache poisoned".to_string())
+    })
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct CatalogValidationCacheKey {
     entries_ptr: usize,
@@ -189,11 +196,7 @@ pub fn validate_catalog_identity(
         identity_digest: identity_digest(&catalog.identity),
         policy_digest: policy_digest(policy),
     };
-    if VALIDATED_CATALOGS
-        .lock()
-        .expect("catalog validation cache poisoned")
-        .contains(&cache_key)
-    {
+    if lock_validated_catalogs()?.contains(&cache_key) {
         return verify_ring_challenge_config_digest_on_cache_hit(
             &catalog.identity,
             ring_challenge_config,
@@ -207,10 +210,7 @@ pub fn validate_catalog_identity(
         fold_challenge_shape_at_level,
     )?;
 
-    VALIDATED_CATALOGS
-        .lock()
-        .expect("catalog validation cache poisoned")
-        .insert(cache_key);
+    lock_validated_catalogs()?.insert(cache_key);
     Ok(())
 }
 

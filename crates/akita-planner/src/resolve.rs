@@ -325,6 +325,41 @@ mod tests {
     }
 
     #[test]
+    fn validate_generated_entry_rejects_understated_a_rank() {
+        let key = AkitaScheduleLookupKey::new(20, 1);
+        let policy = flat_policy();
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let mut steps = generated_steps_from_schedule(&schedule);
+        match steps
+            .iter_mut()
+            .find(|step| matches!(step, GeneratedStep::Fold(_)))
+            .expect("schedule should contain a fold")
+        {
+            GeneratedStep::Fold(fold) => {
+                assert!(fold.n_a > 1, "test needs n_a > 1 to understate rank");
+                fold.n_a -= 1;
+            }
+            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
+        }
+        let entry = generated_entry_from_steps(key, steps);
+
+        let err = validate_generated_schedule_entry(
+            &entry,
+            key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect_err("understated A rank must be rejected");
+
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("a-rank mismatch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn resolve_schedule_rejects_corrupt_table_hit() {
         let key = AkitaScheduleLookupKey::new(20, 1);
         let policy = flat_policy();
