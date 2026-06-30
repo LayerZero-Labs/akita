@@ -12,13 +12,14 @@ use akita_field::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
+use akita_types::dispatch_ring_dim_result;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    FpExtEncoding, LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, Schedule,
-    SetupContributionMode, Step, VerifierOpeningBatch, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED,
+    FpExtEncoding, LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, RingVec,
+    RingView, Schedule, SetupContributionMode, Step, VerifierOpeningBatch,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -68,7 +69,7 @@ where
     Ok(())
 }
 
-fn effective_batched_schedule<Cfg, const D: usize>(
+fn effective_batched_schedule<Cfg>(
     opening_batch: &OpeningBatchShape,
     opening_point: &[Cfg::ExtField],
 ) -> Result<Schedule, AkitaError>
@@ -81,12 +82,23 @@ where
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
-            std::slice::from_ref(&opening_point),
-            &root_step.params,
-            alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
-        {
+        // The root-fold support/tensor-projection checks are const-generic over
+        // the *root* ring dimension; that dimension is carried at runtime by the
+        // root step's `LevelParams`. Dispatch once at this kernel-entry boundary
+        // and return a D-free `bool`.
+        let supports_opening_shape =
+            dispatch_ring_dim_result!(root_step.params.ring_dimension, |D| Ok(
+                folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
+                    std::slice::from_ref(&opening_point),
+                    &root_step.params,
+                    alpha_bits,
+                )
+            ))?;
+        let tensor_projection_enabled = dispatch_ring_dim_result!(
+            root_step.params.ring_dimension,
+            |D| Ok(root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars))
+        )?;
+        if !supports_opening_shape && !tensor_projection_enabled {
             let commit_params = Cfg::get_params_for_batched_commitment(opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
@@ -329,10 +341,10 @@ where
 /// Returns an error if the direct witness shape does not match the batch shape,
 /// if witness reconstruction fails, or if any recomputed commitment differs
 /// from the proof commitment.
-pub(crate) fn verify_root_direct_commitments_with_params<F, E, const D: usize>(
+pub(crate) fn verify_root_direct_commitments_with_params<F, E>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    claims: &VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: &VerifierOpeningBatch<'_, E, &RingVec<F>>,
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
@@ -344,15 +356,25 @@ where
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
     let opening_batch = claims.to_shape();
-    validate_root_direct_recommitment_shape::<F, D>(
-        witnesses,
-        setup.expanded.seed(),
-        &opening_batch,
-        params,
-    )?;
-
-    let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, params)?;
-    if &recomputed != commitment {
+    // Validate the flat commitment shape against the schedule-derived ring
+    // dimension before interpreting it. `RingView::new` enforces the
+    // multiple-of-`ring_dim` invariant; no panic on malformed lengths.
+    let ring_dim = params.ring_dimension;
+    let commitment_view = RingView::new(commitment.coeffs(), ring_dim)?;
+    let recomputed_matches = dispatch_ring_dim_result!(ring_dim, |D| {
+        validate_root_direct_recommitment_shape::<F, D>(
+            witnesses,
+            setup.expanded.seed(),
+            &opening_batch,
+            params,
+        )?;
+        let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, params)?;
+        // Compare recomputed `u` to the proof commitment as flat coefficients
+        // under the same ring dimension (byte/coefficient parity with absorb).
+        let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
+        Ok(recomputed_vec.coeffs() == commitment_view.coeffs())
+    })?;
+    if !recomputed_matches {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -395,11 +417,11 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 /// Returns an error if public claims are malformed, schedule/layout policy
 /// rejects the proof shape, root-direct commitment recomputation rejects, or
 /// proof replay fails.
-pub fn batched_verify<Cfg, T, const D: usize>(
+pub fn batched_verify<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingVec<Cfg::Field>>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -430,19 +452,25 @@ where
         })
         .map_err(|_| AkitaError::InvalidProof)?;
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
-    let schedule = effective_batched_schedule::<Cfg, D>(&opening_batch, claims.point())
+    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
-    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
-        &setup.expanded,
-        &opening_batch,
-        &schedule,
-        basis,
-        transcript,
-    )?;
+    // The transcript instance descriptor binds the setup-wide root ring
+    // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
+    // the prover binds for uniform-D presets. Dispatch on the runtime value so
+    // the verifier entry stays D-free; the descriptor bytes are unchanged.
+    dispatch_ring_dim_result!(setup.expanded.seed().gen_ring_dim, |D| {
+        bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+            &setup.expanded,
+            &opening_batch,
+            &schedule,
+            basis,
+            transcript,
+        )
+    })?;
 
-    verify::<Cfg, T, D>(
+    verify::<Cfg, T>(
         proof,
         setup,
         transcript,
@@ -467,11 +495,11 @@ where
 /// replay rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(crate) fn verify<Cfg, T, const D: usize>(
+pub(crate) fn verify<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingVec<Cfg::Field>>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -495,12 +523,12 @@ where
             verify_zero_fold_openings_with_opening_batch::<Cfg::Field, Cfg::ExtField, _>(
                 witnesses, &claims, basis,
             )?;
-            verify_root_direct_commitments_with_params::<Cfg::Field, Cfg::ExtField, D>(
+            verify_root_direct_commitments_with_params::<Cfg::Field, Cfg::ExtField>(
                 witnesses, setup, &claims, params,
             )?;
         }
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
-            verify_folded_batched_proof::<Cfg::Field, Cfg::ExtField, T, D>(
+            verify_folded_batched_proof::<Cfg::Field, Cfg::ExtField, T>(
                 proof,
                 setup,
                 transcript,
@@ -527,11 +555,11 @@ where
 /// Returns an error if the proof is not a folded-root proof, the schedule does
 /// not match the proof shape, the root proof rejects, or a suffix level rejects.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
+pub(crate) fn verify_folded_batched_proof<F, E, T>(
     proof: &AkitaBatchedProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: VerifierOpeningBatch<'_, E, &RingVec<F>>,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
@@ -572,7 +600,7 @@ where
             {
                 return Err(AkitaError::InvalidProof);
             }
-            verify_root::<F, E, T, D>(
+            verify_root::<F, E, T>(
                 &proof.root,
                 setup,
                 transcript,
@@ -617,7 +645,7 @@ where
                 .stage2
                 .as_intermediate()
                 .ok_or(AkitaError::InvalidProof)?;
-            let root_challenges = verify_root::<F, E, T, D>(
+            let root_challenges = verify_root::<F, E, T>(
                 &proof.root,
                 setup,
                 transcript,
@@ -730,6 +758,25 @@ mod tests {
         )
         .expect_err("num_vars=6 requires 64 direct witness elements");
         assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    /// The D-free commitment read path validates the flat coefficient length
+    /// against the schedule-derived ring dimension via `RingView::new` and
+    /// returns an error (never panics) when the length is not a multiple of the
+    /// ring dimension. This is the no-panic gate the verifier relies on before
+    /// interpreting any ring-shaped commitment.
+    #[test]
+    fn flat_commitment_length_not_multiple_of_ring_dim_rejects() {
+        // 33 coefficients is not a multiple of D = 32.
+        let commitment = RingVec::from_coeffs(vec![F::zero(); D + 1]);
+        let err = RingView::new(commitment.coeffs(), D)
+            .expect_err("commitment length must be a multiple of the ring dimension");
+        assert!(matches!(err, AkitaError::InvalidProof));
+
+        // A well-formed buffer (2 * D) is accepted and yields the expected ring count.
+        let well_formed = vec![F::zero(); 2 * D];
+        let ok = RingView::new(&well_formed, D).expect("valid flat commitment");
+        assert_eq!(ok.num_rings(), 2);
     }
 
     #[test]

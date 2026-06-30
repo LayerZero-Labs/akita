@@ -32,6 +32,7 @@ fn prepare_fold_data<'a, F, L, T, const D: usize>(
     proof: &'a AkitaLevelProof<F, L>,
     transcript: &mut T,
     current_state: &'a SuffixVerifierState<'a, F, L>,
+    commitment_rings: &'a [CyclotomicRing<F, D>],
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
@@ -45,16 +46,24 @@ where
     let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let m_row_layout = proof.m_row_layout();
-    let v_typed = proof.v_as_ring_slice::<D>()?;
-    let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
+    // `v` and the current commitment are read D-free from their flat buffers;
+    // the typed reinterpretation under `D` happens here at the fold kernel
+    // boundary. `try_to_vec` validates the buffer is an exact multiple of `D`.
+    let v_typed = proof.v().try_to_vec::<D>()?;
+    let commitment_u = commitment_rings;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
         ));
     }
-    current_state
-        .commitment
-        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    // Absorb the current suffix commitment as flat coefficients under the
+    // schedule's ring dimension — byte-identical to the prover's absorb and to
+    // the former typed `append_as_ring_commitment` path (S2 byte-identity test).
+    current_state.commitment.append_flat_to_transcript::<T>(
+        ABSORB_COMMITMENT,
+        lp.ring_dimension,
+        transcript,
+    )?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
     let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
@@ -206,10 +215,14 @@ where
                 }
 
                 let challenges = dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+                    // Reconstruct the validated flat commitment as typed rings
+                    // for the kernel; owned for the duration of this arm.
+                    let commitment_rings = current_state.commitment.try_to_vec::<D_LEVEL>()?;
                     let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
                         level_proof,
                         transcript,
                         &current_state,
+                        &commitment_rings,
                         &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
@@ -257,10 +270,12 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+                    let commitment_rings = current_state.commitment.try_to_vec::<D_LEVEL>()?;
                     let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
                         terminal_proof,
                         transcript,
                         &current_state,
+                        &commitment_rings,
                         &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,

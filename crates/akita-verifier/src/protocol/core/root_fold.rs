@@ -1,5 +1,6 @@
 use super::*;
-use akita_types::terminal_witness_segment_layout;
+use akita_types::dispatch_ring_dim_result;
+use akita_types::{terminal_witness_segment_layout, RingView};
 
 /// Verify the folded-root proof payload for either an intermediate root or the
 /// 1-fold terminal root.
@@ -15,11 +16,11 @@ use akita_types::terminal_witness_segment_layout;
 /// fails, ring-switch replay fails, or a sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(super) fn verify_root<F, E, T, const D: usize>(
+pub(super) fn verify_root<F, E, T>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: &VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: &VerifierOpeningBatch<'_, E, &RingVec<F>>,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
@@ -31,16 +32,15 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    validate_level_dispatch::<D>(root_lp)?;
     let m_row_layout = proof.fold_m_row_layout().ok_or(AkitaError::InvalidProof)?;
     let extension_opening_reduction = proof.fold_extension_opening_reduction();
-    let v_typed = proof.fold_v::<D>()?;
     let next_fold_level_params = match proof {
         AkitaBatchedRootProof::Fold(_) => next_fold_level_params.ok_or(AkitaError::InvalidProof)?,
         AkitaBatchedRootProof::Terminal(_) => root_lp,
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     let stage3_sumcheck_proof = proof.fold_stage3_sumcheck_proof(setup_contribution_mode)?;
+    // Read the proof commitment as a D-free flat coefficient buffer.
     let commitment = claims
         .single_group_commitment()
         .copied()
@@ -52,11 +52,90 @@ where
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    if commitment.u.len() != root_lp.effective_commit_rows() {
+    // Validate the commitment length against the schedule-derived ring
+    // dimension before interpreting it: `RingView::new` enforces the
+    // multiple-of-`ring_dim` invariant (no panic), and the ring count must
+    // equal the expected commitment-row count.
+    let ring_dim = root_lp.ring_dimension;
+    let commitment_view = RingView::new(commitment.coeffs(), ring_dim)?;
+    if commitment_view.num_rings() != root_lp.effective_commit_rows() {
         return Err(AkitaError::InvalidProof);
     }
 
-    claims.append_to_transcript::<F, T>(transcript)?;
+    // Transcript binding, D-free and byte-identical to the prover's absorb:
+    // batch shape header, then the flat commitment coefficients under
+    // `ring_dim`, then the shared opening point. This replaces the former
+    // `VerifierOpeningBatch::append_to_transcript`, whose generic commitment
+    // path required a typed `RingCommitment: AppendToTranscript`.
+    opening_batch.append_to_transcript::<F, T>(transcript)?;
+    commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript);
+    for coord in shared_opening_point {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
+    }
+
+    // `D` enters here exactly once, at the fold kernel-entry boundary. The
+    // dispatched body interprets the flat commitment as typed rings, runs the
+    // ring-dimension-typed opening/EOR/fold kernels, and returns the D-free
+    // root challenge vector.
+    dispatch_ring_dim_result!(ring_dim, |D| {
+        verify_root_inner::<F, E, T, D>(
+            proof,
+            setup,
+            transcript,
+            commitment_view,
+            &openings,
+            &opening_batch,
+            shared_opening_point,
+            num_claims,
+            m_row_layout,
+            extension_opening_reduction,
+            stage3_sumcheck_proof,
+            next_fold_level_params,
+            basis,
+            root_lp,
+            terminal_final_w_len,
+        )
+    })
+}
+
+/// Ring-dimension-typed root-fold replay kernel.
+///
+/// Reached only through [`verify_root`]'s single `dispatch_ring_dim_result!`
+/// boundary; `D` is the schedule's root ring dimension. The commitment is
+/// reconstructed from its already-validated flat [`RingView`] into typed rings
+/// here, never threaded as `D` across the public API.
+#[allow(clippy::too_many_arguments)]
+fn verify_root_inner<F, E, T, const D: usize>(
+    proof: &AkitaBatchedRootProof<F, E>,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    commitment_view: RingView<'_, F>,
+    openings: &[E],
+    opening_batch: &OpeningBatchShape,
+    shared_opening_point: &[E],
+    num_claims: usize,
+    m_row_layout: MRowLayout,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
+    next_fold_level_params: &LevelParams,
+    basis: BasisMode,
+    root_lp: &LevelParams,
+    terminal_final_w_len: usize,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    validate_level_dispatch::<D>(root_lp)?;
+    // Reconstruct the validated flat commitment as typed rings for the kernel.
+    let commitment_rings: Vec<CyclotomicRing<F, D>> = commitment_view
+        .coeffs()
+        .chunks_exact(D)
+        .map(CyclotomicRing::from_slice)
+        .collect();
+    let v_typed = proof.v().try_to_vec::<D>()?;
+
     if extension_opening_reduction.is_none() {
         let prepared_point = prepare_opening_point::<F, E, D>(
             shared_opening_point,
@@ -69,15 +148,15 @@ where
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?;
+    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
+    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let root_eor = verify_fold_eor::<F, E, T, D>(
         extension_opening_reduction,
         &[],
         shared_opening_point,
-        &openings,
+        openings,
         &row_coefficients,
-        &opening_batch,
+        opening_batch,
         basis,
         root_lp,
         BlockOrder::RowMajor,
@@ -109,7 +188,7 @@ where
         )?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, &openings)?;
+        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, openings)?;
     let trace_eval_target = eor_trace_final
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
@@ -161,15 +240,15 @@ where
         shared_opening_point,
         opening_batch.clone(),
         vec![CommitmentGroup {
-            claims: openings,
-            commitment: commitment.u.as_slice(),
+            claims: openings.to_vec(),
+            commitment: commitment_rings.as_slice(),
         }],
     )?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed.to_vec(),
+        v: v_typed,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

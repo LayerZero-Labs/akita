@@ -14,11 +14,12 @@ use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInsta
 use akita_transcript::labels::{self, ABSORB_PROVER_V};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::eval_poly;
+use akita_types::proof::append_flat_coefficients;
 use akita_types::{
     combine_polys, linear_combination, sis::FoldWitnessGrindContract,
     stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
     stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
-    MRowLayout, RingSliceSerializer,
+    MRowLayout,
 };
 
 type Stage1VerifyOutput<E> = Vec<E>;
@@ -55,7 +56,7 @@ pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     grind_nonce: u32,
 ) -> Result<Challenges, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + AkitaSerialize,
     T: Transcript<F>,
 {
     // Terminal layout drops the D-block (`v = D · ŵ`) from M entirely;
@@ -63,7 +64,11 @@ where
     // both prover and verifier to keep the Fiat-Shamir transcript in
     // sync. Intermediate layouts still bind the prover's `v` rows.
     if matches!(m_row_layout, MRowLayout::WithDBlock) {
-        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
+        // Absorb `v` as flat ring coefficients under dimension `D` — byte-identical
+        // to the former typed `RingSliceSerializer(v)` path (S2 byte-identity test):
+        // ring-major coefficient order, no length header.
+        let v_coeffs: Vec<F> = v.iter().flat_map(|r| r.coefficients().to_vec()).collect();
+        append_flat_coefficients(ABSORB_PROVER_V, &v_coeffs, D, transcript)?;
     }
     sample_folding_challenges::<F, T, D>(
         transcript,

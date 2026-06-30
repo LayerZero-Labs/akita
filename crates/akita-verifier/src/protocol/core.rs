@@ -40,7 +40,7 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
     BasisMode, BlockOrder, CleartextWitnessProof, CommitmentGroup, ExecutionSchedule,
     ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding, LevelParams,
-    MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment,
+    MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RelationOnlyStage2Inputs,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
     SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts, TraceClaim, VerifierOpeningBatch,
