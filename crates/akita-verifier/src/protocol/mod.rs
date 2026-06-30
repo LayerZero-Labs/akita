@@ -13,25 +13,14 @@ pub(crate) use slice_mle::{SetupEvalPlan, SetupEvaluator};
 
 #[inline]
 pub(crate) fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {
-    if D == 0 || !D.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "ring dimension must be a non-zero power of two".to_string(),
-        ));
-    }
-    Ok(D.trailing_zeros() as usize)
+    akita_types::validate_ring_dispatch::<D>()
 }
 
 #[inline]
 pub(crate) fn validate_level_dispatch<const D: usize>(
     lp: &LevelParams,
 ) -> Result<usize, AkitaError> {
-    let ring_bits = validate_ring_dispatch::<D>()?;
-    if lp.ring_dimension != D {
-        return Err(AkitaError::InvalidSetup(
-            "LevelParams ring dimension does not match verifier dispatch".to_string(),
-        ));
-    }
-    Ok(ring_bits)
+    akita_types::validate_level_dispatch::<D>(lp)
 }
 
 #[inline]

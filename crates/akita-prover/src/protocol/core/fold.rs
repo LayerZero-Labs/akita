@@ -11,6 +11,7 @@ use akita_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::build_segment_typed_witness;
+use akita_types::validate_level_dispatch;
 use akita_types::validate_segment_typed_z_payload;
 use akita_types::CleartextWitnessShape;
 
@@ -634,6 +635,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = L>,
 {
     let lp = &scheduled.params;
+    validate_level_dispatch::<D>(lp)?;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
     // §6 invariant — commitment vector length == num_rings · ring_dim. The
     // prepared-fold commitment is the D-free flat `RingVec`; reinterpret it as
@@ -641,6 +643,9 @@ where
     // `try_to_vec::<D>` is the no-panic gate (returns `InvalidProof` when the
     // buffer is not an exact multiple of `D`), replacing the former typed
     // `as_ring_slice::<D>` bridge.
+    if !prepared_fold.commitment.can_decode_vec(lp.ring_dimension) {
+        return Err(AkitaError::InvalidProof);
+    }
     let commitment_u = prepared_fold.commitment.try_to_vec::<D>()?;
     let build_output = ring_switch_build_w::<F, R, D>(
         &prepared_fold.instance,

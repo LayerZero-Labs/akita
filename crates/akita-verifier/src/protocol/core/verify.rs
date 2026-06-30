@@ -5,7 +5,7 @@ use super::*;
 use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
 use crate::protocol::{validate_level_dispatch, validate_log_basis};
 use akita_algebra::CyclotomicRing;
-use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
+use akita_config::{bind_transcript_instance_descriptor, effective_batched_schedule, CommitmentConfig};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
@@ -14,11 +14,10 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    FpExtEncoding, LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, RingVec,
-    RingView, Schedule, SetupContributionMode, Step, VerifierOpeningBatch,
+    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
+    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, FpExtEncoding,
+    LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, RingVec, RingView,
+    Schedule, SetupContributionMode, Step, ValidatedScheduleContext, VerifierOpeningBatch,
     GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
@@ -67,44 +66,6 @@ where
         }
     }
     Ok(())
-}
-
-fn effective_batched_schedule<Cfg>(
-    opening_batch: &OpeningBatchShape,
-    opening_point: &[Cfg::ExtField],
-) -> Result<Schedule, AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-{
-    let num_vars = opening_batch.num_vars();
-    let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
-    if let Some(root_step) = schedule_root_fold_step(&schedule) {
-        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        // The root-fold support/tensor-projection checks are const-generic over
-        // the *root* ring dimension; that dimension is carried at runtime by the
-        // root step's `LevelParams`. Dispatch once at this kernel-entry boundary
-        // and return a D-free `bool`.
-        let supports_opening_shape =
-            dispatch_ring_dim_result!(root_step.params.ring_dimension, |D| Ok(
-                folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
-                    std::slice::from_ref(&opening_point),
-                    &root_step.params,
-                    alpha_bits,
-                )
-            ))?;
-        let tensor_projection_enabled = dispatch_ring_dim_result!(
-            root_step.params.ring_dimension,
-            |D| Ok(root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars))
-        )?;
-        if !supports_opening_shape && !tensor_projection_enabled {
-            let commit_params = Cfg::get_params_for_batched_commitment(opening_batch)?;
-            schedule = root_direct_schedule(num_vars, commit_params)?;
-        }
-    }
-
-    Ok(schedule)
 }
 
 fn reject_unsupported_grouped_root<Cfg>(
@@ -454,6 +415,7 @@ where
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
+    ValidatedScheduleContext::new(&schedule, setup.expanded.seed().gen_ring_dim)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
     // The transcript instance descriptor binds the setup-wide root ring

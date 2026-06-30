@@ -198,7 +198,7 @@ where
                     (ring_backend, &ring_prepared),
                     expanded.as_ref(),
                 )?;
-                let level_prefix_slots = SetupPrefixProverRegistry::new();
+                let level_prefix_slots = prefix_slots;
                 let prepared_fold =
                     prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
                         &level_stack,
@@ -321,6 +321,9 @@ where
         ..
     } = current_state;
     let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
+    if !commitment.can_decode_vec(level_params.ring_dimension) {
+        return Err(AkitaError::InvalidProof);
+    }
     // D-free suffix hint: the cache carries the flat `AkitaCommitmentHint<F>`
     // directly (Slice A re-homed the recomposed rows), so there is no typed
     // reconstruction here (the former `hint.to_typed::<D>()` bridge is gone).

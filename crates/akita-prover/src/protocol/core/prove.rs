@@ -9,10 +9,12 @@ use crate::compute::{
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
+use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
-    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
+    validate_level_dispatch, ValidatedScheduleContext, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
+    GROUPED_ROOT_UNSUPPORTED,
 };
 
 fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
@@ -154,26 +156,23 @@ where
         &flat_polys,
         setup_contribution_mode,
     )?;
-    let num_vars = opening_batch.num_vars();
-    let mut schedule = Cfg::get_params_for_prove(&opening_batch)?;
-    if let Some(root_step) = schedule_root_fold_step(&schedule) {
-        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
-            std::slice::from_ref(&claims.point()),
-            &root_step.params,
-            alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
-        {
-            let commit_params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
-            schedule = root_direct_schedule(num_vars, commit_params)?;
-        }
-    }
+    let schedule =
+        effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
+    ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
     let root_commit_params = match schedule.steps.first() {
-        Some(Step::Fold(root)) => Some(&root.params),
-        Some(Step::Direct(root)) => root.params.as_ref(),
-        None => None,
-    }
-    .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
+        Some(Step::Fold(root)) => {
+            validate_level_dispatch::<D>(&root.params)?;
+            &root.params
+        }
+        Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {
+            AkitaError::InvalidSetup("root-direct schedule missing commit params".to_string())
+        })?,
+        None => {
+            return Err(AkitaError::InvalidSetup(
+                "root schedule is empty".to_string(),
+            ));
+        }
+    };
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(&flat_polys, root_commit_params)?;
 
     // The transcript instance descriptor binds the setup-wide root ring
@@ -298,6 +297,7 @@ where
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
+    validate_level_dispatch::<D>(&root_scheduled.params)?;
     {
         // §6 invariant — commitment vector length == num_rings · ring_dim.
         // The flat `Commitment` stores raw coefficients; validate its ring count

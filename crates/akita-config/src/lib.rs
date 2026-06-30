@@ -26,11 +26,13 @@ pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+pub mod schedule_selection;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_grouped_opening_batch_for_shape,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
+pub use schedule_selection::effective_batched_schedule;
 
 /// Derive the `Cfg`-free [`PlannerPolicy`] the planner DP consumes from a
 /// preset.

@@ -1,5 +1,39 @@
 //! Runtime-to-const-generic dispatch shared by prover and verifier.
 
+use crate::LevelParams;
+use akita_field::AkitaError;
+
+/// Validate that a const-generic ring dimension is supported for dispatch.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `D` is zero or not a power of two.
+#[inline]
+pub fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {
+    if D == 0 || !D.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "ring dimension must be a non-zero power of two".to_string(),
+        ));
+    }
+    Ok(D.trailing_zeros() as usize)
+}
+
+/// Validate that schedule level params match the dispatched ring dimension.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `lp.ring_dimension != D`.
+#[inline]
+pub fn validate_level_dispatch<const D: usize>(lp: &LevelParams) -> Result<usize, AkitaError> {
+    let ring_bits = validate_ring_dispatch::<D>()?;
+    if lp.ring_dimension != D {
+        return Err(AkitaError::InvalidSetup(
+            "LevelParams ring dimension does not match prover dispatch".to_string(),
+        ));
+    }
+    Ok(ring_bits)
+}
+
 /// Bridge a runtime ring dimension to a const-generic `D` context.
 ///
 /// Returns an [`AkitaError`](akita_field::AkitaError) instead of panicking so it
