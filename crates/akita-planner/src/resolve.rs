@@ -146,9 +146,7 @@ mod tests {
         validate_generated_schedule_entry, GeneratedDirectStep, GeneratedFoldStep,
         GeneratedScheduleTable, GeneratedStep,
     };
-    use akita_types::{
-        DecompositionParams, DirectStep, FoldStep, LevelParams, SisModulusFamily, Step,
-    };
+    use akita_types::{DecompositionParams, LevelParams, SisModulusFamily, Step};
 
     fn flat_policy() -> PlannerPolicy {
         PlannerPolicy {

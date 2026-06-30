@@ -1,6 +1,6 @@
 //! Public validation for generated schedule rows.
 //!
-//! Delegates to the shared walker in [`super::walk`]; see
+//! Delegates to the shared generated-schedule walker; see
 //! [`validate_generated_schedule_entry`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
