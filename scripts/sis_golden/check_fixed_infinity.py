@@ -92,13 +92,13 @@ def main() -> int:
     checked = 0
     skipped_fragile = 0
 
-    for expected in sorted(rows, key=fixed_row_key):
+    for row_index, expected in enumerate(sorted(rows, key=fixed_row_key), start=1):
         trust = expected.get("trust", TRUSTED)
         if trust == FRAGILE:
             skipped_fragile += 1
             continue
         if trust != TRUSTED:
-            failures.append(f"unknown trust value {trust!r} for row {fixed_row_key(expected)}")
+            failures.append(f"row {row_index}: unknown trust value")
             continue
 
         actual = estimate_fixed_infinity_cell(
@@ -120,12 +120,10 @@ def main() -> int:
         for field in FLOAT_FIELDS:
             failure = compare_float(field, expected[field], actual[field])
             if failure is not None:
-                failures.append(f"{fixed_row_key(expected)} {failure}")
+                failures.append(f"row {row_index}: {field} mismatch")
         for field in INT_FIELDS:
             if expected[field] != actual[field]:
-                failures.append(
-                    f"{fixed_row_key(expected)} {field}: expected {expected[field]}, got {actual[field]}"
-                )
+                failures.append(f"row {row_index}: {field} mismatch")
 
     if failures:
         for failure in failures:

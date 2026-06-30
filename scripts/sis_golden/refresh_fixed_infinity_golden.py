@@ -112,12 +112,7 @@ def main() -> int:
             )
         elapsed = time.time() - cell_t0
         print(
-            "fixed_infinity "
-            f"{index}/{len(work)} family={row['family']} d={row['d']} "
-            f"rank={row['rank']} width={row['width']} "
-            f"linf={row['coeff_linf_bound']} beta={row['beta_input']} "
-            f"zeta={row['zeta_input']} rop_log2={row['rop_log2']} "
-            f"({elapsed:.1f}s)",
+            f"fixed_infinity {index}/{len(work)} completed ({elapsed:.1f}s)",
             file=sys.stderr,
         )
         rows.append(row)

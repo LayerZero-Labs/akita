@@ -152,13 +152,7 @@ def main() -> int:
             )
         elapsed = time.time() - cell_t0
         print(
-            "infinity "
-            f"{index}/{len(work)} family={row['family']} d={row['d']} "
-            f"rank={row['rank']} width={row['width']} "
-            f"linf={row['coeff_linf_bound']} rop_log2={row['rop_log2']} "
-            f"prob_log2={row['prob_log2']} tiny={row['tiny_probability']} "
-            f"trust={row['trust']} "
-            f"({elapsed:.1f}s)",
+            f"infinity {index}/{len(work)} completed ({elapsed:.1f}s)",
             file=sys.stderr,
         )
         rows.append(row)

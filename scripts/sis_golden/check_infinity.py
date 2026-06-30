@@ -109,10 +109,7 @@ def check_monotonicity(rows: list[dict[str, str]]) -> list[str]:
             width = int(row["width"])
             bits = parse_float(row["rop_log2"])
             if prior_bits is not None and bits > prior_bits + FLOAT_ABS_TOL:
-                failures.append(
-                    f"width monotonicity {key}: width {width} has {bits} bits "
-                    f"> prior width {prior_width} bits {prior_bits}"
-                )
+                failures.append("width monotonicity failure")
             prior_width = width
             prior_bits = bits
 
@@ -123,10 +120,7 @@ def check_monotonicity(rows: list[dict[str, str]]) -> list[str]:
             bound = int(row["coeff_linf_bound"])
             bits = parse_float(row["rop_log2"])
             if prior_bits is not None and bits > prior_bits + FLOAT_ABS_TOL:
-                failures.append(
-                    f"bound monotonicity {key}: bound {bound} has {bits} bits "
-                    f"> prior bound {prior_bound} bits {prior_bits}"
-                )
+                failures.append("bound monotonicity failure")
             prior_bound = bound
             prior_bits = bits
     return failures
@@ -152,13 +146,13 @@ def main() -> int:
     checked = 0
     skipped_fragile = 0
 
-    for expected in sorted(rows, key=row_key):
+    for row_index, expected in enumerate(sorted(rows, key=row_key), start=1):
         trust = expected.get("trust", TRUSTED)
         if trust == FRAGILE:
             skipped_fragile += 1
             continue
         if trust != TRUSTED:
-            failures.append(f"unknown trust value {trust!r} for row {row_key(expected)}")
+            failures.append(f"row {row_index}: unknown trust value")
             continue
 
         actual = estimate_infinity_cell(
@@ -178,17 +172,13 @@ def main() -> int:
         for field in FLOAT_FIELDS:
             failure = compare_float(field, expected[field], actual[field])
             if failure is not None:
-                failures.append(f"{row_key(expected)} {failure}")
+                failures.append(f"row {row_index}: {field} mismatch")
         for field in INT_FIELDS:
             if expected[field] != actual[field]:
-                failures.append(
-                    f"{row_key(expected)} {field}: expected {expected[field]}, got {actual[field]}"
-                )
+                failures.append(f"row {row_index}: {field} mismatch")
         for field in ["security_met", "tiny_probability"]:
             if expected[field] != actual[field]:
-                failures.append(
-                    f"{row_key(expected)} {field}: expected {expected[field]}, got {actual[field]}"
-                )
+                failures.append(f"row {row_index}: {field} mismatch")
 
     if not args.skip_monotonicity:
         failures.extend(check_monotonicity(rows))
