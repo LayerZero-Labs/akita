@@ -1,8 +1,8 @@
 use super::*;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootProvePoly,
-    TensorBackendFor,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootPolyMeta,
+    RootProvePoly, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -41,7 +41,7 @@ where
 fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningBatch<'_, E, P, F>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
@@ -64,7 +64,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProvePoly<F, D>,
+    P: RootProvePoly<F, D> + RootPolyMeta<F>,
     TS: TensorBackendFor<F, P, E, D>,
     O: DigitRowsComputeBackend<F>
         + OpeningProveBackendFor<F, P, D>
@@ -139,7 +139,7 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningBatch<'_, E, P, F>,
     scheduled: &ExecutionSchedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -162,7 +162,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProvePoly<F, D>,
+    P: RootProvePoly<F, D> + RootPolyMeta<F>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: OpeningProveBackendFor<F, P, D>
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
@@ -191,7 +191,10 @@ where
         ));
     }
 
-    claims.append_to_transcript::<T>(transcript)?;
+    // Absorb root claims through the D-free flat commitment encoder keyed on the
+    // root level's schedule `ring_dimension` (byte-identical to the verifier's
+    // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
+    claims.append_to_transcript::<T>(root_params.ring_dimension, transcript)?;
 
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
         stack,
@@ -244,7 +247,7 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningBatch<'_, E, P, F>,
     scheduled: &ExecutionSchedule,
     terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
@@ -268,7 +271,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProvePoly<F, D>,
+    P: RootProvePoly<F, D> + RootPolyMeta<F>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: OpeningProveBackendFor<F, P, D>
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
@@ -297,7 +300,9 @@ where
         ));
     }
 
-    claims.append_to_transcript::<T>(transcript)?;
+    // Absorb root claims through the D-free flat commitment encoder keyed on the
+    // root level's schedule `ring_dimension` (S2/S7 byte parity).
+    claims.append_to_transcript::<T>(root_params.ring_dimension, transcript)?;
 
     let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
         root_params,

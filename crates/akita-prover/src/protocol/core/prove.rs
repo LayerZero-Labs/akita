@@ -3,8 +3,9 @@ use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
-    RingSwitchProveBackend, RootPolyShape, RootProvePoly, SuffixDispatchOpeningProveBackendFor,
-    SuffixDispatchTensorProveBackendFor, SuffixRingSwitchProveBackend, TensorBackendFor,
+    RingSwitchProveBackend, RootPolyMeta, RootPolyShape, RootProvePoly,
+    SuffixDispatchOpeningProveBackendFor, SuffixDispatchTensorProveBackendFor,
+    SuffixRingSwitchProveBackend, TensorBackendFor,
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
@@ -54,7 +55,7 @@ where
 /// Returns an error if any polynomial cannot produce a direct root witness.
 pub fn prove_root_direct<F, L, const D: usize, P>(
     polys: &[&P],
-    hints: &[AkitaCommitmentHint<F, D>],
+    hints: &[AkitaCommitmentHint<F>],
 ) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
     F: FieldCore,
@@ -97,7 +98,7 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
         Tensor = TS,
         RingSwitch = R,
     >,
-    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field, D>,
+    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
     transcript: &mut T,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -122,7 +123,7 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: RootProvePoly<Cfg::Field, D>,
+    P: RootProvePoly<Cfg::Field, D> + RootPolyMeta<Cfg::Field>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
@@ -175,13 +176,22 @@ where
     .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(&flat_polys, root_commit_params)?;
 
-    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
-        expanded.as_ref(),
-        &opening_batch,
-        &schedule,
-        basis,
-        transcript,
-    )?;
+    // The transcript instance descriptor binds the setup-wide root ring
+    // dimension (`gen_ring_dim`), NOT the root stack's const `D`. For uniform-D
+    // presets `gen_ring_dim == Cfg::D == D`, so the descriptor bytes are
+    // unchanged today; binding `gen_ring_dim` (via the canonical dispatcher,
+    // exactly as the verifier's `batched_verify` does) keeps the prover and
+    // verifier descriptors byte-identical under a future mixed-D preset. This is
+    // the one absorption-parity point the compiler cannot check (S7/S9 caveat).
+    dispatch_ring_dim_result!(expanded.seed().gen_ring_dim, |GEN_D| {
+        bind_transcript_instance_descriptor::<Cfg::Field, T, GEN_D, Cfg>(
+            expanded.as_ref(),
+            &opening_batch,
+            &schedule,
+            basis,
+            transcript,
+        )
+    })?;
 
     if schedule_is_root_direct(&schedule) {
         let commitment_hints = claims
@@ -240,7 +250,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field, D>,
+    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -265,7 +275,7 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: RootProvePoly<Cfg::Field, D>,
+    P: RootProvePoly<Cfg::Field, D> + RootPolyMeta<Cfg::Field>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
@@ -289,14 +299,21 @@ where
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
+        // §6 invariant — commitment vector length == num_rings · ring_dim.
+        // The flat `Commitment` stores raw coefficients; validate its ring count
+        // against the scheduled root params under the schedule-derived ring
+        // dimension via `RingView::new` (no-panic gate, mirrors the verifier's
+        // commitment-length check) before interpreting it as ring rows.
+        let root_ring_dim = root_scheduled.params.ring_dimension;
+        let expected_rows = root_scheduled.params.effective_commit_rows();
         let commitments = claims.commitments();
-        if commitments
-            .iter()
-            .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
-        {
-            return Err(AkitaError::InvalidInput(
-                "root commitment row count does not match scheduled root params".to_string(),
-            ));
+        for commitment in commitments {
+            let view = RingView::new(commitment.rows().coeffs(), root_ring_dim)?;
+            if view.num_rings() != expected_rows {
+                return Err(AkitaError::InvalidInput(
+                    "root commitment row count does not match scheduled root params".to_string(),
+                ));
+            }
         }
     }
 

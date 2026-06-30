@@ -321,10 +321,24 @@ where
         ..
     } = current_state;
     let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
-    let typed_hint = hint.to_typed::<D>()?;
+    // D-free suffix hint: the cache carries the flat `AkitaCommitmentHint<F>`
+    // directly (Slice A re-homed the recomposed rows), so there is no typed
+    // reconstruction here (the former `hint.to_typed::<D>()` bridge is gone).
+    let suffix_hint = hint.into_hint();
     let opening_point = &sumcheck_challenges;
 
-    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    // §6 invariant (H5 byte-parity) — absorb the suffix commitment through the
+    // D-free flat coefficient encoder keyed on the level's schedule
+    // `ring_dimension`. This is byte-identical to the verifier's
+    // `current_state.commitment.append_flat_to_transcript(...)` (S7
+    // `prepare_fold_data`) and to the former typed `append_as_ring_commitment`
+    // path (S2 byte-identity test). The same coefficient order, same
+    // `ABSORB_COMMITMENT` label.
+    commitment.append_flat_to_transcript::<T>(
+        ABSORB_COMMITMENT,
+        level_params.ring_dimension,
+        transcript,
+    )?;
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
@@ -333,13 +347,11 @@ where
     let eor_opening_batch =
         VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let commitment_u = commitment.as_ring_slice::<D>()?;
-    let suffix_commitment = (
-        RingCommitment {
-            u: commitment_u.to_vec(),
-        },
-        typed_hint,
-    );
+    // §6 invariant — commitment vector length == num_rings · ring_dim. Carry the
+    // commitment as the D-free flat `Commitment<F>`; the kernel reinterprets it
+    // under `D` at the fold-entry boundary (`prove_fold` `try_to_vec::<D>`),
+    // which is the no-panic length gate.
+    let suffix_commitment = (Commitment::new(commitment), suffix_hint);
     let fold_claims = ProverOpeningBatch::new_suffix(
         opening_point,
         recursive_num_vars,

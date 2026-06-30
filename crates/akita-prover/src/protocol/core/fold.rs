@@ -2,7 +2,8 @@ use super::*;
 use crate::compute::{
     tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, OpeningProveBackendFor,
-    ProverComputeStack, RingSwitchProveBackend, RootOpeningSource, RootProvePoly, TensorBackendFor,
+    ProverComputeStack, RingSwitchProveBackend, RootOpeningSource, RootPolyMeta, RootProvePoly,
+    TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -256,7 +257,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
 >(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     needs_extension_reduction: bool,
-    fold_claims: ProverOpeningBatch<'a, E, P, F, D>,
+    fold_claims: ProverOpeningBatch<'a, E, P, F>,
     eor_polys: &[&P],
     eor_opening_batch: &VerifierOpeningBatch<'_, E>,
     pad_base_evals: bool,
@@ -282,7 +283,7 @@ where
     T: Transcript<F> + ProverTranscriptGrind<F>,
     F: RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-    P: RootProvePoly<F, D>,
+    P: RootProvePoly<F, D> + RootPolyMeta<F>,
     V: FnOnce() -> Result<(), AkitaError>,
     TS: TensorBackendFor<F, P, E, D>,
     C: ComputeBackendSetup<F>,
@@ -409,7 +410,7 @@ where
     R: ComputeBackendSetup<F>,
 {
     stack: &'a ProverComputeStack<'a, F, D, C, O, TS, R>,
-    fold_claims: ProverOpeningBatch<'a, E, Q, F, D>,
+    fold_claims: ProverOpeningBatch<'a, E, Q, F>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
@@ -442,7 +443,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    Q: RootOpeningSource<F, D>,
+    Q: RootOpeningSource<F, D> + RootPolyMeta<F>,
     O: DigitRowsComputeBackend<F> + OpeningProveBackendFor<F, Q, D>,
     R: DigitRowsComputeBackend<F>,
     C: ComputeBackendSetup<F>,
@@ -510,6 +511,13 @@ where
         terminal_tail_t_vectors,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
+    // §6 invariant (#239 HIGH) — suffix `PreparedFold` trace-table layout vs
+    // `pad_base_evals`. `row_coefficients` and `trace_claim_scales` MUST be
+    // cleared together on the `pad_base_evals` (recursive-suffix) path and
+    // written together otherwise; `prove_fold` selects the root vs recursive
+    // `build_*_stage2_trace_table` branch on `row_coefficients.is_some()`, so a
+    // split here would silently mis-scale the trace table. Preserve the exact
+    // branch wiring and assert the two stay coupled to `pad_base_evals`.
     let row_coefficients = if pad_base_evals {
         None
     } else {
@@ -520,6 +528,15 @@ where
     } else {
         trace_target.trace_claim_scales
     };
+    debug_assert_eq!(
+        pad_base_evals,
+        row_coefficients.is_none(),
+        "suffix trace layout: row_coefficients must be cleared iff pad_base_evals"
+    );
+    debug_assert!(
+        !pad_base_evals || trace_claim_scales.is_none(),
+        "suffix trace layout: trace_claim_scales must be cleared when pad_base_evals"
+    );
     Ok(PreparedFold {
         commitment,
         instance,
@@ -618,7 +635,13 @@ where
 {
     let lp = &scheduled.params;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
-    let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
+    // §6 invariant — commitment vector length == num_rings · ring_dim. The
+    // prepared-fold commitment is the D-free flat `RingVec`; reinterpret it as
+    // typed ring rows at this fold's `D` at the kernel-entry boundary.
+    // `try_to_vec::<D>` is the no-panic gate (returns `InvalidProof` when the
+    // buffer is not an exact multiple of `D`), replacing the former typed
+    // `as_ring_slice::<D>` bridge.
+    let commitment_u = prepared_fold.commitment.try_to_vec::<D>()?;
     let build_output = ring_switch_build_w::<F, R, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
@@ -676,7 +699,7 @@ where
         &rs.tau1,
         rs.alpha,
         relation_rows,
-        commitment_u,
+        &commitment_u,
     )?;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
         (None, vec![L::zero(); rs.col_bits + rs.ring_bits], L::zero())

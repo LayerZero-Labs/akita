@@ -370,7 +370,7 @@ mod tests {
             .expect("setup b");
         assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
 
-        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
+        let prepared_a = CpuBackend.prepare_setup::<D>(&setup_a).expect("prepared a");
         assert!(matches!(
             OperationCtx::new(&CpuBackend, &prepared_a, setup_b.expanded.as_ref()),
             Err(AkitaError::InvalidSetup(_))
@@ -381,7 +381,7 @@ mod tests {
     fn operation_ctx_accepts_matching_expanded_setup() {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let prepared = CpuBackend.prepare_setup::<D>(&setup).expect("prepared");
         OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("matching expanded metadata should validate");
     }
@@ -439,7 +439,7 @@ mod tests {
     fn heterogeneous_stack_accepts_distinct_operation_clusters() {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let prepared = CpuBackend.prepare_setup::<D>(&setup).expect("prepared");
         let commit_backend = CommitClusterBackend;
         let ring_backend = RingSwitchClusterBackend;
         let stack = ProverComputeStack::new(
@@ -465,7 +465,7 @@ mod tests {
     fn heterogeneous_stack_implements_level_prove_stacks() {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let prepared = CpuBackend.prepare_setup::<D>(&setup).expect("prepared");
         let commit_backend = CommitClusterBackend;
         let ring_backend = RingSwitchClusterBackend;
         let stack = ProverComputeStack::new(
@@ -504,7 +504,7 @@ mod tests {
     fn tiered_prove_stacks_rejects_length_mismatch() {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
             .expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let prepared = CpuBackend.prepare_setup::<D>(&setup).expect("prepared");
         let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
         let stacks = [stack];
@@ -518,8 +518,8 @@ mod tests {
             .expect("setup a");
         let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
             .expect("setup b");
-        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
-        let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
+        let prepared_a = CpuBackend.prepare_setup::<D>(&setup_a).expect("prepared a");
+        let prepared_b = CpuBackend.prepare_setup::<D>(&setup_b).expect("prepared b");
         let stack_a =
             UniformProverStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
                 .expect("stack a");
@@ -537,8 +537,8 @@ mod tests {
             .expect("setup a");
         let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
             .expect("setup b");
-        let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
-        let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
+        let prepared_a = CpuBackend.prepare_setup::<D>(&setup_a).expect("prepared a");
+        let prepared_b = CpuBackend.prepare_setup::<D>(&setup_b).expect("prepared b");
         let stack_a =
             UniformProverStack::uniform(&CpuBackend, &prepared_a, setup_a.expanded.as_ref())
                 .expect("stack a");

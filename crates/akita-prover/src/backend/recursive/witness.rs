@@ -403,8 +403,8 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningFoldPlan, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
+    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
@@ -433,6 +433,50 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         padded_ring_elems_for_digits::<D>(&self.digits).unwrap_or(1)
+    }
+}
+
+/// D-free polynomial metadata for the recursive suffix witness (H2 boundary).
+///
+/// The recursive suffix witness is genuinely D-erased: it owns a flat `Vec<i8>`
+/// digit buffer (one digit per field-element coefficient) and is re-chunked
+/// under the level's ring dimension only inside D-typed kernels. The D-free
+/// `RootPolyMeta` is what the PCS-facing `ProverOpeningBatch::to_opening_shape`
+/// requires, so it must expose `num_vars` without a const `D`.
+///
+/// `num_vars` is the witness's logical variable count `log2(coeff_count)`. The
+/// digit buffer length is the field-element coefficient count, which the
+/// protocol always builds as a power of two (the suffix opening point is sized
+/// by the schedule's `recursive_opening_num_vars`, and `to_opening_shape`
+/// validates the point length against this value). This is byte/shape-identical
+/// to the former typed `RootPolyShape::<F, D>::num_vars` = `log2(n_ring · D)`
+/// **whenever `coeff_count / D` is a power of two**, which the schedule
+/// guarantees; the `debug_assert` makes any future violation loud rather than a
+/// silent shape mismatch. Per the cutover mandate, `num_vars` here is derived
+/// from the witness's own logical length, never from a const `D`.
+///
+/// `num_ring_elems` is not on the suffix `to_opening_shape` path (only
+/// `num_vars` is consumed there); the D-keyed ring-element count is recovered
+/// inside kernels via the D-typed `RootPolyShape`/`SuffixWitnessView`. The
+/// D-free value reported here is the flat coefficient count, consistent with
+/// `num_vars`.
+impl<F> RootPolyMeta<F> for RecursiveWitnessFlat
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        self.digits.len().max(1)
+    }
+
+    fn num_vars(&self) -> usize {
+        let coeff_count = self.digits.len().next_power_of_two().max(1);
+        debug_assert!(
+            self.digits.len() <= 1 || self.digits.len().is_power_of_two(),
+            "recursive suffix witness coefficient count must be a power of two \
+             (schedule invariant); got {}",
+            self.digits.len()
+        );
+        coeff_count.trailing_zeros() as usize
     }
 }
 

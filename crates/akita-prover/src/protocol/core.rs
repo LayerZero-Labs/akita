@@ -48,11 +48,11 @@ use akita_types::{
     trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
-    CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams,
-    MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingRelationSegmentLayout, RingVec, Schedule,
-    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
-    TraceTable, VerifierOpeningBatch,
+    CleartextWitnessProof, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
+    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    RingRelationSegmentLayout, RingVec, RingView, Schedule, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
+    VerifierOpeningBatch,
 };
 use std::sync::Arc;
 

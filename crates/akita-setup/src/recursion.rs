@@ -84,7 +84,7 @@ where
     let terminal_fold_idx = folds.len().saturating_sub(1);
 
     let backend = CpuBackend;
-    let prepared = backend.prepare_setup(setup)?;
+    let prepared = backend.prepare_setup::<D>(setup)?;
     for (idx, fold) in folds.iter().enumerate() {
         if idx >= terminal_fold_idx {
             continue;
