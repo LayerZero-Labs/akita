@@ -16,6 +16,7 @@ pub mod lhl_blinding;
 pub mod proof;
 pub mod proof_size;
 pub mod schedule;
+pub mod schedule_context;
 pub mod setup_contribution;
 pub mod sis;
 pub mod tail_golomb_rice_low_bits;
@@ -115,6 +116,7 @@ pub use schedule::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, DirectStep,
     ExecutionSchedule, FoldStep, GroupBatchAkitaScheduleLookupKey, Schedule, Step,
 };
+pub use schedule_context::{LevelShape, ValidatedScheduleContext};
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
 pub use tail_golomb_rice_low_bits::{

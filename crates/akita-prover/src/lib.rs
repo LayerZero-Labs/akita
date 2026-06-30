@@ -7,6 +7,7 @@
 pub mod api;
 pub mod backend;
 pub mod compute;
+pub mod dispatch_dim;
 pub mod kernels;
 pub mod protocol;
 mod validation;
