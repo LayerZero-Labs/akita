@@ -97,6 +97,11 @@ def estimator_git_sha(path: Path) -> str:
         return "unknown"
 
 
+def format_estimator_sha(sha: str) -> str:
+    """Short SHA for console output (avoids logging full commit ids)."""
+    return sha[:12] if len(sha) > 12 else sha
+
+
 def estimator_remote_url(path: Path) -> str:
     try:
         out = subprocess.run(

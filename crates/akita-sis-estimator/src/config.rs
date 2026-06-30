@@ -113,7 +113,7 @@ impl OptimizerConfig {
     /// Returns an error when a fixed beta is zero.
     pub fn validate(&self) -> Result<()> {
         match *self {
-            Self::Fixed { beta, zeta: _ } => validate_positive("optimizer.beta", beta),
+            Self::Fixed { beta, zeta: _ } => validate_min_beta("optimizer.beta", beta),
             Self::OptimizeBeta { zeta: _, .. } => Ok(()),
             Self::OptimizeZeta { .. } => Ok(()),
         }
@@ -208,6 +208,16 @@ fn validate_positive(field: &'static str, value: u32) -> Result<()> {
     Ok(())
 }
 
+fn validate_min_beta(field: &'static str, beta: u32) -> Result<()> {
+    if beta < 2 {
+        return Err(EstimatorError::InvalidConfig {
+            field,
+            reason: "beta must be at least 2".to_string(),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,13 +243,20 @@ mod tests {
     }
 
     #[test]
-    fn optimizer_validation_rejects_zero_fixed_beta_but_allows_zero_zeta() {
+    fn optimizer_validation_rejects_beta_below_two_for_fixed_mode() {
         assert!(OptimizerConfig::Fixed { beta: 0, zeta: 1 }
+            .validate()
+            .is_err());
+        assert!(OptimizerConfig::Fixed { beta: 1, zeta: 1 }
             .validate()
             .is_err());
         assert!(OptimizerConfig::Fixed { beta: 64, zeta: 0 }
             .validate()
             .is_ok());
+    }
+
+    #[test]
+    fn optimizer_validation_allows_zero_zeta_for_non_fixed_modes() {
         assert!(OptimizerConfig::OptimizeBeta {
             zeta: 0,
             beta: SearchMode::PythonLocalMinimum,

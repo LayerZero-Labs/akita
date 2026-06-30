@@ -269,7 +269,7 @@ mod tests {
     use super::*;
     use crate::{
         config::{Adps16Mode, EstimateConfig, ReductionCostModel, ShapeModel},
-        params::{akita_q32, SisNorm},
+        params::{akita_q128, akita_q32, SisNorm},
     };
 
     fn sample_config() -> EstimateConfig {
@@ -298,5 +298,19 @@ mod tests {
             cost_infinity_fixed(63, &params, 0, &config),
             Err(EstimatorError::Unsupported { .. })
         ));
+    }
+
+    #[test]
+    fn fixed_infinity_reports_infinite_sieve_for_tiny_probability_goldens() {
+        let params = SisParameters::try_new(
+            32,
+            akita_q128(),
+            Some(64),
+            Bound::from_u64(15),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        let cost = cost_infinity_fixed(63, &params, 0, &sample_config()).unwrap();
+        assert!(matches!(cost.sieve, Some(CostValue::Infinity)));
     }
 }

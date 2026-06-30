@@ -123,6 +123,10 @@ def main() -> int:
     SIS, RC, log, oo, _RealField = load_estimator(estimator_path)
 
     work = select_work(args)
+    if not work:
+        print("error: no infinity golden work items selected", file=sys.stderr)
+        return 1
+
     rows: list[dict[str, str]] = []
     t0 = time.time()
     for index, item in enumerate(work, start=1):

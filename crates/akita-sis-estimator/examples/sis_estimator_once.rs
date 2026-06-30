@@ -124,28 +124,32 @@ impl Args {
         };
 
         while let Some(arg) = args.next() {
-            let value = args
-                .next()
-                .unwrap_or_else(|| fatal(&format!("missing value for {arg}")));
             match arg.as_str() {
-                "--mode" => parsed.mode = parse_mode(&value),
-                "--family" => {
-                    parsed.family = AkitaModulusFamily::parse(&value)
-                        .unwrap_or_else(|error| fatal(&format!("{error}")));
-                }
-                "--n" => parsed.raw_n = Some(parse(&value, "--n")),
-                "--m" => parsed.raw_m = Some(parse(&value, "--m")),
-                "--d" => parsed.d = parse(&value, "--d"),
-                "--rank" => parsed.rank = parse(&value, "--rank"),
-                "--width" => parsed.width = parse(&value, "--width"),
-                "--coeff-linf-bound" => {
-                    parsed.coeff_linf_bound = parse(&value, "--coeff-linf-bound");
-                }
-                "--beta" => parsed.beta = Some(parse(&value, "--beta")),
-                "--zeta" => parsed.zeta = Some(parse(&value, "--zeta")),
-                "--iterations" => parsed.iterations = parse(&value, "--iterations"),
                 "--help" | "-h" => usage(0),
-                _ => fatal(&format!("unknown argument {arg}")),
+                _ => {
+                    let value = args
+                        .next()
+                        .unwrap_or_else(|| fatal(&format!("missing value for {arg}")));
+                    match arg.as_str() {
+                        "--mode" => parsed.mode = parse_mode(&value),
+                        "--family" => {
+                            parsed.family = AkitaModulusFamily::parse(&value)
+                                .unwrap_or_else(|error| fatal(&format!("{error}")));
+                        }
+                        "--n" => parsed.raw_n = Some(parse(&value, "--n")),
+                        "--m" => parsed.raw_m = Some(parse(&value, "--m")),
+                        "--d" => parsed.d = parse(&value, "--d"),
+                        "--rank" => parsed.rank = parse(&value, "--rank"),
+                        "--width" => parsed.width = parse(&value, "--width"),
+                        "--coeff-linf-bound" => {
+                            parsed.coeff_linf_bound = parse(&value, "--coeff-linf-bound");
+                        }
+                        "--beta" => parsed.beta = Some(parse(&value, "--beta")),
+                        "--zeta" => parsed.zeta = Some(parse(&value, "--zeta")),
+                        "--iterations" => parsed.iterations = parse(&value, "--iterations"),
+                        _ => fatal(&format!("unknown argument {arg}")),
+                    }
+                }
             }
         }
 

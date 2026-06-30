@@ -23,6 +23,7 @@ from infinity_core import (  # noqa: E402
     assert_pr217_estimator,
     estimate_infinity_cell,
     estimator_git_sha,
+    format_estimator_sha,
     load_estimator,
     locate_estimator,
     parse_float,
@@ -135,13 +136,19 @@ def main() -> int:
     expected_sha = metadata.get("lattice_estimator_sha")
     if expected_sha and actual_sha != expected_sha:
         print(
-            f"estimator SHA mismatch: golden expects {expected_sha}, got {actual_sha}",
+            "estimator SHA mismatch: "
+            f"golden expects {format_estimator_sha(expected_sha)}, "
+            f"got {format_estimator_sha(actual_sha)}",
             file=sys.stderr,
         )
         return 1
 
     SIS, RC, log, oo, _RealField = load_estimator(estimator_path)
     rows = load_rows(args.golden)
+    trusted_rows = [row for row in rows if row.get("trust") == TRUSTED]
+    if not trusted_rows:
+        print("FAIL no trusted rows in golden CSV", file=sys.stderr)
+        return 1
     failures: list[str] = []
     checked = 0
     skipped_fragile = 0
@@ -192,7 +199,8 @@ def main() -> int:
         return 1
 
     print(
-        f"OK: {checked} trusted infinity cell(s) match PR217 @ {actual_sha}; "
+        f"OK: {checked} trusted infinity cell(s) match PR217 @ "
+        f"{format_estimator_sha(actual_sha)}; "
         f"skipped {skipped_fragile} fragile cell(s)"
     )
     return 0

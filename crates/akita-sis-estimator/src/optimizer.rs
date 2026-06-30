@@ -63,10 +63,10 @@ fn cost_zeta_search(
     params: &SisParameters,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
+    let zeta_stop = zeta_search_stop(params, config)?;
     match zeta_mode {
         SearchMode::PythonLocalMinimum => {
-            let m = explicit_m(params)?;
-            let best = local_minimum(0, m, 1, |zeta| {
+            let best = local_minimum(0, zeta_stop, 1, |zeta| {
                 cost_zeta_with_mode(zeta, beta_mode, params, config)
             })?;
             let zero = cost_zeta_with_mode(0, beta_mode, params, config)?;
@@ -76,16 +76,13 @@ fn cost_zeta_search(
                 None => zero,
             })
         }
-        SearchMode::Exhaustive => {
-            let m = explicit_m(params)?;
-            best_in_range(0, m, |zeta| {
-                cost_zeta_with_mode(zeta, beta_mode, params, config)
-            })?
-            .ok_or_else(|| EstimatorError::InvalidParameter {
-                field: "m",
-                reason: "zeta search range is empty".to_string(),
-            })
-        }
+        SearchMode::Exhaustive => best_in_range(0, zeta_stop, |zeta| {
+            cost_zeta_with_mode(zeta, beta_mode, params, config)
+        })?
+        .ok_or_else(|| EstimatorError::InvalidParameter {
+            field: "zeta",
+            reason: "zeta search range is empty".to_string(),
+        }),
         SearchMode::ExhaustiveParallel => Err(EstimatorError::Unsupported {
             feature: "parallel zeta search",
         }),
@@ -130,6 +127,9 @@ fn cost_zeta_with_mode(
         }
         SearchMode::Exhaustive => {
             let stop = beta_search_stop(params, config)?;
+            if stop <= MIN_BETA {
+                return Ok(cost_infinity_fixed(MIN_BETA, params, zeta, config)?);
+            }
             best_in_range(MIN_BETA, stop, |beta| {
                 cost_infinity_fixed(beta, params, zeta, config)
             })?
@@ -258,6 +258,18 @@ fn explicit_m(params: &SisParameters) -> Result<u32> {
         field: "m",
         reason: "optimizer requires an explicit column count m".to_string(),
     })
+}
+
+fn zeta_search_stop(params: &SisParameters, config: &EstimateConfig) -> Result<u32> {
+    let m = explicit_m(params)?;
+    let lattice_dimension = config.lattice_dimension.unwrap_or(m);
+    if lattice_dimension == 0 {
+        return Err(EstimatorError::InvalidParameter {
+            field: "lattice_dimension",
+            reason: "zeta search requires a positive lattice dimension".to_string(),
+        });
+    }
+    Ok(lattice_dimension.min(m))
 }
 
 fn beta_search_stop(params: &SisParameters, config: &EstimateConfig) -> Result<u32> {

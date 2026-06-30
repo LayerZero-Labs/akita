@@ -79,6 +79,10 @@ def main() -> int:
     SIS, RC, log, oo, _RealField = load_estimator(estimator_path)
 
     work = fixed_infinity_work_items()
+    if not work:
+        print("error: no fixed infinity golden work items", file=sys.stderr)
+        return 1
+
     rows: list[dict[str, str]] = []
     t0 = time.time()
     for index, item in enumerate(work, start=1):
