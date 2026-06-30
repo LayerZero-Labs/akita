@@ -7,7 +7,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, MulBase};
 use std::iter::repeat_n;
 
 /// Build the RHS vector `y` matching the M row layout:
-/// consistency (zero) | D (`v`) | COMMIT (`commitment_rows`) | B_inner (zeros) | A (zeros).
+/// consistency | D (`v`) | COMMIT (`commitment_rows`) | B_inner (zeros) | A.
 ///
 /// Public-output rows bind through the fused trace term, not `y`.
 ///
@@ -21,9 +21,12 @@ use std::iter::repeat_n;
 ///
 /// Returns an error if the supplied row slices do not match the expected row
 /// counts for the level layout.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_y<F, const D: usize>(
+    consistency_row: CyclotomicRing<F, D>,
     v: &[CyclotomicRing<F, D>],
     commitment_rows: &[CyclotomicRing<F, D>],
+    a_rows: &[CyclotomicRing<F, D>],
     n_d: usize,
     commit_rows_per_group: usize,
     b_inner_rows_per_group: usize,
@@ -36,6 +39,12 @@ where
         return Err(AkitaError::InvalidSize {
             expected: n_d,
             actual: v.len(),
+        });
+    }
+    if a_rows.len() != n_a {
+        return Err(AkitaError::InvalidSize {
+            expected: n_a,
+            actual: a_rows.len(),
         });
     }
     if commit_rows_per_group == 0
@@ -52,19 +61,19 @@ where
         .checked_mul(num_commitments)
         .ok_or_else(|| AkitaError::InvalidSetup("generate_y B_inner overflow".to_string()))?;
     let mut out = Vec::with_capacity(1 + n_d + commitment_rows.len() + b_inner_total + n_a);
-    out.push(CyclotomicRing::<F, D>::zero());
+    out.push(consistency_row);
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), b_inner_total));
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
+    out.extend_from_slice(a_rows);
     Ok(out)
 }
 
 /// Compute the stage-2 relation claim from the public M-row data.
 ///
 /// This evaluates `sum_i eq(tau1, i) * y_alpha[i]` where `y_alpha` follows
-/// the M row layout: consistency zero row, D rows `v`, B rows `u`, then A zero
-/// rows. Public openings bind through the fused trace term, not M rows.
+/// the M row layout. Public openings bind through the fused trace term, not M
+/// rows.
 ///
 /// # Errors
 ///
@@ -74,26 +83,15 @@ where
 pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     tau1: &[F],
     alpha: F,
-    v: &[CyclotomicRing<F, D>],
-    u: &[CyclotomicRing<F, D>],
+    y: &[CyclotomicRing<F, D>],
 ) -> Result<F, AkitaError> {
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let mut acc = F::zero();
-    let mut row_idx = 1usize;
-
-    for r in v {
+    for (row_idx, r) in y.iter().enumerate() {
         if row_idx >= eq_tau1.len() {
-            return Ok(acc);
+            break;
         }
         acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
-        row_idx += 1;
-    }
-    for r in u {
-        if row_idx >= eq_tau1.len() {
-            return Ok(acc);
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
-        row_idx += 1;
     }
     Ok(acc)
 }
@@ -106,8 +104,7 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
 pub fn relation_claim_from_rows_extension<F, E, const D: usize>(
     tau1: &[E],
     alpha: E,
-    v: &[CyclotomicRing<F, D>],
-    u: &[CyclotomicRing<F, D>],
+    y: &[CyclotomicRing<F, D>],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -116,21 +113,11 @@ where
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
-    let mut row_idx = 1usize;
-
-    for r in v {
+    for (row_idx, r) in y.iter().enumerate() {
         if row_idx >= eq_tau1.len() {
-            return Ok(acc);
+            break;
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
-        row_idx += 1;
-    }
-    for r in u {
-        if row_idx >= eq_tau1.len() {
-            return Ok(acc);
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
-        row_idx += 1;
     }
     Ok(acc)
 }
@@ -165,16 +152,15 @@ mod tests {
             F::from_u64(7),
             F::from_u64(8),
         ])];
+        let mut y = vec![CyclotomicRing::<F, D>::zero()];
+        y.extend_from_slice(&v);
+        y.extend_from_slice(&u);
 
-        let base = relation_claim_from_rows::<F, D>(&tau1, alpha, &v, &u).unwrap();
+        let base = relation_claim_from_rows::<F, D>(&tau1, alpha, &y).unwrap();
         let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
-        let lifted = relation_claim_from_rows_extension::<F, E, D>(
-            &lifted_tau1,
-            E::lift_base(alpha),
-            &v,
-            &u,
-        )
-        .unwrap();
+        let lifted =
+            relation_claim_from_rows_extension::<F, E, D>(&lifted_tau1, E::lift_base(alpha), &y)
+                .unwrap();
 
         assert_eq!(lifted, E::lift_base(base));
     }

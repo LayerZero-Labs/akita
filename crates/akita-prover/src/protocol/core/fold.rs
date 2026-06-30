@@ -86,7 +86,6 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
 }
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
-    pub(in crate::protocol::core) commitment: FlatRingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
     pub(in crate::protocol::core) extension_opening_reduction:
@@ -495,7 +494,11 @@ where
         transcript,
     )?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-    let commitment = fold_claims.single_fold_commitment()?;
+    if fold_claims.single_group().is_none() {
+        return Err(AkitaError::InvalidInput(
+            "multi-group fold proving is not supported yet".to_string(),
+        ));
+    }
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
@@ -521,7 +524,6 @@ where
         trace_target.trace_claim_scales
     };
     Ok(PreparedFold {
-        commitment,
         instance,
         witness,
         extension_opening_reduction,
@@ -618,7 +620,6 @@ where
 {
     let lp = &scheduled.params;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
-    let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
     let build_output = ring_switch_build_w::<F, R, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
@@ -667,16 +668,10 @@ where
         m_row_layout,
     )?;
 
-    let relation_rows = if is_terminal_fold {
-        &[][..]
-    } else {
-        prepared_fold.instance.v.as_slice()
-    };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
-        relation_rows,
-        commitment_u,
+        prepared_fold.instance.y(),
     )?;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
         (None, vec![L::zero(); rs.col_bits + rs.ring_bits], L::zero())

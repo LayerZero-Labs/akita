@@ -17,6 +17,7 @@ pub(super) fn decompose_fold_batched_tensor_dense<F, const D: usize>(
     tensor: &TensorChallengeSet,
     block_len: usize,
     num_digits: usize,
+    num_digits_fold: usize,
     log_basis: u32,
 ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>
 where
@@ -72,6 +73,8 @@ where
     Ok(Some(build_decompose_fold_witness::<F, D>(
         centered_coeffs,
         q,
+        log_basis,
+        num_digits_fold,
     )))
 }
 

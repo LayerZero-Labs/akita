@@ -186,6 +186,7 @@ where
             plan.challenges,
             plan.block_len,
             plan.num_digits,
+            plan.num_digits_fold,
             plan.log_basis,
         ))
     }
@@ -208,12 +209,14 @@ where
                 tensor,
                 block_len,
                 num_digits,
+                num_digits_fold,
                 log_basis,
             } => match SparseRingPoly::decompose_fold_tensor_batched(
                 source.polys,
                 tensor,
                 block_len,
                 num_digits,
+                num_digits_fold,
                 log_basis,
             )? {
                 Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),

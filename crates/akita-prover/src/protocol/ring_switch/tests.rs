@@ -1,7 +1,26 @@
-use super::coeffs::balanced_decompose_centered_i32_i8_into;
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7;
 use std::array::from_fn;
+
+fn balanced_decompose_centered_i32_i8_into<const D: usize>(
+    centered: &[i32; D],
+    out: &mut [[i8; D]],
+    log_basis: u32,
+) {
+    let half_b = 1i128 << (log_basis - 1);
+    let b = half_b << 1;
+    let mask = b - 1;
+
+    for coeff_idx in 0..D {
+        let mut c = centered[coeff_idx] as i128;
+        for plane in out.iter_mut() {
+            let d = c & mask;
+            let balanced = if d >= half_b { d - b } else { d };
+            c = (c - balanced) >> log_basis;
+            plane[coeff_idx] = balanced as i8;
+        }
+    }
+}
 
 #[test]
 fn centered_i32_decompose_matches_ring_decompose() {

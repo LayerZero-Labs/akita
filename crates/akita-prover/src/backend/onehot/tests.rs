@@ -1,5 +1,6 @@
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
+use crate::backend::poly_helpers::committed_fold_digits_from_centered;
 use crate::compute::RootPolyShape;
 use crate::DensePoly;
 use akita_field::RandomSampling;
@@ -37,6 +38,14 @@ fn aggregate_witnesses<F: FieldCore, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
+    let (shift, digits) = committed_fold_digits_from_centered(
+        &acc.centered_coeffs,
+        acc.log_basis,
+        acc.num_digits_fold,
+    )
+    .expect("test fold shift fits i128");
+    acc.committed_shift = shift;
+    acc.committed_digits = digits;
     acc
 }
 
@@ -835,12 +844,13 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
         &polys
             .iter()
             .zip(challenges.chunks(2))
-            .map(|(poly, poly_challenges)| poly.decompose_fold(poly_challenges, block_len, 1, 0))
+            .map(|(poly, poly_challenges)| poly.decompose_fold(poly_challenges, block_len, 1, 1, 1))
             .collect::<Vec<_>>(),
     );
     let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
-    let got = OneHotPoly::<F, D>::decompose_fold_batched(&poly_refs, &challenges, block_len, 1, 0)
-        .expect("onehot batched path should apply");
+    let got =
+        OneHotPoly::<F, D>::decompose_fold_batched(&poly_refs, &challenges, block_len, 1, 1, 1)
+            .expect("onehot batched path should apply");
 
     assert_eq!(got, expected);
 }

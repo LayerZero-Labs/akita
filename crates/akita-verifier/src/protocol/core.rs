@@ -29,10 +29,11 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
+use akita_types::sis::fold_response_shift;
 use akita_types::{
     append_claim_values_to_transcript, batched_eval_target_from_opening_batch,
-    build_trace_claim_root, ensure_trace_stage2_supported, generate_y, prepare_opening_point,
-    relation_claim_from_rows_extension, reorder_stage1_coords,
+    build_trace_claim_root, ensure_trace_stage2_supported, gadget_row_scalars, generate_y,
+    prepare_opening_point, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
     sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, trace_terms_recursive,

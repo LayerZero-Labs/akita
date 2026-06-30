@@ -224,6 +224,10 @@ mod tests {
             z_folded_rings: Vec::new(),
             centered_coeffs: vec![[cap as i32; D]],
             centered_inf_norm: cap as u32,
+            log_basis: 2,
+            num_digits_fold: 1,
+            committed_shift: 0,
+            committed_digits: vec![[0i8; D]],
         };
         assert!(!accepts_fold_witness(&contract, &witness, cap, Some(1),));
     }

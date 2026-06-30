@@ -2,6 +2,7 @@
 //!
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
+use crate::backend::poly_helpers::committed_fold_digits_from_centered;
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OperationCtx, RootOpeningSource,
@@ -122,6 +123,9 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     };
     let z_len = first.z_folded_rings.len();
     let coeff_len = first.centered_coeffs.len();
+    let log_basis = first.log_basis;
+    let num_digits_fold = first.num_digits_fold;
+    let committed_shift = first.committed_shift;
     let mut z_folded_rings = first.z_folded_rings.clone();
     let mut centered_coeffs = first.centered_coeffs.clone();
 
@@ -129,6 +133,16 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         if witness.z_folded_rings.len() != z_len || witness.centered_coeffs.len() != coeff_len {
             return Err(AkitaError::InvalidInput(
                 "batched decompose_fold witness length mismatch".to_string(),
+            ));
+        }
+        if witness.committed_shift != committed_shift {
+            return Err(AkitaError::InvalidInput(
+                "batched decompose_fold witness shift mismatch".to_string(),
+            ));
+        }
+        if witness.log_basis != log_basis || witness.num_digits_fold != num_digits_fold {
+            return Err(AkitaError::InvalidInput(
+                "batched decompose_fold witness digit schedule mismatch".to_string(),
             ));
         }
         for (dst, src) in z_folded_rings.iter_mut().zip(witness.z_folded_rings.iter()) {
@@ -154,11 +168,22 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
+    let (recomputed_shift, committed_digits) =
+        committed_fold_digits_from_centered(&centered_coeffs, log_basis, num_digits_fold)?;
+    if recomputed_shift != committed_shift {
+        return Err(AkitaError::InvalidInput(
+            "batched decompose_fold recomputed shift mismatch".to_string(),
+        ));
+    }
 
     Ok(DecomposeFoldWitness {
         z_folded_rings,
         centered_coeffs,
         centered_inf_norm,
+        log_basis,
+        num_digits_fold,
+        committed_shift,
+        committed_digits,
     })
 }
 
@@ -177,6 +202,7 @@ where
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
+    let num_digits_fold = lp.num_digits_fold(point_indices.len(), F::modulus_bits())?;
     match challenges {
         Challenges::Sparse {
             challenges: sparse,
@@ -210,6 +236,7 @@ where
                     challenges: &point_challenges,
                     block_len: lp.block_len,
                     num_digits: lp.num_digits_commit,
+                    num_digits_fold,
                     log_basis: lp.log_basis,
                 },
             )? {
@@ -227,6 +254,7 @@ where
                                     challenges: poly_challenges,
                                     block_len: lp.block_len,
                                     num_digits: lp.num_digits_commit,
+                                    num_digits_fold,
                                     log_basis: lp.log_basis,
                                 },
                             )
@@ -258,6 +286,7 @@ where
                     tensor: &point_factored,
                     block_len: lp.block_len,
                     num_digits: lp.num_digits_commit,
+                    num_digits_fold,
                     log_basis: lp.log_basis,
                 },
             )? {
@@ -318,6 +347,65 @@ where
     }
 }
 
+fn all_coeffs_one_ring<F: FieldCore, const D: usize>() -> CyclotomicRing<F, D> {
+    CyclotomicRing::from_coefficients([F::one(); D])
+}
+
+fn fold_shift_consistency_row<F, const D: usize>(
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    block_len: usize,
+    depth_commit: usize,
+    log_basis: u32,
+    committed_shift: u128,
+) -> Result<CyclotomicRing<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    if ring_multiplier_point.a_len() < block_len {
+        return Err(AkitaError::InvalidInput(format!(
+            "ring-multiplier a length mismatch: actual={} expected_at_least={block_len}",
+            ring_multiplier_point.a_len()
+        )));
+    }
+    let shift = F::from_u128(committed_shift);
+    let gadget_sum = gadget_row_scalars::<F>(depth_commit, log_basis)
+        .into_iter()
+        .fold(F::zero(), |acc, g| acc + g);
+    let ones = all_coeffs_one_ring::<F, D>().scale(&gadget_sum);
+    let mut acc = CyclotomicRing::<F, D>::zero();
+    for block_idx in 0..block_len {
+        if let Some(scalar) = ring_multiplier_point.a_constant_coeff(block_idx) {
+            acc += ones.scale(&scalar);
+        } else {
+            let a_rings = ring_multiplier_point
+                .a_rings()
+                .ok_or(AkitaError::InvalidProof)?;
+            let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
+            acc += *multiplier * ones;
+        }
+    }
+    Ok(acc.scale(&shift))
+}
+
+fn fold_shift_a_rows<F, B, const D: usize>(
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    lp: &LevelParams,
+    committed_shift: u128,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    B: DigitRowsComputeBackend<F>,
+{
+    let ones = vec![[1i8; D]; lp.inner_width()];
+    let mut rows = backend.digit_rows::<D>(prepared, lp.a_key.row_len(), &ones, lp.log_basis)?;
+    let shift = F::from_u128(committed_shift);
+    for row in &mut rows {
+        *row = row.scale(&shift);
+    }
+    Ok(rows)
+}
+
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
 pub struct RingRelationProver;
 
@@ -359,7 +447,7 @@ impl RingRelationProver {
         terminal_tail_t_vectors: Option<usize>,
     ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: FieldCore + CanonicalField + FromPrimitiveInt,
         PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,
         P: RootOpeningSource<F, D>,
@@ -468,9 +556,24 @@ impl RingRelationProver {
             MRowLayout::WithDBlock => (v.as_slice(), lp.d_key.row_len()),
             MRowLayout::WithoutDBlock => (&[][..], 0usize),
         };
+        let consistency_shift_row = fold_shift_consistency_row::<F, D>(
+            &ring_multiplier_point,
+            lp.block_len,
+            lp.num_digits_commit,
+            lp.log_basis,
+            z_folded_rings.committed_shift,
+        )?;
+        let a_shift_rows = fold_shift_a_rows::<F, RB, D>(
+            ring_switch_ctx.backend(),
+            ring_switch_ctx.prepared(),
+            &lp,
+            z_folded_rings.committed_shift,
+        )?;
         let y = generate_y::<F, D>(
+            consistency_shift_row,
             y_v_slice,
             &commitment_rows,
+            &a_shift_rows,
             n_d_active,
             lp.effective_commit_rows(),
             lp.b_inner_rows_per_group(),

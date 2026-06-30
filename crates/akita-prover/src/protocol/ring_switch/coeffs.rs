@@ -72,8 +72,8 @@ where
         &e_folded,
         instance.ring_multiplier_point(),
         instance.row_coefficient_rings(),
-        &z_folded_rings.centered_coeffs,
-        z_folded_rings.centered_inf_norm,
+        &z_folded_rings.committed_digits,
+        z_folded_rings.num_digits_fold,
         instance.y(),
         opening_batch.num_polynomials(),
         lp.num_blocks,
@@ -87,7 +87,7 @@ where
             &e_hat,
             &decomposed_inner_rows,
             &u_concat_digits,
-            &z_folded_rings.centered_coeffs,
+            &z_folded_rings.committed_digits,
             &r,
             lp,
             num_claims,
@@ -110,77 +110,12 @@ where
     })
 }
 
-pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
-    centered: &[i32; D],
-    out: &mut [[i8; D]],
-    log_basis: u32,
-) {
-    let levels = out.len();
-    assert!(
-        log_basis > 0 && log_basis <= 6,
-        "log_basis must be in 1..=6 for i8 output"
-    );
-    assert!(
-        (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
-        "levels * log_basis must be <= 128 + log_basis"
-    );
-
-    let half_b = 1i128 << (log_basis - 1);
-    let b = half_b << 1;
-    let mask = b - 1;
-
-    for coeff_idx in 0..D {
-        let mut c = centered[coeff_idx] as i128;
-        for plane in out.iter_mut() {
-            let d = c & mask;
-            let balanced = if d >= half_b { d - b } else { d };
-            c = (c - balanced) >> log_basis;
-            plane[coeff_idx] = balanced as i8;
-        }
-    }
-}
-
 /// Emit flat digit planes contiguously (no block transpose). Used for the
 /// tiered `û_concat` segment; a no-op for the single-tier path (empty slice).
 fn emit_flat_planes<const D: usize>(out: &mut Vec<i8>, planes: &[[i8; D]]) {
     for plane in planes {
         out.extend_from_slice(plane);
     }
-}
-
-/// Decompose centered `z` fold response coeffs and emit digit-major planes.
-fn emit_z_folded_block_inner<const D: usize>(
-    out: &mut Vec<i8>,
-    z_folded_centered: &[[i32; D]],
-    block_len: usize,
-    depth_commit: usize,
-    num_digits_fold: usize,
-    log_basis: u32,
-) {
-    let total_elems = z_folded_centered.len();
-    let inner_width = block_len * depth_commit;
-    debug_assert_eq!(
-        total_elems % inner_width,
-        0,
-        "z_folded_rings length {total_elems} not divisible by inner_width {inner_width}",
-    );
-
-    let mut all_planes = vec![[0i8; D]; total_elems * num_digits_fold];
-    for (k, z_j) in z_folded_centered.iter().enumerate() {
-        balanced_decompose_centered_i32_i8_into(
-            z_j,
-            &mut all_planes[k * num_digits_fold..(k + 1) * num_digits_fold],
-            log_basis,
-        );
-    }
-    akita_types::emit_witness_z_folded_planes_inner::<D>(
-        out,
-        &all_planes,
-        block_len,
-        depth_commit,
-        num_digits_fold,
-        total_elems,
-    );
 }
 
 /// Build the committed witness polynomial from ring-domain digit planes.
@@ -205,7 +140,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     e_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     u_concat_digits: &[[i8; D]],
-    z_folded_centered: &[[i32; D]],
+    z_committed_digits: &[[i8; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
     num_claims: usize,
@@ -224,14 +159,19 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     // Tiered: the hidden decomposed concatenated slice images `û_concat` are a
     // flat contiguous segment emitted immediately after `t̂` (at `offset_u`).
     let u_concat_planes = u_concat_digits.len();
-    let z_count =
-        e_hat_planes + t_hat_planes + u_concat_planes + z_folded_centered.len() * num_digits_fold;
+    assert_eq!(
+        z_committed_digits.len() % num_digits_fold,
+        0,
+        "build_w_coeffs: z digit plane count must be a multiple of fold depth"
+    );
+    let z_folded_elems = z_committed_digits.len() / num_digits_fold;
+    let z_count = e_hat_planes + t_hat_planes + u_concat_planes + z_committed_digits.len();
     let r_hat_count = r.len() * levels;
     tracing::debug!(
         e_hat_planes,
         t_hat_planes,
-        z_folded_elems = z_folded_centered.len(),
-        z_folded_planes = z_folded_centered.len() * num_digits_fold,
+        z_folded_elems,
+        z_folded_planes = z_committed_digits.len(),
         r_elems = r.len(),
         r_planes = r_hat_count,
         total_ring = z_count + r_hat_count,
@@ -261,13 +201,13 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         t_hat_planes / t_block_count
     };
 
-    emit_z_folded_block_inner(
+    akita_types::emit_witness_z_folded_planes_inner::<D>(
         &mut out,
-        z_folded_centered,
+        z_committed_digits,
         block_len,
         depth_commit,
         num_digits_fold,
-        log_basis,
+        z_folded_elems,
     );
     akita_types::emit_witness_planes_block_inner(
         &mut out,

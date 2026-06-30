@@ -22,6 +22,8 @@ fn expand_onehot_accum<const D: usize>(
 fn finish_decompose_fold<F: CanonicalField, const D: usize>(
     compressed_accum: Vec<[i32; D]>,
     num_digits: usize,
+    num_digits_fold: usize,
+    log_basis: u32,
 ) -> DecomposeFoldWitness<F, D> {
     let modulus = (-F::one()).to_canonical_u128() + 1;
     let coeff_accum = {
@@ -29,7 +31,7 @@ fn finish_decompose_fold<F: CanonicalField, const D: usize>(
         expand_onehot_accum(compressed_accum, num_digits)
     };
     let _span = tracing::info_span!("onehot_convert").entered();
-    build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+    build_decompose_fold_witness::<F, D>(coeff_accum, modulus, log_basis, num_digits_fold)
 }
 
 fn decompose_fold_from_views<E, F, const D: usize>(
@@ -38,6 +40,8 @@ fn decompose_fold_from_views<E, F, const D: usize>(
     num_blocks: usize,
     block_len: usize,
     num_digits: usize,
+    num_digits_fold: usize,
+    log_basis: u32,
 ) -> DecomposeFoldWitness<F, D>
 where
     E: OneHotEntry,
@@ -47,7 +51,7 @@ where
         let _span = tracing::info_span!("onehot_accumulate").entered();
         onehot_accumulate::<E, D>(block_views, challenges, num_blocks, block_len)
     };
-    finish_decompose_fold(compressed_accum, num_digits)
+    finish_decompose_fold(compressed_accum, num_digits, num_digits_fold, log_basis)
 }
 
 impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
@@ -57,6 +61,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> DecomposeFoldWitness<F, D>
     where
         E: OneHotEntry,
@@ -64,7 +70,15 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     {
         let num_blocks = challenges.len().min(blocks.num_blocks());
         let block_views: Vec<&[E]> = (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-        decompose_fold_from_views(&block_views, challenges, num_blocks, block_len, num_digits)
+        decompose_fold_from_views(
+            &block_views,
+            challenges,
+            num_blocks,
+            block_len,
+            num_digits,
+            num_digits_fold,
+            log_basis,
+        )
     }
 
     pub(super) fn decompose_fold_batched_single_chunk_onehot(
@@ -72,6 +86,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>>
     where
         F: CanonicalField,
@@ -97,6 +113,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             active_blocks,
             block_len,
             num_digits,
+            num_digits_fold,
+            log_basis,
         ))
     }
 
@@ -105,6 +123,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>>
     where
         F: CanonicalField,
@@ -130,6 +150,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             active_blocks,
             block_len,
             num_digits,
+            num_digits_fold,
+            log_basis,
         ))
     }
 
@@ -139,6 +161,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         tensor: &TensorChallengeSet,
         block_len: usize,
         num_digits: usize,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>
     where
         F: CanonicalField,
@@ -191,7 +215,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 };
                 let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
                 let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
-                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+                build_decompose_fold_witness::<F, D>(
+                    coeff_accum,
+                    modulus,
+                    log_basis,
+                    num_digits_fold,
+                )
             }
             OneHotBlocks::MultiChunk(_) => {
                 let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(expected_blocks);
@@ -221,7 +250,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 };
                 let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
                 let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
-                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+                build_decompose_fold_witness::<F, D>(
+                    coeff_accum,
+                    modulus,
+                    log_basis,
+                    num_digits_fold,
+                )
             }
         };
         Ok(Some(witness))

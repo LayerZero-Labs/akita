@@ -202,6 +202,7 @@ where
             plan.challenges,
             plan.block_len,
             plan.num_digits,
+            plan.num_digits_fold,
             plan.log_basis,
         ))
     }
@@ -223,12 +224,14 @@ where
                 challenges,
                 block_len,
                 num_digits,
+                num_digits_fold,
                 log_basis,
             } => match OneHotPoly::decompose_fold_batched(
                 source.polys,
                 challenges,
                 block_len,
                 num_digits,
+                num_digits_fold,
                 log_basis,
             ) {
                 Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
@@ -238,12 +241,14 @@ where
                 tensor,
                 block_len,
                 num_digits,
+                num_digits_fold,
                 log_basis,
             } => match OneHotPoly::decompose_fold_tensor_batched(
                 source.polys,
                 tensor,
                 block_len,
                 num_digits,
+                num_digits_fold,
                 log_basis,
             )? {
                 Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
@@ -761,17 +766,28 @@ where
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-        _log_basis: u32,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
         let blocks = self
             .blocks_for(block_len)
             .expect("OneHotPoly::decompose_fold: invalid block_len for this polynomial");
         match blocks {
             OneHotBlocks::SingleChunk(blocks) => self.decompose_fold_onehot::<SingleChunkEntry>(
-                blocks, challenges, block_len, num_digits,
+                blocks,
+                challenges,
+                block_len,
+                num_digits,
+                num_digits_fold,
+                log_basis,
             ),
             OneHotBlocks::MultiChunk(blocks) => self.decompose_fold_onehot::<MultiChunkEntry>(
-                blocks, challenges, block_len, num_digits,
+                blocks,
+                challenges,
+                block_len,
+                num_digits,
+                num_digits_fold,
+                log_basis,
             ),
         }
     }
@@ -782,7 +798,8 @@ where
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-        _log_basis: u32,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>> {
         // Materialize per-poly block caches up front so every poly agrees on
         // `block_len` before we touch the batched kernels.
@@ -798,10 +815,20 @@ where
             .expect("block cache was just built above");
         match first_blocks {
             OneHotBlocks::SingleChunk(_) => Self::decompose_fold_batched_single_chunk_onehot(
-                polys, challenges, block_len, num_digits,
+                polys,
+                challenges,
+                block_len,
+                num_digits,
+                num_digits_fold,
+                log_basis,
             ),
             OneHotBlocks::MultiChunk(_) => Self::decompose_fold_batched_multi_chunk_onehot(
-                polys, challenges, block_len, num_digits,
+                polys,
+                challenges,
+                block_len,
+                num_digits,
+                num_digits_fold,
+                log_basis,
             ),
         }
     }
@@ -812,9 +839,17 @@ where
         tensor: &TensorChallengeSet,
         block_len: usize,
         num_digits: usize,
-        _log_basis: u32,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
-        Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
+        Self::decompose_fold_batched_tensor_onehot(
+            polys,
+            tensor,
+            block_len,
+            num_digits,
+            num_digits_fold,
+            log_basis,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]

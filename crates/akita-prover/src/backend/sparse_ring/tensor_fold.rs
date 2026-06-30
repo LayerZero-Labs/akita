@@ -11,6 +11,8 @@ pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
     tensor: &TensorChallengeSet,
     block_len: usize,
     num_digits: usize,
+    num_digits_fold: usize,
+    log_basis: u32,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
@@ -50,7 +52,12 @@ where
     );
     let coeff_accum = narrow_tensor_accum_to_i32::<D>(accum_i64)?;
     let modulus = (-F::one()).to_canonical_u128() + 1;
-    Ok(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
+    Ok(build_decompose_fold_witness::<F, D>(
+        coeff_accum,
+        modulus,
+        log_basis,
+        num_digits_fold,
+    ))
 }
 
 fn sparse_accumulate_tensor<const D: usize>(

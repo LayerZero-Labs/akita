@@ -16,8 +16,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AppendToTranscript,
-    FlatDigitBlocks, FlatRingVec, OpeningBatchShape, OpeningGroupShape, OpeningPoints,
-    PointVariableSelection, RingCommitment,
+    FlatDigitBlocks, OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection,
+    RingCommitment,
 };
 
 pub use api::{
@@ -187,14 +187,6 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         groups.pop()
     }
 
-    /// Borrow the current single-group fold batch's commitment rows as flat proof storage.
-    pub(crate) fn single_fold_commitment(&self) -> Result<FlatRingVec<CommitF>, AkitaError> {
-        let group = self.single_group().ok_or_else(|| {
-            AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
-        })?;
-        Ok(FlatRingVec::from_ring_elems(&group.commitment.0.u))
-    }
-
     /// Preserve this batch's grouping metadata while replacing its flat polynomial stream.
     pub(crate) fn regroup_polynomial_refs<'b, Q>(
         self,
@@ -268,12 +260,20 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
-    /// Folded witness rows in ring form.
+    /// Semantic folded witness rows in ring form (`z`).
     pub z_folded_rings: Vec<CyclotomicRing<F, D>>,
-    /// Centered integer coefficients for each `z_folded_rings` row.
+    /// Semantic centered integer coefficients for each `z_folded_rings` row.
     pub centered_coeffs: Vec<[i32; D]>,
     /// Infinity norm of `centered_coeffs`.
     pub centered_inf_norm: u32,
+    /// Logarithm of the digit basis used for `committed_digits`.
+    pub log_basis: u32,
+    /// Number of folded-response digit planes per committed coordinate.
+    pub num_digits_fold: usize,
+    /// Public shift `eta` with committed coordinates `z_comm = z - eta`.
+    pub committed_shift: u128,
+    /// Balanced digit planes for the shifted coordinates committed in the recursive witness.
+    pub committed_digits: Vec<[i8; D]>,
 }
 
 /// Prover-side output of the inner Ajtai commit step.

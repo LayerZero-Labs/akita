@@ -18,7 +18,8 @@ use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_types::sis::fold_response_shift;
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]
@@ -396,9 +397,52 @@ pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
     CyclotomicRing::from_coefficients(coeffs)
 }
 
+fn balanced_decompose_i128_i8<const D: usize>(
+    centered: &[i128; D],
+    out: &mut [[i8; D]],
+    log_basis: u32,
+) {
+    let half_b = 1i128 << (log_basis - 1);
+    let b = half_b << 1;
+    let mask = b - 1;
+
+    for coeff_idx in 0..D {
+        let mut c = centered[coeff_idx];
+        for plane in out.iter_mut() {
+            let d = c & mask;
+            let balanced = if d >= half_b { d - b } else { d };
+            c = (c - balanced) >> log_basis;
+            plane[coeff_idx] = balanced as i8;
+        }
+    }
+}
+
+pub(crate) fn committed_fold_digits_from_centered<const D: usize>(
+    centered_coeffs: &[[i32; D]],
+    log_basis: u32,
+    num_digits_fold: usize,
+) -> Result<(u128, Vec<[i8; D]>), AkitaError> {
+    let committed_shift = fold_response_shift(log_basis, num_digits_fold);
+    let shift_i128 = i128::try_from(committed_shift).map_err(|_| {
+        AkitaError::InvalidSetup("fold response shift exceeds prover i128 range".to_string())
+    })?;
+    let mut committed_digits = vec![[0i8; D]; centered_coeffs.len() * num_digits_fold];
+    for (row_idx, row) in centered_coeffs.iter().enumerate() {
+        let shifted: [i128; D] = std::array::from_fn(|idx| i128::from(row[idx]) - shift_i128);
+        balanced_decompose_i128_i8(
+            &shifted,
+            &mut committed_digits[row_idx * num_digits_fold..(row_idx + 1) * num_digits_fold],
+            log_basis,
+        );
+    }
+    Ok((committed_shift, committed_digits))
+}
+
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
     centered_coeffs: Vec<[i32; D]>,
     modulus: u128,
+    log_basis: u32,
+    num_digits_fold: usize,
 ) -> DecomposeFoldWitness<F, D> {
     let centered_inf_norm = centered_coeffs
         .iter()
@@ -406,6 +450,9 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
+    let (committed_shift, committed_digits) =
+        committed_fold_digits_from_centered(&centered_coeffs, log_basis, num_digits_fold)
+            .expect("fold response shift must fit i128 for prover fold digits");
     let z_folded_rings = cfg_iter!(centered_coeffs)
         .map(|coeff_accum| signed_accum_to_ring::<F, D>(*coeff_accum, modulus))
         .collect();
@@ -413,6 +460,10 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
         z_folded_rings,
         centered_coeffs,
         centered_inf_norm,
+        log_basis,
+        num_digits_fold,
+        committed_shift,
+        committed_digits,
     }
 }
 

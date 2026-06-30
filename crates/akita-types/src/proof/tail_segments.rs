@@ -20,7 +20,7 @@ use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::layout::field_bytes;
 use crate::proof::CleartextWitnessShape;
 use crate::proof::{FlatRingVec, TerminalWitnessTranscriptParts};
-use crate::sis::compute_num_digits_full_field;
+use crate::sis::{compute_num_digits_full_field, fold_response_shift};
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
 use crate::{LevelParams, MRowLayout};
 
@@ -725,12 +725,12 @@ pub(crate) fn recompose_balanced_i8_digits(digits: &[i8], log_basis: u32) -> i64
 }
 
 /// Split a recomposed integer into balanced base-`2^log_basis` digits.
-fn balanced_digits_from_i64(value: i64, num_digits: usize, log_basis: u32) -> Vec<i8> {
+fn balanced_digits_from_i128(value: i128, num_digits: usize, log_basis: u32) -> Vec<i8> {
     let half_b = 1i128 << (log_basis - 1);
     let b = half_b << 1;
     let mask = b - 1;
     let mut digits = Vec::with_capacity(num_digits);
-    let mut c = i128::from(value);
+    let mut c = value;
     for _ in 0..num_digits {
         let d = c & mask;
         let balanced = if d >= half_b { d - b } else { d };
@@ -915,10 +915,17 @@ where
     if total_z_elems * D != z_values.len() || !total_z_elems.is_multiple_of(inner_width) {
         return Err(AkitaError::InvalidProof);
     }
+    let committed_shift =
+        i128::try_from(fold_response_shift(log_basis, num_digits_fold)).map_err(|_| {
+            AkitaError::InvalidSetup("fold response shift exceeds terminal i128 range".to_string())
+        })?;
     let mut all_z_planes = vec![[0i8; D]; total_z_elems * num_digits_fold];
     for (elem_idx, chunk) in z_values.chunks_exact(D).enumerate() {
         for (coeff_idx, &value) in chunk.iter().enumerate() {
-            let digits = balanced_digits_from_i64(value, num_digits_fold, log_basis);
+            let committed_value = i128::from(value)
+                .checked_sub(committed_shift)
+                .ok_or(AkitaError::InvalidProof)?;
+            let digits = balanced_digits_from_i128(committed_value, num_digits_fold, log_basis);
             for (plane_idx, digit) in digits.into_iter().enumerate() {
                 all_z_planes[elem_idx * num_digits_fold + plane_idx][coeff_idx] = digit;
             }
@@ -1078,7 +1085,7 @@ mod tests {
     fn recompose_and_split_digits_round_trip() {
         let digits = vec![-2i8, 1, 0];
         let value = recompose_balanced_i8_digits(&digits, 3);
-        let back = balanced_digits_from_i64(value, digits.len(), 3);
+        let back = balanced_digits_from_i128(i128::from(value), digits.len(), 3);
         assert_eq!(back, digits);
     }
 

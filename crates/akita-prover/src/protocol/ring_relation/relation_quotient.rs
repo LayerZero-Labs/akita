@@ -1,10 +1,6 @@
 use super::repeated_b::repeated_b_commitment_rows;
 use super::*;
-use crate::backend::{RingSwitchQuotientView, RingSwitchRelationView};
-use crate::compute::{
-    OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
-    RingSwitchRelationKernel, RingSwitchRelationPlan,
-};
+use crate::compute::{OperationCtx, RingSwitchProveBackend};
 use crate::validation::validate_i8_setup_log_basis;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
@@ -134,17 +130,44 @@ fn add_cyclic_scalar_ring_product<F: FieldCore, const D: usize>(
     }
 }
 
-fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
-    coeffs: &[i32; D],
-) -> CyclotomicRing<F, D> {
-    CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
+fn recomposed_digit_ring<F, const D: usize>(
+    z_committed_digits: &[[i8; D]],
+    elem_idx: usize,
+    num_digits_fold: usize,
+    fold_gadget: &[F],
+) -> Result<CyclotomicRing<F, D>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+{
+    if fold_gadget.len() != num_digits_fold {
+        return Err(AkitaError::InvalidProof);
+    }
+    let start = elem_idx
+        .checked_mul(num_digits_fold)
+        .ok_or(AkitaError::InvalidProof)?;
+    let end = start
+        .checked_add(num_digits_fold)
+        .ok_or(AkitaError::InvalidProof)?;
+    let planes = z_committed_digits
+        .get(start..end)
+        .ok_or(AkitaError::InvalidProof)?;
+    let coeffs = std::array::from_fn(|coeff_idx| {
+        planes
+            .iter()
+            .zip(fold_gadget.iter())
+            .fold(F::zero(), |acc, (plane, &g)| {
+                acc + F::from_i64(i64::from(plane[coeff_idx])) * g
+            })
+    });
+    Ok(CyclotomicRing::from_coefficients(coeffs))
 }
 
 fn cyclic_consistency_z_product<F, const D: usize>(
     ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
-    z_folded_centered: &[[i32; D]],
+    z_committed_digits: &[[i8; D]],
     block_len: usize,
     depth_commit: usize,
+    num_digits_fold: usize,
     log_basis: u32,
 ) -> Result<(CyclotomicRing<F, D>, CyclotomicRing<F, D>), AkitaError>
 where
@@ -153,16 +176,18 @@ where
     let inner_width = block_len
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("z inner width overflow".to_string()))?;
-    if inner_width == 0 || z_folded_centered.len() != inner_width {
+    if inner_width == 0 || z_committed_digits.len() != inner_width * num_digits_fold {
         return Err(AkitaError::InvalidInput(format!(
-            "ring-multiplier z layout mismatch: z_folded_len={} block_len={} depth_commit={} expected={}",
-            z_folded_centered.len(),
+            "ring-multiplier z layout mismatch: z_digit_len={} block_len={} depth_commit={} depth_fold={} expected={}",
+            z_committed_digits.len(),
             block_len,
             depth_commit,
-            inner_width
+            num_digits_fold,
+            inner_width * num_digits_fold
         )));
     }
     let g_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
+    let g_fold = gadget_row_scalars::<F>(num_digits_fold, log_basis);
     let mut cyclic = [F::zero(); D];
     let mut reduced = CyclotomicRing::<F, D>::zero();
 
@@ -177,7 +202,13 @@ where
             let mut z_block = CyclotomicRing::<F, D>::zero();
             for (digit_idx, &g) in g_commit.iter().enumerate() {
                 let z_idx = block_idx * depth_commit + digit_idx;
-                z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
+                z_block += recomposed_digit_ring::<F, D>(
+                    z_committed_digits,
+                    z_idx,
+                    num_digits_fold,
+                    &g_fold,
+                )?
+                .scale(&g);
             }
             if let Some(scalar) = ring_multiplier_point.a_constant_coeff(block_idx) {
                 add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
@@ -194,6 +225,58 @@ where
     }
 
     Ok((CyclotomicRing::from_coefficients(cyclic), reduced))
+}
+
+fn a_quotients_from_committed_digits<F, B, const D: usize>(
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    n_a: usize,
+    z_committed_digits: &[[i8; D]],
+    inner_width: usize,
+    num_digits_fold: usize,
+    log_basis: u32,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
+    B: RingSwitchProveBackend<F, D>,
+{
+    if n_a == 0 {
+        return Ok(Vec::new());
+    }
+    if inner_width == 0
+        || num_digits_fold == 0
+        || !z_committed_digits
+            .len()
+            .is_multiple_of(inner_width * num_digits_fold)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let fold_gadget = gadget_row_scalars::<F>(num_digits_fold, log_basis);
+    let num_segments = z_committed_digits.len() / (inner_width * num_digits_fold);
+    let mut out = vec![CyclotomicRing::<F, D>::zero(); n_a];
+    let mut digit_slice = vec![[0i8; D]; inner_width];
+    for segment_idx in 0..num_segments {
+        let segment_elem_start = segment_idx * inner_width;
+        let mut cyclic = vec![CyclotomicRing::<F, D>::zero(); n_a];
+        let mut reduced = vec![CyclotomicRing::<F, D>::zero(); n_a];
+        for (fold_digit_idx, &scale) in fold_gadget.iter().enumerate() {
+            for (local_idx, dst) in digit_slice.iter_mut().enumerate() {
+                let elem_idx = segment_elem_start + local_idx;
+                *dst = z_committed_digits[elem_idx * num_digits_fold + fold_digit_idx];
+            }
+            let cyclic_rows =
+                backend.cyclic_digit_rows::<D>(prepared, n_a, &digit_slice, log_basis)?;
+            let reduced_rows = backend.digit_rows::<D>(prepared, n_a, &digit_slice, log_basis)?;
+            for row_idx in 0..n_a {
+                cyclic[row_idx] += cyclic_rows[row_idx].scale(&scale);
+                reduced[row_idx] += reduced_rows[row_idx].scale(&scale);
+            }
+        }
+        for row_idx in 0..n_a {
+            out[row_idx] += quotient_from_cyclic_and_reduced(&cyclic[row_idx], &reduced[row_idx]);
+        }
+    }
+    Ok(out)
 }
 
 /// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
@@ -217,8 +300,8 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     e_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
     row_coefficient_rings: &[CyclotomicRing<F, D>],
-    z_folded_centered: &[[i32; D]],
-    z_folded_centered_inf_norm: u32,
+    z_committed_digits: &[[i8; D]],
+    num_digits_fold: usize,
     y: &[CyclotomicRing<F, D>],
     num_polys: usize,
     blocks_per_claim: usize,
@@ -300,12 +383,14 @@ where
     let b_inner_start = lp.b_inner_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
     let a_start = lp.a_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
 
-    if inner_width == 0 || z_folded_centered.len() != inner_width {
+    if inner_width == 0
+        || num_digits_fold == 0
+        || !z_committed_digits
+            .len()
+            .is_multiple_of(inner_width * num_digits_fold)
+    {
         return Err(AkitaError::InvalidProof);
     }
-
-    let mut z_segments = z_folded_centered.chunks(inner_width);
-    let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
     let use_relation_b_rows = !tiered;
     let relation_n_b = if use_relation_b_rows { n_b } else { 0 };
@@ -314,47 +399,27 @@ where
     } else {
         &[]
     };
-    let relation_rows = RingSwitchRelationKernel::relation_rows(
+    let d_cyclic = if n_d_active == 0 {
+        Vec::new()
+    } else {
+        backend.cyclic_digit_rows::<D>(prepared, n_d_active, e_hat_flat, lp.log_basis)?
+    };
+    let b_cyclic = if relation_n_b == 0 {
+        Vec::new()
+    } else {
+        backend.cyclic_digit_rows::<D>(prepared, relation_n_b, relation_t_hat, lp.log_basis)?
+    };
+    let a_quotients = a_quotients_from_committed_digits::<F, B, D>(
         backend,
         prepared,
-        RingSwitchRelationView {
-            e_hat: e_hat_flat,
-            t_hat: relation_t_hat,
-            z_segment: first_z_segment,
-            z_folded_centered_inf_norm,
-        },
-        RingSwitchRelationPlan {
-            n_d: n_d_active,
-            n_b: relation_n_b,
-            n_a,
-            log_basis: lp.log_basis,
-        },
+        n_a,
+        z_committed_digits,
+        inner_width,
+        num_digits_fold,
+        lp.log_basis,
     )?;
-    if relation_rows.d_cyclic.len() != n_d_active
-        || relation_rows.b_cyclic.len() != relation_n_b
-        || relation_rows.a_quotients.len() != n_a
-    {
+    if d_cyclic.len() != n_d_active || b_cyclic.len() != relation_n_b || a_quotients.len() != n_a {
         return Err(AkitaError::InvalidProof);
-    }
-    let mut a_quotients = relation_rows.a_quotients;
-    let b_cyclic = relation_rows.b_cyclic;
-    let d_cyclic = relation_rows.d_cyclic;
-    for z_segment in z_segments {
-        let segment_rows = RingSwitchQuotientKernel::quotient_rows(
-            backend,
-            prepared,
-            RingSwitchQuotientView {
-                z_segment,
-                z_folded_centered_inf_norm,
-            },
-            RingSwitchQuotientPlan { n_a },
-        )?;
-        if segment_rows.len() != n_a {
-            return Err(AkitaError::InvalidProof);
-        }
-        for (dst, src) in a_quotients.iter_mut().zip(segment_rows.into_iter()) {
-            *dst += src;
-        }
     }
     let commitment_cyclic_rows = if tiered {
         // Tiered: the COMMIT block is F (computed below), not B.
@@ -438,9 +503,10 @@ where
     } else {
         let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
             ring_multiplier_point,
-            z_folded_centered,
+            z_committed_digits,
             lp.block_len,
             lp.num_digits_commit,
+            num_digits_fold,
             lp.log_basis,
         )?;
         quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)

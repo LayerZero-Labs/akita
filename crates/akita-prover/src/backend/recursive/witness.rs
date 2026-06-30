@@ -334,7 +334,8 @@ where
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-        _log_basis: u32,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
         let inner_width = block_len * num_digits;
         let num_blocks = challenges.len();
@@ -350,7 +351,7 @@ where
             num_digits,
             inner_width,
         );
-        build_decompose_fold_witness::<F, D>(coeff_accum, q)
+        build_decompose_fold_witness::<F, D>(coeff_accum, q, log_basis, num_digits_fold)
     }
 
     pub(crate) fn decompose_fold_tensor_batched(
@@ -358,6 +359,7 @@ where
         _tensor: &TensorChallenges,
         _block_len: usize,
         _num_digits: usize,
+        _num_digits_fold: usize,
         _log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         Ok(None)
@@ -536,6 +538,7 @@ where
             plan.challenges,
             plan.block_len,
             plan.num_digits,
+            plan.num_digits_fold,
             plan.log_basis,
         ))
     }
@@ -563,9 +566,15 @@ where
                 tensor,
                 block_len,
                 num_digits,
+                num_digits_fold,
                 log_basis,
             } => match SuffixWitnessView::decompose_fold_tensor_batched(
-                &refs, tensor, block_len, num_digits, log_basis,
+                &refs,
+                tensor,
+                block_len,
+                num_digits,
+                num_digits_fold,
+                log_basis,
             )? {
                 Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
                 None => Ok(BatchDecomposeFoldOutcome::Unsupported),
@@ -816,8 +825,8 @@ mod tests {
             },
         ];
 
-        let once = view.decompose_fold(&challenges, 2, 1, 0);
-        let twice = view.decompose_fold(&challenges, 2, 1, 0);
+        let once = view.decompose_fold(&challenges, 2, 1, 1, 1);
+        let twice = view.decompose_fold(&challenges, 2, 1, 1, 1);
         assert_eq!(once, twice);
     }
 }

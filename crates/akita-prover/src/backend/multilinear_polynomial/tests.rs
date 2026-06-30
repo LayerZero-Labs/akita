@@ -246,6 +246,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
                 challenges: &[],
                 block_len: 1,
                 num_digits: 1,
+                num_digits_fold: 1,
                 log_basis: 1,
             },
         )

@@ -106,6 +106,8 @@ pub struct DecomposeFoldPlan<'a> {
     pub block_len: usize,
     /// Number of balanced digits.
     pub num_digits: usize,
+    /// Number of balanced digits used to decompose the folded response.
+    pub num_digits_fold: usize,
     /// Logarithm of the gadget basis.
     pub log_basis: u32,
 }
@@ -125,6 +127,8 @@ pub enum DecomposeFoldBatchPlan<'a> {
         block_len: usize,
         /// Number of balanced digits.
         num_digits: usize,
+        /// Number of balanced digits used to decompose the folded response.
+        num_digits_fold: usize,
         /// Logarithm of the gadget basis.
         log_basis: u32,
     },
@@ -136,6 +140,8 @@ pub enum DecomposeFoldBatchPlan<'a> {
         block_len: usize,
         /// Number of balanced digits.
         num_digits: usize,
+        /// Number of balanced digits used to decompose the folded response.
+        num_digits_fold: usize,
         /// Logarithm of the gadget basis.
         log_basis: u32,
     },

@@ -39,23 +39,65 @@ use super::norm_bound::{
 };
 use crate::DecompositionParams;
 
-/// Maximum coefficient `L∞` envelope accepted for folded witness `z` when each
-/// ring coefficient is decomposed into `num_digits_fold` balanced
-/// base-`2^log_basis` digits.
+/// Maximum semantic coefficient `L∞` envelope accepted for folded witness `z`
+/// when each committed coordinate is shifted before balanced decomposition.
 ///
-/// Stage-1 digit membership is the only norm-shaped constraint on `z`; A-role
-/// weak binding must price at the absolute envelope of all accepted digit
-/// strings, not at [`super::norm_bound::fold_witness_honest_prover_linf_cap`]
-/// alone and not only at the shorter positive side.
+/// Stage-1 digit membership constrains the committed shifted coordinate
+/// `z_comm = z - eta`. A-role weak binding prices the semantic value recovered
+/// as `z = z_comm + eta`, not the raw half-open digit interval and not only
+/// [`super::norm_bound::fold_witness_honest_prover_linf_cap`].
 ///
-/// Balanced digits lie in `[-b/2, b/2 - 1]`, so `num_digits` digits represent
-/// values down to `-(b/2) · (b^n - 1)/(b - 1)` and up to
-/// `(b/2 - 1) · (b^n - 1)/(b - 1)`. This returns the larger absolute value,
-/// i.e. the negative reach.
+/// This is the centered interval's remaining one-integer asymmetry:
+/// `((b - 1) · L + 1) / 2`, where `L = 1 + b + ... + b^(delta - 1)`.
 #[inline]
 #[must_use]
 pub fn fold_witness_verifier_linf_bound(log_basis: u32, num_digits_fold: usize) -> u128 {
+    fold_response_semantic_linf_bound(log_basis, num_digits_fold)
+}
+
+/// Geometric series `1 + b + ... + b^(num_digits - 1)` for
+/// `b = 2^log_basis`.
+#[inline]
+#[must_use]
+pub fn balanced_digit_series(log_basis: u32, num_digits: usize) -> u128 {
+    let base: u128 = 1u128 << log_basis;
+    let mut pow = 1u128;
+    let mut series = 0u128;
+    for _ in 0..num_digits.max(1) {
+        series = series.saturating_add(pow);
+        pow = pow.saturating_mul(base);
+    }
+    series
+}
+
+/// Public shift `eta` for the committed folded response, where
+/// `z_comm = z - eta`.
+#[inline]
+#[must_use]
+pub fn fold_response_shift(log_basis: u32, num_digits_fold: usize) -> u128 {
+    balanced_digit_series(log_basis, num_digits_fold).div_ceil(2)
+}
+
+/// Raw committed-coordinate absolute reach of the half-open digit interval.
+///
+/// This is the negative reach of `D_b^delta`, not the semantic folded-response
+/// bound after undoing [`fold_response_shift`].
+#[inline]
+#[must_use]
+pub fn fold_response_committed_linf_bound(log_basis: u32, num_digits_fold: usize) -> u128 {
     balanced_digit_abs_max(log_basis, num_digits_fold.max(1))
+}
+
+/// Semantic folded-response absolute bound after undoing the public shift.
+#[inline]
+#[must_use]
+pub fn fold_response_semantic_linf_bound(log_basis: u32, num_digits_fold: usize) -> u128 {
+    let base: u128 = 1u128 << log_basis;
+    let series = balanced_digit_series(log_basis, num_digits_fold);
+    base.saturating_sub(1)
+        .saturating_mul(series)
+        .saturating_add(1)
+        / 2
 }
 
 /// Maximum positive value representable by `num_digits` balanced base-`b`
@@ -82,13 +124,7 @@ fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
     let base: u128 = 1u128 << log_basis;
     let max_abs_digit = base / 2;
 
-    let mut pow = 1u128;
-    let mut series = 0u128;
-    for _ in 0..num_digits {
-        series = series.saturating_add(pow);
-        pow = pow.saturating_mul(base);
-    }
-
+    let series = balanced_digit_series(log_basis, num_digits);
     max_abs_digit.saturating_mul(series)
 }
 
@@ -275,14 +311,29 @@ mod tests {
     }
 
     #[test]
-    fn fold_witness_verifier_linf_bound_uses_negative_reach() {
-        // b = 4, δ = 3 digits represent [-42, 21]; A-role pricing must use
-        // the accepted absolute envelope, not the shorter positive side.
-        assert_eq!(balanced_digit_max(2, 3), 21);
-        assert_eq!(fold_witness_verifier_linf_bound(2, 3), 42);
-        // b = 8, δ = 2 digits represent [-36, 27].
+    fn fold_response_shift_centers_semantic_interval() {
+        // b = 4, δ = 1: raw committed interval [-2, 1], shift 1, semantic
+        // interval [-1, 2].
+        assert_eq!(balanced_digit_series(2, 1), 1);
+        assert_eq!(fold_response_shift(2, 1), 1);
+        assert_eq!(fold_response_committed_linf_bound(2, 1), 2);
+        assert_eq!(fold_witness_verifier_linf_bound(2, 1), 2);
+
+        // b = 4, δ = 2: raw committed interval [-10, 5], shift 3, semantic
+        // interval [-7, 8].
+        assert_eq!(balanced_digit_series(2, 2), 5);
+        assert_eq!(fold_response_shift(2, 2), 3);
+        assert_eq!(balanced_digit_max(2, 2), 5);
+        assert_eq!(fold_response_committed_linf_bound(2, 2), 10);
+        assert_eq!(fold_witness_verifier_linf_bound(2, 2), 8);
+
+        // b = 8, δ = 2: raw committed interval [-36, 27], shift 5, semantic
+        // interval [-31, 32].
+        assert_eq!(balanced_digit_series(3, 2), 9);
+        assert_eq!(fold_response_shift(3, 2), 5);
         assert_eq!(balanced_digit_max(3, 2), 27);
-        assert_eq!(fold_witness_verifier_linf_bound(3, 2), 36);
+        assert_eq!(fold_response_committed_linf_bound(3, 2), 36);
+        assert_eq!(fold_witness_verifier_linf_bound(3, 2), 32);
     }
 
     #[test]

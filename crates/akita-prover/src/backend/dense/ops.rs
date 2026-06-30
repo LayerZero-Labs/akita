@@ -232,6 +232,7 @@ where
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
+        num_digits_fold: usize,
         log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
         let n = self.coeffs.len();
@@ -248,7 +249,12 @@ where
                 )
             };
             let modulus = (-F::one()).to_canonical_u128() + 1;
-            return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
+            return build_decompose_fold_witness::<F, D>(
+                coeff_accum,
+                modulus,
+                log_basis,
+                num_digits_fold,
+            );
         }
 
         let q = (-F::one()).to_canonical_u128() + 1;
@@ -286,7 +292,12 @@ where
                 };
 
                 let _span = tracing::info_span!("dense_single_digit_convert").entered();
-                return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
+                return build_decompose_fold_witness::<F, D>(
+                    coeff_accum,
+                    params.q,
+                    log_basis,
+                    num_digits_fold,
+                );
             }
 
             let coeff_accum: Vec<[i32; D]> = {
@@ -312,7 +323,12 @@ where
             };
 
             let _span = tracing::info_span!("dense_single_digit_convert").entered();
-            return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
+            return build_decompose_fold_witness::<F, D>(
+                coeff_accum,
+                params.q,
+                log_basis,
+                num_digits_fold,
+            );
         }
 
         let centered_coeffs = {
@@ -323,7 +339,7 @@ where
         };
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
-        build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
+        build_decompose_fold_witness::<F, D>(centered_coeffs, params.q, log_basis, num_digits_fold)
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold_tensor_batched")]
@@ -332,10 +348,16 @@ where
         tensor: &TensorChallengeSet,
         block_len: usize,
         num_digits: usize,
+        num_digits_fold: usize,
         log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         tensor_fold::decompose_fold_batched_tensor_dense(
-            polys, tensor, block_len, num_digits, log_basis,
+            polys,
+            tensor,
+            block_len,
+            num_digits,
+            num_digits_fold,
+            log_basis,
         )
     }
 

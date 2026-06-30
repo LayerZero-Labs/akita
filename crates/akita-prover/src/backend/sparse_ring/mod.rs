@@ -389,7 +389,8 @@ where
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-        _log_basis: u32,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
         let blocks = self
             .blocks_for(block_len)
@@ -399,7 +400,7 @@ where
         let coeff_accum =
             sparse_accumulate::<D>(blocks, challenges, num_blocks, inner_width, num_digits);
         let modulus = (-F::one()).to_canonical_u128() + 1;
-        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+        build_decompose_fold_witness::<F, D>(coeff_accum, modulus, log_basis, num_digits_fold)
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold_tensor_batched")]
@@ -408,10 +409,16 @@ where
         tensor: &TensorChallengeSet,
         block_len: usize,
         num_digits: usize,
-        _log_basis: u32,
+        num_digits_fold: usize,
+        log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         Ok(Some(tensor_fold::decompose_fold_batched_tensor_sparse(
-            polys, tensor, block_len, num_digits,
+            polys,
+            tensor,
+            block_len,
+            num_digits,
+            num_digits_fold,
+            log_basis,
         )?))
     }
 
