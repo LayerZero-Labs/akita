@@ -481,7 +481,7 @@ mod tests {
         let policy = flat_policy();
         let pre = CommitmentGroupLayout::from_params(
             pre_key,
-            &find_schedule(pre_key, &policy, ring_challenge_config, fold_shape)
+            find_schedule(pre_key, &policy, ring_challenge_config, fold_shape)
                 .expect("precommit schedule")
                 .steps
                 .first()
