@@ -32,7 +32,9 @@ coordinate rule for choosing compatible $A$ coefficients. Coordinates are shared
 only when their full $A$-column semantics match. When two sources have the same
 vector coordinate and gadget exponent but different $A$ row semantics, the
 planner keeps them in separate namespaces inside the same logical $z_\star$
-witness rather than rejecting the batch.
+witness rather than rejecting the batch. This is a coordinate-sharing rule, not
+a batch-admission rule. Sources with different $A$ ranks can still be batched in
+one common-$z$ proof.
 
 ## Intent
 
@@ -41,8 +43,9 @@ witness rather than rejecting the batch.
 Define a canonical embedding from each local Hachi opening witness layout into a
 single logical folded-witness layout, allowing heterogeneous polynomial sizes
 and heterogeneous `log_basis` values to contribute to one random-linear folded
-response $z_\star$. The layout maximally shares compatible coordinates and
-automatically splits incompatible coordinates into separate namespaces.
+response $z_\star$. The same layout also allows heterogeneous $A$ row ranks.
+The layout maximally shares compatible coordinates and automatically splits
+incompatible coordinates into separate namespaces.
 
 ### Invariants
 
@@ -55,17 +58,20 @@ automatically splits incompatible coordinates into separate namespaces.
    coordinate with another local digit only if both induce the same full
    $A$-column profile after embedding into the batched row space. Equal
    $(k,e)$ alone is not sufficient.
-4. **Linear folding.** The shared folded response is the transcript-challenge
+4. **Rank heterogeneity.** Sources with different local $A$ row ranks may
+   appear in the same $z_\star$ batch. Different ranks only force different
+   compatibility namespaces when their full $A$ profiles differ.
+5. **Linear folding.** The shared folded response is the transcript-challenge
    linear combination of embedded local witnesses:
 
    $$
    z_\star = \sum_{i,a} c_{i,a} E_i\!\left(s^{(i)}_a\right).
    $$
 
-5. **Local reconstruction.** For every local block, applying the common gadget
+6. **Local reconstruction.** For every local block, applying the common gadget
    matrix after embedding must recover the same ring vector as applying the
    local gadget matrix before embedding.
-6. **Transcript binding.** The batch descriptor must bind every layout parameter
+7. **Transcript binding.** The batch descriptor must bind every layout parameter
    that affects the embedding: $(m_i, r_i, \texttt{log\_basis}_i, \delta_i)$, the common
    layout, the compatibility namespace map, the padding convention, the source
    provenance, and the claim/block ordering.
@@ -80,6 +86,8 @@ automatically splits incompatible coordinates into separate namespaces.
   matrices can share a folded-response coordinate; compatible local $A_i$
   columns must have identical descriptor-bound $A$ profiles. Incompatible
   columns stay in separate namespaces inside $z_\star$.
+- This spec does not require all sources in one batch to have the same $A$ row
+  rank.
 - This spec does not optimize the norm bound or SIS rank pricing for the
   batched relation.
 - This spec does not require backward compatibility with existing proof bytes or
@@ -215,13 +223,15 @@ $s^{(i)}_{a,k,p}$. The profile is the full embedded column semantics: the
 common row embedding, the active row domain, and the setup-coordinate handle
 read by each active row. Inactive rows are part of the profile as zeros.
 
-Two digits are allowed to share one folded-response coordinate only when their
-profiles are equal. This handles heterogeneous ranks generally: if one source
-has rows $0,\ldots,3$ active and another has rows $0,\ldots,5$ active, their
-profiles are different even if the first four coefficient handles coincide, so
-the planner allocates two coordinates. A later optimization may deliberately
+Two digits are allowed to share the same folded-response coordinate only when
+their profiles are equal. This does not require every source in the batch to
+have the same rank. If one source has rows $0,\ldots,3$ active and another has
+rows $0,\ldots,5$ active, both sources remain in the same common-$z$ batch, but
+their profiles are different. The planner allocates two compatibility
+coordinates for that $(k,e)$ position. A later optimization may deliberately
 lift the smaller source to the larger row profile, committing the extra
-$\hat t$ rows, in order to make the profiles equal and recover sharing.
+$\hat t$ rows, in order to make the profiles equal and recover coordinate
+sharing.
 
 Define the compatibility-keyed coordinate set
 
@@ -425,13 +435,16 @@ default setup-repacking rule is:
    setup handles are independent unless a later proof explicitly justifies a
    correlated-column construction.
 
-This rule is what makes heterogeneous row ranks safe. A one-hot source with
-four active $A$ rows and a full-field source with six active $A$ rows do not
-share the same profile merely because rows $0,\ldots,3$ use the same formula.
-Sharing would incorrectly make the one-hot contribution appear in rows $4,5$.
-The planner can still choose to lift the one-hot source to the six-row profile,
-commit those extra $\hat t$ rows, and thereby make the profiles equal. That is
-a cost/performance choice, not a soundness requirement.
+This rule is what makes heterogeneous row ranks safe inside one common-$z$
+batch. A one-hot source with four active $A$ rows and a full-field source with
+six active $A$ rows do not share the same profile merely because rows
+$0,\ldots,3$ use the same formula. Sharing the exact coordinate would
+incorrectly make the one-hot contribution appear in rows $4,5$. The safe
+default is not to reject the batch. The safe default is to put those
+contributions in separate compatibility namespaces. The planner can still
+choose to lift the one-hot source to the six-row profile, commit those extra
+$\hat t$ rows, and thereby make the profiles equal. That is a cost/performance
+choice, not a soundness requirement.
 
 The setup object is the sorted set of all nonzero logical handles appearing in
 the descriptor-bound profiles:
@@ -883,6 +896,9 @@ resulting SIS rank and proof-size cost are acceptable.
 - [ ] A planner or verifier check confirms that every shared coordinate has one
       byte-identical $A$ profile and that incompatible profiles are allocated to
       distinct coordinates.
+- [ ] A test covers two sources with different $A$ row ranks in one common-$z$
+      batch. The test must confirm that they share the batch but use different
+      compatibility namespaces for incompatible coordinates.
 - [ ] Norm-bound tests cover heterogeneous `log_basis` values, heterogeneous
       $m_i$, sparse occupancy where $g_i > 1$, and profile splitting where two
       sources share $(k,e)$ but not $\chi$.
@@ -894,6 +910,7 @@ The first tests should be algebraic and deterministic:
 - randomized local digit vectors for several $(m_i, \texttt{log\_basis}_i)$ pairs;
 - exact slot-map tests for $\ell_\star = \gcd_i \ell_i$;
 - padding tests where $m_i < m_\star$;
+- same-batch tests for sources with different $A$ row ranks;
 - split-namespace tests where incompatible $A$ profiles at the same $(k,e)$
   become distinct coordinates;
 - negative tests where a descriptor attempts to map two non-identical profiles
