@@ -67,8 +67,8 @@ automatically splits incompatible coordinates into separate namespaces.
    local gadget matrix before embedding.
 6. **Transcript binding.** The batch descriptor must bind every layout parameter
    that affects the embedding: $(m_i, r_i, \texttt{log\_basis}_i, \delta_i)$, the common
-   layout, the compatibility namespace map, the padding convention, and the
-   claim/block ordering.
+   layout, the compatibility namespace map, the padding convention, the source
+   provenance, and the claim/block ordering.
 
 ### Non-Goals
 
@@ -686,6 +686,134 @@ the default rule. It creates correlated $A_\star$ columns that are not covered
 by the ordinary Module-SIS argument for a uniform role matrix. A future design
 may allow such reuse only with an explicit correlation-aware binding proof.
 
+## Adversarial Precommitted Sources
+
+The common-$z$ construction is intended to cover both verifier-owned and
+prover-owned precommitted sources. This distinction is important for Jolt
+advice. Trusted advice is committed outside the proof and supplied to the
+verifier as an external commitment. Untrusted advice is chosen by the prover.
+The verifier does not know the raw advice values, but it must still check that
+the values used in the RAM and advice relations are the same values committed
+by the prover.
+
+This spec treats a prover-owned commitment as an adversarial input. The prover
+may choose the committed polynomial, the commitment bytes, the opening proof,
+and all prover-side hints. The prover must not be able to choose a different
+layout, source identity, or setup profile after seeing transcript challenges.
+Therefore every verifier-reachable descriptor that controls a prover-owned
+source must be derived by the verifier or bound to the transcript before any
+challenge that depends on the source is sampled.
+
+For a prover-owned source $i$, the verifier must bind at least:
+
+- source kind and source index, such as untrusted advice, trusted advice,
+  bytecode chunk, program image, or trace polynomial;
+- source owner, namely prover-owned, verifier-owned, or third-party committed;
+- commitment bytes or commitment digest;
+- natural polynomial size and padded size;
+- commitment configuration, including basis mode, decomposition basis, and
+  supported root layout;
+- common row-domain embedding into $\mathcal{R}_\star$;
+- canonical $A$ profile table and the map $(k,p)\mapsto\chi_i(k,p)$;
+- compatibility namespace map $(k,p)\mapsto(k,pg_i,\chi_i(k,p))$;
+- setup handle ordering;
+- claim ordering, block ordering, and final opening ordering;
+- opening-point normalization convention.
+
+The verifier may derive these fields from public configuration. If a field is
+proof-supplied, the verifier must check it against the derived schedule and
+absorb the checked value into the transcript before deriving batching
+challenges. Proof-supplied counts or descriptor bytes are consistency checks.
+They are not authoritative.
+
+### Jolt Untrusted Advice Application
+
+In Jolt, untrusted advice contributes to the initial RAM value. At a verifier
+challenge $r_{\mathsf{addr}}$, the verifier computes the public part of the
+initial RAM polynomial and uses prover-supplied advice evaluations for the
+advice regions:
+
+```text
+Val_init(r_addr)
+  = Val_public(r_addr)
+  + selector_trusted(r_addr)   * TrustedAdvice(r_trusted)
+  + selector_untrusted(r_addr) * UntrustedAdvice(r_untrusted).
+```
+
+The verifier does not know `UntrustedAdvice(r_untrusted)` directly. The prover
+supplies that value, and the proof must later open the prover-owned untrusted
+advice commitment at the same derived point. In the current Dory-shaped Jolt
+flow, the verifier absorbs the untrusted advice commitment before the RAM,
+advice-reduction, and final-opening challenges. It also derives the advice
+shape from verifier-known memory-layout bounds and the presence of the
+untrusted advice commitment.
+
+The common-$z$ Akita flow must preserve the same trust boundary. The untrusted
+advice source may contribute digits to $z_\star$, but its source descriptor and
+profile namespace must already be fixed. The prover must not be able to present
+one untrusted advice commitment for the RAM relation and a different layout or
+profile table for the common-$z$ opening proof.
+
+The intended layout is:
+
+```text
+Prover-owned untrusted advice vector U
+
+  U[0]  U[1]  U[2]  U[3]  ...  U[2^n - 1]
+    |     |     |     |              |
+    v     v     v     v              v
+  local advice digits s^{(U)}_{k,p}
+    |
+    v
+  E_U(s^{(U)}_{k,p}) = z_star[k, p g_U, chi_U(k,p)]
+```
+
+If another source has the same vector coordinate and exponent, it still shares
+with untrusted advice only when the full $A$ profile is identical:
+
+```text
+same k and e, but different profiles
+
+one-hot or trace source        untrusted advice source
+
+rows 0 1 2 3 4 5              rows 0 1 2 3 4 5
+     a b c d 0 0                   a b c d e f
+
+allocated coordinates:
+  z_star[k,e,chi_trace]
+  z_star[k,e,chi_untrusted]
+```
+
+This split prevents a prover-owned advice digit from being opened under the
+wrong row semantics. It also prevents the verifier from accepting a proof where
+the RAM relation used one advice layout while the final opening proof used
+another layout.
+
+### Threats Excluded by Descriptor Binding
+
+The verifier must reject the following cases:
+
+- the proof includes an untrusted advice commitment but the common-$z$
+  descriptor omits the untrusted advice source;
+- the RAM or advice-reduction relation requests an untrusted advice opening,
+  but the final common-$z$ batch does not open the untrusted advice commitment;
+- the proof changes the natural size, padded size, basis, row embedding,
+  profile table, or namespace map for a prover-owned source;
+- the proof labels a prover-owned commitment as a trusted, verifier-owned, or
+  different source kind;
+- two sources with non-identical profiles are mapped to the same
+  $(k,e,\chi)$ coordinate;
+- the verifier derives one opening order, but the proof uses another opening
+  order to form the batched relation.
+
+These checks are part of the soundness envelope for prover-owned commitments.
+They are separate from the application-level correctness of the advice itself.
+For untrusted advice, the application must still constrain the advice through
+the guest program, for example by checking a returned inverse, factor, or
+quotient. The commitment proof only binds the execution to one advice
+polynomial. It does not prove that the advice is meaningful unless the program
+checks it.
+
 ## Norm Accounting
 
 Let local opening digits for claim $i$ satisfy
@@ -746,6 +874,12 @@ resulting SIS rank and proof-size cost are acceptable.
 - [ ] The transcript binds all local and common layout parameters that affect
       slot placement, including the canonical profile table and row-domain
       embedding.
+- [ ] For every prover-owned precommitted source, the verifier derives or
+      transcript-binds the source descriptor before sampling any challenge that
+      depends on that source.
+- [ ] Proof-supplied source counts, natural sizes, padded sizes, profile tables,
+      namespace maps, and opening orders are checked against the verifier-derived
+      schedule before they affect the common-$z$ batch.
 - [ ] A planner or verifier check confirms that every shared coordinate has one
       byte-identical $A$ profile and that incompatible profiles are allocated to
       distinct coordinates.
@@ -763,7 +897,12 @@ The first tests should be algebraic and deterministic:
 - split-namespace tests where incompatible $A$ profiles at the same $(k,e)$
   become distinct coordinates;
 - negative tests where a descriptor attempts to map two non-identical profiles
-  to the same coordinate.
+  to the same coordinate;
+- negative tests where a prover-owned source changes source kind, natural size,
+  padded size, row embedding, profile table, namespace map, or final opening
+  order after the verifier has derived the schedule;
+- negative tests where an untrusted advice source is used by an upstream
+  relation but omitted from the final common-$z$ opening batch.
 
 Once the $A_\star$ design is added, end-to-end prover/verifier tests should cover at
 least two polynomials with different sizes and different `log_basis` values in
