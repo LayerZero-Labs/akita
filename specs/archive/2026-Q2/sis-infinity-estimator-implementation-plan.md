@@ -4,7 +4,7 @@
 |-------|-------|
 | Status | superseded |
 | Superseded-by | [`specs/sis-linf-table-cutover.md`](../../sis-linf-table-cutover.md) |
-| Archived | 2026-Q3 |
+| Archived | 2026-Q2 |
 
 This plan breaks `specs/sis-infinity-estimator-crate.md` into slices that can be
 implemented and audited one at a time. Codex owns the branch and final review.
