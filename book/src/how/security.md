@@ -18,11 +18,10 @@ bound:
     -> max secure width by module rank
 ```
 
-This benchmark branch temporarily wires the production floor to 128 bits so CI
-can report performance deltas against the 138-bit table. A lookup for any other
-floor returns `None` until a matching table is generated and checked in.
+The first shipped production floor is 138 bits. A lookup for any other floor
+returns `None` until a matching table is generated and checked in.
 
-The checked-in 128-bit table was generated with the `local-minimum` optimizer
+The checked-in 138-bit table was generated with the `local-minimum` optimizer
 profile. That profile uses Python-compatible local beta and zeta search inside
 each table row. Parallel generation parallelizes rows; it does not make one
 row's optimizer exhaustive.

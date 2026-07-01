@@ -10,11 +10,6 @@
 | Superseded-by | |
 | Book-chapter  | |
 
-> **Benchmark note.** The current PR branch temporarily wires the generated
-> coefficient-`L∞` production table to 128 bits so CI can measure performance
-> deltas against the earlier 138-bit table. The longer-term conservative floor
-> described by this spec remains 138 bits unless review decides otherwise.
-
 ## Summary
 
 Akita currently prices production SIS security with generated Euclidean
@@ -218,6 +213,11 @@ This PR uses `local-minimum`, not exhaustive search, for the production table.
 That choice must be visible in generated table headers and review notes.
 Exhaustive spot checks remain useful review evidence, but the checked-in table
 provenance is the local-minimum profile.
+
+The temporary 128-bit coefficient-`L∞` Rust split table used for benchmark
+comparison is preserved under `scripts/sis_golden/reference_linf_128/` as a
+non-runtime reference artifact. Production lookup remains wired only to the
+138-bit table.
 
 For targeted provenance checks, `sis_estimator_once` accepts
 `--profile local-minimum|exhaustive-serial|exhaustive-parallel`. Use fixed-width

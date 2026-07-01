@@ -131,10 +131,9 @@ Production SIS lookups use `SisTableKey`:
 (min_security_bits, sis_family, ring_dimension, coeff_linf_bound)
 ```
 
-This benchmark branch temporarily uses the 128-bit floor as the generated source
-of truth. The floor is part of `PlannerPolicy`, catalog identity, generated
-table expansion, and descriptor bytes, so a schedule generated for one SIS floor
-cannot be silently reused under another floor.
+Only the 138-bit floor is generated today. The floor is part of `PlannerPolicy`,
+catalog identity, generated table expansion, and descriptor bytes, so a schedule
+generated for one SIS floor cannot be silently reused under another floor.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 

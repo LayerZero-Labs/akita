@@ -316,7 +316,7 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[];
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_d64_onehot_tensor",
     sis_family: SisModulusFamily::Q128,
-    min_sis_security_bits: 128,
+    min_sis_security_bits: 138,
     ring_dimension: 64,
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 1, log_open_bound: Some(128) },
     ring_subfield_norm_bound: 1,
