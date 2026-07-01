@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-01 |
 | Status        | active |
-| PR            | |
+| PR            | [#255](https://github.com/LayerZero-Labs/akita/pull/255) |
 | Supersedes    | `specs/sis-infinity-estimator-implementation-plan.md` Slice 7 |
 | Superseded-by | |
 | Book-chapter  | |
