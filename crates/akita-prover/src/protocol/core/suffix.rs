@@ -143,26 +143,44 @@ where
         let out = {
             let stack = stacks.prove_stack_at_level(level);
             stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), level_d)?;
-            super::fold::prove_suffix_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
-                expanded,
-                prefix_slots,
-                stack,
-                transcript,
-                level,
-                level_d,
-                current_state,
-                level_params,
-                &scheduled,
-                m_row_layout,
-                tail_t_vectors,
-                setup_contribution_mode,
-                is_terminal_level,
-                if is_terminal_level {
-                    Some(terminal_direct_witness_shape)
-                } else {
-                    None
-                },
-            )
+            use akita_types::dispatch_ring_dim_result;
+
+            dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+                let prepared_fold = prepare_suffix::<
+                    Cfg::Field,
+                    Cfg::ExtField,
+                    T,
+                    C,
+                    O,
+                    TS,
+                    R,
+                    { D_LEVEL },
+                >(
+                    stack,
+                    transcript,
+                    current_state,
+                    level,
+                    level_params,
+                    m_row_layout,
+                    tail_t_vectors,
+                )?;
+                super::fold::prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
+                    expanded,
+                    prefix_slots,
+                    stack,
+                    transcript,
+                    level,
+                    &scheduled,
+                    prepared_fold,
+                    setup_contribution_mode,
+                    is_terminal_level,
+                    if is_terminal_level {
+                        Some(terminal_direct_witness_shape)
+                    } else {
+                        None
+                    },
+                )
+            })
             .map_err(|err| {
                 AkitaError::InvalidInput(format!(
                     "suffix fold level {level} D{level_d} failed: {err:?}"

@@ -208,8 +208,7 @@ where
         basis,
     )?;
 
-    prove_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
-        root_params.ring_dimension,
+    prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
         expanded,
         prefix_slots,
         stack,
@@ -324,8 +323,7 @@ where
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
-        root_params.ring_dimension,
+    let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
         expanded,
         &prefix_slots,
         stack,
