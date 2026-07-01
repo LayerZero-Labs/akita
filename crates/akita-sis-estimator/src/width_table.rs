@@ -6,8 +6,8 @@
 //! (family, ring_dimension, coeff_linf_bound) -> max widths by rank
 //! ```
 //!
-//! This module is offline-only. It generates comparison artifacts for the
-//! infinity estimator without changing the production Euclidean SIS table.
+//! This module is offline-only. It generates production Rust tables and CSV
+//! audit artifacts for the infinity estimator.
 
 use crate::{
     akita::{scalar_sis_from_ring_wide, AkitaModulusFamily},
@@ -56,7 +56,8 @@ pub const D128_SEARCH_CAP: u64 = 50_000_000_000;
 /// Optimizer profile used while generating the infinity width table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InfinityWidthProfile {
-    /// Lattice-estimator parity search.
+    /// Lattice-estimator parity search. Rows may be generated in parallel, but
+    /// each row uses Python-compatible local-minimum beta and zeta search.
     LocalMinimum,
     /// Serial exhaustive beta/zeta search.
     ExhaustiveSerial,

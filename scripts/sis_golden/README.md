@@ -214,6 +214,18 @@ The production `rust-split` mode requires the complete production keyspace.
 Partial jobs must use CSV output. Rows with `hit_cap=true` are lower bounds, not
 tight cutoffs.
 
+The checked-in 138-bit table uses `--profile local-minimum`. This profile
+matches the Python `lattice-estimator` local search shape. It searches for a
+local minimum over `zeta`, and for each `zeta` it searches for a local minimum
+over `beta`, then refines in the Python-compatible beta neighborhood. Building
+with `--features parallel` parallelizes independent table rows, but it does not
+make the local search inside one row exhaustive.
+
+The exhaustive profiles scan the full finite `zeta` range and the full finite
+`beta` range for each row. They are more conservative if they find a cheaper
+attack that local-minimum skipped. They are also much slower for the full
+production keyspace.
+
 For Rust-vs-Sage single-shot timing, run:
 
 ```bash

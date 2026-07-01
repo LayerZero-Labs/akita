@@ -3,6 +3,9 @@
 // SIS width thresholds for L-infinity security (ADPS16/LGSA, infinity norm).
 // Rust estimator path: akita-sis-estimator::width_table.
 // Keys are coefficient-L-infinity buckets.
+// Optimizer profile: local-minimum.
+// Local-minimum uses Python-compatible local beta/zeta search inside each row;
+// `--features parallel` parallelizes rows, not the local search itself.
 
 // Family: Q128
 

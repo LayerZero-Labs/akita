@@ -62,10 +62,9 @@ planner-shaped key:
 (family, ring_dimension, coeff_linf_bound) -> widths[rank - 1]
 ```
 
-That generator currently defaults to a 138-bit target, but its committed CSV
-artifact is comparison-only and was produced with the local-minimum parity
-profile. The production cutover must generate canonical Rust table modules
-from the production-intended profile, not blindly reuse the comparison CSV.
+That generator currently defaults to a 138-bit target. The production cutover
+generates canonical Rust table modules from the full production keyspace. The
+checked-in table in this PR uses the local-minimum optimizer profile.
 
 ### Target State
 
@@ -193,7 +192,9 @@ Generation checks:
 cargo run -p akita-sis-estimator --release --features parallel \
   --example infinity_width_table -- \
   --format rust-split \
-  --profile exhaustive-parallel
+  --target-bits 138 \
+  --profile local-minimum \
+  --progress-every 500
 
 cargo run --release -p akita-config --no-default-features \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated
@@ -202,12 +203,10 @@ cargo run --release -p akita-config --no-default-features \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated --wiring-only
 ```
 
-If exhaustive table generation is too slow for the full table, the PR may use
-the local-minimum profile only after a documented spot-check shows that
-local-minimum rows are no looser than exhaustive rows on the planner-relevant
-sample. The spot-check must include small, medium, and large coefficient
-buckets, every modulus family, every ring dimension, and ranks that actually
-appear in regenerated schedules.
+This PR uses `local-minimum`, not exhaustive search, for the production table.
+That choice must be visible in generated table headers and review notes.
+Exhaustive spot checks remain useful review evidence, but the checked-in table
+provenance is the local-minimum profile.
 
 ### Performance And Proof Size
 
@@ -295,21 +294,24 @@ config and provenance.
 
 ### Estimator Profile Choice
 
-Preferred production profile:
+Production profile used in this PR:
 
 ```text
 norm = infinity
 reduction cost model = ADPS16 classical
 shape model = LGSA
-optimizer = exhaustive beta + exhaustive zeta
+optimizer = local-minimum beta + local-minimum zeta
 target_bits = 138
 ```
 
-`exhaustive-parallel` is acceptable when it is deterministic and matches the
-serial exhaustive profile. If full exhaustive generation is too expensive, use
-local-minimum only with a committed rationale and spot-check summary. The
-fallback criterion is not "close enough in general"; it is "not looser for
-planner-relevant rows, or explicitly reviewed where it differs."
+`local-minimum` means Python-compatible local beta and zeta search inside each
+row. The `parallel` feature parallelizes independent table rows. It does not
+make the per-row local search exhaustive.
+
+`exhaustive-serial` and `exhaustive-parallel` scan the full finite beta and
+zeta ranges. They are more conservative if they find a cheaper attack that the
+local search skipped. Full exhaustive generation was not used for this PR
+because the production keyspace is already expensive under local-minimum.
 
 ### Generated Schedules
 

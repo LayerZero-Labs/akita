@@ -21,6 +21,11 @@ bound:
 The first shipped production floor is 138 bits. A lookup for any other floor
 returns `None` until a matching table is generated and checked in.
 
+The checked-in 138-bit table was generated with the `local-minimum` optimizer
+profile. That profile uses Python-compatible local beta and zeta search inside
+each table row. Parallel generation parallelizes rows; it does not make one
+row's optimizer exhaustive.
+
 The planner derives role bounds as coefficient-`L∞` values because those are the
 values enforced by the protocol. It does not convert production role bounds
 through a Euclidean `d * B^2` key. The Euclidean estimator code remains an
