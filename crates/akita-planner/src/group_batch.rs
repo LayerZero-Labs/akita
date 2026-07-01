@@ -16,7 +16,8 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
+    derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo,
+    SuffixCtx,
 };
 use crate::PlannerPolicy;
 
@@ -571,10 +572,13 @@ pub fn find_group_batch_schedule(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
-    if key.num_commitment_groups() == 1 {
-        return Err(AkitaError::InvalidSetup(
-            "single-group grouped root schedules are not supported yet".to_string(),
-        ));
+    if key.precommitteds.is_empty() {
+        return find_schedule(
+            key.final_group,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
     }
     if policy.tiered {
         return Err(AkitaError::InvalidSetup(
@@ -774,7 +778,10 @@ pub fn find_group_batch_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{CommitmentGroupScheduleKey, DecompositionParams, SisModulusFamily};
+    use crate::find_schedule;
+    use akita_types::{
+        AkitaScheduleLookupKey, CommitmentGroupScheduleKey, DecompositionParams, SisModulusFamily,
+    };
 
     fn flat_policy() -> PlannerPolicy {
         PlannerPolicy {
@@ -860,16 +867,19 @@ mod tests {
     }
 
     #[test]
-    fn find_group_batch_schedule_rejects_single_group() {
-        let key = AkitaScheduleLookupKey {
-            final_group: CommitmentGroupScheduleKey::new(12, 1),
-            precommitteds: Vec::new(),
-        };
+    fn find_group_batch_schedule_delegates_single_group_to_scalar() {
+        let final_group = CommitmentGroupScheduleKey::new(12, 1);
+        let key = AkitaScheduleLookupKey::single(final_group);
+        let policy = flat_policy();
 
-        let err =
-            find_group_batch_schedule(&key, &flat_policy(), ring_challenge_config, fold_shape)
-                .expect_err("single-group grouped schedule is disabled");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        let via_grouped =
+            find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+                .expect("single-group grouped key should delegate to scalar DP");
+        let via_scalar =
+            find_schedule(final_group, &policy, ring_challenge_config, fold_shape).expect("scalar");
+
+        assert_eq!(via_grouped.total_bytes, via_scalar.total_bytes);
+        assert_eq!(via_grouped.steps.len(), via_scalar.steps.len());
     }
 
     #[test]

@@ -87,6 +87,16 @@ pub fn resolve_group_batch_schedule(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
+    key.validate()?;
+    if key.precommitteds.is_empty() {
+        return resolve_schedule(
+            key.final_group,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+            catalog,
+        );
+    }
     if let Some(table) = catalog {
         validate_catalog_identity(
             &table,
@@ -463,6 +473,28 @@ mod tests {
         let via_find =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find");
         assert_eq!(via_resolve.total_bytes, via_find.total_bytes);
+    }
+
+    #[test]
+    fn resolve_group_batch_schedule_delegates_single_group_to_scalar() {
+        let final_group = CommitmentGroupScheduleKey::new(20, 1);
+        let key = AkitaScheduleLookupKey::single(final_group);
+        let policy = flat_policy();
+
+        let via_grouped =
+            resolve_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape, None)
+                .expect("single-group grouped resolve should delegate to scalar path");
+        let via_scalar = resolve_schedule(
+            final_group,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+            None,
+        )
+        .expect("scalar resolve");
+
+        assert_eq!(via_grouped.total_bytes, via_scalar.total_bytes);
+        assert_eq!(via_grouped.steps.len(), via_scalar.steps.len());
     }
 
     #[test]
