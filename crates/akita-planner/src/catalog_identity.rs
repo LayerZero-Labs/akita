@@ -465,7 +465,7 @@ fn combined_key_digest(
     scalar.sort_by_key(|k| (k.num_vars, k.num_polynomials));
     let mut grouped: Vec<GeneratedScheduleLookupKey> =
         group_batch_entries.iter().map(|entry| entry.key).collect();
-    grouped.sort_by(|left, right| generated_group_batch_key_cmp(left, right));
+    grouped.sort_by(generated_group_batch_key_cmp);
 
     let mut h = Fnv64::new();
     for k in scalar {
