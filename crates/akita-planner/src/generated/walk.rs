@@ -12,13 +12,16 @@ use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupScheduleKey, DirectStep, FoldStep,
-    LevelParams, MRowLayout, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentGroupScheduleKey,
+    DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::generated::{
-    GeneratedCommitmentGroupScheduleKey, GeneratedFoldStep, GeneratedScheduleTableEntry,
-    GeneratedStep,
+    validate_group_batch_entry_key, GeneratedCommitmentGroupScheduleKey, GeneratedFoldStep,
+    GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleTableEntry, GeneratedStep,
+};
+use crate::group_batch::{
+    grouped_root_direct_witness_len, grouped_root_next_w_len, grouped_root_precommitted_groups,
 };
 use crate::PlannerPolicy;
 
@@ -236,6 +239,280 @@ pub(crate) fn walk_generated_schedule_entry(
         total_bytes,
         schedule,
     })
+}
+
+/// Walk one grouped-root generated catalog row into a runtime [`Schedule`].
+pub(crate) fn walk_generated_group_batch_schedule_entry(
+    entry: &GeneratedGroupBatchScheduleTableEntry,
+    key: &AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<GeneratedEntryWalkOutput, AkitaError> {
+    key.validate()?;
+    validate_group_batch_entry_key(&entry.key, key)?;
+    entry.validate()?;
+
+    let extension_opening_width = policy.claim_ext_degree;
+    let field_bits = policy.decomposition.field_bits();
+    let challenge_field_bits = field_bits
+        .checked_mul(policy.chal_ext_degree as u32)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "generated grouped schedule challenge field bit width overflow".to_string(),
+            )
+        })?;
+    let root_eor_key =
+        CommitmentGroupScheduleKey::new(key.final_group.num_vars, key.num_polynomials()?);
+
+    let expected_root_w_len = 1usize
+        .checked_shl(key.final_group.num_vars as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness length overflow".into()))?;
+    let mut steps = Vec::with_capacity(entry.steps.len());
+    let mut total_bytes = 0usize;
+    let mut fold_level = 0usize;
+    let mut current_w_len = expected_root_w_len;
+    let mut terminal_witness_field_len: Option<usize> = None;
+    let mut last_fold_lp: Option<LevelParams> = None;
+
+    for (idx, step) in entry.steps.iter().enumerate() {
+        match step {
+            GeneratedStep::Fold(level) => {
+                let next = entry.steps.get(idx + 1).ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!(
+                        "generated grouped schedule ended with a fold step at level {fold_level}"
+                    ))
+                })?;
+                let is_terminal = matches!(next, GeneratedStep::Direct(_));
+                if fold_level == 0 && is_terminal {
+                    return Err(AkitaError::InvalidSetup(
+                        "grouped terminal root folds are not supported yet".to_string(),
+                    ));
+                }
+                let inputs = AkitaScheduleInputs {
+                    num_vars: key.final_group.num_vars,
+                    level: fold_level,
+                    current_w_len,
+                };
+                let fold_shape = fold_challenge_shape_at_level(inputs);
+                let lp = if fold_level == 0 {
+                    let (precommitted_groups, precommitted_d_width) =
+                        grouped_root_precommitted_groups(
+                            key,
+                            policy,
+                            ring_challenge_config,
+                            fold_shape,
+                        )?;
+                    validate_expanded_precommitted_groups(key, &precommitted_groups)?;
+                    level.expand_to_grouped_root_level_params(
+                        policy,
+                        ring_challenge_config,
+                        fold_shape,
+                        key.final_group.num_polynomials,
+                        precommitted_groups,
+                        precommitted_d_width,
+                    )?
+                } else {
+                    level.expand_to_level_params(
+                        policy,
+                        ring_challenge_config,
+                        fold_level,
+                        current_w_len,
+                        fold_shape,
+                        1,
+                    )?
+                };
+
+                let (next_w_len, next_lp, layout) = if is_terminal {
+                    let ring = w_ring_element_count_with_counts_for_layout_bits(
+                        field_bits,
+                        &lp,
+                        1,
+                        1,
+                        MRowLayout::WithoutDBlock,
+                    )?;
+                    let len = checked_ring_field_len(ring, lp.ring_dimension)?;
+                    terminal_witness_field_len = Some(len);
+                    (len, None, MRowLayout::WithoutDBlock)
+                } else {
+                    let len = if fold_level == 0 {
+                        grouped_root_next_w_len(
+                            field_bits,
+                            &lp,
+                            key.final_group.num_polynomials,
+                            MRowLayout::WithDBlock,
+                        )?
+                    } else {
+                        let ring = w_ring_element_count_with_counts_for_layout_bits(
+                            field_bits,
+                            &lp,
+                            1,
+                            1,
+                            MRowLayout::WithDBlock,
+                        )?;
+                        checked_ring_field_len(ring, lp.ring_dimension)?
+                    };
+                    let GeneratedStep::Fold(next_level) = next else {
+                        return Err(AkitaError::InvalidSetup(
+                            "generated grouped non-terminal successor must be a fold step"
+                                .to_string(),
+                        ));
+                    };
+                    let next_inputs = AkitaScheduleInputs {
+                        num_vars: key.final_group.num_vars,
+                        level: fold_level + 1,
+                        current_w_len: len,
+                    };
+                    let next_lp = next_level.expand_to_level_params(
+                        policy,
+                        ring_challenge_config,
+                        fold_level + 1,
+                        len,
+                        fold_challenge_shape_at_level(next_inputs),
+                        1,
+                    )?;
+                    (len, Some(next_lp), MRowLayout::WithDBlock)
+                };
+
+                let level_bytes = level_proof_bytes(
+                    field_bits,
+                    challenge_field_bits,
+                    &lp,
+                    next_lp.as_ref(),
+                    next_w_len,
+                    1,
+                    layout,
+                )
+                .checked_add(extension_opening_reduction_level_bytes(
+                    challenge_field_bits,
+                    extension_opening_width,
+                    fold_level,
+                    root_eor_key,
+                    current_w_len,
+                )?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "generated grouped level byte count overflow".to_string(),
+                    )
+                })?;
+                total_bytes = total_bytes.checked_add(level_bytes).ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "generated grouped proof byte total overflow".to_string(),
+                    )
+                })?;
+                last_fold_lp = Some(lp.clone());
+                steps.push(Step::Fold(FoldStep {
+                    params: lp,
+                    current_w_len,
+                    next_w_len,
+                    level_bytes,
+                }));
+                fold_level += 1;
+                current_w_len = next_w_len;
+            }
+            GeneratedStep::Direct(direct) => {
+                let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
+                    let direct_current_w_len = grouped_root_direct_witness_len(key)?;
+                    let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+                        num_vars: key.final_group.num_vars,
+                        level: 0,
+                        current_w_len: direct_current_w_len,
+                    });
+                    let params = match direct.commit {
+                        Some(commit) => {
+                            let (precommitted_groups, precommitted_d_width) =
+                                grouped_root_precommitted_groups(
+                                    key,
+                                    policy,
+                                    ring_challenge_config,
+                                    fold_shape,
+                                )?;
+                            validate_expanded_precommitted_groups(key, &precommitted_groups)?;
+                            Some(commit.expand_to_grouped_root_level_params(
+                                policy,
+                                ring_challenge_config,
+                                fold_shape,
+                                key.final_group.num_polynomials,
+                                precommitted_groups,
+                                precommitted_d_width,
+                            )?)
+                        }
+                        None => None,
+                    };
+                    (
+                        CleartextWitnessShape::FieldElements(direct_current_w_len),
+                        direct_current_w_len,
+                        params,
+                    )
+                } else {
+                    let len = terminal_witness_field_len.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing precomputed witness length".to_string(),
+                        )
+                    })?;
+                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing predecessor fold params".to_string(),
+                        )
+                    })?;
+                    let witness_shape =
+                        segment_typed_witness_shape(terminal_lp, field_bits, 1, 1, 1, 1)?;
+                    (witness_shape, len, None)
+                };
+                if direct_current_w_len == 0 {
+                    return Err(AkitaError::InvalidSetup(
+                        "generated grouped direct step has zero witness length".to_string(),
+                    ));
+                }
+                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+                total_bytes = total_bytes.checked_add(direct_bytes).ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "generated grouped proof byte total overflow".to_string(),
+                    )
+                })?;
+                steps.push(Step::Direct(DirectStep {
+                    current_w_len: direct_current_w_len,
+                    witness_shape,
+                    direct_bytes,
+                    params,
+                }));
+            }
+        }
+    }
+
+    if total_bytes == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "generated grouped schedule validates to zero proof bytes".to_string(),
+        ));
+    }
+
+    let schedule = Schedule { steps, total_bytes };
+
+    Ok(GeneratedEntryWalkOutput {
+        total_bytes,
+        schedule,
+    })
+}
+
+fn validate_expanded_precommitted_groups(
+    key: &AkitaScheduleLookupKey,
+    groups: &[GroupRootParams],
+) -> Result<(), AkitaError> {
+    if groups.len() != key.precommitteds.len() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "grouped root precommitted group count mismatch: expected {}, got {}",
+            key.precommitteds.len(),
+            groups.len()
+        )));
+    }
+    for (expected, actual) in key.precommitteds.iter().zip(groups) {
+        if &actual.layout != expected {
+            return Err(AkitaError::InvalidSetup(
+                "grouped root expanded precommitted layout does not match frozen key".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -31,8 +31,9 @@ pub use emit::{
     EmitSpec,
 };
 pub use generated::{
-    catalog_entries_sorted_for_lookup, validate_generated_schedule_entry,
-    validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
+    catalog_entries_sorted_for_lookup, validate_generated_group_batch_schedule_entry,
+    validate_generated_schedule_entry, validate_generated_schedule_table,
+    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
 pub use group_batch::find_group_batch_schedule;
 pub use resolve::{

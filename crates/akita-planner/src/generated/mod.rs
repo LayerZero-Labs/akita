@@ -108,7 +108,10 @@ pub mod expand;
 pub mod validate;
 pub(crate) mod walk;
 pub use akita_types::SisModulusFamily;
-pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
+pub use validate::{
+    validate_generated_group_batch_schedule_entry, validate_generated_schedule_entry,
+    validate_generated_schedule_table,
+};
 
 use core::cmp::Ordering;
 
@@ -183,4 +186,44 @@ fn precommitted_group_key_eq(
         && generated.log_basis == layout.log_basis
         && generated.n_a == layout.n_a
         && generated.conservative_n_b == layout.conservative_n_b
+}
+
+/// Returns an error when the generated grouped key does not match the runtime key.
+pub(crate) fn validate_group_batch_entry_key(
+    generated: &GeneratedScheduleLookupKey,
+    key: &akita_types::AkitaScheduleLookupKey,
+) -> Result<(), akita_field::AkitaError> {
+    if group_batch_key_eq(generated, key) {
+        Ok(())
+    } else {
+        Err(akita_field::AkitaError::InvalidSetup(
+            "generated grouped schedule key mismatch".to_string(),
+        ))
+    }
+}
+
+/// Build a runtime grouped key from a generated catalog row key.
+pub(crate) fn runtime_key_from_generated(
+    key: &GeneratedScheduleLookupKey,
+) -> akita_types::AkitaScheduleLookupKey {
+    use akita_types::{AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey};
+
+    AkitaScheduleLookupKey {
+        final_group: CommitmentGroupScheduleKey::new(
+            key.final_group.num_vars,
+            key.final_group.num_polynomials,
+        ),
+        precommitteds: key
+            .precommitteds
+            .iter()
+            .map(|group| CommitmentGroupLayout {
+                key: CommitmentGroupScheduleKey::new(group.key.num_vars, group.key.num_polynomials),
+                m_vars: group.m_vars,
+                r_vars: group.r_vars,
+                log_basis: group.log_basis,
+                n_a: group.n_a,
+                conservative_n_b: group.conservative_n_b,
+            })
+            .collect(),
+    }
 }
