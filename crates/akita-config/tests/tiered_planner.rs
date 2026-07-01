@@ -9,7 +9,10 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{matrix_envelope_for_schedule, CommitmentConfig};
-use akita_types::{CommitmentGroupScheduleKey, LevelParams, OpeningBatchShape, Schedule, Step};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, OpeningBatchShape, Schedule,
+    Step,
+};
 
 fn footprint(key: &akita_types::AjtaiKeyParams) -> usize {
     key.row_len() * key.col_len()
@@ -62,7 +65,9 @@ fn tiered_preset_tiers_a_batched_root() {
     let mut total_tiered = 0usize;
     for batch in [64usize, 128, 256, 512, 1024] {
         let key = CommitmentGroupScheduleKey::new(22, batch);
-        let schedule = fp128::D64OneHotTiered::runtime_schedule(key).expect("tiered schedule");
+        let schedule =
+            fp128::D64OneHotTiered::runtime_schedule(AkitaScheduleLookupKey::single(key))
+                .expect("tiered schedule");
         total_tiered += assert_tiered_levels_fit_under_a(&schedule);
     }
     assert!(
@@ -126,7 +131,8 @@ fn tiered_preset_matches_non_tiered_when_b_already_fits() {
     // For a singleton the first-tier B typically already fits under A, so the
     // tiered preset must leave every level single-tier (tier_split == 1).
     let key = CommitmentGroupScheduleKey::singleton(20);
-    let schedule = fp128::D64OneHotTiered::runtime_schedule(key).expect("tiered schedule");
+    let schedule = fp128::D64OneHotTiered::runtime_schedule(AkitaScheduleLookupKey::single(key))
+        .expect("tiered schedule");
     // Whatever the layout, the invariant must still hold for any tiered level.
     let _ = assert_tiered_levels_fit_under_a(&schedule);
 }

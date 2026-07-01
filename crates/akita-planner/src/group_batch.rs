@@ -16,8 +16,7 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo,
-    SuffixCtx,
+    derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
 };
 use crate::PlannerPolicy;
 

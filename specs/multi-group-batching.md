@@ -511,13 +511,16 @@ fn get_params_for_group_commit(
     key: &CommitmentGroupScheduleKey,
 ) -> Result<LevelParams, AkitaError>;
 
-fn get_group_batch_schedule(
+fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>;
+
+fn get_params_for_grouped_batched_commitment(
     key: &AkitaScheduleLookupKey,
-) -> Result<GroupedRootSchedule, AkitaError>;
+) -> Result<LevelParams, AkitaError>;
 ```
 
 `get_params_for_group_commit` is the standalone conservative commit planner.
-`get_group_batch_schedule` is the final grouped root planner.
+`runtime_schedule` is the unified scalar and grouped root planner.
+`get_params_for_grouped_batched_commitment` reads the main group's root commit params from that schedule.
 
 `GroupedRootSchedule` is a root-only plan:
 

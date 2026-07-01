@@ -191,7 +191,7 @@ fn candidate<Cfg: CommitmentConfig>(
     // candidate. For any valid key the DP always yields a schedule (it falls
     // back to a root-direct cleartext schedule), so no preset is silently
     // dropped — the caller only ever sees `Err` on a real error.
-    let schedule = Cfg::runtime_schedule(key)?;
+    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))?;
     Ok(Some(Fp128ScheduleSelection { preset, schedule }))
 }
 

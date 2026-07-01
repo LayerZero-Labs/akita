@@ -15,7 +15,7 @@
 //! identical:
 //!
 //! - **table-backed** via [`table_backed_expanded`] after one full-catalog audit
-//!   for scalar schedules, or `Cfg::get_group_batch_schedule` for grouped-root
+//!   for scalar schedules, or `Cfg::runtime_schedule` for grouped-root
 //!   schedules (each expands compact rows through the canonical walker);
 //! - **regenerated** via `family.regen` / `family.regen_group_batch`, which runs
 //!   the pure DP from scratch.
@@ -200,7 +200,7 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
 fn table_backed_group_batch_schedule<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
-    Cfg::get_group_batch_schedule(key)
+    Cfg::runtime_schedule(key.clone())
 }
 
 fn resolve_family_group_batch_schedule(

@@ -8,7 +8,9 @@ use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatchShape;
-use akita_types::{CommitmentGroupScheduleKey, LevelParams, Schedule, SetupMatrixEnvelope};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, Schedule, SetupMatrixEnvelope,
+};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -154,7 +156,15 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         )));
     }
 
-    Ok(SetupMatrixEnvelope { max_setup_len })
+    let mut envelope = SetupMatrixEnvelope { max_setup_len };
+    if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+        crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            &mut envelope,
+        )?;
+    }
+    Ok(envelope)
 }
 
 /// Batched polynomial counts scanned by [`proof_optimized_max_setup_matrix_size`].
@@ -194,7 +204,7 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     // caller's `saw_supported_shape` guard error only if *no* shape is
     // feasible. Genuine bugs in opening_batch-key or envelope construction still
     // propagate via `?`.
-    let Ok(schedule) = Cfg::runtime_schedule(cached_key) else {
+    let Ok(schedule) = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(cached_key)) else {
         return Ok(None);
     };
 

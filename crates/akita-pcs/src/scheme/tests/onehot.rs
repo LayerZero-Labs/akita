@@ -1,7 +1,6 @@
 use super::*;
 
 type ConservativeCommitter = ConservativeOneHotScheme;
-type MultiGroupCommitter = MultiGroupOneHotScheme;
 type RegularCommitter = OneHotScheme;
 
 #[test]
@@ -19,7 +18,7 @@ fn conservative_config_commit_returns_frozen_layout() {
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = MultiGroupCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = RegularCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -55,7 +54,7 @@ fn with_conservative_commit_stack<R>(
         &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend, ONEHOT_D>,
     ) -> R,
 ) -> R {
-    let setup = MultiGroupCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
+    let setup = RegularCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -139,9 +138,9 @@ fn group_batch_schedule_preserves_precommitted_order() {
         };
 
         let schedule =
-            MultiGroupOneHotCfg::runtime_schedule(&grouped_key).expect("grouped runtime schedule");
+            OneHotCfg::runtime_schedule(grouped_key.clone()).expect("grouped runtime schedule");
         let root = grouped_root_params(&schedule);
-        let main_params = MultiGroupOneHotCfg::get_params_for_batched_commitment(&grouped_key)
+        let main_params = OneHotCfg::get_params_for_grouped_batched_commitment(&grouped_key)
             .expect("main grouped commit params");
 
         assert_eq!(grouped_key.num_commitment_groups(), 3);
@@ -164,28 +163,24 @@ fn commit_group_returns_frozen_conservative_layout() {
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::CommitmentGroupScheduleKey::new(NV, GROUP_SIZE);
-    let layout =
-        MultiGroupOneHotCfg::get_params_for_group_commit(&key).expect("group commit layout");
+    let layout = OneHotCfg::get_params_for_group_commit(&key).expect("group commit layout");
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = MultiGroupCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = RegularCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let handle = MultiGroupCommitter::commit_group(&setup, &polys, &stack).expect("commit group");
+    let handle = RegularCommitter::commit_group(&setup, &polys, &stack).expect("commit group");
 
     assert_eq!(handle.schedule.layout.key, key);
     assert_eq!(handle.schedule.layout.m_vars, layout.m_vars);
     assert_eq!(handle.schedule.layout.r_vars, layout.r_vars);
-    assert_eq!(
-        handle.schedule.layout.log_basis,
-        MultiGroupOneHotCfg::basis_range().0
-    );
+    assert_eq!(handle.schedule.layout.log_basis, OneHotCfg::basis_range().0);
     assert_eq!(handle.schedule.layout.n_a, layout.a_key.row_len());
     assert_eq!(
         handle.schedule.layout.conservative_n_b,

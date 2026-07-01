@@ -51,13 +51,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        let mut envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
-        inflate_setup_envelope_for_conservative_commitments::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-            &mut envelope,
-        )?;
-        Ok(envelope)
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
     }
 
     fn basis_range() -> (u32, u32) {

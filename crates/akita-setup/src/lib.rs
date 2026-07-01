@@ -21,8 +21,8 @@ use akita_serialization::{
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    detect_field_modulus, digest_effective_schedule, AkitaSetupSeed, CommitmentGroupScheduleKey,
-    FlatMatrix, SetupPrefixProverRegistry,
+    detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
+    CommitmentGroupScheduleKey, FlatMatrix, SetupPrefixProverRegistry,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -149,23 +149,24 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // key — the full per-level params are hashed by
     // `digest_effective_schedule`. The `planner_v7_` prefix marks the
     // two-field lookup key cutover; old `planner_v6_*` files are not reused.
-    let raw_schedule = match Cfg::runtime_schedule(schedule_lookup_key) {
-        Ok(schedule) => {
-            let digest = digest_effective_schedule(&schedule);
-            let mut hex = String::with_capacity(digest.len() * 2);
-            for byte in digest {
-                let _ = write!(hex, "{byte:02x}");
+    let raw_schedule =
+        match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
+            Ok(schedule) => {
+                let digest = digest_effective_schedule(&schedule);
+                let mut hex = String::with_capacity(digest.len() * 2);
+                for byte in digest {
+                    let _ = write!(hex, "{byte:02x}");
+                }
+                format!(
+                    "planner_v7_nv{}_batch{}_{hex}",
+                    schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
+                )
             }
-            format!(
-                "planner_v7_nv{}_batch{}_{hex}",
+            Err(_) => format!(
+                "miss_nv{}_batch{}",
                 schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
-            )
-        }
-        Err(_) => format!(
-            "miss_nv{}_batch{}",
-            schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
-        ),
-    };
+            ),
+        };
     let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })

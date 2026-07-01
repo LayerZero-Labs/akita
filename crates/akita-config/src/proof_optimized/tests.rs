@@ -132,7 +132,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         }
         // Inject the uncommittable root-direct schedule so the default
         // `get_params_for_batched_commitment` hits its rejection branch.
-        fn runtime_schedule(_key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
+        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
             Ok(Schedule {
                 steps: vec![Step::Direct(DirectStep {
                     current_w_len: 1 << 10,
@@ -201,7 +201,7 @@ fn setup_matrix_envelope_does_not_consult_group_commit_layout() {
             (3, 3)
         }
 
-        fn runtime_schedule(_key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
+        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
             Ok(Schedule {
                 steps: vec![Step::Direct(DirectStep {
                     current_w_len: 1 << 8,
@@ -373,7 +373,16 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
                 }
             }
         }
-        SetupMatrixEnvelope { max_setup_len }
+        let mut envelope = SetupMatrixEnvelope { max_setup_len };
+        if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+            crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
+                max_num_vars,
+                max_num_batched_polys,
+                &mut envelope,
+            )
+            .expect("conservative setup envelope inflation");
+        }
+        envelope
     }
 
     for max_nv in [16usize, 24, 30] {
@@ -423,7 +432,8 @@ fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
 fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(
     key: CommitmentGroupScheduleKey,
 ) {
-    let schedule = Cfg::runtime_schedule(key).expect("planner should succeed");
+    let schedule =
+        Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key)).expect("planner should succeed");
     let num_fold_levels = schedule.num_fold_levels();
     for (idx, fold) in schedule.fold_steps().enumerate() {
         // The last fold in a fold-then-direct schedule is the terminal
@@ -666,8 +676,10 @@ fn batched_root_plan_matches_runtime_next_w_len() {
 #[test]
 fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
     let key = CommitmentGroupScheduleKey::new(30, 4);
-    let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
-        .expect("config schedule should succeed");
+    let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(
+        AkitaScheduleLookupKey::single(key),
+    )
+    .expect("config schedule should succeed");
 
     assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
     assert!(
@@ -695,9 +707,10 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
 #[test]
 fn tight_block_len_is_no_larger_than_pow2() {
     for num_vars in [14, 20, 30] {
-        let schedule =
-            fp128::D64Full::runtime_schedule(CommitmentGroupScheduleKey::singleton(num_vars))
-                .expect("planner should succeed");
+        let schedule = fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(num_vars),
+        ))
+        .expect("planner should succeed");
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
             let pow2_block = 1usize << lp.m_vars;

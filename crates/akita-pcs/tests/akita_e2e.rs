@@ -475,8 +475,10 @@ fn full_d64_prove_verify() {
         let total_fold_levels = batched_total_fold_levels(&proof);
         assert!(total_fold_levels > 0, "proof must have at least one level");
 
-        let plan = Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(FULL_TEST_NV))
-            .expect("schedule plan");
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(FULL_TEST_NV),
+        ))
+        .expect("schedule plan");
         assert_eq!(total_fold_levels, plan.num_fold_levels());
 
         let verifier_setup =
@@ -639,8 +641,10 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(FULL_TEST_NV, b"akita_e2e/terminal-trace-tamper");
-        let schedule = Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(FULL_TEST_NV))
-            .expect("runtime schedule");
+        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(FULL_TEST_NV),
+        ))
+        .expect("runtime schedule");
         let terminal_params = schedule
             .fold_steps()
             .last()
@@ -680,8 +684,10 @@ fn full_d32_prove_verify() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(D32_TEST_NV, b"akita_e2e/full-d32");
 
-        let plan = Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(D32_TEST_NV))
-            .expect("schedule plan");
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(D32_TEST_NV),
+        ))
+        .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
         let commitments = [commitment];
@@ -782,8 +788,10 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         let nv = TINY_DIRECT_TEST_NV;
         let plan = {
-            let plan = Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(nv))
-                .expect("schedule plan");
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+                CommitmentGroupScheduleKey::singleton(nv),
+            ))
+            .expect("schedule plan");
             assert_eq!(
                 plan.num_fold_levels(),
                 0,
@@ -913,8 +921,10 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-full-mixed");
 
-        let plan = Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(nv))
-            .expect("schedule plan");
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(nv),
+        ))
+        .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
         assert_eq!(
@@ -1034,8 +1044,10 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof.shape())
                 .expect("deserialize adaptive onehot proof");
 
-        let plan = Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(nv))
-            .expect("schedule plan");
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(nv),
+        ))
+        .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
         // `Schedule::total_bytes` is the planner's public upper bound. For
         // segment-typed tails the schedule budgets the variable-length
@@ -1092,7 +1104,9 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     // with stale singleton plans); the assertion exists only to catch any
     // future planner change that escapes the configured envelope.
     for nv in 10..=120 {
-        let schedule = match Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(nv)) {
+        let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(nv),
+        )) {
             Ok(schedule) => schedule,
             Err(_) => continue,
         };

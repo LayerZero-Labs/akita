@@ -1,7 +1,7 @@
 use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
-use akita_config::{CommitmentConfig, ConservativeCommitmentConfig, MultiGroupBatchConfig};
+use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
 use akita_field::LiftBase;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::{
@@ -39,14 +39,12 @@ type Scheme = AkitaCommitmentScheme<D, Cfg>;
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
 type ConservativeOneHotCfg = ConservativeCommitmentConfig<OneHotCfg>;
-type MultiGroupOneHotCfg = MultiGroupBatchConfig<OneHotCfg>;
 const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::D64OneHot` requires K=256 one-hot schedules (must match
 // `OneHotCfg::onehot_chunk_size()`); chunks span `K/D = 4` ring elements.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 type ConservativeOneHotScheme = AkitaCommitmentScheme<ONEHOT_D, ConservativeOneHotCfg>;
-type MultiGroupOneHotScheme = AkitaCommitmentScheme<ONEHOT_D, MultiGroupOneHotCfg>;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
 /// sends `w` directly instead of recursing.

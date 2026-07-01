@@ -22,14 +22,12 @@ use akita_types::{
 
 pub mod conservative_commitment;
 pub mod generated_families;
-pub mod multi_group_batch;
 pub mod proof_optimized;
 pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
 pub use conservative_commitment::ConservativeCommitmentConfig;
-pub use multi_group_batch::MultiGroupBatchConfig;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_grouped_opening_batch_for_shape,
@@ -208,28 +206,49 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Build the runtime [`Schedule`] for `key`.
     ///
-    /// Delegates to [`akita_planner::resolve_schedule`] with this preset's
-    /// optional [`Self::schedule_catalog`]: validates catalog identity on a hit,
-    /// expands the compact entry, and regenerates from scratch with the offline
-    /// DP on a miss. The result is deterministic in
-    /// `(policy, key)` plus this config's `ring_challenge_config` /
-    /// `fold_challenge_shape_at_level` hooks, so
-    /// prover and verifier resolve identical schedules and the Fiat-Shamir
-    /// `PlanSection` digest stays consistent.
+    /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
+    /// empty `precommitteds` vector. Grouped roots supply frozen precommit
+    /// layouts in `precommitteds`.
+    ///
+    /// Delegates to [`akita_planner::resolve_group_batch_schedule`] with this
+    /// preset's optional [`Self::schedule_catalog`]: validates catalog identity
+    /// on a hit, expands the compact entry, and regenerates from scratch with
+    /// the offline DP on a miss.
     ///
     /// # Errors
     ///
     /// Propagates expansion / SIS-bucket failures or DP-search failures
     /// (invalid key dimensions, witness overflow). Never panics — this is
     /// verifier-reachable.
-    fn runtime_schedule(key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
-        akita_planner::resolve_schedule(
-            key,
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        akita_planner::resolve_group_batch_schedule(
+            &key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
             Self::schedule_catalog(),
         )
+    }
+
+    /// Root commit layout for a grouped final root plan.
+    ///
+    /// Reads the first schedule step from [`Self::runtime_schedule`], so config
+    /// overrides and DP fallback stay honored.
+    fn get_params_for_grouped_batched_commitment(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<LevelParams, AkitaError> {
+        let schedule = Self::runtime_schedule(key.clone())?;
+        match schedule.steps.first() {
+            Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+            Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "grouped root-direct schedule is missing commit params".to_string(),
+                )
+            }),
+            None => Err(AkitaError::InvalidSetup(
+                "grouped schedule has no steps".to_string(),
+            )),
+        }
     }
 
     /// Schedule used to derive the standalone conservative layout for `commit_group`.
@@ -346,23 +365,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Ok(params)
     }
 
-    /// Resolve the final grouped root schedule key without scalar-key aliasing.
-    ///
-    /// Phase 1 only exposes planning. Proving a grouped root remains guarded by
-    /// the prover/verifier entry points until the opening phase lands. Setup
-    /// envelope scans do not yet size grouped final schedules; callers must not
-    /// treat setup capacity as covering `get_group_batch_schedule` output until
-    /// Phase 2 extends `proof_optimized` envelope construction.
-    fn get_group_batch_schedule(key: &AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-        akita_planner::resolve_group_batch_schedule(
-            key,
-            &policy_of::<Self>(),
-            Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
-            Self::schedule_catalog(),
-        )
-    }
-
     /// Schedule consumed by the prove/verify root path.
     /// Default: expand the resolved table entry; error on miss.
     ///
@@ -371,7 +373,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
     fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
         let key = CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
-        Self::runtime_schedule(key)
+        Self::runtime_schedule(AkitaScheduleLookupKey::single(key))
     }
 
     /// Root commit layout the `batched_prove` flow uses for `opening_batch`,
@@ -602,8 +604,10 @@ mod fp128_policy_tests {
         max_num_vars: usize,
     ) {
         for num_vars in min_num_vars..=max_num_vars {
-            let schedule =
-                Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(num_vars)).unwrap();
+            let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+                CommitmentGroupScheduleKey::singleton(num_vars),
+            ))
+            .unwrap();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
         }
     }

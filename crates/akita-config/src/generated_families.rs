@@ -130,7 +130,7 @@ fn regen_group_batch<Cfg: CommitmentConfig>(
 fn table_backed<Cfg: CommitmentConfig>(
     key: CommitmentGroupScheduleKey,
 ) -> Result<Schedule, AkitaError> {
-    Cfg::runtime_schedule(key)
+    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
 }
 
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {

@@ -16,7 +16,7 @@
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::{find_schedule, PlannerPolicy};
-use akita_types::CommitmentGroupScheduleKey;
+use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey};
 
 /// A one-point 2-poly key that no shipped table carries (shipped tables only
 /// hold singleton / 4-batched keys), so it forces the DP fallback path on both
@@ -57,7 +57,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
         "expected a table miss for the 2-poly key; the table unexpectedly carries it"
     );
 
-    let from_runtime = Cfg::runtime_schedule(key)
+    let from_runtime = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
         .expect("runtime_schedule must not error on a valid one-point 2-poly key");
 
     let from_dp = find_schedule(
@@ -119,6 +119,6 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     ];
     for key in adversarial {
         // Must return without panicking; either branch (Ok/Err) is fine.
-        let _ = fp128::D32OneHot::runtime_schedule(key);
+        let _ = fp128::D32OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
     }
 }
