@@ -177,8 +177,8 @@ Production SIS table generation uses the planner-shaped infinity key:
     -> max widths by rank
 ```
 
-The checked-in production table currently supports only `min_security_bits =
-138`.
+This benchmark branch temporarily supports only `min_security_bits = 128` as
+the production source of truth.
 
 Run a small smoke table:
 
@@ -207,14 +207,14 @@ Regenerate the production Rust split table:
 ```bash
 cargo run -p akita-sis-estimator --release --features parallel \
   --example infinity_width_table -- \
-  --format rust-split --target-bits 138 --profile local-minimum --progress-every 500
+  --format rust-split --target-bits 128 --profile local-minimum --progress-every 500
 ```
 
 The production `rust-split` mode requires the complete production keyspace.
 Partial jobs must use CSV output. Rows with `hit_cap=true` are lower bounds, not
 tight cutoffs.
 
-The checked-in 138-bit table uses `--profile local-minimum`. This profile
+The checked-in 128-bit table uses `--profile local-minimum`. This profile
 matches the Python `lattice-estimator` local search shape. It searches for a
 local minimum over `zeta`, and for each `zeta` it searches for a local minimum
 over `beta`, then refines in the Python-compatible beta neighborhood. Building

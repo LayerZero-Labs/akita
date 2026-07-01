@@ -24,7 +24,7 @@ pub enum SisModulusFamily {
 }
 
 /// Production SIS security floor for generated coefficient-`L∞` tables.
-pub const DEFAULT_SIS_SECURITY_BITS: u16 = 138;
+pub const DEFAULT_SIS_SECURITY_BITS: u16 = 128;
 
 /// Security floors currently shipped in the production SIS table.
 pub const SUPPORTED_SIS_SECURITY_BITS: &[u16] = &[DEFAULT_SIS_SECURITY_BITS];

@@ -41,8 +41,8 @@ pub const FAMILIES: &[AkitaModulusFamily] = &[
     AkitaModulusFamily::Q128,
 ];
 
-/// Default target security bits for the infinity-norm comparison table.
-pub const DEFAULT_INFINITY_TARGET_BITS: f64 = 138.0;
+/// Default target security bits for the infinity-norm production table.
+pub const DEFAULT_INFINITY_TARGET_BITS: f64 = 128.0;
 
 /// Default maximum rank emitted by the current Euclidean SIS table.
 pub const DEFAULT_MAX_RANK: u32 = 20;

@@ -10,6 +10,11 @@
 | Superseded-by | |
 | Book-chapter  | |
 
+> **Benchmark note.** The current PR branch temporarily wires the generated
+> coefficient-`L∞` production table to 128 bits so CI can measure performance
+> deltas against the earlier 138-bit table. The longer-term conservative floor
+> described by this spec remains 138 bits unless review decides otherwise.
+
 ## Summary
 
 Akita currently prices production SIS security with generated Euclidean
