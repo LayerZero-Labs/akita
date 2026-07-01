@@ -438,13 +438,14 @@ where
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
+        let public_matrix_seed = seed.public_matrix_seed;
         Ok(AkitaVerifierSetup {
             expanded: Arc::new(AkitaExpandedSetup::from_verified_parts(
                 seed,
                 shared_matrix,
             )?),
             prefix_slots,
-            fold_a_ones: FoldAOnesTable::empty_for_seed(seed.public_matrix_seed),
+            fold_a_ones: FoldAOnesTable::empty_for_seed(public_matrix_seed),
         })
     }
 
@@ -471,12 +472,13 @@ where
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
+        let public_matrix_seed = seed.public_matrix_seed;
         Ok(AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
             ),
             prefix_slots,
-            fold_a_ones: FoldAOnesTable::empty_for_seed(seed.public_matrix_seed),
+            fold_a_ones: FoldAOnesTable::empty_for_seed(public_matrix_seed),
         })
     }
 

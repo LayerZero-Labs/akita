@@ -281,7 +281,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 }
             }
             if !warmed {
-                if let Ok(schedule) = Self::runtime_schedule(key) {
+                let opening_batch = OpeningBatchShape::new(key.num_vars, key.num_polynomials)?;
+                if let Ok(schedule) = Self::get_params_for_prove(&opening_batch) {
                     miss_schedules.push(schedule);
                 }
             }
