@@ -3,7 +3,7 @@
 use super::*;
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, C: FieldCore, const D: usize> {
-    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, C, D>>,
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, C>>,
     pub(in crate::protocol::core) reduction_challenges: Option<Vec<C>>,
     pub(in crate::protocol::core) final_relation: Option<(C, Vec<C>)>,
 }
@@ -195,7 +195,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
     pub(in crate::protocol::core) next_w_commitment: Option<&'a RingVec<F>>,
     pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
     pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E, D>>,
+    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) trace_block_opening: Option<Vec<E>>,
     pub(in crate::protocol::core) trace_eval_target: E,
     pub(in crate::protocol::core) trace_eval_scale: E,
@@ -441,6 +441,7 @@ where
         v_ring,
         D,
     )?;
+    relation_instance.check_v_shape_for_level(prepared.lp)?;
     let ring_switch_replay = RingSwitchReplay {
         relation: &relation_instance,
         row_coefficients: &prepared.row_coefficients,
@@ -472,7 +473,7 @@ where
     let relation_claim = relation_claim_from_rows_extension::<F, E, D>(
         &rs.tau1,
         rs.alpha,
-        &relation_instance.v_trusted::<D>()?,
+        relation_instance.v_trusted::<D>()?,
         commitment_rows,
     )?;
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;

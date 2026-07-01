@@ -11,8 +11,11 @@ use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
 
 /// Recursive opening point prepared for ring-level replay.
+///
+/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
+/// borrow the ψ-packed inner ring via [`Self::packed_inner_trusted`].
 #[derive(Debug, Clone)]
-pub struct PreparedOpeningPoint<F: FieldCore, L: FieldCore, const D: usize> {
+pub struct PreparedOpeningPoint<F: FieldCore, L: FieldCore> {
     /// Opening point padded to the recursive verifier's target variable count.
     pub padded_point: Vec<L>,
     /// Ring-level outer opening point.
@@ -20,8 +23,73 @@ pub struct PreparedOpeningPoint<F: FieldCore, L: FieldCore, const D: usize> {
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
     pub ring_multiplier_point: RingMultiplierOpeningPoint<F>,
     /// The ψ-packed inner block of the opening point (paper `\check{r}_{\mathrm{in}}`).
+    ///
     /// Public fixed weight in `TraceOpen(Y) = recover_ring_subfield_inner_product(Y, packed_inner_point)`.
-    pub packed_inner_point: CyclotomicRing<F, D>,
+    /// Hot paths borrow via [`Self::packed_inner_trusted`].
+    packed_inner_point: RingVec<F>,
+    ring_dim: usize,
+}
+
+impl<F: FieldCore, L: FieldCore> PreparedOpeningPoint<F, L> {
+    /// Construct from typed kernel output at an opening-point boundary.
+    pub fn from_parts<const D: usize>(
+        padded_point: Vec<L>,
+        ring_opening_point: RingOpeningPoint<F>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
+        packed_inner_point: CyclotomicRing<F, D>,
+    ) -> Self {
+        Self {
+            padded_point,
+            ring_opening_point,
+            ring_multiplier_point,
+            packed_inner_point: RingVec::from_single(&packed_inner_point),
+            ring_dim: D,
+        }
+    }
+
+    /// Stored ring dimension (coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// ψ-packed inner opening weight in flat ring storage.
+    pub fn packed_inner(&self) -> &RingVec<F> {
+        &self.packed_inner_point
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "prepared opening point ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if !self.packed_inner_point.can_decode_single(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.packed_inner_point.coeff_len(),
+            });
+        }
+        self.ring_multiplier_point.ensure_ring_dim::<D>()
+    }
+
+    pub fn packed_inner_trusted<const D: usize>(
+        &self,
+    ) -> Result<&CyclotomicRing<F, D>, AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        Ok(self.packed_inner_point.as_single_ring_trusted::<D>())
+    }
+
+    /// Owned copy of the ψ-packed inner ring after [`Self::ensure_ring_dim`].
+    pub fn packed_inner_owned<const D: usize>(
+        &self,
+    ) -> Result<CyclotomicRing<F, D>, AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.packed_inner_point.try_to_single::<D>()
+    }
 }
 
 /// Ring-level opening point whose outer weights act by ring multiplication.
@@ -473,7 +541,7 @@ pub fn prepare_opening_point<F, L, const D: usize>(
     lp: &LevelParams,
     alpha_bits: usize,
     block_order: BlockOrder,
-) -> Result<PreparedOpeningPoint<F, L, D>, AkitaError>
+) -> Result<PreparedOpeningPoint<F, L>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
     L: FpExtEncoding<F>,
@@ -515,12 +583,12 @@ where
         )?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
-        return Ok(PreparedOpeningPoint {
+        return Ok(PreparedOpeningPoint::from_parts::<D>(
             padded_point,
             ring_opening_point,
             ring_multiplier_point,
             packed_inner_point,
-        });
+        ));
     }
 
     if !D.is_multiple_of(L::EXT_DEGREE) || !(D / L::EXT_DEGREE).is_power_of_two() {
@@ -562,12 +630,12 @@ where
         block_order,
     )?;
 
-    Ok(PreparedOpeningPoint {
+    Ok(PreparedOpeningPoint::from_parts::<D>(
         padded_point,
         ring_opening_point,
         ring_multiplier_point,
         packed_inner_point,
-    })
+    ))
 }
 
 /// Convert an extension-domain opening point into the protocol point expected

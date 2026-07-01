@@ -160,6 +160,9 @@ where
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
+    if !w_commitment.can_decode_vec(D) {
+        return Err(AkitaError::InvalidProof);
+    }
     transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
     ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
         .into_intermediate()

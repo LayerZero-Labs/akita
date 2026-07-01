@@ -107,7 +107,7 @@ pub(in crate::protocol::core) struct Stage3ProveOutput<L: FieldCore> {
 
 fn scalar_opening_from_folded_ring<F, E, const D: usize>(
     folded_ring: &CyclotomicRing<F, D>,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     inner_opening_point: &[E],
     basis: BasisMode,
 ) -> Result<E, AkitaError>
@@ -116,7 +116,7 @@ where
     E: FpExtEncoding<F>,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
-        return (*folded_ring * prepared_point.packed_inner_point.sigma_m1())
+        return (*folded_ring * prepared_point.packed_inner_trusted::<D>()?.sigma_m1())
             .coefficients()
             .first()
             .copied()

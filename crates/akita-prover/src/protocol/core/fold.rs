@@ -33,7 +33,7 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
 fn build_recursive_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F>,
-    prepared: &PreparedOpeningPoint<F, E, D>,
+    prepared: &PreparedOpeningPoint<F, E>,
     trace_scale: E,
     output_scale: E,
     col_bits: usize,
@@ -53,7 +53,7 @@ where
 fn build_root_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F>,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
     trace_claim_scales: Option<&[E]>,
     output_scale: E,
@@ -95,7 +95,7 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
     pub(in crate::protocol::core) trace_eval_target: L,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L, D>>,
+    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L>>,
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
     pub(in crate::protocol::core) trace_scale: L,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<L>>,
@@ -152,7 +152,7 @@ pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, Q, B, c
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
-    prepared_point: &PreparedOpeningPoint<F, C, D>,
+    prepared_point: &PreparedOpeningPoint<F, C>,
     block_len: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
@@ -182,7 +182,7 @@ where
 pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     folded_rings: &[CyclotomicRing<F, D>],
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     protocol_point: &[E],
     alpha_bits: usize,
     basis: BasisMode,

@@ -1,6 +1,6 @@
 use super::*;
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{terminal_witness_segment_layout, OpeningBatchShape};
+use akita_types::{terminal_witness_segment_layout, OpeningBatchShape, RingView};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -211,6 +211,11 @@ where
                 if !current_state.commitment.can_decode_vec(level_d)
                     || !level_proof.v().can_decode_vec(level_d)
                 {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let commitment_view =
+                    RingView::new(current_state.commitment.coeffs(), level_d)?;
+                if commitment_view.num_rings() != current_lp.effective_commit_rows() {
                     return Err(AkitaError::InvalidProof);
                 }
 
