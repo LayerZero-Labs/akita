@@ -318,11 +318,17 @@ fn output_group_batch_const_name(spec: &EmitSpec) -> String {
     )
 }
 
+fn sorted_group_batch_keys(spec: &EmitSpec) -> Vec<AkitaScheduleLookupKey> {
+    let mut keys = spec.group_batch_keys.clone();
+    keys.sort_by(crate::generated::runtime_group_batch_key_cmp);
+    keys
+}
+
 fn memory_group_batch_entries(
     spec: &EmitSpec,
 ) -> Result<Vec<GeneratedGroupBatchScheduleTableEntry>, String> {
     let mut memory_group_batch_entries = Vec::new();
-    for key in &spec.group_batch_keys {
+    for key in sorted_group_batch_keys(spec) {
         let schedule = (spec.regen_group_batch)(key.clone())
             .map_err(|e| format!("{}: regen grouped {key:?}: {e}", spec.module_name))?;
         let steps = schedule_to_generated_steps(&schedule);
@@ -334,7 +340,7 @@ fn memory_group_batch_entries(
             .collect::<Vec<_>>();
         let precommitteds_ref = Box::leak(precommitteds.into_boxed_slice());
         memory_group_batch_entries.push(GeneratedGroupBatchScheduleTableEntry {
-            key: generated_group_batch_schedule_key(key, precommitteds_ref),
+            key: generated_group_batch_schedule_key(&key, precommitteds_ref),
             steps: steps_ref,
         });
     }
@@ -432,10 +438,10 @@ pub fn emit_group_batch_family_module(spec: &EmitSpec) -> Result<String, String>
     )
     .map_err(|e| e.to_string())?;
 
-    for key in &spec.group_batch_keys {
+    for key in sorted_group_batch_keys(spec) {
         let schedule = (spec.regen_group_batch)(key.clone())
             .map_err(|e| format!("{}: regen grouped {key:?}: {e}", spec.module_name))?;
-        let key_str = emit_group_batch_key(key);
+        let key_str = emit_group_batch_key(&key);
         emit_group_batch_schedule_entry(&mut out, &key_str, &schedule)?;
     }
 

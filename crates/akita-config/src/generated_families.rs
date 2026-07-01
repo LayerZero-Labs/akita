@@ -183,6 +183,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
             }
         }
     }
+    keys.sort_by(akita_planner::runtime_group_batch_key_cmp);
     Ok(keys)
 }
 

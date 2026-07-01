@@ -212,6 +212,46 @@ pub fn generated_group_batch_key_cmp_runtime(
         .then_with(|| precommitted_groups_cmp(generated.precommitteds, &runtime.precommitteds))
 }
 
+/// Sort order for runtime grouped keys; matches [`generated_group_batch_key_cmp`].
+pub fn runtime_group_batch_key_cmp(
+    left: &akita_types::AkitaScheduleLookupKey,
+    right: &akita_types::AkitaScheduleLookupKey,
+) -> std::cmp::Ordering {
+    let left_main = (left.final_group.num_vars, left.final_group.num_polynomials);
+    let right_main = (
+        right.final_group.num_vars,
+        right.final_group.num_polynomials,
+    );
+    left_main
+        .cmp(&right_main)
+        .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
+        .then_with(|| {
+            left.precommitteds
+                .iter()
+                .map(runtime_precommitted_group_sort_key)
+                .cmp(
+                    right
+                        .precommitteds
+                        .iter()
+                        .map(runtime_precommitted_group_sort_key),
+                )
+        })
+}
+
+fn runtime_precommitted_group_sort_key(
+    key: &akita_types::CommitmentGroupLayout,
+) -> (usize, usize, usize, usize, u32, usize, usize) {
+    (
+        key.key.num_vars,
+        key.key.num_polynomials,
+        key.m_vars,
+        key.r_vars,
+        key.log_basis,
+        key.n_a,
+        key.conservative_n_b,
+    )
+}
+
 fn precommitted_groups_cmp(
     generated: &[GeneratedCommitmentGroupLayout],
     runtime: &[akita_types::CommitmentGroupLayout],
