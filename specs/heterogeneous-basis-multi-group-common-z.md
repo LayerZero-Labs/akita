@@ -15,9 +15,9 @@
 This spec records the first step toward batching several Hachi/Akita opening
 claims whose committed polynomials may have different arities and different
 commitment decomposition bases. The goal is to place all commitment-opening
-digits into one shared coordinate system so the root fold can use one folded
-response witness $z_\star$, while preserving the ability to reconstruct each local
-polynomial block through its original gadget basis.
+digits into one compatibility-keyed coordinate system so the root fold can use
+one logical folded response witness $z_\star$, while preserving the ability to
+reconstruct each local polynomial block through its original gadget basis.
 
 This document also specifies the next setup-repacking step: a canonical setup
 grid from which the local $A$ coefficients are selected so the shared relation
@@ -28,16 +28,21 @@ $$
 
 can be formed over the common folded witness. The construction below specifies
 the proposed common-$z$ coordinate system, the algebra it must preserve, and the
-coordinate rule for choosing compatible $A$ coefficients.
+coordinate rule for choosing compatible $A$ coefficients. Coordinates are shared
+only when their full $A$-column semantics match. When two sources have the same
+vector coordinate and gadget exponent but different $A$ row semantics, the
+planner keeps them in separate namespaces inside the same logical $z_\star$
+witness rather than rejecting the batch.
 
 ## Intent
 
 ### Goal
 
 Define a canonical embedding from each local Hachi opening witness layout into a
-single shared folded-witness layout, allowing heterogeneous polynomial sizes and
-heterogeneous `log_basis` values to contribute to one random-linear folded
-response $z_\star$.
+single logical folded-witness layout, allowing heterogeneous polynomial sizes
+and heterogeneous `log_basis` values to contribute to one random-linear folded
+response $z_\star$. The layout maximally shares compatible coordinates and
+automatically splits incompatible coordinates into separate namespaces.
 
 ### Invariants
 
@@ -46,19 +51,24 @@ response $z_\star$.
 2. **Coordinate preservation.** A local vector coordinate $k$ must map to the
    same semantic coordinate $k$ in the shared layout, with zero padding for
    polynomials with smaller $m_i$.
-3. **Linear folding.** The shared folded response is the transcript-challenge
+3. **A-profile preservation.** A local digit may share a folded-response
+   coordinate with another local digit only if both induce the same full
+   $A$-column profile after embedding into the batched row space. Equal
+   $(k,e)$ alone is not sufficient.
+4. **Linear folding.** The shared folded response is the transcript-challenge
    linear combination of embedded local witnesses:
 
    $$
    z_\star = \sum_{i,a} c_{i,a} E_i\!\left(s^{(i)}_a\right).
    $$
 
-4. **Local reconstruction.** For every local block, applying the common gadget
+5. **Local reconstruction.** For every local block, applying the common gadget
    matrix after embedding must recover the same ring vector as applying the
    local gadget matrix before embedding.
-5. **Transcript binding.** The batch descriptor must bind every layout parameter
+6. **Transcript binding.** The batch descriptor must bind every layout parameter
    that affects the embedding: $(m_i, r_i, \texttt{log\_basis}_i, \delta_i)$, the common
-   layout, the padding convention, and the claim/block ordering.
+   layout, the compatibility namespace map, the padding convention, and the
+   claim/block ordering.
 
 ### Non-Goals
 
@@ -67,8 +77,9 @@ response $z_\star$.
   `B`, `D`, or `F` coefficients; it does not define those matrices' batching
   relations.
 - This spec does not claim that arbitrary independently sampled local $A_i$
-  matrices can share $z_\star$; compatible local $A_i$ matrices must be derived
-  from the setup-repacking grid.
+  matrices can share a folded-response coordinate; compatible local $A_i$
+  columns must have identical descriptor-bound $A$ profiles. Incompatible
+  columns stay in separate namespaces inside $z_\star$.
 - This spec does not optimize the norm bound or SIS rank pricing for the
   batched relation.
 - This spec does not require backward compatibility with existing proof bytes or
@@ -166,7 +177,7 @@ b_i^p
   = b_\star^{p g_i}.
 $$
 
-The shared coordinate dimension is
+The semantic vector coordinate dimension is
 
 $$
 N_\star := 2^{m_\star},
@@ -190,32 +201,73 @@ $$
 as long as $\Delta_\star \le \delta_\star$ and unused slots are zero. The full-depth choice
 is simpler to bind in descriptors and aligns with a canonical $G_{b_\star,N_\star}$.
 
-Define the common gadget matrix
+The exponent grid alone is not enough to decide sharing. Each local digit also
+has an $A$-role meaning: it contributes a column vector to the batched
+$A$-relation after the local rows have been embedded into the common row space.
+Let
 
 $$
-G_\star := G_{b_\star,N_\star}
-     := I_{N_\star} \otimes
-        \begin{bmatrix}
-        1 & b_\star & b_\star^2 & \cdots & b_\star^{\delta_\star - 1}
-        \end{bmatrix}.
+\chi_i(k,p)
 $$
 
-### Sparse Exponent-preserving Embedding
+denote the descriptor-bound $A$-column profile of the local digit
+$s^{(i)}_{a,k,p}$. The profile is the full embedded column semantics: the
+common row embedding, the active row domain, and the setup-coordinate handle
+read by each active row. Inactive rows are part of the profile as zeros.
+
+Two digits are allowed to share one folded-response coordinate only when their
+profiles are equal. This handles heterogeneous ranks generally: if one source
+has rows $0,\ldots,3$ active and another has rows $0,\ldots,5$ active, their
+profiles are different even if the first four coefficient handles coincide, so
+the planner allocates two coordinates. A later optimization may deliberately
+lift the smaller source to the larger row profile, committing the extra
+$\hat t$ rows, in order to make the profiles equal and recover sharing.
+
+Define the compatibility-keyed coordinate set
+
+$$
+\mathcal{J}_\star
+  :=
+  \left\{(k,e,\chi_i(k,p)):
+    i \in [h],\
+    0 \le k < N_i,\
+    0 \le p < \delta_i,\
+    e = p g_i
+  \right\}.
+$$
+
+The common reconstruction gadget is the linear map
+
+$$
+G_\star : R_q^{\mathcal{J}_\star} \to R_q^{N_\star},
+\qquad
+\left(G_\star z\right)_k
+  :=
+  \sum_{\substack{(k',e,\chi)\in\mathcal{J}_\star\\ k'=k}}
+    b_\star^e z_{k,e,\chi}.
+$$
+
+Thus $G_\star$ ignores the compatibility namespace when recomposing field
+values, but the $A$ relation does not: $A_\star$ has one column for every
+coordinate in $\mathcal{J}_\star$.
+
+### Sparse Exponent- and Profile-preserving Embedding
 
 For every claim $i$, define a linear embedding
 
 $$
-E_i : R_q^{N_i\delta_i} \longrightarrow R_q^{N_\star\delta_\star}
+E_i : R_q^{N_i\delta_i} \longrightarrow R_q^{\mathcal{J}_\star}
 $$
 
 by
 
 $$
-\left(E_i(s)\right)_{k,e}
+\left(E_i(s)\right)_{k,e,\chi}
 =
 \begin{cases}
 s_{k,p} &
-\text{if } 0 \le k < N_i,\ e = p g_i\ \text{for some } 0 \le p < \delta_i, \\
+\text{if } 0 \le k < N_i,\ e = p g_i,\ \chi=\chi_i(k,p)
+  \text{ for some } 0 \le p < \delta_i, \\
 0 &
 \text{otherwise.}
 \end{cases}
@@ -224,7 +276,7 @@ $$
 Equivalently, each local digit `s^{(i)}_{a,k,p}` is placed at shared slot
 
 $$
-\operatorname{slot}_i(k,p) := k\delta_\star + p g_i.
+\operatorname{slot}_i(k,p) := (k, p g_i, \chi_i(k,p)).
 $$
 
 All coordinates $k \ge N_i$ are padding coordinates and are zero for claim $i$.
@@ -234,7 +286,8 @@ This embedding is exponent-preserving:
 $$
 \begin{aligned}
 \left(G_\star E_i(s)\right)_k
-  &= \sum_{e=0}^{\delta_\star - 1} b_\star^e \left(E_i(s)\right)_{k,e} \\
+  &= \sum_{\substack{(k',e,\chi)\in\mathcal{J}_\star\\ k'=k}}
+     b_\star^e \left(E_i(s)\right)_{k,e,\chi} \\
   &= \sum_{p=0}^{\delta_i - 1} b_\star^{p g_i} s_{k,p} \\
   &= \sum_{p=0}^{\delta_i - 1} b_i^p s_{k,p} \\
   &= \left(G_i s\right)_k.
@@ -269,21 +322,22 @@ $$
 z_\star
   := \sum_{i=1}^{h} \sum_{a \in \{0,1\}^{r_i}}
        c_{i,a} E_i\!\left(s^{(i)}_a\right)
-  \in R_q^{N_\star\delta_\star}.
+  \in R_q^{\mathcal{J}_\star}.
 $$
 
-At a concrete coordinate $(k,e)$,
+At a concrete coordinate $(k,e,\chi)$,
 
 $$
-\left(z_\star\right)_{k,e}
+\left(z_\star\right)_{k,e,\chi}
   =
-  \sum_{\substack{i,a,p:\\ k < N_i,\ e = p g_i}}
+  \sum_{\substack{i,a,p:\\ k < N_i,\ e = p g_i,\\ \chi_i(k,p)=\chi}}
       c_{i,a} s^{(i)}_{a,k,p}.
 $$
 
 This is the intended "shared slot" behavior: two local digits contribute to the
-same coordinate of $z_\star$ exactly when they represent the same vector coordinate
-$k$ and the same power of the common basis $b_\star^e$.
+same coordinate of $z_\star$ exactly when they represent the same vector
+coordinate $k$, the same power of the common basis $b_\star^e$, and the same
+embedded $A$-column profile $\chi$.
 
 The common reconstruction is
 
@@ -295,8 +349,8 @@ G_\star z_\star
 \end{aligned}
 $$
 
-This identity is the core algebraic reason for constructing $z_\star$ on the common
-exponent grid.
+This identity is the core algebraic reason for constructing $z_\star$ on the
+compatibility-keyed common exponent grid.
 
 ### Relation to $\hat z$
 
@@ -324,7 +378,7 @@ inner commitment images. The setup grid below fixes the compatible $A_\star$
 coefficient coordinates; the exact $\operatorname{batched\_t\_side}$ layout remains
 separate from this section.
 
-### Setup Repacking Grid
+### Setup Repacking and A Profiles
 
 During setup generation, the planner receives the number of committed
 polynomials and their sizes, along with the local decomposition bases used by
@@ -337,122 +391,134 @@ D_\star := \delta_\star = \left\lceil \log_{b_\star} q \right\rceil,
 L_\star := N_\star = 2^{m_\star}.
 $$
 
-The planner also derives the setup rank
+The planner also derives a common row domain $\mathcal{R}_\star$ for the
+batched $A$ relation. This row domain may be a disjoint union of local row
+domains, a shared lifted row domain, or a mixture chosen by the planner. The
+only invariant is algebraic:
 
 $$
-R_\star
+A_\star E_i = \bar A_i
 $$
 
-required by the batched $A$ relation. The generated setup is viewed as a
-rectangle with
+for every source $i$, where $\bar A_i$ is the local $A_i$ matrix embedded into
+the common row domain and zero on rows that do not belong to source $i$.
+
+For every local digit $(i,k,p)$ the planner defines the profile
 
 $$
-D_\star R_\star
+\chi_i(k,p): \mathcal{R}_\star \to \Lambda_\star \cup \{\bot\}.
 $$
 
-rows and
+Here $\Lambda_\star$ is the set of logical setup-coordinate handles, and
+$\bot$ means the row is inactive for this local digit. If
+$\chi_i(k,p)(\rho)=\lambda$, then row $\rho$ of the embedded local $A$ column
+uses setup handle $\lambda$.
 
-$$
-L_\star
-$$
+The shared coordinate set $\mathcal{J}_\star$ from the previous section uses
+the whole profile $\chi_i(k,p)$, not only the active-row count. Therefore the
+default setup-repacking rule is:
 
-columns. It is indexed by logical coordinates
+1. if two local digits share one folded-response coordinate, their complete
+   $A$ profiles are byte-identical and they use the same setup handles on every
+   active row;
+2. if their profiles differ, they are separate $z_\star$ coordinates and their
+   setup handles are independent unless a later proof explicitly justifies a
+   correlated-column construction.
 
-$$
-\operatorname{SETUP}[e,r,k],
-\qquad
-0 \le e < D_\star,\quad
-0 \le r < R_\star,\quad
-0 \le k < L_\star.
-$$
+This rule is what makes heterogeneous row ranks safe. A one-hot source with
+four active $A$ rows and a full-field source with six active $A$ rows do not
+share the same profile merely because rows $0,\ldots,3$ use the same formula.
+Sharing would incorrectly make the one-hot contribution appear in rows $4,5$.
+The planner can still choose to lift the one-hot source to the six-row profile,
+commit those extra $\hat t$ rows, and thereby make the profiles equal. That is
+a cost/performance choice, not a soundness requirement.
 
-Equivalently, the physical row is $eR_\star + r$ and the column is $k$. Define
-one physical setup row by
-
-$$
-\operatorname{row}(e,r)
-  :=
-  \begin{bmatrix}
-  \operatorname{SETUP}[e,r,0] &
-  \operatorname{SETUP}[e,r,1] &
-  \cdots &
-  \operatorname{SETUP}[e,r,L_\star - 1]
-  \end{bmatrix}.
-$$
-
-Then the canonical row-major order is the following stack of row vectors, grouped
-first by the common exponent coordinate $e$ and then by the local row coordinate
-$r$:
-
-$$
-\begin{bmatrix}
-\operatorname{row}(0,0) \\
-\operatorname{row}(0,1) \\
-\vdots \\
-\operatorname{row}(0,R_\star - 1) \\[2pt]
-\operatorname{row}(1,0) \\
-\vdots \\
-\operatorname{row}(D_\star - 1,R_\star - 1)
-\end{bmatrix}.
-$$
-
-For claim $i$, recall that $g_i = \ell_i / \ell_\star$. A local digit
-$s^{(i)}_{a,k,p}$ embeds into common exponent slot $e = pg_i$. The corresponding
-local $A$ coefficient is selected from the same shared coordinate:
-
-$$
-A^{(i)}[r,k,p]
-  := \operatorname{SETUP}[pg_i,r,k],
-$$
-
-for all
-
-$$
-0 \le r < \operatorname{rank}(A^{(i)}),\qquad
-0 \le k < N_i,\qquad
-0 \le p < \delta_i.
-$$
-
-Thus the vector coordinate $k$ remains the same semantic coordinate in the
-shared grid, while only the local digit index $p$ is converted into the common
-exponent coordinate $pg_i$.
-
-The shared $A_\star$ coefficients are therefore
-
-$$
-A_\star[r,k,e] := \operatorname{SETUP}[e,r,k],
-$$
-
-and the local matrices are exactly restrictions of $A_\star$ along the embedding
-map $E_i$.
-
-The auxiliary allocation order for `B`, `D`, `F`, or related matrices first uses
-the coordinates selected by the $A$ rule above. If more setup coefficients are
-needed, the extension order scans the same setup grid in canonical order:
-
-$$
-(0,0,0), (0,0,1), \ldots, (0,0,L_\star - 1),
-(0,1,0), \ldots, (D_\star - 1,R_\star - 1,L_\star - 1).
-$$
-
-The batch descriptor must bind $D_\star$, $R_\star$, $L_\star$, the row-major
-ordering convention, every local tuple $(m_i,r_i,\ell_i,\delta_i)$, and the
-claim/block ordering that determines which local $A$ restrictions are used.
-
-### Setup-Coefficient Accounting Examples
-
-The grid can be larger than the coefficients selected by a concrete batch. The
-selected $A$ coefficients are the union of local restriction coordinates:
+The setup object is the sorted set of all nonzero logical handles appearing in
+the descriptor-bound profiles:
 
 $$
 \mathcal{U}_A
   :=
-  \left\{(p g_i,r,k):
-    i \in [h],\
-    0 \le p < \delta^{A}_i,\
-    0 \le r < R_i,\
-    0 \le k < L_i
+  \left\{\lambda \in \Lambda_\star:
+    \exists (k,e,\chi)\in \mathcal{J}_\star,\ \exists \rho\in\mathcal{R}_\star
+    \text{ with } \chi(\rho)=\lambda
   \right\}.
+$$
+
+The physical setup coefficient order is the canonical lexicographic order of
+the handles in $\mathcal{U}_A$. A simple default handle format is
+
+$$
+\lambda=(\mathtt{A},\operatorname{profile\_id},\rho,k,e),
+$$
+
+where `profile_id` is the canonical digest or table index of $\chi$. With this
+default, incompatible profiles receive independent setup coefficients even when
+they have the same $(\rho,k,e)$ on some rows. If the planner wants two sources
+to reuse setup coefficients, it must make their full profiles equal by
+construction.
+
+The shared matrix is then
+
+$$
+A_\star[\rho,(k,e,\chi)]
+  :=
+  \begin{cases}
+  \operatorname{SETUP}[\chi(\rho)] & \text{if } \chi(\rho)\neq \bot,\\
+  0 & \text{if } \chi(\rho)=\bot.
+  \end{cases}
+$$
+
+For claim $i$, recall that $g_i = \ell_i / \ell_\star$. A local digit
+$s^{(i)}_{a,k,p}$ embeds into coordinate $(k,pg_i,\chi_i(k,p))$, and the
+definition above gives exactly the embedded local column:
+
+$$
+\left(A_\star E_i(s)\right)_\rho
+  =
+  \left(\bar A_i s\right)_\rho.
+$$
+
+Consequently the batched $A$ relation is honest:
+
+$$
+A_\star z_\star
+  =
+  \sum_{i,a} c_{i,a}\,\bar A_i s^{(i)}_a.
+$$
+
+The right-hand side is represented by the corresponding challenge-weighted
+combination of embedded inner commitment images. Its `t_hat` layout must bind
+the same row domain $\mathcal{R}_\star$ and the same source-to-row embedding.
+
+The auxiliary allocation order for `B`, `D`, `F`, or related matrices first uses
+the setup handles selected by the $A$ rule above. If more setup coefficients are
+needed, the extension order scans the same descriptor-bound handle namespace in
+canonical order:
+
+$$
+(\mathtt{B},0),(\mathtt{B},1),\ldots,\quad
+(\mathtt{D},0),(\mathtt{D},1),\ldots,\quad
+(\mathtt{F},0),(\mathtt{F},1),\ldots.
+$$
+
+The batch descriptor must bind $D_\star$, $L_\star$, $\mathcal{R}_\star$, the
+canonical profile table, the handle ordering convention, every local tuple
+$(m_i,r_i,\ell_i,\delta_i)$, and the claim/block ordering that determines which
+local $A$ profiles are used.
+
+### Setup-Coefficient Accounting Examples
+
+The setup footprint is the number of distinct nonzero handles in the selected
+$A$ profiles:
+
+$$
+\mathcal{U}_A
+  :=
+\left\{\lambda:
+  \exists (k,e,\chi)\in\mathcal{J}_\star,\ \exists \rho\in\mathcal{R}_\star
+  \text{ with } \chi(\rho)=\lambda
+\right\}.
 $$
 
 The number of distinct setup coefficients consumed by $A$ is
@@ -507,38 +573,49 @@ $$
 
 setup coefficients, at common exponent rows $e = 0,1,\ldots,42$.
 
-The proposed coordinate-preserving grid does not double-count overlap. The
-overlap is
+Under the compatibility-keyed rule, the apparent overlap at
 
 $$
 \{(0,r,k): 0 \le r < 4,\ 0 \le k < 2^{10}\},
 $$
 
-which has size
+is not shareable by default. The one-hot source has four active $A$ rows, while
+the full-field source has six. Their embedded $A$ profiles differ because rows
+$4,5$ are zero for the one-hot source and nonzero for the full-field source.
+Therefore the default safe layout puts those low-exponent digits in separate
+compatibility namespaces and consumes
 
 $$
-4 \cdot 2^{10} = 4{,}096.
-$$
-
-Therefore the proposed grid consumes
-
-$$
-16{,}384 + 264{,}192 - 4{,}096 = 276{,}480
+16{,}384 + 264{,}192 = 280{,}576
 $$
 
 distinct $A$ setup coefficients.
 
-A flat-reuse baseline could instead sample the full-field $A$ matrix first and
-derive the one-hot $A$ matrix by reusing coefficients from that full-field pool.
-Under that baseline, the total coefficient count would be
+The planner has another safe option: lift the one-hot source to the six-row
+profile and commit the two additional $\hat t$ rows in its `B` relation. Then
+the e=0 profile can be made identical on the overlap
 
 $$
-\max(264{,}192,\ 16{,}384) = 264{,}192.
+\{(0,r,k): 0 \le r < 6,\ 0 \le k < 2^{10}\}.
 $$
 
-This baseline has smaller coefficient usage in this example, but it is not the
-same coordinate rule as the proposed setup grid: it reuses a flat coefficient
-pool rather than preserving the shared semantic coordinate $(e,r,k)$.
+In that lifted layout, the one-hot source selects
+
+$$
+1\cdot 6\cdot 2^{12}=24{,}576
+$$
+
+coefficients, the overlap has size $6\cdot 2^{10}=6{,}144$, and the distinct
+$A$ setup footprint becomes
+
+$$
+24{,}576 + 264{,}192 - 6{,}144 = 282{,}624.
+$$
+
+This is larger in setup footprint than the default split in this concrete
+example, but it may reduce the folded-witness and relation-layout cost by
+sharing actual $z_\star$ coordinates. The planner should compare these choices
+using proof-size and verifier-time costs, not only setup coefficient count.
 
 #### Two one-hot roots, same 40-variable size
 
@@ -558,11 +635,12 @@ $$
 1 \cdot 7 \cdot 2^{21} = 14{,}680{,}064
 $$
 
-$A$ setup coefficients, all at $e = 0$. If two such roots are batched through the
-proposed grid, their selected coordinate sets are identical:
+$A$ setup coefficients, all at $e = 0$. If two such roots use the same row
+embedding and the same profile table, their selected profiles are identical:
 
 $$
-\{(0,r,k): 0 \le r < 7,\ 0 \le k < 2^{21}\}.
+\chi_1(k,0)=\chi_2(k,0)
+\qquad\text{for every }0\le k<2^{21}.
 $$
 
 Thus the proposed grid consumes
@@ -584,22 +662,29 @@ is finalized.
 
 ## Compatibility Condition for $A$
 
-The common-$z$ embedding is algebraically useful only if the linear rows that act
-on $z_\star$ are compatible with the local rows they replace. Abstractly, if claim
-$i$ previously used a local matrix $A_i$, then a shared matrix $A_\star$ must satisfy
+The common-$z$ embedding is algebraically useful only if the linear rows that
+act on $z_\star$ are compatible with the local rows they replace. Abstractly,
+if claim $i$ previously used a local matrix $A_i$, then the shared matrix
+$A_\star$ must satisfy
 
 $$
-A_\star E_i = A_i
+A_\star E_i = \bar A_i
 $$
 
-for every claim whose digits are embedded into shared slots, or else the batch
-must use disjoint slots for the incompatible columns.
+for every source, where $\bar A_i$ is $A_i$ embedded into the common row domain.
+The compatibility namespace is the mechanism that enforces this equation
+without rejecting heterogeneous layouts.
 
 Equivalently, whenever two local digits land in the same shared slot, every
 batched row that touches that slot must assign the same coefficient to both
-digits. The setup-repacking grid enforces this condition by assigning one
-coefficient to each shared coordinate $(e,r,k)$ and deriving each local
-coefficient from the embedded coordinate $(pg_i,r,k)$.
+digits and every inactive row must be inactive for both. If this is not true,
+the digits are not rejected; they simply receive different profile identifiers
+and therefore different columns of $z_\star$.
+
+Partial coefficient reuse across incompatible profiles is deliberately outside
+the default rule. It creates correlated $A_\star$ columns that are not covered
+by the ordinary Module-SIS argument for a uniform role matrix. A future design
+may allow such reuse only with an explicit correlation-aware binding proof.
 
 ## Norm Accounting
 
@@ -621,8 +706,8 @@ A conservative coordinate-wise bound for $z_\star$ is
 $$
 \left\|z_\star\right\|_\infty
   \le
-  \max_{k,e}
-  \sum_{\substack{i,a,p:\\ k < N_i,\ e = p g_i}}
+  \max_{k,e,\chi}
+  \sum_{\substack{i,a,p:\\ k < N_i,\ e = p g_i,\\ \chi_i(k,p)=\chi}}
        \omega_{i,a} B_i.
 $$
 
@@ -633,22 +718,22 @@ $$
   \le \sum_{i,a} \omega_{i,a} B_i.
 $$
 
-The tighter bound should eventually account for exponent-slot sparsity: a claim
-with $g_i > 1$ occupies only every $g_i$-th slot, so it does not contribute to
-all common digit slots. The first implementation may use the simpler bound if
-the resulting SIS rank and proof-size cost are acceptable.
+The tighter bound should eventually account for both exponent-slot sparsity and
+profile sparsity: a claim with $g_i > 1$ occupies only every $g_i$-th exponent
+slot, and a claim with a distinct $A$ profile does not contribute to other
+profile namespaces. The first implementation may use the simpler bound if the
+resulting SIS rank and proof-size cost are acceptable.
 
 ## Open Questions
 
-- If two claims use incompatible $A$ coefficients at the same $(k,e)$ slot,
-  should the planner split them into disjoint slot namespaces or separate root
-  batches?
 - Should $J_\star$ use the common embedding basis $b_\star$, the maximum local basis, or
   a fold-specific basis optimized for proof size?
 - Can the norm bound exploit the sparse exponent occupancy without complicating
   verifier-reachable layout derivation?
 - How should different $r_i$ values be represented in the transcript challenge
   schedule so the extractor can isolate each local block?
+- When is lifting a smaller source to a larger shared $A$ profile worth the
+  extra `t_hat` and `B`-binding cost?
 
 ## Evaluation
 
@@ -659,11 +744,14 @@ the resulting SIS rank and proof-size cost are acceptable.
 - [ ] For every local claim, a unit test checks
       $G_\star E_i(s) = \operatorname{pad}_i(G_i s)$ on randomized digit witnesses.
 - [ ] The transcript binds all local and common layout parameters that affect
-      slot placement.
-- [ ] A planner or verifier check rejects batches whose $A$ rows are not derived
-      from the setup-repacking grid at the embedded coordinates $(pg_i,r,k)$.
+      slot placement, including the canonical profile table and row-domain
+      embedding.
+- [ ] A planner or verifier check confirms that every shared coordinate has one
+      byte-identical $A$ profile and that incompatible profiles are allocated to
+      distinct coordinates.
 - [ ] Norm-bound tests cover heterogeneous `log_basis` values, heterogeneous
-      $m_i$, and sparse occupancy where $g_i > 1$.
+      $m_i$, sparse occupancy where $g_i > 1$, and profile splitting where two
+      sources share $(k,e)$ but not $\chi$.
 
 ### Testing Strategy
 
@@ -672,8 +760,10 @@ The first tests should be algebraic and deterministic:
 - randomized local digit vectors for several $(m_i, \texttt{log\_basis}_i)$ pairs;
 - exact slot-map tests for $\ell_\star = \gcd_i \ell_i$;
 - padding tests where $m_i < m_\star$;
-- negative tests where incompatible slot maps or incompatible $A$ coefficients
-  are rejected before proof construction.
+- split-namespace tests where incompatible $A$ profiles at the same $(k,e)$
+  become distinct coordinates;
+- negative tests where a descriptor attempts to map two non-identical profiles
+  to the same coordinate.
 
 Once the $A_\star$ design is added, end-to-end prover/verifier tests should cover at
 least two polynomials with different sizes and different `log_basis` values in

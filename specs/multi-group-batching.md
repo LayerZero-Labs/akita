@@ -26,11 +26,12 @@ narrow:
 witness commitment;
 - tiered multi-group commitments remain out of scope.
 
-> **Shared-z update.** The root model below gives every commitment group its
-> own folded `z` witness. That part of this spec is superseded by
-> [`multi-group-shared-z-setup-repack.md`](multi-group-shared-z-setup-repack.md),
-> which aligns A through a shared setup coordinate system and uses one root
-> `z` segment across groups.
+> **Common-z refinement.** The root model below gives every commitment group its
+> own folded `z` witness. A general refinement is tracked in
+> [`heterogeneous-basis-multi-group-common-z.md`](heterogeneous-basis-multi-group-common-z.md):
+> it embeds local opening digits into one logical folded witness, shares
+> coordinates only when their exponent and full embedded `A` profile match, and
+> automatically splits incompatible profiles into separate namespaces.
 
 The original root model gives every commitment group its own folded `z` witness:
 
