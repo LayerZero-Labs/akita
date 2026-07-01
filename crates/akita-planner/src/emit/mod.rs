@@ -338,6 +338,14 @@ fn memory_group_batch_entries(
             steps: steps_ref,
         });
     }
+    memory_group_batch_entries.sort_by(|left, right| {
+        crate::generated::generated_group_batch_key_cmp(&left.key, &right.key)
+    });
+    debug_assert!(
+        crate::generated::catalog_group_batch_entries_sorted_for_lookup(
+            &memory_group_batch_entries
+        )
+    );
     Ok(memory_group_batch_entries)
 }
 

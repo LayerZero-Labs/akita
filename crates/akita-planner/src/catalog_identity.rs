@@ -14,8 +14,9 @@ use akita_field::AkitaError;
 use akita_types::AkitaScheduleInputs;
 
 use crate::generated::{
-    catalog_key_cmp, GeneratedCommitmentGroupLayout, GeneratedCommitmentGroupScheduleKey,
-    GeneratedDirectStep, GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleCatalogIdentity,
+    catalog_key_cmp, generated_group_batch_key_cmp, GeneratedCommitmentGroupLayout,
+    GeneratedCommitmentGroupScheduleKey, GeneratedDirectStep,
+    GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleCatalogIdentity,
     GeneratedScheduleLookupKey, GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
@@ -34,6 +35,8 @@ fn lock_validated_catalogs(
 struct CatalogValidationCacheKey {
     entries_ptr: usize,
     entries_len: usize,
+    group_batch_entries_ptr: usize,
+    group_batch_entries_len: usize,
     identity_digest: [u8; 32],
     policy_digest: [u8; 32],
 }
@@ -228,6 +231,8 @@ pub fn validate_catalog_identity(
     let cache_key = CatalogValidationCacheKey {
         entries_ptr: catalog.entries.as_ptr() as usize,
         entries_len: catalog.entries.len(),
+        group_batch_entries_ptr: catalog.group_batch_entries.as_ptr() as usize,
+        group_batch_entries_len: catalog.group_batch_entries.len(),
         identity_digest: identity_digest(&catalog.identity),
         policy_digest: policy_digest(policy),
     };
@@ -257,6 +262,7 @@ fn validate_catalog_identity_impl(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
     validate_catalog_keys(catalog.entries)?;
+    validate_group_batch_catalog_keys(catalog.group_batch_entries)?;
     let embedded = catalog.identity;
     let expected = catalog_identity_expectation(
         embedded.family_name,
@@ -323,6 +329,30 @@ fn validate_catalog_keys(entries: &[GeneratedScheduleTableEntry]) -> Result<(), 
                 return Err(AkitaError::InvalidSetup(
                     "schedule catalog entries are not sorted for binary lookup \
                      (num_polynomials, then num_vars)"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_group_batch_catalog_keys(
+    entries: &[GeneratedGroupBatchScheduleTableEntry],
+) -> Result<(), AkitaError> {
+    for pair in entries.windows(2) {
+        match generated_group_batch_key_cmp(&pair[0].key, &pair[1].key) {
+            Ordering::Less => {}
+            Ordering::Equal => {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "schedule catalog contains duplicate grouped key {:?}",
+                    pair[0].key
+                )));
+            }
+            Ordering::Greater => {
+                return Err(AkitaError::InvalidSetup(
+                    "schedule catalog grouped entries are not sorted for binary lookup \
+                     (final_group num_vars/num_polynomials, then precommitted layout)"
                         .to_string(),
                 ));
             }
@@ -435,7 +465,7 @@ fn combined_key_digest(
     scalar.sort_by_key(|k| (k.num_vars, k.num_polynomials));
     let mut grouped: Vec<GeneratedScheduleLookupKey> =
         group_batch_entries.iter().map(|entry| entry.key).collect();
-    grouped.sort_by(group_batch_key_cmp);
+    grouped.sort_by(|left, right| generated_group_batch_key_cmp(left, right));
 
     let mut h = Fnv64::new();
     for k in scalar {
@@ -451,40 +481,6 @@ fn combined_key_digest(
         }
     }
     h.finish()
-}
-
-fn group_batch_key_cmp(
-    left: &GeneratedScheduleLookupKey,
-    right: &GeneratedScheduleLookupKey,
-) -> std::cmp::Ordering {
-    let left_main = (left.final_group.num_vars, left.final_group.num_polynomials);
-    let right_main = (
-        right.final_group.num_vars,
-        right.final_group.num_polynomials,
-    );
-    left_main
-        .cmp(&right_main)
-        .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
-        .then_with(|| {
-            left.precommitteds
-                .iter()
-                .map(precommitted_group_sort_key)
-                .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
-        })
-}
-
-fn precommitted_group_sort_key(
-    key: &GeneratedCommitmentGroupLayout,
-) -> (usize, usize, usize, usize, u32, usize, usize) {
-    (
-        key.key.num_vars,
-        key.key.num_polynomials,
-        key.m_vars,
-        key.r_vars,
-        key.log_basis,
-        key.n_a,
-        key.conservative_n_b,
-    )
 }
 
 fn write_generated_schedule_key(h: &mut Fnv64, key: GeneratedCommitmentGroupScheduleKey) {
@@ -601,8 +597,33 @@ mod tests {
         Box::leak(Box::new([sample_entry()]))
     }
 
-    fn sample_group_batch_entries() -> &'static [GeneratedGroupBatchScheduleTableEntry] {
+    fn empty_group_batch_entries() -> &'static [GeneratedGroupBatchScheduleTableEntry] {
         &[]
+    }
+
+    fn sample_group_batch_entry() -> GeneratedGroupBatchScheduleTableEntry {
+        static PRECOMMITTED: [GeneratedCommitmentGroupLayout; 1] =
+            [GeneratedCommitmentGroupLayout {
+                key: GeneratedCommitmentGroupScheduleKey {
+                    num_vars: 8,
+                    num_polynomials: 1,
+                },
+                m_vars: 1,
+                r_vars: 0,
+                log_basis: 2,
+                n_a: 1,
+                conservative_n_b: 1,
+            }];
+        GeneratedGroupBatchScheduleTableEntry {
+            key: GeneratedScheduleLookupKey {
+                final_group: GeneratedCommitmentGroupScheduleKey {
+                    num_vars: 16,
+                    num_polynomials: 1,
+                },
+                precommitteds: &PRECOMMITTED,
+            },
+            steps: &[],
+        }
     }
 
     fn sample_ring_challenge_config(_: usize) -> Result<SparseChallengeConfig, AkitaError> {
@@ -616,11 +637,19 @@ mod tests {
         policy: &PlannerPolicy,
         entries: &'static [GeneratedScheduleTableEntry],
     ) -> GeneratedScheduleCatalogIdentity {
+        expected_identity_with_group_batch(policy, entries, empty_group_batch_entries())
+    }
+
+    fn expected_identity_with_group_batch(
+        policy: &PlannerPolicy,
+        entries: &'static [GeneratedScheduleTableEntry],
+        group_batch_entries: &'static [GeneratedGroupBatchScheduleTableEntry],
+    ) -> GeneratedScheduleCatalogIdentity {
         expected_catalog_identity(
             "fp128_d64_onehot",
             policy,
             entries,
-            sample_group_batch_entries(),
+            group_batch_entries,
             sample_ring_challenge_config,
             flat_fold,
         )
@@ -633,7 +662,7 @@ mod tests {
         let entries = sample_entries();
         let catalog = GeneratedScheduleTable {
             entries,
-            group_batch_entries: sample_group_batch_entries(),
+            group_batch_entries: empty_group_batch_entries(),
             identity: expected_identity(&policy, entries),
         };
         validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
@@ -648,7 +677,7 @@ mod tests {
         let entries = sample_entries();
         let catalog = GeneratedScheduleTable {
             entries,
-            group_batch_entries: sample_group_batch_entries(),
+            group_batch_entries: empty_group_batch_entries(),
             identity: expected_identity(&policy, entries),
         };
         validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
@@ -672,7 +701,7 @@ mod tests {
         wrong.ring_dimension = 128;
         let catalog = GeneratedScheduleTable {
             entries,
-            group_batch_entries: sample_group_batch_entries(),
+            group_batch_entries: empty_group_batch_entries(),
             identity: wrong,
         };
         let err =
@@ -689,7 +718,7 @@ mod tests {
         wrong.ring_challenge_config_digest ^= 1;
         let catalog = GeneratedScheduleTable {
             entries,
-            group_batch_entries: sample_group_batch_entries(),
+            group_batch_entries: empty_group_batch_entries(),
             identity: wrong,
         };
         let err =
@@ -706,7 +735,7 @@ mod tests {
         wrong.key_digest ^= 1;
         let catalog = GeneratedScheduleTable {
             entries,
-            group_batch_entries: sample_group_batch_entries(),
+            group_batch_entries: empty_group_batch_entries(),
             identity: wrong,
         };
         let err =
@@ -721,7 +750,7 @@ mod tests {
         let entries = Box::leak(Box::new([sample_entry(), sample_entry()]));
         let catalog = GeneratedScheduleTable {
             entries,
-            group_batch_entries: sample_group_batch_entries(),
+            group_batch_entries: empty_group_batch_entries(),
             identity: expected_identity(&policy, entries),
         };
         let err =
@@ -746,7 +775,7 @@ mod tests {
         let entries = Box::leak(Box::new([batched, singleton]));
         let catalog = GeneratedScheduleTable {
             entries,
-            group_batch_entries: sample_group_batch_entries(),
+            group_batch_entries: empty_group_batch_entries(),
             identity: expected_identity(&policy, entries),
         };
         let err =
@@ -754,6 +783,51 @@ mod tests {
                 .expect_err("unsorted keys should error");
         assert!(
             matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("not sorted for binary lookup")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn duplicate_group_batch_catalog_keys_are_rejected() {
+        let policy = sample_policy();
+        let entries = sample_entries();
+        let grouped = Box::leak(Box::new([
+            sample_group_batch_entry(),
+            sample_group_batch_entry(),
+        ]));
+        let catalog = GeneratedScheduleTable {
+            entries,
+            group_batch_entries: grouped,
+            identity: expected_identity_with_group_batch(&policy, entries, grouped),
+        };
+        let err =
+            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+                .expect_err("duplicate grouped keys should error");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("duplicate grouped key")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn unsorted_group_batch_catalog_keys_are_rejected() {
+        let policy = sample_policy();
+        let entries = sample_entries();
+        let mut later = sample_group_batch_entry();
+        later.key.final_group.num_vars = 20;
+        let mut earlier = sample_group_batch_entry();
+        earlier.key.final_group.num_vars = 16;
+        let grouped = Box::leak(Box::new([later, earlier]));
+        let catalog = GeneratedScheduleTable {
+            entries,
+            group_batch_entries: grouped,
+            identity: expected_identity_with_group_batch(&policy, entries, grouped),
+        };
+        let err =
+            validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
+                .expect_err("unsorted grouped keys should error");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("grouped entries are not sorted")),
             "unexpected error: {err}"
         );
     }
@@ -776,7 +850,7 @@ mod tests {
             "fp128_d64_onehot",
             &policy,
             entries,
-            sample_group_batch_entries(),
+            empty_group_batch_entries(),
             sample_ring_challenge_config,
             fold_shape,
         )
