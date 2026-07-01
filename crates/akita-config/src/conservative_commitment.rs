@@ -10,8 +10,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
-    OpeningBatchShape, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AjtaiKeyParams, AkitaScheduleInputs, CommitmentGroupScheduleKey, DecompositionParams,
+    LevelParams, OpeningBatchShape, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 use std::marker::PhantomData;
 
@@ -73,7 +73,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
     }
 
     fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
+        let key = CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
         conservative_commit_schedule::<Cfg>(&key)
     }
 
@@ -86,7 +86,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
 }
 
 pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    key: &CommitmentGroupScheduleKey,
 ) -> Result<LevelParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
     Ok(root_commit_params(&schedule, "conservative commit schedule")?.clone())
@@ -100,7 +100,7 @@ pub(crate) fn inflate_setup_envelope_for_conservative_commitments<Cfg: Commitmen
     let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
     for num_vars in 1..=max_num_vars {
         for &num_polys in &poly_counts {
-            let key = AkitaScheduleLookupKey::new(num_vars, num_polys);
+            let key = CommitmentGroupScheduleKey::new(num_vars, num_polys);
             if let Ok(params) = conservative_commit_params::<Cfg>(&key) {
                 accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
             }
@@ -110,7 +110,7 @@ pub(crate) fn inflate_setup_envelope_for_conservative_commitments<Cfg: Commitmen
 }
 
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    key: &CommitmentGroupScheduleKey,
 ) -> Result<Schedule, AkitaError> {
     if Cfg::TIERED_COMMITMENT {
         return Err(AkitaError::InvalidSetup(

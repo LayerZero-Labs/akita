@@ -8,7 +8,7 @@ use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatchShape;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope};
+use akita_types::{CommitmentGroupScheduleKey, LevelParams, Schedule, SetupMatrixEnvelope};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -184,7 +184,7 @@ pub fn worst_case_grouped_opening_batch_for_shape(
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     opening_batch: &OpeningBatchShape,
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
-    let cached_key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
+    let cached_key = CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
 
     // Setup-matrix sizing scans many candidate sub-shapes. `runtime_schedule`
     // serves the shipped table on a hit and regenerates via the planner DP on

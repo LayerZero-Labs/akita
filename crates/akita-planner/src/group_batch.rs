@@ -11,7 +11,7 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentGroupLayout,
-    DecompositionParams, DirectStep, FoldStep, GroupBatchAkitaScheduleLookupKey, GroupRootParams,
+    CommitmentGroupScheduleKey, DecompositionParams, DirectStep, FoldStep, GroupRootParams,
     LevelParams, MRowLayout, Schedule, Step,
 };
 
@@ -227,7 +227,7 @@ fn grouped_root_direct_cost_score(
 }
 
 pub(crate) fn grouped_root_direct_witness_len(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
 ) -> Result<usize, AkitaError> {
     let group_len = |num_polys: usize, num_vars: usize| -> Result<usize, AkitaError> {
         let per_poly_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
@@ -238,7 +238,7 @@ pub(crate) fn grouped_root_direct_witness_len(
         })
     };
 
-    let mut total = group_len(key.main.num_polynomials, key.main.num_vars)?;
+    let mut total = group_len(key.final_group.num_polynomials, key.final_group.num_vars)?;
     for layout in &key.precommitteds {
         let precommitted_len = group_len(layout.key.num_polynomials, layout.key.num_vars)?;
         total = total.checked_add(precommitted_len).ok_or_else(|| {
@@ -249,7 +249,7 @@ pub(crate) fn grouped_root_direct_witness_len(
 }
 
 pub(crate) fn grouped_root_precommitted_groups(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
@@ -497,7 +497,7 @@ fn grouped_root_main_level_params_candidate(
 }
 
 fn compute_grouped_root_direct_level_params(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
@@ -507,8 +507,8 @@ fn compute_grouped_root_direct_level_params(
         grouped_root_precommitted_groups(key, policy, ring_challenge_config, fold_challenge_shape)?;
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let main_num_polys = key.main.num_polynomials;
-    let main_num_vars = key.main.num_vars;
+    let main_num_polys = key.final_group.num_polynomials;
+    let main_num_vars = key.final_group.num_vars;
     let candidate_ctx = GroupedRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
@@ -565,7 +565,7 @@ fn compute_grouped_root_direct_level_params(
 
 /// Build the phase-1 grouped-root schedule from the full grouped key.
 pub fn find_group_batch_schedule(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -594,7 +594,7 @@ pub fn find_group_batch_schedule(
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
     let direct_current_w_len = grouped_root_direct_witness_len(key)?;
     let direct_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.main.num_vars,
+        num_vars: key.final_group.num_vars,
         level: 0,
         current_w_len: direct_current_w_len,
     });
@@ -621,17 +621,17 @@ pub fn find_group_batch_schedule(
     };
 
     let root_current_w_len = 1usize
-        .checked_shl(key.main.num_vars as u32)
+        .checked_shl(key.final_group.num_vars as u32)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("grouped root-fold witness length overflow".to_string())
         })?;
     let fold_challenge_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.main.num_vars,
+        num_vars: key.final_group.num_vars,
         level: 0,
         current_w_len: root_current_w_len,
     });
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
-    let reduced_vars = key.main.num_vars.saturating_sub(alpha);
+    let reduced_vars = key.final_group.num_vars.saturating_sub(alpha);
     if reduced_vars == 0 {
         let Some((total_bytes, steps)) = best else {
             return Err(AkitaError::InvalidSetup(
@@ -654,12 +654,12 @@ pub fn find_group_batch_schedule(
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_config,
-        num_vars: key.main.num_vars,
-        key: AkitaScheduleLookupKey::singleton(key.main.num_vars),
+        num_vars: key.final_group.num_vars,
+        key: CommitmentGroupScheduleKey::singleton(key.final_group.num_vars),
     };
     let mut memo = ScheduleMemo::new();
     let total_polys = key.num_polynomials()?;
-    let root_eor_key = AkitaScheduleLookupKey::new(key.main.num_vars, total_polys);
+    let root_eor_key = CommitmentGroupScheduleKey::new(key.final_group.num_vars, total_polys);
     let initial_witness_len_bits = root_current_w_len
         .checked_mul(field_bits as usize)
         .ok_or_else(|| {
@@ -674,7 +674,7 @@ pub fn find_group_batch_schedule(
             let m_vars = reduced_vars - r_vars;
             let Some(candidate_params) = grouped_root_main_level_params_candidate(
                 &candidate_ctx,
-                key.main.num_polynomials,
+                key.final_group.num_polynomials,
                 candidate_log_basis,
                 m_vars,
                 r_vars,
@@ -685,13 +685,13 @@ pub fn find_group_batch_schedule(
             let next_w_len = grouped_root_next_w_len(
                 field_bits,
                 &candidate_params,
-                key.main.num_polynomials,
+                key.final_group.num_polynomials,
                 MRowLayout::WithDBlock,
             )?;
             let next_w_len_terminal = grouped_root_next_w_len(
                 field_bits,
                 &candidate_params,
-                key.main.num_polynomials,
+                key.final_group.num_polynomials,
                 MRowLayout::WithoutDBlock,
             )?;
             if next_w_len
@@ -774,7 +774,7 @@ pub fn find_group_batch_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{AkitaScheduleLookupKey, DecompositionParams, SisModulusFamily};
+    use akita_types::{CommitmentGroupScheduleKey, DecompositionParams, SisModulusFamily};
 
     fn flat_policy() -> PlannerPolicy {
         PlannerPolicy {
@@ -811,7 +811,7 @@ mod tests {
         let r_vars = outer / 2;
         let m_vars = outer - r_vars;
         CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(num_vars, num_polys),
+            key: CommitmentGroupScheduleKey::new(num_vars, num_polys),
             m_vars,
             r_vars,
             log_basis: 3,
@@ -821,7 +821,7 @@ mod tests {
     }
 
     fn precommitted_from_policy(
-        key: AkitaScheduleLookupKey,
+        key: CommitmentGroupScheduleKey,
         policy: &PlannerPolicy,
     ) -> CommitmentGroupLayout {
         let schedule =
@@ -835,8 +835,8 @@ mod tests {
 
     #[test]
     fn grouped_root_direct_witness_len_sums_mixed_polynomial_counts() {
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 3),
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 3),
             precommitteds: vec![precommitted(1, 20), precommitted(2, 20)],
         };
 
@@ -861,8 +861,8 @@ mod tests {
 
     #[test]
     fn find_group_batch_schedule_rejects_single_group() {
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(12, 1),
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(12, 1),
             precommitteds: Vec::new(),
         };
 
@@ -877,9 +877,9 @@ mod tests {
         let mut policy = flat_policy();
         policy.decomposition.log_basis = 3;
         policy.basis_range = (4, 4);
-        let pre_key = AkitaScheduleLookupKey::new(20, 1);
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 2),
+        let pre_key = CommitmentGroupScheduleKey::new(20, 1);
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 2),
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
@@ -897,9 +897,9 @@ mod tests {
     fn grouped_schedule_can_start_with_fold() {
         let mut policy = flat_policy();
         policy.basis_range = (4, 4);
-        let pre_key = AkitaScheduleLookupKey::new(20, 1);
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 2),
+        let pre_key = CommitmentGroupScheduleKey::new(20, 1);
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 2),
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
@@ -909,7 +909,7 @@ mod tests {
             panic!("expected grouped root fold");
         };
 
-        assert_eq!(root.current_w_len, 1usize << key.main.num_vars);
+        assert_eq!(root.current_w_len, 1usize << key.final_group.num_vars);
         assert_eq!(
             root.params.precommitted_groups.len(),
             key.precommitteds.len()
@@ -921,8 +921,8 @@ mod tests {
     fn find_group_batch_schedule_rejects_dense_policy() {
         let mut policy = flat_policy();
         policy.decomposition.log_commit_bound = 8;
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 2),
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 2),
             precommitteds: vec![precommitted(1, 20)],
         };
 

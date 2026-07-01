@@ -184,7 +184,7 @@ pub struct Fp128ScheduleSelection {
 
 fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     // A genuine planner failure (invalid key shape, witness overflow,
     // SIS-floor gap) propagates rather than being swallowed into a missing
@@ -220,7 +220,7 @@ where
 /// Propagates a planner / runtime-schedule failure (invalid key shape,
 /// witness overflow, or an uncovered SIS-floor width).
 pub fn best_full_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     Ok(best_by_exact_bytes([
         candidate::<D32Full>(Fp128Preset::D32Full, key)?,
@@ -239,7 +239,7 @@ pub fn best_full_schedule(
 /// Propagates a planner / runtime-schedule failure (invalid key shape,
 /// witness overflow, or an uncovered SIS-floor width).
 pub fn best_onehot_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     Ok(best_by_exact_bytes([
         candidate::<D32OneHot>(Fp128Preset::D32OneHot, key)?,

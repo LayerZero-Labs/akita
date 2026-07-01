@@ -12,12 +12,13 @@ use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
+    AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupScheduleKey, DirectStep, FoldStep,
     LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::generated::{
-    GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep,
+    GeneratedCommitmentGroupScheduleKey, GeneratedFoldStep, GeneratedScheduleTableEntry,
+    GeneratedStep,
 };
 use crate::PlannerPolicy;
 
@@ -28,7 +29,7 @@ pub(crate) struct GeneratedEntryWalkOutput {
 
 pub(crate) fn walk_generated_schedule_entry(
     entry: &GeneratedScheduleTableEntry,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -240,7 +241,7 @@ pub(crate) fn walk_generated_schedule_entry(
 #[allow(clippy::too_many_arguments)]
 fn expand_validated_fold_level(
     step: &GeneratedFoldStep,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -268,9 +269,9 @@ fn expand_validated_fold_level(
 
 fn validate_entry_key(
     entry: &GeneratedScheduleTableEntry,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
 ) -> Result<(), AkitaError> {
-    let expected = GeneratedScheduleKey {
+    let expected = GeneratedCommitmentGroupScheduleKey {
         num_vars: key.num_vars,
         num_polynomials: key.num_polynomials,
     };
@@ -295,7 +296,7 @@ fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), Akit
 
 fn validate_fold_geometry(
     step: &GeneratedFoldStep,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     fold_level: usize,
     current_w_len: usize,

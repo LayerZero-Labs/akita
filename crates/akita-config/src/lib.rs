@@ -15,9 +15,9 @@ use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams,
-    GroupBatchAkitaScheduleLookupKey, LevelParams, OpeningBatchShape, Schedule,
-    SetupMatrixEnvelope, SisModulusFamily, Step,
+    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupScheduleKey,
+    DecompositionParams, LevelParams, OpeningBatchShape, Schedule, SetupMatrixEnvelope,
+    SisModulusFamily, Step,
 };
 
 pub mod conservative_commitment;
@@ -222,7 +222,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates expansion / SIS-bucket failures or DP-search failures
     /// (invalid key dimensions, witness overflow). Never panics — this is
     /// verifier-reachable.
-    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+    fn runtime_schedule(key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
         akita_planner::resolve_schedule(
             key,
             &policy_of::<Self>(),
@@ -241,7 +241,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
     /// or unsupported SIS buckets.
-    fn group_commit_schedule(key: &AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+    fn group_commit_schedule(key: &CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
         if Self::TIERED_COMMITMENT {
             return Err(AkitaError::InvalidSetup(
                 "tiered standalone commitment groups are not supported; see specs/multi-group-batching.md"
@@ -279,7 +279,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// conservative layout even when the runtime prove schedule has a different
     /// shape or is unavailable.
     fn group_commit_schedule_starts_with_fold(
-        key: &AkitaScheduleLookupKey,
+        key: &CommitmentGroupScheduleKey,
     ) -> Result<bool, AkitaError> {
         Ok(matches!(
             Self::group_commit_schedule(key)?.steps.first(),
@@ -297,7 +297,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
     /// unsupported SIS buckets, or schedules without root commit params.
     fn get_params_for_group_commit(
-        key: &AkitaScheduleLookupKey,
+        key: &CommitmentGroupScheduleKey,
     ) -> Result<LevelParams, AkitaError> {
         let (min_basis, max_basis) = Self::basis_range();
         let mut params =
@@ -353,9 +353,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// envelope scans do not yet size grouped final schedules; callers must not
     /// treat setup capacity as covering `get_group_batch_schedule` output until
     /// Phase 2 extends `proof_optimized` envelope construction.
-    fn get_group_batch_schedule(
-        key: &GroupBatchAkitaScheduleLookupKey,
-    ) -> Result<Schedule, AkitaError> {
+    fn get_group_batch_schedule(key: &AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
         akita_planner::resolve_group_batch_schedule(
             key,
             &policy_of::<Self>(),
@@ -372,7 +370,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
     fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
+        let key = CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
         Self::runtime_schedule(key)
     }
 
@@ -605,7 +603,7 @@ mod fp128_policy_tests {
     ) {
         for num_vars in min_num_vars..=max_num_vars {
             let schedule =
-                Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars)).unwrap();
+                Cfg::runtime_schedule(CommitmentGroupScheduleKey::singleton(num_vars)).unwrap();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
         }
     }
@@ -658,7 +656,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_family_selector_uses_generated_singleton_plans() {
-        let key = AkitaScheduleLookupKey::singleton(32);
+        let key = CommitmentGroupScheduleKey::singleton(32);
 
         let full = fp128::best_full_schedule(key)
             .expect("selector should resolve full schedules")
@@ -676,7 +674,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_family_selector_supports_batched_keys() {
-        let key = AkitaScheduleLookupKey::new(30, 4);
+        let key = CommitmentGroupScheduleKey::new(30, 4);
 
         let selection = fp128::best_onehot_schedule(key)
             .expect("selector should resolve batched onehot schedules")

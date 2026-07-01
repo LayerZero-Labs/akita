@@ -55,7 +55,7 @@ protocol never name `GeneratedScheduleTableEntry`.
 Moved **from `akita-types` to `akita-planner`** (new home, e.g.
 `akita_planner::schedule_table` + `akita_planner::generated`):
 
-- Schedule-table representation: `GeneratedScheduleKey`,
+- Schedule-table representation: `GeneratedCommitmentGroupScheduleKey`,
   `GeneratedScheduleTableEntry`, `GeneratedStep`, `GeneratedFoldStep`,
   `GeneratedDirectStep`, `GeneratedScheduleTable`, `table_entry`,
   `GeneratedScheduleTableEntry::validate`.
@@ -82,7 +82,7 @@ by `akita-planner`):
   `root_extension_opening_partials`,
   `w_ring_element_count_with_counts*`, `root_direct_commit_layout`,
   `a_role_base_norm`, `AjtaiKeyParams`, `LevelParams`, `Schedule`, `Step`,
-  `FoldStep`, `DirectStep`, `AkitaScheduleLookupKey`, `AkitaScheduleInputs`,
+  `FoldStep`, `DirectStep`, `CommitmentGroupScheduleKey`, `AkitaScheduleInputs`,
   `DecompositionParams`). These remain the shared vocabulary `akita-planner`
   imports — `level_proof_bytes` does **not** reference any `Generated*` type, so
   it is not part of the move.
@@ -105,7 +105,7 @@ pub fn shipped_table(
 /// (deriving `root_fold_is_tensor` by evaluating `fold_shape` at level 0),
 /// expands a matching compact entry, or regenerates with `find_schedule`.
 pub fn get_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     stage1: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -264,7 +264,7 @@ akita-types::generated
 ├── sis_floor            ← SIS security-floor table (SisModulusFamily, ranks)
 │                          USED BY akita-types core: layout/params.rs,
 │                          layout/digit_math.rs, sis_offline.rs, schedule.rs
-└── schedule-table repr  ← GeneratedScheduleKey/Entry/Step + static tables
+└── schedule-table repr  ← GeneratedCommitmentGroupScheduleKey/Entry/Step + static tables
     + expand.rs            + expand_to_level_params + scale_batched_root
                            USED BY akita-config (runtime_schedule, gen bin)
                            and akita-types::proof_size walker
@@ -272,7 +272,7 @@ akita-types::generated
 
 The naive "move all of `generated` to `akita-planner`" creates a cycle because
 `akita-types` core depends on `sis_floor` (and `schedule.rs` depends on
-`GeneratedScheduleKey` via `generated_schedule_lookup_key`). If those moved,
+`GeneratedCommitmentGroupScheduleKey` via `generated_schedule_lookup_key`). If those moved,
 `akita-types → akita-planner` while `akita-planner → akita-types` — a cycle.
 
 The fix is to cut along the true seam:

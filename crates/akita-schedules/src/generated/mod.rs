@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
 pub use akita_planner::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedGroupBatchScheduleKey,
-    GeneratedGroupBatchScheduleTableEntry, GeneratedPrecommittedGroupKey,
-    GeneratedScheduleCatalogIdentity, GeneratedScheduleKey, GeneratedScheduleTable,
-    GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
+    GeneratedCommitmentGroupLayout, GeneratedCommitmentGroupScheduleKey, GeneratedDirectStep,
+    GeneratedFoldStep, GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleLookupKey, GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
+    SisModulusFamily,
 };
 pub use akita_planner::{DecompositionParams, TensorChallengeShape};
 

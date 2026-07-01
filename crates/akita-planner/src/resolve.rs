@@ -11,15 +11,16 @@ use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
-    GroupBatchAkitaScheduleLookupKey, LevelParams, MRowLayout, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentGroupScheduleKey,
+    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::catalog_identity::validate_catalog_identity;
 use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{
-    group_batch_table_entry, table_entry, GeneratedGroupBatchScheduleTableEntry,
-    GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
+    group_batch_table_entry, table_entry, GeneratedCommitmentGroupScheduleKey,
+    GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleTable, GeneratedScheduleTableEntry,
+    GeneratedStep,
 };
 use crate::group_batch::{
     grouped_root_direct_witness_len, grouped_root_next_w_len, grouped_root_precommitted_groups,
@@ -29,8 +30,10 @@ use crate::{find_group_batch_schedule, find_schedule};
 
 ///
 /// Convert the public runtime lookup key into a generated-table lookup key.
-pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
-    GeneratedScheduleKey {
+pub const fn generated_schedule_lookup_key(
+    key: CommitmentGroupScheduleKey,
+) -> GeneratedCommitmentGroupScheduleKey {
+    GeneratedCommitmentGroupScheduleKey {
         num_vars: key.num_vars,
         num_polynomials: key.num_polynomials,
     }
@@ -38,7 +41,7 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 
 /// Resolve the runtime [`Schedule`] using an explicit optional catalog.
 pub fn resolve_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -78,7 +81,7 @@ pub fn resolve_schedule(
 
 /// Resolve a grouped-root schedule without falling back to a scalar table key.
 pub fn resolve_group_batch_schedule(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -112,7 +115,7 @@ pub fn resolve_group_batch_schedule(
 /// Build the runtime [`Schedule`] for a compact generated grouped-root entry.
 pub(crate) fn schedule_from_group_batch_entry(
     entry: &GeneratedGroupBatchScheduleTableEntry,
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -122,10 +125,11 @@ pub(crate) fn schedule_from_group_batch_entry(
     let extension_opening_width = policy.claim_ext_degree;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let root_eor_key = AkitaScheduleLookupKey::new(key.main.num_vars, key.num_polynomials()?);
+    let root_eor_key =
+        CommitmentGroupScheduleKey::new(key.final_group.num_vars, key.num_polynomials()?);
 
     let expected_root_w_len = 1usize
-        .checked_shl(key.main.num_vars as u32)
+        .checked_shl(key.final_group.num_vars as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness length overflow".into()))?;
     let mut steps = Vec::with_capacity(entry.steps.len());
     let mut total = 0usize;
@@ -149,7 +153,7 @@ pub(crate) fn schedule_from_group_batch_entry(
                     ));
                 }
                 let inputs = AkitaScheduleInputs {
-                    num_vars: key.main.num_vars,
+                    num_vars: key.final_group.num_vars,
                     level: fold_level,
                     current_w_len,
                 };
@@ -166,7 +170,7 @@ pub(crate) fn schedule_from_group_batch_entry(
                         policy,
                         &ring_challenge_config,
                         fold_shape,
-                        key.main.num_polynomials,
+                        key.final_group.num_polynomials,
                         precommitted_groups,
                         precommitted_d_width,
                     )?
@@ -204,7 +208,7 @@ pub(crate) fn schedule_from_group_batch_entry(
                         grouped_root_next_w_len(
                             field_bits,
                             &lp,
-                            key.main.num_polynomials,
+                            key.final_group.num_polynomials,
                             MRowLayout::WithDBlock,
                         )?
                     } else {
@@ -224,7 +228,7 @@ pub(crate) fn schedule_from_group_batch_entry(
                         ));
                     };
                     let next_inputs = AkitaScheduleInputs {
-                        num_vars: key.main.num_vars,
+                        num_vars: key.final_group.num_vars,
                         level: fold_level + 1,
                         current_w_len: len,
                     };
@@ -271,7 +275,7 @@ pub(crate) fn schedule_from_group_batch_entry(
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
                     let direct_current_w_len = grouped_root_direct_witness_len(key)?;
                     let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-                        num_vars: key.main.num_vars,
+                        num_vars: key.final_group.num_vars,
                         level: 0,
                         current_w_len: direct_current_w_len,
                     });
@@ -288,7 +292,7 @@ pub(crate) fn schedule_from_group_batch_entry(
                                 policy,
                                 &ring_challenge_config,
                                 fold_shape,
-                                key.main.num_polynomials,
+                                key.final_group.num_polynomials,
                                 precommitted_groups,
                                 precommitted_d_width,
                             )?)
@@ -338,7 +342,7 @@ pub(crate) fn schedule_from_group_batch_entry(
 /// Build the runtime [`Schedule`] for a compact generated entry.
 pub fn schedule_from_entry(
     entry: &GeneratedScheduleTableEntry,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -355,7 +359,7 @@ pub fn schedule_from_entry(
 
 pub fn estimate_proof_bytes(
     entry: &GeneratedScheduleTableEntry,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -441,7 +445,7 @@ mod tests {
     }
 
     fn generated_entry_from_steps(
-        key: AkitaScheduleLookupKey,
+        key: CommitmentGroupScheduleKey,
         steps: Vec<GeneratedStep>,
     ) -> GeneratedScheduleTableEntry {
         GeneratedScheduleTableEntry {
@@ -452,7 +456,7 @@ mod tests {
 
     #[test]
     fn resolve_schedule_none_matches_find_schedule() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let via_resolve = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
             .expect("resolve");
@@ -463,7 +467,7 @@ mod tests {
 
     #[test]
     fn resolve_schedule_rejects_zero_dimension_key() {
-        let key = AkitaScheduleLookupKey::new(0, 1);
+        let key = CommitmentGroupScheduleKey::new(0, 1);
         let policy = flat_policy();
 
         let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
@@ -474,7 +478,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_accepts_materialized_dp_schedule() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -492,7 +496,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_overstated_b_rank() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -524,7 +528,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_overstated_a_rank() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -556,7 +560,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_understated_a_rank() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -591,7 +595,7 @@ mod tests {
 
     #[test]
     fn resolve_schedule_rejects_corrupt_table_hit() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -633,7 +637,7 @@ mod tests {
 
     #[test]
     fn walk_validate_matches_materialize_total_bytes() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");

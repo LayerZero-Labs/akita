@@ -9,7 +9,7 @@ fn conservative_config_commit_returns_frozen_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let key = akita_types::AkitaScheduleLookupKey::new(NV, GROUP_SIZE);
+    let key = akita_types::CommitmentGroupScheduleKey::new(NV, GROUP_SIZE);
     let opening_batch = OpeningBatchShape::new(NV, GROUP_SIZE).expect("opening batch");
     let layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&opening_batch)
         .expect("conservative commit layout");
@@ -69,8 +69,8 @@ fn conservative_config_allows_independent_precommitted_groups() {
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 2;
 
-    let pre_a_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_A_SIZE);
-    let pre_b_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_B_SIZE);
+    let pre_a_key = akita_types::CommitmentGroupScheduleKey::new(NV, PRE_A_SIZE);
+    let pre_b_key = akita_types::CommitmentGroupScheduleKey::new(NV, PRE_B_SIZE);
     let pre_a_opening_batch = OpeningBatchShape::new(NV, PRE_A_SIZE).expect("precommit A batch");
     let pre_b_opening_batch = OpeningBatchShape::new(NV, PRE_B_SIZE).expect("precommit B batch");
     let pre_a_layout =
@@ -110,8 +110,8 @@ fn group_batch_schedule_preserves_precommitted_order() {
     const PRE_B_SIZE: usize = 2;
     const MAIN_SIZE: usize = 3;
 
-    let pre_a_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_A_SIZE);
-    let pre_b_key = akita_types::AkitaScheduleLookupKey::new(NV, PRE_B_SIZE);
+    let pre_a_key = akita_types::CommitmentGroupScheduleKey::new(NV, PRE_A_SIZE);
+    let pre_b_key = akita_types::CommitmentGroupScheduleKey::new(NV, PRE_B_SIZE);
     let pre_a_opening_batch = OpeningBatchShape::new(NV, PRE_A_SIZE).expect("precommit A batch");
     let pre_b_opening_batch = OpeningBatchShape::new(NV, PRE_B_SIZE).expect("precommit B batch");
     let pre_a_layout =
@@ -133,8 +133,8 @@ fn group_batch_schedule_preserves_precommitted_order() {
             akita_types::CommitmentGroupLayout::from_params(pre_a_key, &pre_a_layout);
         let pre_b_frozen =
             akita_types::CommitmentGroupLayout::from_params(pre_b_key, &pre_b_layout);
-        let grouped_key = akita_types::GroupBatchAkitaScheduleLookupKey {
-            main: akita_types::AkitaScheduleLookupKey::new(NV, MAIN_SIZE),
+        let grouped_key = akita_types::AkitaScheduleLookupKey {
+            final_group: akita_types::CommitmentGroupScheduleKey::new(NV, MAIN_SIZE),
             precommitteds: vec![pre_a_frozen.clone(), pre_b_frozen.clone()],
         };
 
@@ -163,7 +163,7 @@ fn commit_group_returns_frozen_conservative_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let key = akita_types::AkitaScheduleLookupKey::new(NV, GROUP_SIZE);
+    let key = akita_types::CommitmentGroupScheduleKey::new(NV, GROUP_SIZE);
     let layout =
         MultiGroupOneHotCfg::get_params_for_group_commit(&key).expect("group commit layout");
     let total_field = (layout.num_blocks * layout.block_len)

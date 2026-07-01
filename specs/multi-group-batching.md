@@ -171,10 +171,10 @@ computation and padding for unequal `K_g`.
 
 Still missing or scalar today:
 
-- `AkitaScheduleLookupKey` is scalar and only describes one group.
-- `GeneratedScheduleKey` is scalar and only describes one group.
+- `CommitmentGroupScheduleKey` is scalar and only describes one group.
+- `GeneratedCommitmentGroupScheduleKey` is scalar and only describes one group.
 - Planner root witness sizing treats the root as one group.
-- `GroupBatchAkitaScheduleLookupKey` and `CommitmentGroupLayout` do not exist.
+- `CommitmentGroupScheduleKey`, `AkitaScheduleLookupKey`, and `CommitmentGroupLayout` do not exist.
 - Conservative-rank presets and conservative B rank selection do not exist.
 - Public `commit_group` and `commit_final` APIs do not exist.
 - `compute_relation_quotient`, verifier ring-switch replay, terminal witness
@@ -311,10 +311,10 @@ The root planner and proof-size formulas must keep these two worlds separate.
 
 ## Schedule Keys
 
-Keep the existing scalar `AkitaScheduleLookupKey` as the per-group entry shape:
+Keep the existing scalar `CommitmentGroupScheduleKey` as the per-group entry shape:
 
 ```rust
-pub struct AkitaScheduleLookupKey {
+pub struct CommitmentGroupScheduleKey {
     pub num_vars: usize,
     pub num_t_vectors: usize,
     pub num_w_vectors: usize,
@@ -339,13 +339,18 @@ Precommitted entries with arity greater than the final/main group must reject.
 Add a group-batch key for final commit/prove planning:
 
 ```rust
-pub struct GroupBatchAkitaScheduleLookupKey {
-    pub new: CommitmentGroupLayout,
+pub struct AkitaScheduleLookupKey {
+    pub final_group: CommitmentGroupScheduleKey,
     pub precommitteds: Vec<CommitmentGroupLayout>,
 }
 
+pub struct CommitmentGroupScheduleKey {
+    pub num_vars: usize,
+    pub num_polynomials: usize,
+}
+
 pub struct CommitmentGroupLayout {
-    pub key: AkitaScheduleLookupKey,
+    pub key: CommitmentGroupScheduleKey,
     pub m_vars: usize,
     pub r_vars: usize,
     pub log_basis: u32,
@@ -386,16 +391,16 @@ num_public_rows     = G
 ## Generated Schedule Keys
 
 Generated schedule keys must be lifted to the same shape as
-`GroupBatchAkitaScheduleLookupKey`:
+`AkitaScheduleLookupKey`:
 
 ```rust
-pub struct GeneratedGroupBatchScheduleKey {
-    pub new: GeneratedScheduleKey,
-    pub precommitteds: &'static [GeneratedPrecommittedGroupKey],
+pub struct GeneratedScheduleLookupKey {
+    pub final_group: GeneratedCommitmentGroupScheduleKey,
+    pub precommitteds: &'static [GeneratedCommitmentGroupLayout],
 }
 
-pub struct GeneratedPrecommittedGroupKey {
-    pub key: GeneratedScheduleKey,
+pub struct GeneratedCommitmentGroupLayout {
+    pub key: GeneratedCommitmentGroupScheduleKey,
     pub m_vars: usize,
     pub r_vars: usize,
     pub log_basis: u32,
@@ -404,7 +409,7 @@ pub struct GeneratedPrecommittedGroupKey {
     pub conservative_n_b: usize,
 }
 
-pub struct GeneratedScheduleKey {
+pub struct GeneratedCommitmentGroupScheduleKey {
     pub num_vars: usize,
     pub num_t_vectors: usize,
     pub num_w_vectors: usize,
@@ -489,7 +494,7 @@ commit_final(new_group, precommitteds)
 
 `commit_final` must:
 
-- build the full `GroupBatchAkitaScheduleLookupKey`;
+- build the full `AkitaScheduleLookupKey`;
 - use the precommitted groups' `CommitmentGroupLayout` values and conservative
   `n_b'` values;
 - commit the last group with the final grouped plan;
@@ -503,11 +508,11 @@ Extend `CommitmentConfig` with grouped hooks:
 
 ```rust
 fn get_params_for_group_commit(
-    key: &AkitaScheduleLookupKey,
+    key: &CommitmentGroupScheduleKey,
 ) -> Result<LevelParams, AkitaError>;
 
 fn get_group_batch_schedule(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
 ) -> Result<GroupedRootSchedule, AkitaError>;
 ```
 
@@ -691,7 +696,7 @@ Add a descriptor section:
 
 ```rust
 pub struct CommitSection {
-    pub group_batch_key: GroupBatchAkitaScheduleLookupKey,
+    pub group_batch_key: AkitaScheduleLookupKey,
     pub grouped_root_schedule_digest: DescriptorDigest,
     pub singleton_suffix_schedule_digest: DescriptorDigest,
 }
@@ -702,7 +707,7 @@ The instance descriptor must bind:
 - group count;
 - `num_polys_per_commitment_group`;
 - claim-to-group and claim-to-poly routing;
-- the full `GroupBatchAkitaScheduleLookupKey`;
+- the full `AkitaScheduleLookupKey`;
 - each precommitted group's `CommitmentGroupLayout`;
 - each precommitted group's conservative B rank;
 - the grouped root schedule digest;
@@ -760,7 +765,7 @@ b_width
 conservative_n_b
 ```
 
-`GroupBatchAkitaScheduleLookupKey` encodes in this fixed order:
+`AkitaScheduleLookupKey` encodes in this fixed order:
 
 ```text
 precommitteds.len()
@@ -772,7 +777,7 @@ CommitmentGroupLayout(new)
 `CommitSection` encodes in this fixed order:
 
 ```text
-GroupBatchAkitaScheduleLookupKey
+AkitaScheduleLookupKey
 grouped_root_schedule_digest[32]
 singleton_suffix_schedule_digest[32]
 ```
@@ -825,7 +830,7 @@ The verifier must follow this order:
 
 1. Parse and validate the instance descriptor bytes at the current schema version.
 2. Reject malformed `CommitSection` bytes before Fiat-Shamir replay continues.
-3. Reconstruct `GroupBatchAkitaScheduleLookupKey` from `CommitSection`.
+3. Reconstruct `AkitaScheduleLookupKey` from `CommitSection`.
 4. Recompute each `CommitmentGroupLayout` deterministically from setup, config
    policy, and the public opening batch.
 5. Reject if any recomputed layout differs from the descriptor-bound layout.
@@ -911,7 +916,7 @@ At standalone `commit_group` time:
 At `commit_final` time:
 
 - `precommitteds` must be well-formed group metadata;
-- the full `GroupBatchAkitaScheduleLookupKey` must be derivable from
+- the full `AkitaScheduleLookupKey` must be derivable from
   `precommitteds + new`;
 - each precommitted group must have `key.num_vars <= new.key.num_vars`;
 - each precommitted group must keep its `CommitmentGroupLayout` `m`, `r`,
@@ -933,7 +938,7 @@ At prove time:
 
 At verify time:
 
-- The verifier must reconstruct the `GroupBatchAkitaScheduleLookupKey` from
+- The verifier must reconstruct the `AkitaScheduleLookupKey` from
   public claims and descriptor data.
 - The verifier must recompute grouped root params from the key.
 - The verifier must reject if a precommitted group's final root layout differs
@@ -986,7 +991,7 @@ still work, and unsupported grouped proof paths fail explicitly.
 
 ### Phase 1: Scheduler and commit_group
 
-- Add `GroupBatchAkitaScheduleLookupKey`.
+- Add `AkitaScheduleLookupKey`.
 - Add generated/DP schedule resolution for grouped keys without collapsing
 `[K_0, K_1, ...]` into `[sum_g K_g]`.
 - Thread grouped root counts through planner and proof-size formulas:
@@ -1012,7 +1017,7 @@ negative tests pass. No grouped opening proof is required yet.
 - Add `commit_final(new_group, precommitteds)`.
 - Bind `CommitSection`, precommitted group metadata, final group metadata, and
 the final grouped root schedule in descriptor bytes at the current schema version.
-- Reconstruct and validate the full `GroupBatchAkitaScheduleLookupKey` from
+- Reconstruct and validate the full `AkitaScheduleLookupKey` from
 `commit_final` metadata and public opening claims.
 - Commit the final group with the final grouped plan.
 - Implement grouped root witness layout with `concat(w_hat_g)`.
@@ -1214,7 +1219,7 @@ The following choices close the open questions from the first draft:
 3. **Recursive setup contribution:** explicitly delay generalization until
   a later root-layout generalization. The `commit_final`/opening phase keeps the
   existing reject.
-4. **Planner key exposure:** keep `GroupBatchAkitaScheduleLookupKey` as an
+4. **Planner key exposure:** keep `AkitaScheduleLookupKey` as an
   internal planner input behind `commit_group` / `commit_final`. Public callers
    use `CommittedGroupScheduleMeta` and grouped claim vectors.
 

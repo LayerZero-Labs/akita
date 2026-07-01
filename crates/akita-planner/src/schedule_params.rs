@@ -21,7 +21,7 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams,
     DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
@@ -372,7 +372,7 @@ pub(crate) fn terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     terminal_fold_level: usize,
 ) -> Result<(DirectStep, usize), AkitaError> {
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
@@ -399,7 +399,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) ring_challenge_config: RingChallengeConfigFn<'a>,
     pub(crate) num_vars: usize,
-    pub(crate) key: AkitaScheduleLookupKey,
+    pub(crate) key: CommitmentGroupScheduleKey,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -490,7 +490,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
             policy.claim_ext_degree,
             level,
-            AkitaScheduleLookupKey::singleton(num_vars),
+            CommitmentGroupScheduleKey::singleton(num_vars),
             current_witness_len,
         ) else {
             continue;
@@ -774,7 +774,7 @@ fn compute_root_direct_level_params(
 /// overflows. The function never panics on malformed input — it is
 /// verifier-reachable and audited under the no-panic contract.
 pub fn find_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -788,7 +788,7 @@ pub fn find_schedule(
 }
 
 fn find_schedule_inner(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,

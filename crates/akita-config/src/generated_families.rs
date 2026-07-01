@@ -17,8 +17,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_planner::{find_group_batch_schedule, find_schedule, EmitSpec, PlannerPolicy};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout,
-    GroupBatchAkitaScheduleLookupKey, OpeningBatchShape, Schedule,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
+    OpeningBatchShape, Schedule,
 };
 
 use crate::conservative_commitment::conservative_commit_params;
@@ -54,18 +54,17 @@ pub struct GeneratedFamily {
     pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any shipped table
     /// (`find_schedule(key, &policy_of::<Cfg>(), …)`).
-    pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub regen: fn(CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError>,
     /// Pure grouped DP regeneration that ignores any shipped table.
-    pub regen_group_batch: fn(GroupBatchAkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     /// Whether this family ships grouped-root generated tables.
     pub emit_group_batch: bool,
     /// Grouped-root keys enumerated for this generated family.
-    pub group_batch_keys:
-        fn(&GeneratedFamily) -> Result<Vec<GroupBatchAkitaScheduleLookupKey>, AkitaError>,
+    pub group_batch_keys: fn(&GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError>,
     /// `Cfg::runtime_schedule(key)` — the table fast path when an entry
     /// exists, falling through to the DP otherwise. Used by diagnostic
     /// comparisons against the shipped table.
-    pub table_backed: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub table_backed: fn(CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError>,
     pub policy: fn() -> PlannerPolicy,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -84,7 +83,9 @@ pub struct GeneratedFamily {
 /// Returns an error if the synthetic opening batch fails to build
 /// or the lookup-key derivation fails (both indicate a malformed
 /// `(min_num_vars, max_num_vars)` range).
-pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+pub fn family_keys(
+    family: &GeneratedFamily,
+) -> Result<Vec<CommitmentGroupScheduleKey>, AkitaError> {
     let mut keys = Vec::with_capacity(
         family
             .num_polys
@@ -94,7 +95,7 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKe
     for &num_polys in family.num_polys {
         for nv in family.min_num_vars..=family.max_num_vars {
             let opening_batch = OpeningBatchShape::new(nv, num_polys)?;
-            keys.push(AkitaScheduleLookupKey::new_from_opening_batch(
+            keys.push(CommitmentGroupScheduleKey::new_from_opening_batch(
                 &opening_batch,
             )?);
         }
@@ -103,7 +104,7 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKe
 }
 
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
-fn regen<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+fn regen<Cfg: CommitmentConfig>(key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
     find_schedule(
         key,
         &policy_of::<Cfg>(),
@@ -114,7 +115,7 @@ fn regen<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> Result<Schedule,
 
 /// Pure grouped DP regeneration for `Cfg` — never consults the shipped table.
 fn regen_group_batch<Cfg: CommitmentConfig>(
-    key: GroupBatchAkitaScheduleLookupKey,
+    key: AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
     find_group_batch_schedule(
         &key,
@@ -127,7 +128,7 @@ fn regen_group_batch<Cfg: CommitmentConfig>(
 /// Table-backed resolution for `Cfg` — table hit when present, otherwise
 /// the DP fallback baked into `runtime_schedule`.
 fn table_backed<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
 ) -> Result<Schedule, AkitaError> {
     Cfg::runtime_schedule(key)
 }
@@ -138,7 +139,7 @@ fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
 
 fn group_batch_keys<Cfg: CommitmentConfig>(
     family: &GeneratedFamily,
-) -> Result<Vec<GroupBatchAkitaScheduleLookupKey>, AkitaError> {
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     if !family.emit_group_batch {
         return Ok(Vec::new());
     }
@@ -160,7 +161,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
             let mut precommitteds = Vec::with_capacity(pattern.len());
             let mut supported = true;
             for &num_polys in &pattern {
-                let pre_key = AkitaScheduleLookupKey::new(pre_num_vars, num_polys);
+                let pre_key = CommitmentGroupScheduleKey::new(pre_num_vars, num_polys);
                 let params = match conservative_commit_params::<Cfg>(&pre_key) {
                     Ok(params) => params,
                     Err(_) => {
@@ -173,8 +174,8 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
             if !supported {
                 continue;
             }
-            let candidate = GroupBatchAkitaScheduleLookupKey {
-                main,
+            let candidate = AkitaScheduleLookupKey {
+                final_group: main,
                 precommitteds,
             };
             if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {

@@ -12,16 +12,15 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, DirectStep, FoldStep,
-    GroupBatchAkitaScheduleLookupKey, LevelParams, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
+    DirectStep, FoldStep, LevelParams, Schedule, Step,
 };
 
 use crate::catalog_identity::expected_catalog_identity;
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedGroupBatchScheduleKey,
-    GeneratedGroupBatchScheduleTableEntry, GeneratedPrecommittedGroupKey,
-    GeneratedScheduleCatalogIdentity, GeneratedScheduleKey, GeneratedScheduleTableEntry,
-    GeneratedStep, SisModulusFamily,
+    GeneratedCommitmentGroupLayout, GeneratedCommitmentGroupScheduleKey, GeneratedDirectStep,
+    GeneratedFoldStep, GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleLookupKey, GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
 };
 use crate::{generated_schedule_lookup_key, PlannerPolicy};
 
@@ -33,12 +32,12 @@ pub struct EmitSpec {
     pub family_name: &'static str,
     pub schedule_feature: &'static str,
     pub policy: PlannerPolicy,
-    pub keys: Vec<AkitaScheduleLookupKey>,
-    pub group_batch_keys: Vec<GroupBatchAkitaScheduleLookupKey>,
+    pub keys: Vec<CommitmentGroupScheduleKey>,
+    pub group_batch_keys: Vec<AkitaScheduleLookupKey>,
     pub emit_group_batch: bool,
     pub output_dir: PathBuf,
-    pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
-    pub regen_group_batch: fn(GroupBatchAkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub regen: fn(CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError>,
+    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
     pub generator_command: &'static str,
@@ -78,17 +77,17 @@ fn schedule_to_generated_steps(schedule: &Schedule) -> Vec<GeneratedStep> {
         .collect()
 }
 
-fn emit_key(key: GeneratedScheduleKey) -> String {
+fn emit_key(key: GeneratedCommitmentGroupScheduleKey) -> String {
     format!(
-        "GeneratedScheduleKey {{ num_vars: {}, num_polynomials: {} }}",
+        "GeneratedCommitmentGroupScheduleKey {{ num_vars: {}, num_polynomials: {} }}",
         key.num_vars, key.num_polynomials,
     )
 }
 
 fn generated_precommitted_group_key(
     layout: &CommitmentGroupLayout,
-) -> GeneratedPrecommittedGroupKey {
-    GeneratedPrecommittedGroupKey {
+) -> GeneratedCommitmentGroupLayout {
+    GeneratedCommitmentGroupLayout {
         key: generated_schedule_lookup_key(layout.key),
         m_vars: layout.m_vars,
         r_vars: layout.r_vars,
@@ -99,11 +98,11 @@ fn generated_precommitted_group_key(
 }
 
 fn generated_group_batch_schedule_key(
-    key: &GroupBatchAkitaScheduleLookupKey,
-    precommitteds: &'static [GeneratedPrecommittedGroupKey],
-) -> GeneratedGroupBatchScheduleKey {
-    GeneratedGroupBatchScheduleKey {
-        main: generated_schedule_lookup_key(key.main),
+    key: &AkitaScheduleLookupKey,
+    precommitteds: &'static [GeneratedCommitmentGroupLayout],
+) -> GeneratedScheduleLookupKey {
+    GeneratedScheduleLookupKey {
+        final_group: generated_schedule_lookup_key(key.final_group),
         precommitteds,
     }
 }
@@ -111,7 +110,7 @@ fn generated_group_batch_schedule_key(
 fn emit_precommitted_group_key(layout: &CommitmentGroupLayout) -> String {
     let key = generated_precommitted_group_key(layout);
     format!(
-        "GeneratedPrecommittedGroupKey {{ key: {}, m_vars: {}, r_vars: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        "GeneratedCommitmentGroupLayout {{ key: {}, m_vars: {}, r_vars: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
         emit_key(key.key),
         key.m_vars,
         key.r_vars,
@@ -121,7 +120,7 @@ fn emit_precommitted_group_key(layout: &CommitmentGroupLayout) -> String {
     )
 }
 
-fn emit_group_batch_key(key: &GroupBatchAkitaScheduleLookupKey) -> String {
+fn emit_group_batch_key(key: &AkitaScheduleLookupKey) -> String {
     let precommitteds = key
         .precommitteds
         .iter()
@@ -129,8 +128,8 @@ fn emit_group_batch_key(key: &GroupBatchAkitaScheduleLookupKey) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "GeneratedGroupBatchScheduleKey {{ main: {}, precommitteds: &[{}] }}",
-        emit_key(generated_schedule_lookup_key(key.main)),
+        "GeneratedScheduleLookupKey {{ final_group: {}, precommitteds: &[{}] }}",
+        emit_key(generated_schedule_lookup_key(key.final_group)),
         precommitteds,
     )
 }
@@ -351,7 +350,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     writeln!(
         out,
         "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, \
-         GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, \
+         GeneratedCommitmentGroupScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, \
          SisModulusFamily, TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;
@@ -411,9 +410,9 @@ pub fn emit_group_batch_family_module(spec: &EmitSpec) -> Result<String, String>
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedGroupBatchScheduleKey, \
-         GeneratedGroupBatchScheduleTableEntry, GeneratedPrecommittedGroupKey, \
-         GeneratedScheduleKey, GeneratedStep,\n}};"
+        "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleLookupKey, \
+         GeneratedGroupBatchScheduleTableEntry, GeneratedCommitmentGroupLayout, \
+         GeneratedCommitmentGroupScheduleKey, GeneratedStep,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

@@ -14,10 +14,9 @@ use akita_field::AkitaError;
 use akita_types::AkitaScheduleInputs;
 
 use crate::generated::{
-    catalog_key_cmp, GeneratedDirectStep, GeneratedGroupBatchScheduleKey,
-    GeneratedGroupBatchScheduleTableEntry, GeneratedPrecommittedGroupKey,
-    GeneratedScheduleCatalogIdentity, GeneratedScheduleKey, GeneratedScheduleTable,
-    GeneratedScheduleTableEntry, GeneratedStep,
+    catalog_key_cmp, GeneratedCommitmentGroupLayout, GeneratedCommitmentGroupScheduleKey,
+    GeneratedDirectStep, GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleLookupKey, GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
 
@@ -162,7 +161,7 @@ fn catalog_identity_expectation(
     let ring_dimensions = collect_ring_dimensions(entries, group_batch_entries);
     let ring_challenge_config_digest =
         ring_challenge_config_digest(&ring_dimensions, &ring_challenge_config)?;
-    let keys: Vec<GeneratedScheduleKey> = entries.iter().map(|e| e.key).collect();
+    let keys: Vec<GeneratedCommitmentGroupScheduleKey> = entries.iter().map(|e| e.key).collect();
     Ok(CatalogIdentityExpectation {
         family_name,
         sis_family: policy.sis_family,
@@ -339,7 +338,7 @@ fn catalog_identity_mismatch_error(family_name: &str, field: &str) -> AkitaError
 }
 
 fn root_fold_shape_for_key(
-    key: GeneratedScheduleKey,
+    key: GeneratedCommitmentGroupScheduleKey,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<TensorChallengeShape, AkitaError> {
     let current_w_len = 1usize
@@ -360,7 +359,7 @@ fn root_fold_shape_for_entries(
     let first = entries
         .first()
         .map(|e| e.key)
-        .or_else(|| group_batch_entries.first().map(|e| e.key.main))
+        .or_else(|| group_batch_entries.first().map(|e| e.key.final_group))
         .ok_or_else(|| AkitaError::InvalidSetup("empty schedule catalog".to_string()))?;
     let expected = root_fold_shape_for_key(first, fold_challenge_shape_at_level)?;
     for entry in entries.iter().skip(1) {
@@ -373,11 +372,11 @@ fn root_fold_shape_for_entries(
         }
     }
     for entry in group_batch_entries {
-        let actual = root_fold_shape_for_key(entry.key.main, fold_challenge_shape_at_level)?;
+        let actual = root_fold_shape_for_key(entry.key.final_group, fold_challenge_shape_at_level)?;
         if actual != expected {
             return Err(AkitaError::InvalidSetup(format!(
                 "schedule catalog family has mixed root fold shapes: first key {:?} uses {:?}, grouped key {:?} uses {:?}",
-                first, expected, entry.key.main, actual
+                first, expected, entry.key.final_group, actual
             )));
         }
     }
@@ -417,8 +416,8 @@ fn push_unique(dims: &mut Vec<usize>, d: usize) {
     }
 }
 
-pub fn key_digest(keys: &[GeneratedScheduleKey]) -> u64 {
-    let mut sorted: Vec<GeneratedScheduleKey> = keys.to_vec();
+pub fn key_digest(keys: &[GeneratedCommitmentGroupScheduleKey]) -> u64 {
+    let mut sorted: Vec<GeneratedCommitmentGroupScheduleKey> = keys.to_vec();
     sorted.sort_by_key(|k| (k.num_vars, k.num_polynomials));
     let mut h = Fnv64::new();
     for k in sorted {
@@ -429,12 +428,12 @@ pub fn key_digest(keys: &[GeneratedScheduleKey]) -> u64 {
 }
 
 fn combined_key_digest(
-    keys: &[GeneratedScheduleKey],
+    keys: &[GeneratedCommitmentGroupScheduleKey],
     group_batch_entries: &[GeneratedGroupBatchScheduleTableEntry],
 ) -> u64 {
     let mut scalar = keys.to_vec();
     scalar.sort_by_key(|k| (k.num_vars, k.num_polynomials));
-    let mut grouped: Vec<GeneratedGroupBatchScheduleKey> =
+    let mut grouped: Vec<GeneratedScheduleLookupKey> =
         group_batch_entries.iter().map(|entry| entry.key).collect();
     grouped.sort_by(group_batch_key_cmp);
 
@@ -445,7 +444,7 @@ fn combined_key_digest(
     }
     for k in grouped {
         h.write_u64(1);
-        write_generated_schedule_key(&mut h, k.main);
+        write_generated_schedule_key(&mut h, k.final_group);
         h.write_u64(k.precommitteds.len() as u64);
         for group in k.precommitteds {
             write_generated_precommitted_group_key(&mut h, group);
@@ -455,11 +454,14 @@ fn combined_key_digest(
 }
 
 fn group_batch_key_cmp(
-    left: &GeneratedGroupBatchScheduleKey,
-    right: &GeneratedGroupBatchScheduleKey,
+    left: &GeneratedScheduleLookupKey,
+    right: &GeneratedScheduleLookupKey,
 ) -> std::cmp::Ordering {
-    let left_main = (left.main.num_vars, left.main.num_polynomials);
-    let right_main = (right.main.num_vars, right.main.num_polynomials);
+    let left_main = (left.final_group.num_vars, left.final_group.num_polynomials);
+    let right_main = (
+        right.final_group.num_vars,
+        right.final_group.num_polynomials,
+    );
     left_main
         .cmp(&right_main)
         .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
@@ -472,7 +474,7 @@ fn group_batch_key_cmp(
 }
 
 fn precommitted_group_sort_key(
-    key: &GeneratedPrecommittedGroupKey,
+    key: &GeneratedCommitmentGroupLayout,
 ) -> (usize, usize, usize, usize, u32, usize, usize) {
     (
         key.key.num_vars,
@@ -485,12 +487,12 @@ fn precommitted_group_sort_key(
     )
 }
 
-fn write_generated_schedule_key(h: &mut Fnv64, key: GeneratedScheduleKey) {
+fn write_generated_schedule_key(h: &mut Fnv64, key: GeneratedCommitmentGroupScheduleKey) {
     h.write_u64(key.num_vars as u64);
     h.write_u64(key.num_polynomials as u64);
 }
 
-fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &GeneratedPrecommittedGroupKey) {
+fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &GeneratedCommitmentGroupLayout) {
     write_generated_schedule_key(h, key.key);
     h.write_u64(key.m_vars as u64);
     h.write_u64(key.r_vars as u64);
@@ -587,7 +589,7 @@ mod tests {
 
     fn sample_entry() -> GeneratedScheduleTableEntry {
         GeneratedScheduleTableEntry {
-            key: GeneratedScheduleKey {
+            key: GeneratedCommitmentGroupScheduleKey {
                 num_vars: 16,
                 num_polynomials: 1,
             },

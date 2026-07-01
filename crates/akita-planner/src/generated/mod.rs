@@ -44,14 +44,14 @@ pub enum GeneratedStep {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedScheduleKey {
+pub struct GeneratedCommitmentGroupScheduleKey {
     pub num_vars: usize,
     pub num_polynomials: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedPrecommittedGroupKey {
-    pub key: GeneratedScheduleKey,
+pub struct GeneratedCommitmentGroupLayout {
+    pub key: GeneratedCommitmentGroupScheduleKey,
     pub m_vars: usize,
     pub r_vars: usize,
     pub log_basis: u32,
@@ -60,21 +60,21 @@ pub struct GeneratedPrecommittedGroupKey {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedGroupBatchScheduleKey {
-    /// Main group shape for the final commitment.
-    pub main: GeneratedScheduleKey,
-    pub precommitteds: &'static [GeneratedPrecommittedGroupKey],
+pub struct GeneratedScheduleLookupKey {
+    /// Final group shape for the grouped root commitment.
+    pub final_group: GeneratedCommitmentGroupScheduleKey,
+    pub precommitteds: &'static [GeneratedCommitmentGroupLayout],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedGroupBatchScheduleTableEntry {
-    pub key: GeneratedGroupBatchScheduleKey,
+    pub key: GeneratedScheduleLookupKey,
     pub steps: &'static [GeneratedStep],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleTableEntry {
-    pub key: GeneratedScheduleKey,
+    pub key: GeneratedCommitmentGroupScheduleKey,
     pub steps: &'static [GeneratedStep],
 }
 
@@ -114,7 +114,10 @@ use core::cmp::Ordering;
 
 /// Lexicographic order used by shipped catalog emission: `num_polynomials`, then `num_vars`.
 #[inline]
-pub fn catalog_key_cmp(a: GeneratedScheduleKey, b: GeneratedScheduleKey) -> Ordering {
+pub fn catalog_key_cmp(
+    a: GeneratedCommitmentGroupScheduleKey,
+    b: GeneratedCommitmentGroupScheduleKey,
+) -> Ordering {
     a.num_polynomials
         .cmp(&b.num_polynomials)
         .then_with(|| a.num_vars.cmp(&b.num_vars))
@@ -129,7 +132,7 @@ pub fn catalog_entries_sorted_for_lookup(entries: &[GeneratedScheduleTableEntry]
 
 pub fn table_entry(
     table: GeneratedScheduleTable,
-    key: GeneratedScheduleKey,
+    key: GeneratedCommitmentGroupScheduleKey,
 ) -> Option<&'static GeneratedScheduleTableEntry> {
     debug_assert!(catalog_entries_sorted_for_lookup(table.entries));
     table
@@ -141,7 +144,7 @@ pub fn table_entry(
 
 pub fn group_batch_table_entry(
     table: GeneratedScheduleTable,
-    key: &akita_types::GroupBatchAkitaScheduleLookupKey,
+    key: &akita_types::AkitaScheduleLookupKey,
 ) -> Option<&'static GeneratedGroupBatchScheduleTableEntry> {
     table
         .group_batch_entries
@@ -150,13 +153,13 @@ pub fn group_batch_table_entry(
 }
 
 fn group_batch_key_eq(
-    generated: &GeneratedGroupBatchScheduleKey,
-    key: &akita_types::GroupBatchAkitaScheduleLookupKey,
+    generated: &GeneratedScheduleLookupKey,
+    key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
-    generated.main
-        == GeneratedScheduleKey {
-            num_vars: key.main.num_vars,
-            num_polynomials: key.main.num_polynomials,
+    generated.final_group
+        == GeneratedCommitmentGroupScheduleKey {
+            num_vars: key.final_group.num_vars,
+            num_polynomials: key.final_group.num_polynomials,
         }
         && generated.precommitteds.len() == key.precommitteds.len()
         && generated
@@ -167,11 +170,11 @@ fn group_batch_key_eq(
 }
 
 fn precommitted_group_key_eq(
-    generated: &GeneratedPrecommittedGroupKey,
+    generated: &GeneratedCommitmentGroupLayout,
     layout: &akita_types::CommitmentGroupLayout,
 ) -> bool {
     generated.key
-        == GeneratedScheduleKey {
+        == GeneratedCommitmentGroupScheduleKey {
             num_vars: layout.key.num_vars,
             num_polynomials: layout.key.num_polynomials,
         }

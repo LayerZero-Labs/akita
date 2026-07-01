@@ -10,8 +10,8 @@ use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, DecompositionParams, GroupBatchAkitaScheduleLookupKey, LevelParams,
-    Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams, Schedule,
+    SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 use std::marker::PhantomData;
 
@@ -24,9 +24,7 @@ impl<Cfg: CommitmentConfig> MultiGroupBatchConfig<Cfg> {
     ///
     /// Unlike scalar [`CommitmentConfig::runtime_schedule`], this consumes the
     /// full group-batch key so the grouped root cannot alias a scalar table key.
-    pub fn runtime_schedule(
-        key: &GroupBatchAkitaScheduleLookupKey,
-    ) -> Result<Schedule, AkitaError> {
+    pub fn runtime_schedule(key: &AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
         akita_planner::resolve_group_batch_schedule(
             key,
             &policy_of::<Cfg>(),
@@ -41,7 +39,7 @@ impl<Cfg: CommitmentConfig> MultiGroupBatchConfig<Cfg> {
     /// These are derived from the grouped runtime schedule and are intentionally
     /// not the conservative precommit params.
     pub fn get_params_for_batched_commitment(
-        key: &GroupBatchAkitaScheduleLookupKey,
+        key: &AkitaScheduleLookupKey,
     ) -> Result<LevelParams, AkitaError> {
         let schedule = Self::runtime_schedule(key)?;
         Ok(root_commit_params(&schedule, "grouped runtime schedule")?.clone())

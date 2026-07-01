@@ -40,7 +40,7 @@ use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleLookupKey, DirectStep, FoldStep, GroupBatchAkitaScheduleLookupKey, Schedule, Step,
+    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, DirectStep, FoldStep, Schedule, Step,
 };
 
 #[cfg(feature = "all-schedules")]
@@ -75,7 +75,7 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
 fn assert_table_hit(
     module_name: &str,
     catalog: &akita_planner::GeneratedScheduleTable,
-    keys: &[AkitaScheduleLookupKey],
+    keys: &[CommitmentGroupScheduleKey],
 ) {
     use akita_planner::generated::table_entry;
 
@@ -91,7 +91,7 @@ fn assert_table_hit(
 #[cfg(feature = "all-schedules")]
 fn prepare_family_catalog<Cfg: CommitmentConfig>(
     module_name: &str,
-    keys: &[AkitaScheduleLookupKey],
+    keys: &[CommitmentGroupScheduleKey],
 ) -> akita_planner::GeneratedScheduleTable {
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
@@ -114,7 +114,7 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
 #[cfg(feature = "all-schedules")]
 fn family_catalog(
     family: &GeneratedFamily,
-    keys: &[AkitaScheduleLookupKey],
+    keys: &[CommitmentGroupScheduleKey],
 ) -> akita_planner::GeneratedScheduleTable {
     match family.module_name {
         "fp128_d128_full" => prepare_family_catalog::<fp128::D128Full>(family.module_name, keys),
@@ -140,7 +140,7 @@ fn family_catalog(
 
 fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     module_name: &str,
-    keys: &[GroupBatchAkitaScheduleLookupKey],
+    keys: &[AkitaScheduleLookupKey],
 ) {
     if keys.is_empty() {
         return;
@@ -160,10 +160,7 @@ fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     );
 }
 
-fn assert_family_group_batch_table_hit(
-    family: &GeneratedFamily,
-    keys: &[GroupBatchAkitaScheduleLookupKey],
-) {
+fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaScheduleLookupKey]) {
     match family.module_name {
         "fp128_d128_full" => {
             assert_group_batch_table_hits::<fp128::D128Full>(family.module_name, keys)
@@ -201,14 +198,14 @@ fn assert_family_group_batch_table_hit(
 }
 
 fn table_backed_group_batch_schedule<Cfg: CommitmentConfig>(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
     Cfg::get_group_batch_schedule(key)
 }
 
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
     match family.module_name {
         "fp128_d128_full" => table_backed_group_batch_schedule::<fp128::D128Full>(key),
@@ -234,7 +231,7 @@ fn resolve_family_group_batch_schedule(
 fn table_backed_expanded(
     family: &GeneratedFamily,
     catalog: akita_planner::GeneratedScheduleTable,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
 ) -> Result<Schedule, akita_field::AkitaError> {
     use akita_planner::generated::table_entry;
 
@@ -327,7 +324,7 @@ fn worker_count() -> usize {
 fn compare_scalar_key(
     family: &GeneratedFamily,
     catalog: akita_planner::GeneratedScheduleTable,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
 ) -> Option<Mismatch> {
     let table_backed = table_backed_expanded(family, catalog, key).unwrap_or_else(|e| {
         panic!(
@@ -354,7 +351,10 @@ fn compare_scalar_key(
 }
 
 #[cfg(not(feature = "all-schedules"))]
-fn compare_scalar_key(family: &GeneratedFamily, key: AkitaScheduleLookupKey) -> Option<Mismatch> {
+fn compare_scalar_key(
+    family: &GeneratedFamily,
+    key: CommitmentGroupScheduleKey,
+) -> Option<Mismatch> {
     let table_backed = (family.table_backed)(key).unwrap_or_else(|e| {
         panic!(
             "table-backed schedule failed for family {} key={key:?}: {e}",
@@ -382,7 +382,7 @@ fn compare_scalar_key(family: &GeneratedFamily, key: AkitaScheduleLookupKey) -> 
 #[cfg(feature = "all-schedules")]
 fn check_scalar_keys(
     family: &GeneratedFamily,
-    keys: &[AkitaScheduleLookupKey],
+    keys: &[CommitmentGroupScheduleKey],
     catalog: akita_planner::GeneratedScheduleTable,
     into: &mut Vec<Mismatch>,
 ) {
@@ -422,7 +422,7 @@ fn check_scalar_keys(
 #[cfg(not(feature = "all-schedules"))]
 fn check_scalar_keys(
     family: &GeneratedFamily,
-    keys: &[AkitaScheduleLookupKey],
+    keys: &[CommitmentGroupScheduleKey],
     into: &mut Vec<Mismatch>,
 ) {
     let workers = worker_count();
@@ -460,7 +460,7 @@ fn check_scalar_keys(
 
 fn compare_group_batch_key(
     family: &GeneratedFamily,
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
 ) -> Option<Mismatch> {
     let table_backed = resolve_family_group_batch_schedule(family, key).unwrap_or_else(|e| {
         panic!(
@@ -488,7 +488,7 @@ fn compare_group_batch_key(
 
 fn check_group_batch_keys(
     family: &GeneratedFamily,
-    keys: &[GroupBatchAkitaScheduleLookupKey],
+    keys: &[AkitaScheduleLookupKey],
     into: &mut Vec<Mismatch>,
 ) {
     if keys.is_empty() {
@@ -532,7 +532,7 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
         return;
     }
 
-    let keys: Vec<AkitaScheduleLookupKey> = family_keys(family)
+    let keys: Vec<CommitmentGroupScheduleKey> = family_keys(family)
         .unwrap_or_else(|e| panic!("family {} key enumeration failed: {e}", family.module_name));
     let group_batch_keys = (family.group_batch_keys)(family).unwrap_or_else(|e| {
         panic!(

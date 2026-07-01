@@ -132,7 +132,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         }
         // Inject the uncommittable root-direct schedule so the default
         // `get_params_for_batched_commitment` hits its rejection branch.
-        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        fn runtime_schedule(_key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
             Ok(Schedule {
                 steps: vec![Step::Direct(DirectStep {
                     current_w_len: 1 << 10,
@@ -201,7 +201,7 @@ fn setup_matrix_envelope_does_not_consult_group_commit_layout() {
             (3, 3)
         }
 
-        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        fn runtime_schedule(_key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
             Ok(Schedule {
                 steps: vec![Step::Direct(DirectStep {
                     current_w_len: 1 << 8,
@@ -214,7 +214,7 @@ fn setup_matrix_envelope_does_not_consult_group_commit_layout() {
         }
 
         fn get_params_for_group_commit(
-            _key: &AkitaScheduleLookupKey,
+            _key: &CommitmentGroupScheduleKey,
         ) -> Result<LevelParams, AkitaError> {
             PROOF_OPTIMIZED_GROUP_COMMIT_CALLED.store(true, Ordering::SeqCst);
             Err(AkitaError::InvalidSetup(
@@ -415,10 +415,14 @@ fn presets_select_expected_sis_modulus_family() {
 // ----- migrated from former `schedule_policy::tests` -------------------
 
 fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
-    assert_plan_matches_runtime_w_sizes_for_key::<Cfg>(AkitaScheduleLookupKey::singleton(num_vars));
+    assert_plan_matches_runtime_w_sizes_for_key::<Cfg>(CommitmentGroupScheduleKey::singleton(
+        num_vars,
+    ));
 }
 
-fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) {
+fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(
+    key: CommitmentGroupScheduleKey,
+) {
     let schedule = Cfg::runtime_schedule(key).expect("planner should succeed");
     let num_fold_levels = schedule.num_fold_levels();
     for (idx, fold) in schedule.fold_steps().enumerate() {
@@ -456,7 +460,7 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
 fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     let policy = crate::policy_of::<Cfg>();
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
+        let key = CommitmentGroupScheduleKey::new(entry.key.num_vars, entry.key.num_polynomials);
         schedule_from_entry(
             entry,
             key,
@@ -501,7 +505,7 @@ fn small_field_single_term_safe_width<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "schedules-default")]
 fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     level: &LevelParams,
 ) {
     assert!(
@@ -535,7 +539,7 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
 ) {
     let policy = crate::policy_of::<Cfg>();
     for entry in table.entries {
-        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
+        let key = CommitmentGroupScheduleKey::new(entry.key.num_vars, entry.key.num_polynomials);
         let schedule = schedule_from_entry(
             entry,
             key,
@@ -560,7 +564,7 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         .iter()
         .filter(|entry| entry.key.num_polynomials > 1)
     {
-        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
+        let key = CommitmentGroupScheduleKey::new(entry.key.num_vars, entry.key.num_polynomials);
         let generated = schedule_from_entry(
             entry,
             key,
@@ -654,14 +658,14 @@ fn batched_root_plan_matches_runtime_next_w_len() {
         .iter()
         .find(|entry| entry.key.num_polynomials > 1)
         .expect("generated table should contain a non-singleton batched-root row");
-    let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
+    let key = CommitmentGroupScheduleKey::new(entry.key.num_vars, entry.key.num_polynomials);
 
     assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
 }
 
 #[test]
 fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
-    let key = AkitaScheduleLookupKey::new(30, 4);
+    let key = CommitmentGroupScheduleKey::new(30, 4);
     let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
         .expect("config schedule should succeed");
 
@@ -692,7 +696,7 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
 fn tight_block_len_is_no_larger_than_pow2() {
     for num_vars in [14, 20, 30] {
         let schedule =
-            fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars))
+            fp128::D64Full::runtime_schedule(CommitmentGroupScheduleKey::singleton(num_vars))
                 .expect("planner should succeed");
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;

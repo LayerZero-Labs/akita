@@ -69,20 +69,19 @@ impl ExecutionSchedule {
     }
 }
 
-/// Public runtime key that selects a concrete root schedule context.
+/// Per-group schedule lookup dimensions for one commitment group.
 ///
-/// Describes the supported scalar same-point opening batch: `num_vars`
-/// coordinates in the shared point and `num_polynomials` committed polynomials
-/// opened at that point (one claim per polynomial).
+/// Describes one group's opening geometry: `num_vars` coordinates in the shared
+/// point and `num_polynomials` committed polynomials opened at that point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AkitaScheduleLookupKey {
+pub struct CommitmentGroupScheduleKey {
     /// Root polynomial variable count.
     pub num_vars: usize,
-    /// Number of polynomials in the single commitment group.
+    /// Number of polynomials in this commitment group.
     pub num_polynomials: usize,
 }
 
-impl AkitaScheduleLookupKey {
+impl CommitmentGroupScheduleKey {
     /// Singleton root-opening context.
     pub const fn singleton(num_vars: usize) -> Self {
         Self {
@@ -138,7 +137,7 @@ impl AkitaScheduleLookupKey {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CommitmentGroupLayout {
     /// Per-group root schedule entry shape.
-    pub key: AkitaScheduleLookupKey,
+    pub key: CommitmentGroupScheduleKey,
     /// Root block size exponent used for this group's committed `t_hat` shape.
     pub m_vars: usize,
     /// Root block count exponent used for this group's committed `t_hat` shape.
@@ -153,7 +152,7 @@ pub struct CommitmentGroupLayout {
 
 impl CommitmentGroupLayout {
     /// Build frozen group metadata from the concrete commit params.
-    pub fn from_params(key: AkitaScheduleLookupKey, params: &LevelParams) -> Self {
+    pub fn from_params(key: CommitmentGroupScheduleKey, params: &LevelParams) -> Self {
         Self {
             key,
             m_vars: params.m_vars,
@@ -231,24 +230,36 @@ impl CommitmentGroupLayout {
     }
 }
 
-/// Grouped root schedule lookup key for a main commitment plus earlier groups.
+/// Canonical runtime schedule lookup key.
+///
+/// Scalar same-point openings use an empty `precommitteds` vector and store the
+/// sole group in `final_group`. Multi-group roots list earlier groups in
+/// `precommitteds` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GroupBatchAkitaScheduleLookupKey {
-    /// Main group shape for the final commitment.
-    pub main: AkitaScheduleLookupKey,
+pub struct AkitaScheduleLookupKey {
+    /// Final group shape for the grouped root commitment.
+    pub final_group: CommitmentGroupScheduleKey,
     /// Previously committed groups in caller-supplied transcript order.
     pub precommitteds: Vec<CommitmentGroupLayout>,
 }
 
-impl GroupBatchAkitaScheduleLookupKey {
-    /// Number of commitment groups in this grouped root.
+impl AkitaScheduleLookupKey {
+    /// Scalar root-opening context with no precommitted groups.
+    pub fn single(final_group: CommitmentGroupScheduleKey) -> Self {
+        Self {
+            final_group,
+            precommitteds: Vec::new(),
+        }
+    }
+
+    /// Number of commitment groups in this schedule key.
     pub fn num_commitment_groups(&self) -> usize {
         self.precommitteds.len() + 1
     }
 
-    /// Total number of polynomials across the main and precommitted groups.
+    /// Total number of polynomials across the final and precommitted groups.
     pub fn num_polynomials(&self) -> Result<usize, AkitaError> {
-        let mut total = self.main.num_polynomials;
+        let mut total = self.final_group.num_polynomials;
         for layout in &self.precommitteds {
             total = total
                 .checked_add(layout.key.num_polynomials)
@@ -261,12 +272,12 @@ impl GroupBatchAkitaScheduleLookupKey {
 
     /// Validate per-group metadata.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        self.main.validate()?;
+        self.final_group.validate()?;
         for layout in &self.precommitteds {
             layout.validate()?;
-            if layout.key.num_vars > self.main.num_vars {
+            if layout.key.num_vars > self.final_group.num_vars {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root requires precommitted groups to have at most the main num_vars"
+                    "grouped root requires precommitted groups to have at most the final num_vars"
                         .to_string(),
                 ));
             }
@@ -985,30 +996,30 @@ mod tests {
     #[test]
     fn new_from_opening_batch_rejects_multi_group() {
         let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
-        let err = AkitaScheduleLookupKey::new_from_opening_batch(&batch)
+        let err = CommitmentGroupScheduleKey::new_from_opening_batch(&batch)
             .expect_err("scalar lookup must reject grouped batches");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
     fn validate_rejects_zero_dimensions() {
-        assert!(AkitaScheduleLookupKey::new(0, 1).validate().is_err());
-        assert!(AkitaScheduleLookupKey::new(20, 0).validate().is_err());
-        assert!(AkitaScheduleLookupKey::new(20, 4).validate().is_ok());
+        assert!(CommitmentGroupScheduleKey::new(0, 1).validate().is_err());
+        assert!(CommitmentGroupScheduleKey::new(20, 0).validate().is_err());
+        assert!(CommitmentGroupScheduleKey::new(20, 4).validate().is_ok());
     }
 
     #[test]
     fn group_batch_key_rejects_precommitted_num_vars_above_main() {
         let pre = CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(24, 1),
+            key: CommitmentGroupScheduleKey::new(24, 1),
             m_vars: 4,
             r_vars: 2,
             log_basis: 2,
             n_a: 3,
             conservative_n_b: 4,
         };
-        let grouped = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 3),
+        let grouped = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 3),
             precommitteds: vec![pre],
         };
 
@@ -1021,15 +1032,15 @@ mod tests {
     #[test]
     fn group_batch_key_allows_precommitted_num_vars_above_half_main() {
         let pre_small = CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(12, 1),
+            key: CommitmentGroupScheduleKey::new(12, 1),
             m_vars: 4,
             r_vars: 2,
             log_basis: 2,
             n_a: 3,
             conservative_n_b: 4,
         };
-        let grouped = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 3),
+        let grouped = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 3),
             precommitteds: vec![pre_small],
         };
 
@@ -1041,15 +1052,15 @@ mod tests {
     #[test]
     fn group_batch_key_allows_mixed_polynomial_counts() {
         let pre = CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(10, 1),
+            key: CommitmentGroupScheduleKey::new(10, 1),
             m_vars: 12,
             r_vars: 2,
             log_basis: 2,
             n_a: 3,
             conservative_n_b: 4,
         };
-        let grouped = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 3),
+        let grouped = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 3),
             precommitteds: vec![pre],
         };
 
@@ -1062,7 +1073,7 @@ mod tests {
     #[test]
     fn validate_frozen_precommit_rejects_geometry_mismatch() {
         let layout = CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(20, 1),
+            key: CommitmentGroupScheduleKey::new(20, 1),
             m_vars: 4,
             r_vars: 2,
             log_basis: 2,

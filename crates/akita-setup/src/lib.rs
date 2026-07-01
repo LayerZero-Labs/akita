@@ -21,7 +21,7 @@ use akita_serialization::{
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
+    detect_field_modulus, digest_effective_schedule, AkitaSetupSeed, CommitmentGroupScheduleKey,
     FlatMatrix, SetupPrefixProverRegistry,
 };
 #[cfg(test)]
@@ -142,7 +142,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule_lookup_key = AkitaScheduleLookupKey::new(max_num_vars, max_num_batched_polys);
+    let schedule_lookup_key = CommitmentGroupScheduleKey::new(max_num_vars, max_num_batched_polys);
     // Fingerprint the resolved schedule shape so cached setup files get
     // invalidated when the planner's per-level layout (including the
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
