@@ -160,6 +160,30 @@ Downstream (Jolt) ships `jolt-schedules` and sets `JoltD64OneHot::schedule_catal
 to that table. Akita benches enable only the families the benchmark matrix needs via
 the `profile-ci` feature.
 
+#### Canonical entry walker (implemented)
+
+Compact table rows are expanded through a single walker,
+[`walk_generated_schedule_entry`](../crates/akita-planner/src/generated/walk.rs),
+with two modes:
+
+- **`Validate`**: admissibility checks only (`validate_generated_schedule_entry`).
+- **`Materialize`**: the same walk plus a runtime [`Schedule`]
+  (`schedule_from_entry`).
+
+Both paths audit SIS ranks, witness transitions, and proof-byte totals in one pass.
+There is no second expand path on catalog hits: `resolve_schedule` validates catalog
+identity, then calls `schedule_from_entry` once.
+
+**Catalog identity cache.** `validate_catalog_identity` memoizes successful checks
+per `(table pointer, policy digest, identity digest)` and re-checks only the
+ring-challenge hook digest on cache hits (hooks can vary per caller without
+re-walking every entry).
+
+**CI drift dedup.** `generated_schedule_tables_match_find_schedule` validates each
+shipped family once via `validate_generated_schedule_table`, then compares DP output
+per key through `schedule_from_entry` (table hit) instead of re-running full
+`resolve_schedule` validation on every key.
+
 ### Invariants
 
 - **DP is the source of truth.** Any shipped catalog row MUST match

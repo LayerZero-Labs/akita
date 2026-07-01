@@ -9,14 +9,14 @@ use akita_types::sis::{
     AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, CommitmentGroupLayout, DecompositionParams, DirectStep, FoldStep,
-    GroupBatchAkitaScheduleLookupKey, GroupRootParams, LevelParams, MRowLayout, Schedule, Step,
+    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentGroupLayout,
+    DecompositionParams, DirectStep, FoldStep, GroupBatchAkitaScheduleLookupKey, GroupRootParams,
+    LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, extension_opening_reduction_level_bytes, RingChallengeConfigFn,
-    ScheduleMemo, SuffixCtx,
+    derive_optimal_suffix_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
 };
 use crate::PlannerPolicy;
 
@@ -717,9 +717,10 @@ pub fn find_group_batch_schedule(
                 continue;
             }
             let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-                policy,
-                root_eor_key,
+                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                policy.claim_ext_degree,
                 0,
+                root_eor_key,
                 root_current_w_len,
             ) else {
                 continue;

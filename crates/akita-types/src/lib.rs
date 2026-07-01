@@ -54,8 +54,9 @@ pub use instance_descriptor::{
 };
 pub use layout::{
     basis_weights, block_rings_at_opening, direct_witness_bytes,
-    extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
-    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
+    extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
+    gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
+    padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, GroupRootParams, LevelParams, MRowLayout,
     RingMatrixView, RingOpeningPoint,

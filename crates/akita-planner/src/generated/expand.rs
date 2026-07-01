@@ -23,10 +23,34 @@ use crate::generated::{
 use crate::PlannerPolicy;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_t,
-    rounded_up_collision_norm_w,
+    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
+    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
+    rounded_up_collision_norm_w, SisModulusFamily,
 };
 use akita_types::{AjtaiKeyParams, DecompositionParams, GroupRootParams, LevelParams};
+
+fn require_exact_rank(
+    role: &str,
+    sis_family: SisModulusFamily,
+    ring_d: usize,
+    collision_l2_sq: u128,
+    width: usize,
+    stored_rank: usize,
+) -> Result<(), AkitaError> {
+    let expected = min_secure_rank(sis_family, ring_d as u32, collision_l2_sq, width as u64)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "no audited {role}-role rank for generated schedule \
+                 (family={sis_family:?}, d={ring_d}, collision_l2_sq={collision_l2_sq}, width={width})"
+            ))
+        })?;
+    if stored_rank != expected {
+        return Err(AkitaError::InvalidSetup(format!(
+            "generated schedule {role}-rank mismatch: stored n_{role} = {stored_rank}, recomputed n_{role} = {expected}"
+        )));
+    }
+    Ok(())
+}
 
 impl GeneratedFoldStep {
     /// Expand this compact fold step into the full committed
@@ -101,9 +125,9 @@ impl GeneratedFoldStep {
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
-        // batch factor (the root commits `num_claims` polynomials); the stored
-        // `n_a` sizes the B-role width. Unlike the planner DP, expansion audits
-        // the *shipped* ranks against these (norm, width) via `try_new`.
+        // batch factor (the root commits `num_claims` polynomials); `n_a` is the
+        // A-matrix row count. Unlike the planner DP, expansion audits the
+        // *shipped* ranks against these (norm, width) via `try_new`.
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
@@ -120,7 +144,7 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (a_bucket, expected_n_a) = committed_fold_a_role_rank(
+        let (a_bucket, _) = committed_fold_a_role_rank(
             sis_family,
             ring_d,
             decomp,
@@ -134,12 +158,14 @@ impl GeneratedFoldStep {
             inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
-        if self.n_a as usize != expected_n_a {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated schedule A-rank mismatch: stored n_a = {}, recomputed n_a = {expected_n_a}",
-                self.n_a
-            )));
-        }
+        require_exact_rank(
+            "a",
+            sis_family,
+            ring_d,
+            a_bucket,
+            inner_width,
+            self.n_a as usize,
+        )?;
 
         let b_bucket = rounded_up_collision_norm_t(sis_family, ring_d, log_basis)
             .ok_or_else(|| no_layout("B"))?;
@@ -183,6 +209,11 @@ impl GeneratedFoldStep {
                         "generated tiered step has tier_split <= 1".to_string(),
                     ));
                 }
+                if !policy.tiered {
+                    return Err(AkitaError::InvalidSetup(
+                        "generated tiered step is not allowed by the planner policy".to_string(),
+                    ));
+                }
                 if outer_width == 0 || !outer_width.is_multiple_of(f) {
                     return Err(AkitaError::InvalidSetup(
                         "generated tiered B' width does not divide the full outer width"
@@ -194,8 +225,12 @@ impl GeneratedFoldStep {
                     .checked_mul(self.n_b as usize)
                     .and_then(|w| w.checked_mul(num_digits_open_val))
                     .ok_or_else(|| no_layout("F"))?;
+                let f_bucket =
+                    rounded_up_collision_norm_tiered_commitment(sis_family, ring_d, log_basis)
+                        .ok_or_else(|| no_layout("F"))?;
+                require_exact_rank("f", sis_family, ring_d, f_bucket, f_width, n_f as usize)?;
                 let f_key =
-                    AjtaiKeyParams::try_new(sis_family, n_f as usize, f_width, b_bucket, ring_d)?;
+                    AjtaiKeyParams::try_new(sis_family, n_f as usize, f_width, f_bucket, ring_d)?;
                 (b_small_width, f, Some(f_key))
             }
             _ => {
@@ -205,6 +240,22 @@ impl GeneratedFoldStep {
                 ));
             }
         };
+        require_exact_rank(
+            "b",
+            sis_family,
+            ring_d,
+            b_bucket,
+            b_width,
+            self.n_b as usize,
+        )?;
+        require_exact_rank(
+            "d",
+            sis_family,
+            ring_d,
+            d_bucket,
+            d_matrix_width,
+            self.n_d as usize,
+        )?;
 
         // Audit each shipped rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead

@@ -19,7 +19,7 @@ use akita_types::sis::{
     rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
     DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
@@ -305,36 +305,6 @@ fn derive_candidate_level_params(
     )))
 }
 
-fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
-    let padded = len
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
-    Ok(padded.trailing_zeros() as usize)
-}
-
-pub(crate) fn extension_opening_reduction_level_bytes(
-    policy: &PlannerPolicy,
-    key: AkitaScheduleLookupKey,
-    fold_level: usize,
-    current_w_len: usize,
-) -> Result<usize, AkitaError> {
-    let width = policy.claim_ext_degree;
-    if width <= 1 {
-        return Ok(0);
-    }
-    let (partials, opening_vars) = if fold_level == 0 {
-        (width.saturating_mul(key.num_polynomials), key.num_vars)
-    } else {
-        (width, padded_boolean_vars(current_w_len)?)
-    };
-    extension_opening_reduction_proof_bytes(
-        policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-        partials,
-        opening_vars,
-        width,
-    )
-}
-
 /// A `Step::Fold`-first suffix schedule.
 ///
 /// The parent's proof-size formula needs the child's first fold params
@@ -517,9 +487,10 @@ pub(crate) fn derive_optimal_suffix_schedule(
             depth + 1,
         )?;
         let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-            policy,
-            AkitaScheduleLookupKey::singleton(num_vars),
+            policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+            policy.claim_ext_degree,
             level,
+            AkitaScheduleLookupKey::singleton(num_vars),
             current_witness_len,
         ) else {
             continue;
@@ -1036,9 +1007,13 @@ fn find_schedule_inner(
             if suffix.is_empty() {
                 continue;
             }
-            let Ok(eor_bytes) =
-                extension_opening_reduction_level_bytes(policy, key, 0, witness_len)
-            else {
+            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
+                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                policy.claim_ext_degree,
+                0,
+                key,
+                witness_len,
+            ) else {
                 continue;
             };
 

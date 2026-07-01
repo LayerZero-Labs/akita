@@ -2,6 +2,7 @@
 
 use akita_field::{AkitaError, CanonicalField};
 
+use crate::schedule::AkitaScheduleLookupKey;
 use crate::sis::compute_num_digits_full_field;
 use crate::{CleartextWitnessShape, LevelParams, MRowLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
 
@@ -84,6 +85,44 @@ pub fn extension_opening_reduction_proof_bytes(
             EXTENSION_OPENING_REDUCTION_DEGREE,
             elem_bytes,
         )))
+}
+
+/// Log2 of the next power-of-two Boolean cube width for recursive opening.
+pub fn padded_boolean_opening_vars(len: usize) -> Result<usize, AkitaError> {
+    let padded = len
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
+    Ok(padded.trailing_zeros() as usize)
+}
+
+/// Extension-opening reduction proof bytes for one fold level in a schedule.
+pub fn extension_opening_reduction_level_bytes(
+    challenge_field_bits: u32,
+    extension_opening_width: usize,
+    fold_level: usize,
+    key: AkitaScheduleLookupKey,
+    current_w_len: usize,
+) -> Result<usize, AkitaError> {
+    if extension_opening_width <= 1 {
+        return Ok(0);
+    }
+    let (partials, opening_vars) = if fold_level == 0 {
+        (
+            extension_opening_width.saturating_mul(key.num_polynomials),
+            key.num_vars,
+        )
+    } else {
+        (
+            extension_opening_width,
+            padded_boolean_opening_vars(current_w_len)?,
+        )
+    };
+    extension_opening_reduction_proof_bytes(
+        challenge_field_bits,
+        partials,
+        opening_vars,
+        extension_opening_width,
+    )
 }
 
 /// Planned recursive witness size in ring elements for a singleton fold.
