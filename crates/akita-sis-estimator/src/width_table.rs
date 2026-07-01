@@ -177,14 +177,14 @@ impl InfinityWidthRow {
     /// CSV header for row-oriented comparison artifacts.
     #[must_use]
     pub const fn csv_header() -> &'static str {
-        "family,d,rank,coeff_linf_bound,max_width,target_bits,search_cap,hit_cap,profile,max_rop_log2,next_rop_log2,max_beta,max_zeta,next_beta,next_zeta"
+        "family,d,rank,coeff_linf_bound,max_width,target_bits,search_cap,hit_cap,profile,max_rop_log2,next_rop_log2,max_security_margin_bits,next_failure_margin_bits,max_beta,max_zeta,next_beta,next_zeta"
     }
 
     /// Format one CSV row.
     #[must_use]
     pub fn to_csv_record(&self) -> String {
         format!(
-            "{},{},{},{},{},{:.17},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{:.17},{},{},{},{},{},{},{},{},{},{},{}",
             self.family.label(),
             self.d,
             self.rank,
@@ -196,6 +196,16 @@ impl InfinityWidthRow {
             self.profile.label(),
             cost_log2_text(self.max_cost.as_ref().map(|cost| cost.rop)),
             cost_log2_text(self.next_cost.as_ref().map(|cost| cost.rop)),
+            signed_margin_text(
+                self.max_cost
+                    .as_ref()
+                    .and_then(|cost| security_margin_bits(cost.rop, self.target_bits)),
+            ),
+            signed_margin_text(
+                self.next_cost
+                    .as_ref()
+                    .and_then(|cost| security_failure_margin_bits(cost.rop, self.target_bits)),
+            ),
             optional_u32_text(self.max_cost.as_ref().and_then(|cost| cost.beta)),
             optional_u64_text(self.max_cost.as_ref().and_then(|cost| cost.zeta)),
             optional_u32_text(self.next_cost.as_ref().and_then(|cost| cost.beta)),
@@ -531,6 +541,20 @@ fn security_met(rop: CostValue, target_bits: f64) -> bool {
     }
 }
 
+fn security_margin_bits(rop: CostValue, target_bits: f64) -> Option<f64> {
+    match rop {
+        CostValue::Infinity => None,
+        CostValue::Finite(cost) => Some(cost.log2 - target_bits),
+    }
+}
+
+fn security_failure_margin_bits(rop: CostValue, target_bits: f64) -> Option<f64> {
+    match rop {
+        CostValue::Infinity => None,
+        CostValue::Finite(cost) => Some(target_bits - cost.log2),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PrefixSearchResult {
     max_value: u64,
@@ -589,6 +613,10 @@ fn cost_log2_text(value: Option<CostValue>) -> String {
         Some(CostValue::Infinity) => "inf".to_string(),
         None => String::new(),
     }
+}
+
+fn signed_margin_text(value: Option<f64>) -> String {
+    value.map_or_else(String::new, |value| format!("{value:.12}"))
 }
 
 fn optional_u32_text(value: Option<u32>) -> String {
@@ -661,6 +689,13 @@ mod tests {
                 hit_cap: false,
             }
         );
+    }
+
+    #[test]
+    fn infinity_csv_header_includes_boundary_margins() {
+        let header = InfinityWidthRow::csv_header();
+        assert!(header.contains("max_security_margin_bits"));
+        assert!(header.contains("next_failure_margin_bits"));
     }
 
     #[test]

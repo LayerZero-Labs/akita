@@ -27,6 +27,12 @@ profile. That profile uses Python-compatible local beta and zeta search inside
 each table row. Parallel generation parallelizes rows; it does not make one
 row's optimizer exhaustive.
 
+CSV table-generation artifacts include `max_security_margin_bits` and
+`next_failure_margin_bits` so review can see how close each binary-searched
+width boundary is to the target floor. Narrow margins are not verifier-visible
+state, but they are sensitive provenance and should be audited before treating a
+new table as a durable security floor.
+
 The planner derives role bounds as coefficient-`L∞` values because those are the
 values enforced by the protocol. It does not convert production role bounds
 through a Euclidean `d * B^2` key. The Euclidean estimator code remains an

@@ -132,6 +132,12 @@ unambiguously under the cutover.
   planner only checks `width <= max_width`, but they reduce measurement
   precision and may hide opportunities to lower ranks.
 
+- **Boundary margins are provenance.** CSV generation must expose how far the
+  accepted `max_width` is above the security floor and how far the rejected
+  `max_width + 1` is below it. Rows with sub-bit margins are valid brackets, but
+  they are sensitive to optimizer and numeric changes and should be called out
+  in review.
+
 ### Non-Goals
 
 - Runtime on-demand lattice estimation.
@@ -212,6 +218,11 @@ This PR uses `local-minimum`, not exhaustive search, for the production table.
 That choice must be visible in generated table headers and review notes.
 Exhaustive spot checks remain useful review evidence, but the checked-in table
 provenance is the local-minimum profile.
+
+For targeted provenance checks, `sis_estimator_once` accepts
+`--profile local-minimum|exhaustive-serial|exhaustive-parallel`. Use fixed-width
+or fixed-zeta probes around sensitive table rows when full exhaustive table
+generation is too slow.
 
 ### Performance And Proof Size
 
