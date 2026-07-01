@@ -82,7 +82,7 @@ where
             proof,
             setup,
             transcript,
-            commitment_view,
+            commitment,
             &openings,
             &opening_batch,
             shared_opening_point,
@@ -101,15 +101,14 @@ where
 /// Ring-dimension-typed root-fold replay kernel.
 ///
 /// Reached only through [`verify_root`]'s single `dispatch_ring_dim_result!`
-/// boundary; `D` is the schedule's root ring dimension. The commitment is
-/// reconstructed from its already-validated flat [`RingView`] into typed rings
-/// here, never threaded as `D` across the public API.
+/// boundary; `D` is the schedule's root ring dimension. Flat `v` and commitment
+/// buffers are reinterpreted under `D` inside [`verify_fold`].
 #[allow(clippy::too_many_arguments)]
 fn verify_root_inner<F, E, T, const D: usize>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    commitment_view: RingView<'_, F>,
+    commitment: &RingVec<F>,
     openings: &[E],
     opening_batch: &OpeningBatchShape,
     shared_opening_point: &[E],
@@ -128,13 +127,11 @@ where
     T: Transcript<F>,
 {
     validate_level_dispatch::<D>(root_lp)?;
-    // Reconstruct the validated flat commitment as typed rings for the kernel.
-    let commitment_rings: Vec<CyclotomicRing<F, D>> = commitment_view
-        .coeffs()
-        .chunks_exact(D)
-        .map(CyclotomicRing::from_slice)
-        .collect();
-    let v_typed = proof.fold_v::<D>()?;
+    let v_storage = match proof {
+        AkitaBatchedRootProof::Fold(fold) => fold.v.clone(),
+        AkitaBatchedRootProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
+        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
+    };
 
     if extension_opening_reduction.is_none() {
         let prepared_point = prepare_opening_point::<F, E, D>(
@@ -241,14 +238,14 @@ where
         opening_batch.clone(),
         vec![CommitmentGroup {
             claims: openings.to_vec(),
-            commitment: commitment_rings.as_slice(),
+            commitment,
         }],
     )?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed,
+        v: v_storage,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

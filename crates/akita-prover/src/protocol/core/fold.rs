@@ -88,7 +88,7 @@ pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
     pub(in crate::protocol::core) trace_scale: E,
 }
 
-pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore, const D: usize> {
+pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) commitment: RingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
@@ -272,7 +272,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     block_order: BlockOrder,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-) -> Result<PreparedFold<F, E, D>, AkitaError>
+) -> Result<PreparedFold<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     E: FpExtEncoding<F>
@@ -433,7 +433,7 @@ where
 #[allow(clippy::needless_lifetimes)]
 fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R, const D: usize>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R, D>,
-) -> Result<PreparedFold<F, E, D>, AkitaError>
+) -> Result<PreparedFold<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
@@ -606,7 +606,7 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg, c
     transcript: &mut T,
     level: usize,
     scheduled: &ExecutionSchedule,
-    prepared_fold: PreparedFold<F, E, D>,
+    prepared_fold: PreparedFold<F, E>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,

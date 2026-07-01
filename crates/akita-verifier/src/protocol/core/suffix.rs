@@ -32,11 +32,10 @@ fn prepare_fold_data<'a, F, E, T, const D: usize>(
     proof: &'a AkitaLevelProof<F, E>,
     transcript: &mut T,
     current_state: &'a SuffixVerifierState<'a, F, E>,
-    commitment_rings: &'a [CyclotomicRing<F, D>],
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<PreparedFoldReplay<'a, F, E, D>, AkitaError>
+) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -46,11 +45,6 @@ where
     let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let m_row_layout = proof.m_row_layout();
-    // `v` and the current commitment are read D-free from their flat buffers;
-    // the typed reinterpretation under `D` happens here at the fold kernel
-    // boundary. `try_to_vec` validates the buffer is an exact multiple of `D`.
-    let v_typed = proof.v_as_ring_slice::<D>()?;
-    let commitment_u = commitment_rings;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
@@ -135,19 +129,23 @@ where
     };
 
     let fold_grind_nonce = proof.fold_grind_nonce();
+    let v_storage = match proof {
+        AkitaLevelProof::Intermediate { v, .. } => v.clone(),
+        AkitaLevelProof::Terminal { .. } => RingVec::from_coeffs(Vec::new()),
+    };
     let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
         current_state.opening_point.as_slice(),
         opening_batch,
         vec![CommitmentGroup {
             claims: openings,
-            commitment: commitment_u,
+            commitment: current_state.commitment,
         }],
     )?;
     Ok(PreparedFoldReplay {
         lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed,
+        v: v_storage,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
@@ -219,14 +217,10 @@ where
                 }
 
                 let challenges = dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    // Reconstruct the validated flat commitment as typed rings
-                    // for the kernel; owned for the duration of this arm.
-                    let commitment_rings = current_state.commitment.try_to_vec::<D_LEVEL>()?;
                     let prepared = prepare_fold_data::<F, E, T, D_LEVEL>(
                         level_proof,
                         transcript,
                         &current_state,
-                        &commitment_rings,
                         &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
@@ -274,12 +268,10 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    let commitment_rings = current_state.commitment.try_to_vec::<D_LEVEL>()?;
                     let prepared = prepare_fold_data::<F, E, T, D_LEVEL>(
                         terminal_proof,
                         transcript,
                         &current_state,
-                        &commitment_rings,
                         &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,

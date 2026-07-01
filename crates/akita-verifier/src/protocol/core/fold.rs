@@ -174,18 +174,12 @@ where
     })
 }
 
-pub(in crate::protocol::core) struct PreparedFoldReplay<
-    'a,
-    F: FieldCore,
-    E: FieldCore,
-    const D: usize,
-> {
+pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) lp: &'a LevelParams,
     pub(in crate::protocol::core) m_row_layout: MRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
-    pub(in crate::protocol::core) v: Vec<CyclotomicRing<F, D>>,
-    pub(in crate::protocol::core) opening_batch:
-        VerifierOpeningBatch<'a, E, &'a [CyclotomicRing<F, D>]>,
+    pub(in crate::protocol::core) v: RingVec<F>,
+    pub(in crate::protocol::core) opening_batch: VerifierOpeningBatch<'a, E, &'a RingVec<F>>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) ring_opening_point: RingOpeningPoint<F>,
     pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F>,
@@ -379,7 +373,7 @@ where
 pub(in crate::protocol::core) fn verify_fold<F, E, T, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    prepared: PreparedFoldReplay<'_, F, E, D>,
+    prepared: PreparedFoldReplay<'_, F, E>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -387,11 +381,12 @@ where
     T: Transcript<F>,
 {
     let opening_shape = prepared.opening_batch.to_shape();
-    let commitment_rows = prepared
+    let commitment = prepared
         .opening_batch
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
+    let commitment_rows = commitment.as_ring_slice::<D>()?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
             opening_shape.num_polynomials(),
@@ -399,9 +394,10 @@ where
         )?,
         prepared.fold_grind_nonce,
     )?;
+    let v_rings = prepared.v.as_ring_slice::<D>()?;
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
-        &prepared.v,
+        v_rings,
         prepared.lp.num_blocks,
         opening_shape.num_polynomials(),
         prepared.lp,
@@ -416,9 +412,8 @@ where
         MRowLayout::WithDBlock => prepared.lp.d_key.row_len(),
         MRowLayout::WithoutDBlock => 0,
     };
-    let v_ring = RingVec::from_ring_elems(&prepared.v);
     let y_v_slice = match prepared.m_row_layout {
-        MRowLayout::WithDBlock => v_ring.as_ring_slice::<D>()?,
+        MRowLayout::WithDBlock => v_rings,
         MRowLayout::WithoutDBlock => &[],
     };
     let relation_y = RingVec::from_ring_elems(&generate_y::<F, D>(
@@ -438,8 +433,8 @@ where
         gamma,
         row_coefficient_rings,
         relation_y,
-        v_ring,
-        D,
+        RingVec::from_ring_elems(v_rings),
+        prepared.lp.ring_dimension,
     )?;
     relation_instance.check_v_shape_for_level(prepared.lp)?;
     let ring_switch_replay = RingSwitchReplay {
