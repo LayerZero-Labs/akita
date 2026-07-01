@@ -2,23 +2,39 @@
 
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
-One canonical security narrative (not parallel truths): the hardness assumption,
-how Ajtai ranks connect to security bits, the weak-binding fold-price story, and
-a changelog footnote for the evolving norm regimes (anchored → committed-fold L∞
-→ proposed Euclidean model). Keep the marketing claim separate from audited
-reality (see [Introduction → Security status](../intro.md#security-status-honest)).
+One canonical security narrative: the hardness assumption, how Ajtai ranks
+connect to security bits, the weak-binding fold price, and the current SIS table
+model. Keep the marketing claim separate from audited reality. See
+[Introduction → Security status](../intro.md#security-status-honest).
 
 ## SIS / MSIS and Ajtai sizing
 
-The Module-SIS assumption, the SIS security-floor tables that map parameters to
-a minimum secure rank, the modulus families, and how the two norm models
-(ℓ∞ and ℓ₂) are priced.
+Production Ajtai key sizing uses generated Module-SIS width tables keyed by the
+minimum security floor, modulus family, ring dimension, and coefficient-`L∞`
+bound:
+
+```text
+(min_security_bits, family, ring_dimension, coeff_linf_bound)
+    -> max secure width by module rank
+```
+
+The first shipped production floor is 138 bits. A lookup for any other floor
+returns `None` until a matching table is generated and checked in.
+
+The planner derives role bounds as coefficient-`L∞` values because those are the
+values enforced by the protocol. It does not convert production role bounds
+through a Euclidean `d * B^2` key. The Euclidean estimator code remains an
+offline comparison path.
+
+The production lookup is table-only. Verifier-reachable code must reject a
+missing table row or unsupported floor with `AkitaError`; it must not run the
+estimator at verification time.
 
 **Sources to fold in**
 
-- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table.rs`.
+- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table.rs`, `norm_bound.rs`.
 - Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
-- `docs/security-posture.md`, `specs/akita-sis-consolidation.md`.
+- `docs/security-posture.md`, `specs/sis-linf-table-cutover.md`.
 
 ## Norm bounds and weak binding
 

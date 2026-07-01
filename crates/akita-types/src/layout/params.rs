@@ -233,21 +233,30 @@ impl LevelParams {
         Self {
             ring_dimension,
             log_basis,
-            a_key: AjtaiKeyParams {
-                row_len: n_a,
+            a_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
-            b_key: AjtaiKeyParams {
-                row_len: n_b,
+                n_a,
+                0,
+                0,
+                ring_dimension,
+            ),
+            b_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
-            d_key: AjtaiKeyParams {
-                row_len: n_d,
+                n_b,
+                0,
+                0,
+                ring_dimension,
+            ),
+            d_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
+                n_d,
+                0,
+                0,
+                ring_dimension,
+            ),
             num_blocks: 0,
             block_len: 0,
             m_vars: 0,
@@ -826,24 +835,27 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: self.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.sis_family,
+                self.a_key.min_security_bits(),
+                self.a_key.sis_family(),
                 self.a_key.row_len,
                 inner_width,
-                self.a_key.collision_l2_sq,
+                self.a_key.coeff_linf_bound(),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.sis_family,
+                self.b_key.min_security_bits(),
+                self.b_key.sis_family(),
                 self.b_key.row_len,
                 outer_width,
-                self.b_key.collision_l2_sq,
+                self.b_key.coeff_linf_bound(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.sis_family,
+                self.d_key.min_security_bits(),
+                self.d_key.sis_family(),
                 self.d_key.row_len,
                 d_matrix_width,
-                self.d_key.collision_l2_sq,
+                self.d_key.coeff_linf_bound(),
                 d,
             ),
             num_blocks,
@@ -877,39 +889,41 @@ impl LevelParams {
     /// from `other`.
     ///
     /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
-    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_l2_sq`
-    /// is not a layout field** — it is the SIS-floor bucket the rank
-    /// (`row_len`) was sized against — so it is preserved from `self`,
-    /// matching the placement of `row_len` and `sis_family`. Pulling
-    /// `collision_l2_sq` from `other` would lose the audited bucket when
-    /// the layout argument was constructed via
-    /// [`LevelParams::params_only`] (which leaves `collision_l2_sq = 0`)
-    /// or threaded through [`Self::with_decomp`], and would let the SIS
-    /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
+    /// `m_vars`, `r_vars`, and the commit/open digit counts. The audited
+    /// coefficient-L∞ SIS bucket is not a layout field: it is the bucket the
+    /// rank (`row_len`) was sized against, so it is preserved from `self`,
+    /// matching the placement of `row_len` and `sis_family`. Pulling the
+    /// bucket from `other` would lose the audited value when the layout
+    /// argument was constructed via [`LevelParams::params_only`] or threaded
+    /// through [`Self::with_decomp`], and would let the SIS audit at
+    /// [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Result<Self, AkitaError> {
         let d = self.ring_dimension;
         Self {
             ring_dimension: d,
             log_basis: other.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.sis_family,
+                self.a_key.min_security_bits(),
+                self.a_key.sis_family(),
                 self.a_key.row_len,
                 other.a_key.col_len,
-                self.a_key.collision_l2_sq,
+                self.a_key.coeff_linf_bound(),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.sis_family,
+                self.b_key.min_security_bits(),
+                self.b_key.sis_family(),
                 self.b_key.row_len,
                 other.b_key.col_len,
-                self.b_key.collision_l2_sq,
+                self.b_key.coeff_linf_bound(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.sis_family,
+                self.d_key.min_security_bits(),
+                self.d_key.sis_family(),
                 self.d_key.row_len,
                 other.d_key.col_len,
-                self.d_key.collision_l2_sq,
+                self.d_key.coeff_linf_bound(),
                 d,
             ),
             num_blocks: other.num_blocks,
@@ -923,7 +937,7 @@ impl LevelParams {
             onehot_chunk_size: other.onehot_chunk_size,
             // The tier (split factor + `f_key` rank/bucket) is sized against the
             // same SIS floor as the ranks, so it stays with `self`, matching the
-            // placement of `b_key`'s `row_len`/`collision_l2_sq`.
+            // placement of `b_key`'s `row_len`/coefficient-L∞ bucket.
             tier_split: self.tier_split,
             f_key: self.f_key.clone(),
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),

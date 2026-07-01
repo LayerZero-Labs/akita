@@ -6,7 +6,7 @@
 | Created       | 2026-07-01 |
 | Status        | active |
 | PR            | [#255](https://github.com/LayerZero-Labs/akita/pull/255) |
-| Supersedes    | `specs/sis-infinity-estimator-implementation-plan.md` Slice 7 |
+| Supersedes    | `specs/archive/2026-Q3/sis-infinity-estimator-implementation-plan.md` Slice 7, `specs/archive/2026-Q3/sis-euclidean-estimator.md` for production SIS lookup |
 | Superseded-by | |
 | Book-chapter  | |
 
@@ -382,9 +382,9 @@ cleanup. Required documentation work:
 Spec lifecycle work:
 
 - Mark this spec `implemented` and set `PR` before merge.
-- Update `specs/sis-infinity-estimator-implementation-plan.md` so Slice 7 points
+- Update `specs/archive/2026-Q3/sis-infinity-estimator-implementation-plan.md` so Slice 7 points
   to this spec and does not remain a live contradictory plan.
-- Revisit `specs/sis-euclidean-estimator.md`; after this cutover, it should be
+- Revisit `specs/archive/2026-Q3/sis-euclidean-estimator.md`; after this cutover, it should be
   either historical/offline-only or archived once durable Euclidean-generator
   notes are folded into docs.
 - Revisit `specs/weak-binding-norm-fix.md`,
@@ -433,7 +433,7 @@ Risk-first checks:
 - `crates/akita-planner/src/generated/expand.rs`
 - `crates/akita-config/src/bin/gen_schedule_tables.rs`
 - `specs/sis-infinity-estimator-crate.md`
-- `specs/sis-infinity-estimator-implementation-plan.md`
-- `specs/sis-euclidean-estimator.md`
+- `specs/archive/2026-Q3/sis-infinity-estimator-implementation-plan.md`
+- `specs/archive/2026-Q3/sis-euclidean-estimator.md`
 - `specs/schedule-catalog-ownership.md`
 - `docs/documentation.md`

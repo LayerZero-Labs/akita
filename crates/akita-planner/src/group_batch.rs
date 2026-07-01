@@ -5,8 +5,8 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_fold, num_digits_open,
-    num_digits_s_commit, rounded_up_collision_norm_t, rounded_up_collision_norm_w, AjtaiKeyParams,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    num_digits_s_commit, rounded_up_collision_linf_t, rounded_up_collision_linf_w, AjtaiKeyParams,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupLayout,
@@ -16,6 +16,15 @@ use akita_types::{
 
 use crate::schedule_params::RingChallengeConfigFn;
 use crate::PlannerPolicy;
+
+fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
+    SisTableKey {
+        min_security_bits: policy.min_sis_security_bits,
+        family: policy.sis_family,
+        ring_dimension: policy.ring_dimension as u32,
+        coeff_linf_bound,
+    }
+}
 
 fn group_root_params_from_layout(
     layout: &CommitmentGroupLayout,
@@ -55,6 +64,7 @@ fn group_root_params_from_layout(
     let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped A width overflow".to_string()))?;
     let (norm_s, min_n_a) = committed_fold_a_role_rank(
+        policy.min_sis_security_bits,
         family,
         d,
         level_decomp,
@@ -73,14 +83,21 @@ fn group_root_params_from_layout(
             "precommitted group A rank is below grouped root requirement".to_string(),
         ));
     }
-    let a_key = AjtaiKeyParams::try_new(family, layout.n_a, width_s, norm_s, d)?;
+    let a_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        layout.n_a,
+        width_s,
+        norm_s,
+        d,
+    )?;
 
     let b_norm_basis = if conservative_b_rank {
         policy.basis_range.1
     } else {
         layout.log_basis
     };
-    let norm_t = rounded_up_collision_norm_t(family, d, b_norm_basis)
+    let norm_t = rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, b_norm_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("no grouped B-role norm".to_string()))?;
     let width_t = decomposed_t_ring_count(
         layout.n_a,
@@ -89,7 +106,7 @@ fn group_root_params_from_layout(
         layout.key.num_polynomials,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("grouped B width overflow".to_string()))?;
-    let min_n_b = min_secure_rank(family, d as u32, norm_t, width_t as u64)
+    let min_n_b = min_secure_rank(sis_key(policy, norm_t), width_t as u64)
         .ok_or_else(|| AkitaError::InvalidSetup("no grouped B-role rank".to_string()))?;
     let n_b = if conservative_b_rank {
         if layout.conservative_n_b < min_n_b {
@@ -102,7 +119,14 @@ fn group_root_params_from_layout(
     } else {
         min_n_b
     };
-    let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
+    let b_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        n_b,
+        width_t,
+        norm_t,
+        d,
+    )?;
 
     let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
         &ring_challenge_cfg,
@@ -273,6 +297,7 @@ fn grouped_root_direct_main_candidate(
         return Ok(None);
     };
     let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+        policy.min_sis_security_bits,
         family,
         d,
         level_decomp,
@@ -287,19 +312,35 @@ fn grouped_root_direct_main_candidate(
     ) else {
         return Ok(None);
     };
-    let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
+    let a_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        n_a,
+        width_s,
+        norm_s,
+        d,
+    )?;
 
-    let Some(norm_t) = rounded_up_collision_norm_t(family, d, log_basis) else {
+    let Some(norm_t) =
+        rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, log_basis)
+    else {
         return Ok(None);
     };
     let Some(width_t) = decomposed_t_ring_count(n_a, num_digits_open, num_blocks, main_num_polys)
     else {
         return Ok(None);
     };
-    let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
+    let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
         return Ok(None);
     };
-    let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
+    let b_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        n_b,
+        width_t,
+        norm_t,
+        d,
+    )?;
 
     // Grouped D uses one `w_hat_g` segment per commitment group, not per polynomial.
     let Some(main_d_width) = decomposed_w_ring_count(num_digits_open, num_blocks, 1) else {
@@ -308,13 +349,22 @@ fn grouped_root_direct_main_candidate(
     let d_width = main_d_width
         .checked_add(ctx.precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped D width overflow".to_string()))?;
-    let Some(norm_w) = rounded_up_collision_norm_w(family, d, log_basis) else {
+    let Some(norm_w) =
+        rounded_up_collision_linf_w(policy.min_sis_security_bits, family, d, log_basis)
+    else {
         return Ok(None);
     };
-    let Some(n_d) = min_secure_rank(family, d as u32, norm_w, d_width as u64) else {
+    let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), d_width as u64) else {
         return Ok(None);
     };
-    let d_key = AjtaiKeyParams::try_new(family, n_d, d_width, norm_w, d)?;
+    let d_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        n_d,
+        d_width,
+        norm_w,
+        d,
+    )?;
 
     let onehot_chunk_size = if decomp.log_commit_bound == 1 {
         policy.onehot_chunk_size
@@ -494,7 +544,9 @@ pub fn find_group_batch_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{AkitaScheduleLookupKey, DecompositionParams, SisModulusFamily};
+    use akita_types::{
+        AkitaScheduleLookupKey, DecompositionParams, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
+    };
 
     fn flat_policy() -> PlannerPolicy {
         PlannerPolicy {
@@ -505,6 +557,7 @@ mod tests {
                 log_open_bound: Some(8),
             },
             sis_family: SisModulusFamily::Q128,
+            min_sis_security_bits: DEFAULT_SIS_SECURITY_BITS,
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 4,
             chal_ext_degree: 4,

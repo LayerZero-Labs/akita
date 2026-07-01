@@ -12,7 +12,7 @@
 //! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset
 //! live in `akita-config`, the only crate that can name the presets.
 
-pub use akita_types::{DecompositionParams, SisModulusFamily};
+pub use akita_types::{DecompositionParams, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
 
 pub mod catalog_identity;
 pub mod emit;
@@ -51,6 +51,8 @@ pub struct PlannerPolicy {
     pub decomposition: DecompositionParams,
     /// SIS modulus family (`Cfg::sis_modulus_family()`).
     pub sis_family: SisModulusFamily,
+    /// Minimum SIS security floor in bits for generated SIS-width tables.
+    pub min_sis_security_bits: u16,
     /// `psi`-embedding infinity-norm expansion
     /// (`Cfg::ring_subfield_embedding_norm_bound()`).
     pub ring_subfield_norm_bound: u32,

@@ -76,6 +76,7 @@ pub struct GeneratedScheduleTableEntry {
 pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
     pub sis_family: SisModulusFamily,
+    pub min_sis_security_bits: u16,
     pub ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
     pub ring_subfield_norm_bound: u32,

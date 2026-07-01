@@ -18,7 +18,9 @@ use crate::{
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "parallel")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Coefficient-L∞ buckets needed by Akita planner envelopes.
 ///
@@ -107,6 +109,8 @@ pub struct InfinityWidthTableConfig {
     pub search_cap: Option<u64>,
     /// Optimizer profile.
     pub profile: InfinityWidthProfile,
+    /// Optional progress report interval, in completed rows.
+    pub progress_every: Option<usize>,
 }
 
 impl Default for InfinityWidthTableConfig {
@@ -119,8 +123,20 @@ impl Default for InfinityWidthTableConfig {
             target_bits: DEFAULT_INFINITY_TARGET_BITS,
             search_cap: None,
             profile: InfinityWidthProfile::LocalMinimum,
+            progress_every: None,
         }
     }
+}
+
+/// Return whether `config` covers the complete production infinity SIS width-table keyspace.
+#[must_use]
+pub fn is_full_infinity_width_table_config(config: &InfinityWidthTableConfig) -> bool {
+    same_set(&config.families, FAMILIES)
+        && same_set(&config.ring_dims, RING_DIMS)
+        && same_set(&config.coeff_linf_bounds, COEFF_LINF_BUCKETS)
+        && config.max_rank == DEFAULT_MAX_RANK
+        && config.target_bits == DEFAULT_INFINITY_TARGET_BITS
+        && config.search_cap.is_none()
 }
 
 /// One generated comparison row.
@@ -216,9 +232,14 @@ fn generate_rows_from_work(
     config: &InfinityWidthTableConfig,
     estimator_config: &EstimateConfig,
 ) -> Result<Vec<InfinityWidthRow>> {
+    let total = work.len();
+    let completed = AtomicUsize::new(0);
     work.into_par_iter()
         .map(|(family, d, rank, coeff_linf_bound)| {
-            max_secure_width_row(family, d, rank, coeff_linf_bound, config, estimator_config)
+            let row =
+                max_secure_width_row(family, d, rank, coeff_linf_bound, config, estimator_config);
+            report_progress(config.progress_every, &completed, total);
+            row
         })
         .collect()
 }
@@ -229,11 +250,44 @@ fn generate_rows_from_work(
     config: &InfinityWidthTableConfig,
     estimator_config: &EstimateConfig,
 ) -> Result<Vec<InfinityWidthRow>> {
+    let total = work.len();
+    let mut completed = 0usize;
     work.into_iter()
         .map(|(family, d, rank, coeff_linf_bound)| {
-            max_secure_width_row(family, d, rank, coeff_linf_bound, config, estimator_config)
+            let row =
+                max_secure_width_row(family, d, rank, coeff_linf_bound, config, estimator_config);
+            completed += 1;
+            report_progress(config.progress_every, completed, total);
+            row
         })
         .collect()
+}
+
+#[cfg(feature = "parallel")]
+fn report_progress(progress_every: Option<usize>, completed: &AtomicUsize, total: usize) {
+    let Some(progress_every) = progress_every else {
+        return;
+    };
+    if progress_every == 0 {
+        return;
+    }
+    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+    if done == total || done.is_multiple_of(progress_every) {
+        eprintln!("infinity width table progress: {done}/{total} rows");
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+fn report_progress(progress_every: Option<usize>, completed: usize, total: usize) {
+    let Some(progress_every) = progress_every else {
+        return;
+    };
+    if progress_every == 0 {
+        return;
+    }
+    if completed == total || completed.is_multiple_of(progress_every) {
+        eprintln!("infinity width table progress: {completed}/{total} rows");
+    }
 }
 
 /// Validate monotonicity and security brackets for generated rows.
@@ -260,6 +314,42 @@ pub fn validate_infinity_width_rows(rows: &[InfinityWidthRow]) -> Result<()> {
     }
     validate_rank_monotonicity(rows)?;
     validate_bound_monotonicity(rows)
+}
+
+/// Convert rows into generated table match arms grouped by family.
+#[must_use]
+pub fn rust_table_arms(
+    rows: &[InfinityWidthRow],
+    max_rank: u32,
+) -> BTreeMap<AkitaModulusFamily, Vec<String>> {
+    let mut grouped = BTreeMap::<(AkitaModulusFamily, u32, u64), Vec<&InfinityWidthRow>>::new();
+    for row in rows {
+        grouped
+            .entry((row.family, row.d, row.coeff_linf_bound))
+            .or_default()
+            .push(row);
+    }
+
+    let mut arms = BTreeMap::<AkitaModulusFamily, Vec<String>>::new();
+    for ((family, d, coeff_linf_bound), mut group) in grouped {
+        group.sort_by_key(|row| row.rank);
+        if group.len() != max_rank as usize {
+            continue;
+        }
+        if group.iter().all(|row| row.max_width == 0) {
+            continue;
+        }
+        let widths = group
+            .into_iter()
+            .map(|row| format_u64_underscored(row.max_width))
+            .collect::<Vec<_>>()
+            .join(", ");
+        arms.entry(family).or_default().push(format!(
+            "({}, {}) => Some(&[{}]),",
+            d, coeff_linf_bound, widths
+        ));
+    }
+    arms
 }
 
 fn validate_rank_monotonicity(rows: &[InfinityWidthRow]) -> Result<()> {
@@ -506,6 +596,27 @@ fn optional_u32_text(value: Option<u32>) -> String {
 
 fn optional_u64_text(value: Option<u64>) -> String {
     value.map_or_else(String::new, |value| value.to_string())
+}
+
+fn format_u64_underscored(value: u64) -> String {
+    let raw = value.to_string();
+    let mut out = String::new();
+    for (index, ch) in raw.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            out.push('_');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
+
+fn same_set<T>(left: &[T], right: &[T]) -> bool
+where
+    T: Copy + Ord,
+{
+    left.len() == right.len()
+        && left.iter().copied().collect::<BTreeSet<_>>()
+            == right.iter().copied().collect::<BTreeSet<_>>()
 }
 
 #[cfg(test)]

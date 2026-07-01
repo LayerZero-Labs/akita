@@ -77,8 +77,8 @@ This is implemented in
 [`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs)
 (with fold-linf cap policy in
 [`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
-`committed_fold_collision_l2_sq` prices the `8·ω·fold_witness_verifier_linf_bound·ν`
-collision envelope (via `collision_l2_sq_for_linf_envelope`), and
+`committed_fold_collision_linf_bound` prices the
+`8·ω·fold_witness_verifier_linf_bound·ν` coefficient-`L∞` envelope, and
 `committed_fold_a_role_rank` builds the level's audited A-role rank from the same
 geometry. Both thread `num_claims`, and `ring_subfield_norm_bound` from each call
 site (the planner DP in `schedule_params.rs`, the runtime expansion, and the
@@ -109,8 +109,8 @@ private Akita write-up and are not reproduced here.
 - **SIS collision ladder extended `2^20−1 → 2^26−1`.** Under the heavier norm a
   fp128 D128 batched dense root folds to a collision above the old `2^20−1`
   ceiling; without the extension it fell back to a cleartext root-direct proof.
-  `ceil_supported_collision` and the generated SIS-floor tables now cover
-  buckets up to `2^26−1`.
+  The generated SIS-floor tables now cover coefficient-`L∞` buckets up to
+  `2^26−1`.
 - **All shipped schedule tables regenerated** against the corrected norm.
 - **Small-D families pruned (no longer securable).** fp32 D32 was dropped
   entirely, fp16 was removed from the production and profile paths, and the
@@ -199,8 +199,8 @@ needs `||z||_1`. Two independent facts close that door:
 
 So the shipped `8·ω·fold_witness_verifier_linf_bound(δ_fold)·ν` bound is already the
 tight one for the one-hot case; replacing the outer `||c||_1` with `||c||_inf` would
-under-price `collision_inf` by a factor of `ω` and select sub-128-bit SIS ranks. No
-code change: the conservative `||c||_1` outer factor is also the correct one. The
+under-price the coefficient-`L∞` collision by a factor of `ω` and select SIS
+ranks below the configured floor. No code change: the conservative `||c||_1` outer factor is also the correct one. The
 one-hot A-rank therefore cannot be lowered by this route; any further one-hot
 proof-size win has to come from the fold / digit side (already optimized via the
 `min` and the digit envelope), not from the binding collision.
@@ -225,8 +225,7 @@ regenerating the SIS-floor security tables and one deferred follow-up:
   `akita_types::sis_floor` tables were regenerated with
   `scripts/gen_sis_table.py` (lattice-estimator, BDGL16 + lgsa) for **all
   families and dimensions (D = 32/64/128/256), ranks 1..=20, and collision
-  buckets `2 … 1_048_575` (`2^k − 1` up to `2^20 − 1`)**. `ceil_supported_collision`
-  was extended to the same bucket list. The estimator's
+  buckets `2 … 1_048_575` (`2^k − 1` up to `2^20 − 1`)**. The estimator's
   `sis_lattice.cost_euclidean` trivial-easy bound is evaluated in log-space to
   avoid a float overflow at high rank / large `q` (an exact reformulation of
   its `min(term1, term2)`); all pre-existing table values are reproduced
@@ -337,11 +336,10 @@ inequality:
    cross-multiplication is missing entirely**, and the `β̄` term uses the
    invalid product `||c||_inf · ||s||_inf` instead of
    `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`. The result is an
-   **under-estimate** of the SIS collision infinity-norm `collision_inf`,
-   which is the exact quantity the 128-bit SIS-floor tables
-   (`crates/akita-types/src/sis_floor.rs`) are indexed by. Under-pricing it
-   selects SIS instances that are *not* 128-bit hard for the true collision
-   norm, so Module-SIS binding is no longer guaranteed.
+   **under-estimate** of the SIS coefficient-`L∞` bound, which is the exact
+   quantity the production SIS-floor tables are indexed by. Under-pricing it
+   selects SIS instances below the configured security floor for the true
+   collision norm, so Module-SIS binding is no longer guaranteed.
 
 2. **Optimization (in scope, secondary).** The folded-witness digit bound in
    [`crates/akita-types/src/layout/digit_math.rs`](../crates/akita-types/src/layout/digit_math.rs)
