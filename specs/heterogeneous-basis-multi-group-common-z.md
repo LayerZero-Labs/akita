@@ -439,6 +439,149 @@ The batch descriptor must bind $D_\star$, $R_\star$, $L_\star$, the row-major
 ordering convention, every local tuple $(m_i,r_i,\ell_i,\delta_i)$, and the
 claim/block ordering that determines which local $A$ restrictions are used.
 
+### Setup-Coefficient Accounting Examples
+
+The grid can be larger than the coefficients selected by a concrete batch. The
+selected $A$ coefficients are the union of local restriction coordinates:
+
+$$
+\mathcal{U}_A
+  :=
+  \left\{(p g_i,r,k):
+    i \in [h],\
+    0 \le p < \delta^{A}_i,\
+    0 \le r < R_i,\
+    0 \le k < L_i
+  \right\}.
+$$
+
+The number of distinct setup coefficients consumed by $A$ is
+
+$$
+|\mathcal{U}_A|.
+$$
+
+Here $\delta^{A}_i$ is the digit depth of the witness actually committed by the
+$A$ matrix. For current one-hot root commitments, $\delta^{A}_i = 1$. For current
+recursive commitments, $\delta^{A}_i = 1$ as well because the recursive committed
+witness is a balanced-digit witness whose commit bound collapses to its
+`log_basis`. For a full-field root commitment over a 128-bit field,
+
+$$
+\delta^{A}_i = \left\lceil \frac{128}{\ell_i} \right\rceil.
+$$
+
+#### One-hot plus full-field, same 25-variable size
+
+Using the current `fp128_d64_onehot` and `fp128_d64_full` generated root layouts
+for `num_vars = 25`, both roots use $\ell = 3$, so $\ell_\star = 3$ and
+$g_i = 1$.
+
+The one-hot root has
+
+$$
+L_{\mathsf{oh}} = 2^{12},\qquad R_{\mathsf{oh}} = 4,\qquad
+\delta^{A}_{\mathsf{oh}} = 1,
+$$
+
+so it selects
+
+$$
+1 \cdot 4 \cdot 2^{12} = 16{,}384
+$$
+
+setup coefficients, all at common exponent row $e = 0$.
+
+The full-field root has
+
+$$
+L_{\mathsf{full}} = 2^{10},\qquad R_{\mathsf{full}} = 6,\qquad
+\delta^{A}_{\mathsf{full}} = \left\lceil \frac{128}{3} \right\rceil = 43,
+$$
+
+so it selects
+
+$$
+43 \cdot 6 \cdot 2^{10} = 264{,}192
+$$
+
+setup coefficients, at common exponent rows $e = 0,1,\ldots,42$.
+
+The proposed coordinate-preserving grid does not double-count overlap. The
+overlap is
+
+$$
+\{(0,r,k): 0 \le r < 4,\ 0 \le k < 2^{10}\},
+$$
+
+which has size
+
+$$
+4 \cdot 2^{10} = 4{,}096.
+$$
+
+Therefore the proposed grid consumes
+
+$$
+16{,}384 + 264{,}192 - 4{,}096 = 276{,}480
+$$
+
+distinct $A$ setup coefficients.
+
+A flat-reuse baseline could instead sample the full-field $A$ matrix first and
+derive the one-hot $A$ matrix by reusing coefficients from that full-field pool.
+Under that baseline, the total coefficient count would be
+
+$$
+\max(264{,}192,\ 16{,}384) = 264{,}192.
+$$
+
+This baseline has smaller coefficient usage in this example, but it is not the
+same coordinate rule as the proposed setup grid: it reuses a flat coefficient
+pool rather than preserving the shared semantic coordinate $(e,r,k)$.
+
+#### Two one-hot roots, same 40-variable size
+
+Using the current `fp128_d64_onehot` generated root layout for `num_vars = 40`,
+each one-hot root has
+
+$$
+\ell = 2,\qquad
+L = 2^{21},\qquad
+R = 7,\qquad
+\delta^{A} = 1.
+$$
+
+Each root individually selects
+
+$$
+1 \cdot 7 \cdot 2^{21} = 14{,}680{,}064
+$$
+
+$A$ setup coefficients, all at $e = 0$. If two such roots are batched through the
+proposed grid, their selected coordinate sets are identical:
+
+$$
+\{(0,r,k): 0 \le r < 7,\ 0 \le k < 2^{21}\}.
+$$
+
+Thus the proposed grid consumes
+
+$$
+14{,}680{,}064
+$$
+
+distinct $A$ setup coefficients in total, which equals the maximum individual
+footprint:
+
+$$
+\max(14{,}680{,}064,\ 14{,}680{,}064) = 14{,}680{,}064.
+$$
+
+These examples isolate coordinate reuse for $A$. A final planner may still choose
+a different batched SIS rank once norm accounting for the shared folded witness
+is finalized.
+
 ## Compatibility Condition for $A$
 
 The common-$z$ embedding is algebraically useful only if the linear rows that act
