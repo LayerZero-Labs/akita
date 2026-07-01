@@ -117,8 +117,8 @@ pub fn schedule_from_entry(
 
 /// Expand every fold step's [`LevelParams`] from a compact catalog entry.
 ///
-/// Delegates to [`walk_generated_schedule_entry`] so fold geometry matches
-/// runtime schedule materialization and catalog validation.
+/// Uses the same schedule-entry walk as [`schedule_from_entry`] so fold geometry
+/// matches runtime schedule materialization and catalog validation.
 pub fn fold_level_params_from_entry(
     entry: &GeneratedScheduleTableEntry,
     key: AkitaScheduleLookupKey,

@@ -173,28 +173,10 @@ pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<us
     }
 }
 
-/// Schedule lookup keys scanned by [`proof_optimized_max_setup_matrix_size`].
-pub(crate) fn envelope_schedule_lookup_keys(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Vec<AkitaScheduleLookupKey> {
-    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
-    let mut keys = Vec::new();
-    for num_vars in 1..=max_num_vars {
-        for &num_polys in &poly_counts {
-            let key = AkitaScheduleLookupKey::new(num_vars, num_polys);
-            if key.validate().is_ok() {
-                keys.push(key);
-            }
-        }
-    }
-    keys
-}
-
 /// Schedule lookup keys for setup-time fold `A · 1` warming.
 ///
-/// Unlike [`envelope_schedule_lookup_keys`], this scans every batch size in
-/// `1..=max_num_batched_polys`. Level-0 fold geometry depends on
+/// Unlike [`setup_envelope_poly_counts`] (endpoint batch sizes only), this scans
+/// every batch size in `1..=max_num_batched_polys`. Level-0 fold geometry depends on
 /// `num_polynomials`, so intermediate counts must be warmed even when setup
 /// matrix sizing uses only endpoint batch sizes.
 pub(crate) fn fold_a_ones_schedule_lookup_keys(

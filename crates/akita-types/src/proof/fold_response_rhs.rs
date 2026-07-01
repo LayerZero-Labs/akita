@@ -135,6 +135,9 @@ pub struct FoldAOnesGeometryKey {
     inner_width: usize,
 }
 
+type FoldAOnesBucket<F, const D: usize> =
+    HashMap<FoldAOnesGeometryKey, Arc<Vec<CyclotomicRing<F, D>>>>;
+
 impl FoldAOnesGeometryKey {
     /// Build a geometry key from one fold level's Ajtai layout.
     #[must_use]
@@ -437,7 +440,7 @@ impl<F: FieldCore> FoldAOnesTable<F> {
 }
 
 fn serialize_fold_a_ones_bucket<F, const D: usize, W: Write>(
-    map: &HashMap<FoldAOnesGeometryKey, Arc<Vec<CyclotomicRing<F, D>>>>,
+    map: &FoldAOnesBucket<F, D>,
     writer: &mut W,
     compress: Compress,
 ) -> Result<(), SerializationError>
@@ -463,12 +466,12 @@ fn deserialize_fold_a_ones_bucket<F, const D: usize, R: Read>(
     reader: &mut R,
     compress: Compress,
     validate: Validate,
-) -> Result<HashMap<FoldAOnesGeometryKey, Arc<Vec<CyclotomicRing<F, D>>>>, SerializationError>
+) -> Result<FoldAOnesBucket<F, D>, SerializationError>
 where
     F: FieldCore + AkitaDeserialize<Context = ()> + Valid,
 {
     let entry_count = usize::deserialize_with_mode(&mut *reader, compress, validate, &())?;
-    let mut map = HashMap::with_capacity(entry_count);
+    let mut map: FoldAOnesBucket<F, D> = HashMap::with_capacity(entry_count);
     for _ in 0..entry_count {
         let a_row_len = usize::deserialize_with_mode(&mut *reader, compress, validate, &())?;
         let inner_width = usize::deserialize_with_mode(&mut *reader, compress, validate, &())?;
@@ -497,7 +500,7 @@ where
 }
 
 fn serialized_fold_a_ones_bucket_size<F, const D: usize>(
-    map: &HashMap<FoldAOnesGeometryKey, Arc<Vec<CyclotomicRing<F, D>>>>,
+    map: &FoldAOnesBucket<F, D>,
     compress: Compress,
 ) -> usize
 where
