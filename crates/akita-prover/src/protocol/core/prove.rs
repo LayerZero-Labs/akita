@@ -381,7 +381,7 @@ where
     let next_state = root.next_state;
     let root = AkitaBatchedRootProof::new(root.level_proof);
 
-    let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R, D>(
+    let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
         expanded,
         prefix_slots,
         stacks,

@@ -2,7 +2,7 @@ use super::*;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
     OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootPolyMeta,
-    RootProvePoly, TensorBackendFor,
+    RootProvePoly, SuffixRingSwitchProveBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -172,7 +172,10 @@ where
         + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
         + ComputeBackendSetup<F>
         + 'stack,
-    R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
+    R: RingSwitchProveBackend<F, D>
+        + SuffixRingSwitchProveBackend<F>
+        + ComputeBackendSetup<F>
+        + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
@@ -205,7 +208,8 @@ where
         basis,
     )?;
 
-    prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
+    prove_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
+        root_params.ring_dimension,
         expanded,
         prefix_slots,
         stack,
@@ -280,7 +284,10 @@ where
         + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
         + ComputeBackendSetup<F>
         + 'stack,
-    R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
+    R: RingSwitchProveBackend<F, D>
+        + SuffixRingSwitchProveBackend<F>
+        + ComputeBackendSetup<F>
+        + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
@@ -317,7 +324,8 @@ where
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
+    let terminal_result = prove_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
+        root_params.ring_dimension,
         expanded,
         &prefix_slots,
         stack,

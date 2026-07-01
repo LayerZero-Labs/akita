@@ -2,7 +2,7 @@ use super::*;
 use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, SuffixOpeningProveBackend,
+    OpeningProveBackendFor, ProverComputeStack, SuffixOpeningProveBackend,
     SuffixRingSwitchProveBackend, SuffixTensorProveBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
@@ -51,7 +51,7 @@ impl<F: FieldCore, E: FieldCore> SuffixProverState<F, E> {
 /// schedule's recursive suffix is empty (root-terminal proofs do not run this
 /// helper).
 #[allow(clippy::too_many_arguments)]
-pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
+pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'stack impl LevelProveStacks<
@@ -96,7 +96,6 @@ where
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     R: SuffixRingSwitchProveBackend<Cfg::Field>
-        + RingSwitchProveBackend<Cfg::Field, D>
         + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,

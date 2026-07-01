@@ -1067,6 +1067,64 @@ where
     }
 }
 
+/// Runtime ring-dispatch entry for one prepared fold level.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prove_fold_at_ring_d<'stack, Cfg, T, C, O, TS, R>(
+    ring_dim: usize,
+    expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
+    stack: &'stack ProverComputeStack<'stack, Cfg::Field, C, O, TS, R>,
+    transcript: &mut T,
+    level: usize,
+    scheduled: &ExecutionSchedule,
+    prepared_fold: PreparedFold<Cfg::Field, Cfg::ExtField>,
+    setup_contribution_mode: SetupContributionMode,
+    is_terminal_fold: bool,
+    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+) -> Result<FoldProveOutput<Cfg::Field, Cfg::ExtField>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HalvingField
+        + Invertible
+        + PseudoMersenneField
+        + AkitaSerialize,
+    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: ExtField<Cfg::Field>
+        + FpExtEncoding<Cfg::Field>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
+    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    C: CommitmentComputeBackend<Cfg::Field> + ComputeBackendSetup<Cfg::Field> + 'stack,
+    O: ComputeBackendSetup<Cfg::Field>,
+    TS: ComputeBackendSetup<Cfg::Field>,
+    R: SuffixRingSwitchProveBackend<Cfg::Field> + ComputeBackendSetup<Cfg::Field> + 'stack,
+    <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+    <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
+{
+    use akita_types::dispatch_ring_dim_result;
+
+    dispatch_ring_dim_result!(ring_dim, |D_LEVEL| {
+        prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
+            expanded,
+            prefix_slots,
+            stack,
+            transcript,
+            level,
+            scheduled,
+            prepared_fold,
+            setup_contribution_mode,
+            is_terminal_fold,
+            terminal_direct_witness_shape,
+        )
+    })
+}
+
 /// Runtime ring-dispatch wrapper for one suffix fold level (prepare + prove).
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prove_suffix_fold_at_ring_d<'stack, Cfg, T, C, O, TS, R>(
@@ -1143,7 +1201,8 @@ where
             m_row_layout,
             tail_t_vectors,
         )?;
-        prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
+        prove_fold_at_ring_d::<Cfg, T, C, O, TS, R>(
+            level_d,
             expanded,
             prefix_slots,
             stack,
