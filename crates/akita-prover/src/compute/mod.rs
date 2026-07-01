@@ -67,9 +67,9 @@ pub use poly::{
     RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProveFlowBackend,
     RootProvePoly, RootTensorSource, SuffixDispatchOpeningProveBackendFor,
     SuffixDispatchTensorProveBackendFor, SuffixOpeningProveBackend, SuffixRingSwitchProveBackend,
-    SuffixTensorProveBackend, SuffixRootTensorOpeningProveBackendFor, SuffixRootTensorTensorProveBackendFor,
-    SuffixWitnessOpeningProveBackendFor, SuffixWitnessTensorProveBackendFor, TensorBackendFor,
-    RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    SuffixRootTensorOpeningProveBackendFor, SuffixRootTensorTensorProveBackendFor,
+    SuffixTensorProveBackend, SuffixWitnessOpeningProveBackendFor,
+    SuffixWitnessTensorProveBackendFor, TensorBackendFor, RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use stack::{
     LevelProveStacks, OperationCtx, ProverComputeStack, TieredProveStacks, UniformProverStack,

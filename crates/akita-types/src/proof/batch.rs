@@ -15,9 +15,9 @@ use akita_transcript::{append_ext_field, Transcript};
 /// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
 /// borrow the ψ-packed inner ring via [`Self::packed_inner_trusted`].
 #[derive(Debug, Clone)]
-pub struct PreparedOpeningPoint<F: FieldCore, L: FieldCore> {
+pub struct PreparedOpeningPoint<F: FieldCore, E: FieldCore> {
     /// Opening point padded to the recursive verifier's target variable count.
-    pub padded_point: Vec<L>,
+    pub padded_point: Vec<E>,
     /// Ring-level outer opening point.
     pub ring_opening_point: RingOpeningPoint<F>,
     /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
@@ -30,10 +30,10 @@ pub struct PreparedOpeningPoint<F: FieldCore, L: FieldCore> {
     ring_dim: usize,
 }
 
-impl<F: FieldCore, L: FieldCore> PreparedOpeningPoint<F, L> {
+impl<F: FieldCore, E: FieldCore> PreparedOpeningPoint<F, E> {
     /// Construct from typed kernel output at an opening-point boundary.
     pub fn from_parts<const D: usize>(
-        padded_point: Vec<L>,
+        padded_point: Vec<E>,
         ring_opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F>,
         packed_inner_point: CyclotomicRing<F, D>,
@@ -84,9 +84,7 @@ impl<F: FieldCore, L: FieldCore> PreparedOpeningPoint<F, L> {
     }
 
     /// Owned copy of the ψ-packed inner ring after [`Self::ensure_ring_dim`].
-    pub fn packed_inner_owned<const D: usize>(
-        &self,
-    ) -> Result<CyclotomicRing<F, D>, AkitaError> {
+    pub fn packed_inner_owned<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
         self.ensure_ring_dim::<D>()?;
         self.packed_inner_point.try_to_single::<D>()
     }
@@ -233,7 +231,11 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     /// # Errors
     ///
     /// Returns an invalid proof error if `idx` is out of range.
-    pub fn eval_a_at<const D: usize, E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
+    pub fn eval_a_at<const D: usize, E>(
+        &self,
+        idx: usize,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
     where
         E: ExtField<F>,
     {
@@ -280,7 +282,10 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                 .ok_or(AkitaError::InvalidProof),
             Self::Ring { b, .. } => {
                 let coefficient_ring = coefficient_ring.ok_or(AkitaError::InvalidProof)?;
-                let value = b.as_ring_slice::<D>()?.get(idx).ok_or(AkitaError::InvalidProof)?;
+                let value = b
+                    .as_ring_slice::<D>()?
+                    .get(idx)
+                    .ok_or(AkitaError::InvalidProof)?;
                 Ok(eval_ring_at_pows(&(*coefficient_ring * *value), alpha_pows))
             }
         }
@@ -318,9 +323,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
 }
 
 fn flat_ring_is_constant<F: FieldCore>(coeffs: &[F], ring_dim: usize) -> bool {
-    ring_dim > 0
-        && coeffs.len() == ring_dim
-        && coeffs[1..].iter().all(|coeff| coeff.is_zero())
+    ring_dim > 0 && coeffs.len() == ring_dim && coeffs[1..].iter().all(|coeff| coeff.is_zero())
 }
 
 fn flat_rings_are_constant<F: FieldCore>(coeffs: &[F], ring_dim: usize) -> bool {
@@ -520,12 +523,12 @@ where
 }
 
 /// Prepare a recursive opening point whose coordinates may live in the proof
-/// scalar field `L`, while the resulting ring payload remains over `F`.
+/// scalar field `E`, while the resulting ring payload remains over `F`.
 ///
-/// For degree-one `L`, this is the original recursive materialization path:
+/// For degree-one `E`, this is the original recursive materialization path:
 /// coordinates are converted to base scalars, outer variables are prepared by
 /// [`ring_opening_point_from_field`], and the inner point is reduced by
-/// [`reduce_inner_opening_to_ring_element`]. For true extension-valued `L`,
+/// [`reduce_inner_opening_to_ring_element`]. For true extension-valued `E`,
 /// the currently supported shape is the same explicit ring-subfield boundary
 /// as the root folded path: all live variables must fit in the packed inner
 /// slots and there can be no outer block variables.
@@ -535,16 +538,16 @@ where
 /// Returns an error when the point length is invalid, the extension degree is
 /// unsupported by the ring-subfield dispatcher, or the level has outer
 /// variables that require the later split/Frobenius route.
-pub fn prepare_opening_point<F, L, const D: usize>(
-    opening_point: &[L],
+pub fn prepare_opening_point<F, E, const D: usize>(
+    opening_point: &[E],
     basis: BasisMode,
     lp: &LevelParams,
     alpha_bits: usize,
     block_order: BlockOrder,
-) -> Result<PreparedOpeningPoint<F, L>, AkitaError>
+) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    L: FpExtEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
     let target_num_vars = lp
@@ -559,9 +562,9 @@ where
         });
     }
     let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, L::zero());
+    padded_point.resize(target_num_vars, E::zero());
 
-    if L::EXT_DEGREE == 1 {
+    if E::EXT_DEGREE == 1 {
         let base_point = padded_point
             .iter()
             .map(|coord| {
@@ -591,14 +594,14 @@ where
         ));
     }
 
-    if !D.is_multiple_of(L::EXT_DEGREE) || !(D / L::EXT_DEGREE).is_power_of_two() {
+    if !D.is_multiple_of(E::EXT_DEGREE) || !(D / E::EXT_DEGREE).is_power_of_two() {
         return Err(AkitaError::InvalidInput(
             "challenge-field degree must divide the ring dimension into power-of-two slots"
                 .to_string(),
         ));
     }
 
-    let trace_inner_point_len = (D / L::EXT_DEGREE).trailing_zeros() as usize;
+    let trace_inner_point_len = (D / E::EXT_DEGREE).trailing_zeros() as usize;
     if padded_point[trace_inner_point_len..alpha_bits]
         .iter()
         .any(|coord| !coord.is_zero())
@@ -608,14 +611,14 @@ where
         ));
     }
     let trace_inner_weights = basis_weights(&padded_point[..trace_inner_point_len], basis)?;
-    let packed_inner_point = embed_ring_subfield_vector::<F, L, D>(
+    let packed_inner_point = embed_ring_subfield_vector::<F, E, D>(
         &trace_inner_weights,
         AkitaError::InvalidInput(
             "recursive opening point does not encode in the ring-subfield basis".to_string(),
         ),
     )?;
     let outer_point = &padded_point[alpha_bits..];
-    let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, L, D>(
+    let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, E, D>(
         outer_point,
         lp.r_vars,
         lp.m_vars,
@@ -763,8 +766,8 @@ mod tests {
     use akita_field::{Fp32, FpExt2, FpExt4, LiftBase, NegOneNr};
 
     type F = Fp32<251>;
-    type E = FpExt2<F, NegOneNr>;
-    type L = FpExt4<F>;
+    type E2 = FpExt2<F, NegOneNr>;
+    type E = FpExt4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
@@ -781,7 +784,7 @@ mod tests {
 
     #[test]
     fn batched_input_validation_accepts_extension_points() {
-        let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
+        let p0 = [E2::new(F::from_u64(1), F::from_u64(2))];
 
         validate_batched_inputs(&setup(), &p0[..], &[3], true)
             .expect("extension-valued shared opening point should validate by shape");
@@ -805,9 +808,9 @@ mod tests {
     #[test]
     fn recursive_extension_opening_preparation_uses_ring_subfield_boundary() {
         let lp = packed_inner_lp();
-        let point = [L::lift_base(F::from_u64(3)), L::lift_base(F::from_u64(5))];
+        let point = [E::lift_base(F::from_u64(3)), E::lift_base(F::from_u64(5))];
 
-        let prepared = prepare_opening_point::<F, L, 32>(
+        let prepared = prepare_opening_point::<F, E, 32>(
             &point,
             BasisMode::Lagrange,
             &lp,
@@ -822,19 +825,19 @@ mod tests {
     #[test]
     fn packed_extension_opening_point_exposes_basis_slots() {
         let point = [
-            L::lift_base(F::from_u64(1)),
-            L::lift_base(F::from_u64(2)),
-            L::lift_base(F::from_u64(3)),
-            L::lift_base(F::from_u64(4)),
+            E::lift_base(F::from_u64(1)),
+            E::lift_base(F::from_u64(2)),
+            E::lift_base(F::from_u64(3)),
+            E::lift_base(F::from_u64(4)),
         ];
 
         let transformed =
-            ring_subfield_packed_extension_opening_point::<F, L, 32>(point.len(), &point)
+            ring_subfield_packed_extension_opening_point::<F, E, 32>(point.len(), &point)
                 .expect("packed extension point");
 
         assert_eq!(
             transformed,
-            vec![point[0], point[1], point[2], L::zero(), L::zero(), point[3]]
+            vec![point[0], point[1], point[2], E::zero(), E::zero(), point[3]]
         );
     }
 
@@ -857,8 +860,8 @@ mod tests {
 
     #[test]
     fn root_tensor_projection_gate_requires_room_for_signed_subfield_basis() {
-        assert!(root_tensor_projection_enabled::<F, L, 8>(3));
-        assert!(!root_tensor_projection_enabled::<F, L, 4>(2));
+        assert!(root_tensor_projection_enabled::<F, E, 8>(3));
+        assert!(!root_tensor_projection_enabled::<F, E, 4>(2));
     }
 
     #[test]

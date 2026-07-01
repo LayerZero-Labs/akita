@@ -5,7 +5,9 @@ use super::*;
 use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
 use crate::protocol::{validate_level_dispatch, validate_log_basis};
 use akita_algebra::CyclotomicRing;
-use akita_config::{bind_transcript_instance_descriptor, effective_batched_schedule, CommitmentConfig};
+use akita_config::{
+    bind_transcript_instance_descriptor, effective_batched_schedule, CommitmentConfig,
+};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
@@ -41,10 +43,10 @@ where
         .collect())
 }
 
-fn check_batched_proof_step_shape<F, L>(proof: &AkitaBatchedProof<F, L>) -> Result<(), AkitaError>
+fn check_batched_proof_step_shape<F, E>(proof: &AkitaBatchedProof<F, E>) -> Result<(), AkitaError>
 where
     F: FieldCore,
-    L: FieldCore,
+    E: FieldCore,
 {
     match &proof.root {
         AkitaBatchedRootProof::Fold(_) => {

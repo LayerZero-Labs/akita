@@ -2,9 +2,8 @@ use super::*;
 use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend,
-    SuffixOpeningProveBackend, SuffixRingSwitchProveBackend, SuffixTensorProveBackend,
-    TensorBackendFor,
+    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, SuffixOpeningProveBackend,
+    SuffixRingSwitchProveBackend, SuffixTensorProveBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -13,7 +12,7 @@ use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
 
 /// Prover state carried between suffix fold levels.
-pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
+pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
     /// Current committed suffix witness representation.
     pub w: RecursiveWitnessFlat,
     /// Logical suffix witness when it differs from the committed representation.
@@ -25,12 +24,12 @@ pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next suffix opening point.
-    pub sumcheck_challenges: Vec<L>,
+    pub sumcheck_challenges: Vec<E>,
     /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
-    pub opening: L,
+    pub opening: E,
 }
 
-impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
+impl<F: FieldCore, E: FieldCore> SuffixProverState<F, E> {
     /// Logical witness represented by the carried opening claim.
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
@@ -55,7 +54,9 @@ impl<F: FieldCore, L: FieldCore> SuffixProverState<F, L> {
 pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
-    stacks: &'stack impl LevelProveStacks<'stack, Cfg::Field,
+    stacks: &'stack impl LevelProveStacks<
+        'stack,
+        Cfg::Field,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -209,15 +210,15 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
+pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R, const D: usize>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
-    current_state: SuffixProverState<F, L>,
+    current_state: SuffixProverState<F, E>,
     _level: usize,
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-) -> Result<PreparedFold<F, L, D>, AkitaError>
+) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -229,7 +230,7 @@ where
         + FromPrimitiveInt
         + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-    L: FpExtEncoding<F>
+    E: FpExtEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
         + HasOptimizedFold
@@ -237,7 +238,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    TS: TensorBackendFor<F, RecursiveWitnessFlat, L, D>,
+    TS: TensorBackendFor<F, RecursiveWitnessFlat, E, D>,
     O: DigitRowsComputeBackend<F>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
@@ -276,7 +277,7 @@ where
     )?;
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-    let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
+    let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let logical_polys = [logical_w];
     let fold_polys = [&w];
     let eor_opening_batch =
@@ -293,7 +294,7 @@ where
         &fold_polys,
         suffix_commitment,
     )?;
-    prepare_fold_inner::<F, L, T, _, _, C, O, TS, R, D>(
+    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R, D>(
         stack,
         needs_extension_reduction,
         fold_claims,

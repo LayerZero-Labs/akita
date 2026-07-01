@@ -24,8 +24,8 @@ use akita_types::{
     schedule_terminal_direct_witness_shape, CleartextWitnessProof, CleartextWitnessShape, Schedule,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommitmentGroup,
-    PointVariableSelection, Commitment, VerifierOpeningBatch,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, Commitment,
+    CommitmentGroup, PointVariableSelection, VerifierOpeningBatch,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -53,13 +53,13 @@ const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-fn schedule_bytes_with_realized_terminal_z<FF, L>(
-    proof: &AkitaBatchedProof<FF, L>,
+fn schedule_bytes_with_realized_terminal_z<FF, E>(
+    proof: &AkitaBatchedProof<FF, E>,
     schedule: &Schedule,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
 {
     let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
         return schedule.total_bytes;
@@ -204,8 +204,8 @@ fn schedule_terminal_log_basis<Cfg: CommitmentConfig>(schedule: &akita_types::Sc
 /// Count the total number of fold levels (including the batched root and the
 /// terminal step) in a singleton-shaped batched proof, matching the planner's
 /// `num_fold_levels` convention.
-fn batched_total_fold_levels<FF: CanonicalField, L: FieldCore>(
-    proof: &AkitaBatchedProof<FF, L>,
+fn batched_total_fold_levels<FF: CanonicalField, E: FieldCore>(
+    proof: &AkitaBatchedProof<FF, E>,
 ) -> usize {
     use akita_types::{AkitaBatchedRootProof, AkitaLevelProof};
     let root_fold = match proof.root {
@@ -259,21 +259,14 @@ where
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
-        .unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
     let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .unwrap();
+        AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let poly_refs: [&DensePoly<FField, D>; 1] = [&poly];
     let commitments = [commitment];
@@ -366,8 +359,8 @@ fn mutate_terminal_e_hat_digit<FField: FieldCore>(
     }
 }
 
-fn terminal_witness_mut<FField: FieldCore, L: FieldCore>(
-    proof: &mut AkitaBatchedProof<FField, L>,
+fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
+    proof: &mut AkitaBatchedProof<FField, E>,
 ) -> &mut akita_types::CleartextWitnessProof<FField> {
     match &mut proof.root {
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => terminal
@@ -418,11 +411,7 @@ fn full_d64_prove_verify() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(FULL_TEST_NV);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
-            FULL_TEST_NV,
-            1,
-        )
-        .unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(FULL_TEST_NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -430,12 +419,9 @@ fn full_d64_prove_verify() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
+                .unwrap();
 
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let commitments = [commitment];
@@ -470,19 +456,17 @@ fn full_d64_prove_verify() {
             .expect("schedule plan");
         assert_eq!(total_fold_levels, plan.num_fold_levels());
 
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let verify_start = Instant::now();
-        let verify_result =
-            AkitaCommitmentScheme::<Cfg>::batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verify_input(&pt[..], opening_groups[0], &commitments[0]),
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            );
+        let verify_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
         let verify_time = verify_start.elapsed();
 
         assert!(
@@ -570,8 +554,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(NV);
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -579,12 +562,9 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup, &polys, &stack,
-        )
-        .unwrap();
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).unwrap();
         let commitments = [commitment];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
@@ -712,15 +692,14 @@ fn fp32_static_dense_round_trip() {
         let commitments = [commitment];
         let openings = [opening];
         let mut verifier_transcript = AkitaTranscript::<FSmall>::new(b"akita_e2e/fp32-static");
-        let result =
-            AkitaCommitmentScheme::<Cfg>::batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verify_input(&opening_point[..], &openings[..], &commitments[0]),
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            );
+        let result = AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&opening_point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
 
         assert!(
             result.is_ok(),
@@ -745,15 +724,14 @@ fn fp64_static_dense_round_trip() {
         let commitments = [commitment];
         let openings = [opening];
         let mut verifier_transcript = AkitaTranscript::<FSmall>::new(b"akita_e2e/fp64-static");
-        let result =
-            AkitaCommitmentScheme::<Cfg>::batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verify_input(&opening_point[..], &openings[..], &commitments[0]),
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            );
+        let result = AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&opening_point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
 
         assert!(
             result.is_ok(),
@@ -793,8 +771,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening_point = random_point::<F>(nv);
         let opening = opening_from_poly(&poly, &opening_point, &layout);
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -802,14 +779,10 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .unwrap();
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
+                .unwrap();
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [opening];
@@ -853,7 +826,9 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         );
 
         let (recomputed_commitment, _) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup, std::slice::from_ref(&reconstructed), &stack
+            &setup,
+            std::slice::from_ref(&reconstructed),
+            &stack,
         )
         .expect("recompute commitment from direct witness");
         assert_eq!(
@@ -973,8 +948,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -982,8 +956,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
         let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
             &setup,
             std::slice::from_ref(&onehot_poly),
@@ -1147,8 +1120,7 @@ fn batched_onehot_same_point_round_trip() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 2).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 2).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -1156,15 +1128,10 @@ fn batched_onehot_same_point_round_trip() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
         let commit_group = [poly_a.clone(), poly_b.clone()];
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup,
-            &commit_group,
-            &stack,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, &commit_group, &stack).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -1216,15 +1183,14 @@ fn batched_onehot_same_point_round_trip() {
         let mut truncated = decoded.clone();
         truncated.steps.remove(0);
         let mut truncated_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
-        let truncated_result =
-            AkitaCommitmentScheme::<Cfg>::batched_verify(
-                &truncated,
-                &verifier_setup,
-                &mut truncated_transcript,
-                verify_input(&pt[..], opening_groups[0], &commitments[0]),
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            );
+        let truncated_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &truncated,
+            &verifier_setup,
+            &mut truncated_transcript,
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
         assert!(
             truncated_result.is_err(),
             "proof with a truncated scheduled recursive suffix must be rejected"
@@ -1268,11 +1234,8 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
-            nv,
-            SAME_POINT_ONEHOT_BATCH_SIZE,
-        )
-        .unwrap();
+        let setup =
+            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, SAME_POINT_ONEHOT_BATCH_SIZE).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -1280,12 +1243,9 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup, &polys, &stack,
-        )
-        .unwrap();
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 

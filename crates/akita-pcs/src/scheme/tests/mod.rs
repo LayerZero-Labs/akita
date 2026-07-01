@@ -4,10 +4,8 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
-use akita_prover::{
-    DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch,
-};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
@@ -290,9 +288,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) =
-        Scheme::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .unwrap();
+    let (commitment, hint) = Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))

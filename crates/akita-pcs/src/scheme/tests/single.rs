@@ -15,9 +15,7 @@ fn verify_passes_for_consistent_opening() {
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
 
-    let (commitment, hint) =
-        Scheme::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .unwrap();
+    let (commitment, hint) = Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -69,9 +67,7 @@ fn verify_rejects_wrong_opening() {
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
 
-    let (commitment, hint) =
-        Scheme::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .unwrap();
+    let (commitment, hint) = Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -252,9 +248,7 @@ fn monomial_basis_prove_verify_round_trip() {
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
 
-    let (commitment, hint) =
-        Scheme::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .unwrap();
+    let (commitment, hint) = Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 
@@ -310,20 +304,14 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let opening_point = vec![DirectF::zero(); num_vars];
     let opening = evals[0];
 
-    let setup =
-        DirectScheme::setup_prover(num_vars, 1).unwrap();
+    let setup = DirectScheme::setup_prover(num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        DirectScheme::setup_verifier(&setup);
-    let (commitment, hint) = DirectScheme::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .unwrap();
+    let verifier_setup = DirectScheme::setup_verifier(&setup);
+    let (commitment, hint) =
+        DirectScheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let poly_refs: [&DensePoly<DirectF, DIRECT_D>; 1] = [&poly];
     let commitments = [commitment];

@@ -37,11 +37,11 @@ use akita_types::{
     append_claim_values_to_transcript, basis_weights, batched_eval_target_from_opening_batch,
     build_trace_table_scaled, check_extension_opening_reduction_output,
     derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
-    embed_ring_subfield_vector, ensure_trace_stage2_supported,
-    prepare_opening_point, recover_ring_subfield_inner_product, relation_claim_from_rows_extension,
-    reorder_stage1_coords, ring_subfield_packed_extension_opening_point, root_current_w_len,
-    root_tensor_projection_enabled, sample_public_row_coefficients,
-    schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
+    embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
+    recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
+    ring_subfield_packed_extension_opening_point, root_current_w_len,
+    root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
+    schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     trace_public_weights_recursive, trace_public_weights_root_terms,
@@ -56,13 +56,13 @@ use akita_types::{
 };
 use std::sync::Arc;
 
-pub(in crate::protocol::core) struct ExtensionOpeningReduction<L: FieldCore> {
-    pub(in crate::protocol::core) proof: ExtensionOpeningReductionProof<L>,
+pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: FieldCore> {
+    pub(in crate::protocol::core) proof: ExtensionOpeningReductionProof<E>,
     /// EOR final sumcheck claim and transparent-factor evaluation. Retained so
     /// the prepare step can fail-fast cross-check the folded opening against
     /// the reduction output; the verifier enforces the same relation.
-    pub(in crate::protocol::core) final_claim: L,
-    pub(in crate::protocol::core) final_factor: L,
+    pub(in crate::protocol::core) final_claim: E,
+    pub(in crate::protocol::core) final_factor: E,
 }
 
 mod extension_opening_reduction;
@@ -80,29 +80,29 @@ pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.
-pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
+pub struct ProveLevelOutput<F: FieldCore, E: FieldCore> {
     /// Fold proof produced at this level.
-    pub level_proof: AkitaLevelProof<F, L>,
+    pub level_proof: AkitaLevelProof<F, E>,
     /// Suffix prover state for the next level.
-    pub next_state: SuffixProverState<F, L>,
+    pub next_state: SuffixProverState<F, E>,
 }
 
 /// Outcome of the recursive fold suffix after the root level.
-pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
+pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
     /// Recursive suffix proof steps: intermediate folds followed by terminal.
-    pub steps: Vec<AkitaLevelProof<F, L>>,
+    pub steps: Vec<AkitaLevelProof<F, E>>,
     /// Total fold-level count reached, including the root level and the
     /// terminal level.
     pub num_levels: usize,
 }
 
-pub(in crate::protocol::core) type Stage2ProveResult<L> =
-    (SumcheckProof<L>, Vec<L>, AkitaStage2Prover<L>);
+pub(in crate::protocol::core) type Stage2ProveResult<E> =
+    (SumcheckProof<E>, Vec<E>, AkitaStage2Prover<E>);
 
-pub(in crate::protocol::core) struct Stage3ProveOutput<L: FieldCore> {
-    pub(in crate::protocol::core) proof: SetupSumcheckProof<L>,
-    pub(in crate::protocol::core) next_w_point: Vec<L>,
-    pub(in crate::protocol::core) next_w_eval: L,
+pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
+    pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
+    pub(in crate::protocol::core) next_w_point: Vec<E>,
+    pub(in crate::protocol::core) next_w_eval: E,
 }
 
 fn scalar_opening_from_folded_ring<F, E, const D: usize>(
@@ -156,18 +156,18 @@ where
     recover_ring_subfield_inner_product::<F, E, D>(folded_ring, &packed_inner_point)
 }
 
-fn row_coefficient_rings<F, L, const D: usize>(
-    coefficients: &[L],
+fn row_coefficient_rings<F, E, const D: usize>(
+    coefficients: &[E],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    L: FpExtEncoding<F>,
+    E: FpExtEncoding<F>,
 {
     coefficients
         .iter()
         .copied()
         .map(|coefficient| {
-            embed_ring_subfield_scalar::<F, L, D>(
+            embed_ring_subfield_scalar::<F, E, D>(
                 coefficient,
                 AkitaError::InvalidInput(
                     "public-row coefficient does not encode in the ring-subfield basis".to_string(),

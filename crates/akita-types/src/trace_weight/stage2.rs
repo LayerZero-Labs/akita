@@ -231,7 +231,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
 
 /// Fused trace coefficient: `γ²` on terminal folds, otherwise `batching_coeff²`.
 #[inline]
-pub fn stage2_trace_coeff<L: FieldCore>(batching_coeff: L, trace_gamma: L, is_terminal: bool) -> L {
+pub fn stage2_trace_coeff<E: FieldCore>(batching_coeff: E, trace_gamma: E, is_terminal: bool) -> E {
     if is_terminal {
         trace_gamma * trace_gamma
     } else {
@@ -319,10 +319,10 @@ where
             .ring_multiplier_point
             .b_rings_trusted::<D>()?
             .ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "extension trace opening point is missing ring block weights".to_string(),
-            )
-        })?;
+                AkitaError::InvalidInput(
+                    "extension trace opening point is missing ring block weights".to_string(),
+                )
+            })?;
         trace_public_weights_ring_terms(&[TraceRingBlockOpening {
             block_offset: 0,
             block_rings: scaled_ring_weights(block_rings, scale)?,

@@ -179,7 +179,10 @@ fn custom_commit_source_runs_commit_with_params() {
     )
     .expect("dense oracle commit");
 
-    assert_eq!(contract_commitment.rows().count(), dense_commitment.rows().count());
+    assert_eq!(
+        contract_commitment.rows().count(),
+        dense_commitment.rows().count()
+    );
     assert_eq!(
         contract_hint.decomposed_inner_rows,
         dense_hint.decomposed_inner_rows
@@ -226,7 +229,10 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         )
         .expect("dense batched commit");
 
-    assert_eq!(contract_commitment.rows().count(), dense_commitment.rows().count());
+    assert_eq!(
+        contract_commitment.rows().count(),
+        dense_commitment.rows().count()
+    );
     assert_eq!(
         contract_hint.decomposed_inner_rows,
         dense_hint.decomposed_inner_rows

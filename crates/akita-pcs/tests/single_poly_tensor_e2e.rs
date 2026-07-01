@@ -40,8 +40,8 @@ fn run_single_onehot_tensor(nv: usize) {
         let pt = random_point(nv, 0xc0ff_ee00 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_prover(nv, 1)
-        .expect("setup_prover");
+        let setup =
+            AkitaCommitmentScheme::<D64OneHotTensor>::setup_prover(nv, 1).expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -49,16 +49,11 @@ fn run_single_onehot_tensor(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
-            AkitaCommitmentScheme::<D64OneHotTensor>::commit(
-                &setup,
-                commit_input,
-                &stack,
-            )
-            .expect("commit");
+            AkitaCommitmentScheme::<D64OneHotTensor>::commit(&setup, commit_input, &stack)
+                .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, TENSOR_D, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -119,8 +114,8 @@ fn run_single_dense_tensor(nv: usize) {
         let pt = random_point(nv, 0xd3e5_f00d + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_prover(nv, 1)
-        .expect("setup_prover");
+        let setup =
+            AkitaCommitmentScheme::<D64OneHotTensor>::setup_prover(nv, 1).expect("setup_prover");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -128,16 +123,11 @@ fn run_single_dense_tensor(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
-            AkitaCommitmentScheme::<D64OneHotTensor>::commit(
-                &setup,
-                commit_input,
-                &stack,
-            )
-            .expect("commit");
+            AkitaCommitmentScheme::<D64OneHotTensor>::commit(&setup, commit_input, &stack)
+                .expect("commit");
 
         let poly_refs: [&DensePoly<F, TENSOR_D>; 1] = [&poly];
         let commitments = [commitment];

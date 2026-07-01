@@ -16,7 +16,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, Commitment,
-    DigitBlocks, OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection, RingVec,
+    DigitBlocks, OpeningBatchShape, OpeningGroupShape, OpeningPoints, PointVariableSelection,
+    RingVec,
 };
 
 pub use api::{

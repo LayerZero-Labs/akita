@@ -8,8 +8,7 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    AkitaProverSetup, DensePoly, OneHotPoly, ProverCommitmentGroup,
-    ProverOpeningBatch,
+    AkitaProverSetup, DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -101,8 +100,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     c: &mut Criterion,
     label: &str,
     nv: usize,
-) where
-{
+) {
     let evals = make_dense_evals::<Cfg>(nv);
     let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
     let pt = random_point(nv);
@@ -114,17 +112,12 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     group.bench_function("setup", |b| {
         b.iter(|| {
             black_box(
-                AkitaCommitmentScheme::<Cfg>::setup_prover(
-                    black_box(nv),
-                    black_box(1),
-                )
-                .unwrap(),
+                AkitaCommitmentScheme::<Cfg>::setup_prover(black_box(nv), black_box(1)).unwrap(),
             )
         })
     });
 
-    let setup =
-        AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -143,19 +136,14 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         })
     });
 
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [opening];
 
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
     for (mode, mode_label) in setup_contribution_modes() {
         group.bench_function(format!("prove/{mode_label}"), |b| {
@@ -251,8 +239,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     c: &mut Criterion,
     label: &str,
     nv: usize,
-) where
-{
+) {
     let layout = Cfg::get_params_for_batched_commitment(
         &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
     )
@@ -279,8 +266,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let pt = random_point(nv);
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
-    let setup =
-        AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -302,19 +288,15 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         })
     });
 
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-        &setup,
-        std::slice::from_ref(&onehot_poly),
-        &stack,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&onehot_poly), &stack)
+            .unwrap();
 
     let poly_refs: [&OneHotPoly<F, D>; 1] = [&onehot_poly];
     let commitments = [commitment];
     let openings = [opening];
 
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
     for (mode, mode_label) in setup_contribution_modes() {
         group.bench_function(format!("prove/{mode_label}"), |b| {

@@ -125,8 +125,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
-    let setup =
-        Scheme::setup_prover(num_vars, num_polys).unwrap();
+    let setup = Scheme::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -193,8 +192,7 @@ where
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
                 let committed =
-                    Scheme::commit(&setup, &polys, &stack)
-                        .expect("benchmark scheme commitment");
+                    Scheme::commit(&setup, &polys, &stack).expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

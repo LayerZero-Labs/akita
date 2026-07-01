@@ -153,7 +153,10 @@ where
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
-    ) -> Result<CommittedGroupHandle<Commitment<Cfg::Field>, AkitaCommitmentHint<Cfg::Field>>, AkitaError>
+    ) -> Result<
+        CommittedGroupHandle<Commitment<Cfg::Field>, AkitaCommitmentHint<Cfg::Field>>,
+        AkitaError,
+    >
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
@@ -175,7 +178,9 @@ where
     pub fn batched_prove<'a, T, P, B, const D: usize>(
         setup: &AkitaProverSetup<Cfg::Field>,
         claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
-        stacks: &'a impl LevelProveStacks<'a, Cfg::Field,
+        stacks: &'a impl LevelProveStacks<
+            'a,
+            Cfg::Field,
             Commit = B,
             Opening = B,
             Tensor = B,
@@ -190,7 +195,9 @@ where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
         P: RootProvePoly<Cfg::Field, D> + RootPolyMeta<Cfg::Field>,
-        B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D> + ComputeBackendSetup<Cfg::Field> + 'a,
+        B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D>
+            + ComputeBackendSetup<Cfg::Field>
+            + 'a,
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     {
         let t_prove_total = Instant::now();

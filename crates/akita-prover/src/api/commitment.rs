@@ -794,10 +794,7 @@ mod tests {
     ) -> CommitInnerWitness<F> {
         let total_digits = block_sizes.iter().sum();
         CommitInnerWitness::from_parts(
-            vec![
-                vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
-                recomposed_blocks
-            ],
+            vec![vec![CyclotomicRing::<F, D>::zero(); rows_per_block]; recomposed_blocks],
             FlatDigitBlocks::new(vec![[0i8; D]; total_digits], block_sizes)
                 .expect("valid flat digit blocks"),
         )

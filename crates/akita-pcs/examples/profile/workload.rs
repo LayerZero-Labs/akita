@@ -75,10 +75,10 @@ pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
     }
 }
 
-fn assert_observed_proof_size<FF, L>(label: &str, proof: &AkitaBatchedProof<FF, L>)
+fn assert_observed_proof_size<FF, E>(label: &str, proof: &AkitaBatchedProof<FF, E>)
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
 {
     let mut encoded = Vec::with_capacity(proof.size());
     proof
@@ -118,13 +118,13 @@ where
 /// absolute proof growth is bounded by the CI proof-size regression threshold.
 const ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES: usize = 3072;
 
-fn segment_typed_z_planner_slack<FF, L>(
-    proof: &AkitaBatchedProof<FF, L>,
+fn segment_typed_z_planner_slack<FF, E>(
+    proof: &AkitaBatchedProof<FF, E>,
     schedule: &Schedule,
 ) -> usize
 where
     FF: FieldCore,
-    L: FieldCore,
+    E: FieldCore,
 {
     let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
         return 0;
@@ -205,16 +205,16 @@ fn profile_setup_contribution_mode() -> SetupContributionMode {
 /// setup-product bytes are pure overhead layered on top, so they are stripped
 /// before the comparison and reported as an explicit delta instead of being
 /// asserted against `schedule.total_bytes`.
-fn report_proof_size_against_planner<FF, L>(
+fn report_proof_size_against_planner<FF, E>(
     label: &str,
-    proof: &AkitaBatchedProof<FF, L>,
+    proof: &AkitaBatchedProof<FF, E>,
     planned_bytes: usize,
     source: &str,
     mode: SetupContributionMode,
     schedule: &Schedule,
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
 {
     let z_slack = segment_typed_z_planner_slack(proof, schedule);
     match mode {
@@ -413,12 +413,8 @@ fn run_prove<
         RootCommitBackend<FF, P, Cfg::ExtField, D> + RecursiveProveBackend<FF, P, Cfg::ExtField, D>,
 {
     let t0 = Instant::now();
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-        setup,
-        std::slice::from_ref(poly),
-        stack,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit(setup, std::slice::from_ref(poly), stack).unwrap();
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
     let poly_refs: [&P; 1] = [poly];
@@ -571,12 +567,11 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         };
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
-        SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::num_vars(&poly), 1),
+        SetupContributionMode::Direct => {
+            AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::num_vars(&poly), 1)
+        }
         SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(
-                RootPolyShape::num_vars(&poly),
-                1,
-            )
+            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(RootPolyShape::num_vars(&poly), 1)
         }
     }
     .unwrap();
@@ -661,10 +656,10 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     };
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
-        SetupContributionMode::Direct => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
+        SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1),
+        SetupContributionMode::Recursive => {
+            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(nv, 1)
         }
-        SetupContributionMode::Recursive => AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(nv, 1),
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -766,9 +761,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let t0 = Instant::now();
     let setup_contribution_mode = profile_setup_contribution_mode();
     let setup = match setup_contribution_mode {
-        SetupContributionMode::Direct => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys)
-        }
+        SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys),
         SetupContributionMode::Recursive => {
             AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(nv, num_polys)
         }
@@ -793,8 +786,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_crt_profile(label, prepared.shared_ntt_profile());
 
     let t0 = Instant::now();
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());

@@ -230,6 +230,11 @@ mod tests {
             vec![[cap as i32; D]],
             cap as u32,
         );
-        assert!(!accepts_fold_witness::<F, D>(&contract, &witness, cap, Some(1),));
+        assert!(!accepts_fold_witness::<F, D>(
+            &contract,
+            &witness,
+            cap,
+            Some(1),
+        ));
     }
 }

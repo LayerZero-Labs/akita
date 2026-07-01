@@ -47,19 +47,14 @@ fn run_tail_bound_with_grind_onehot_roundtrip(
     let point = random_point(num_vars, seed.wrapping_add(1));
     let opening = opening_from_poly(&poly, &point, &layout);
 
-    let setup =
-        Scheme::setup_prover(num_vars, 1).expect("setup");
+    let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) = Scheme::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .expect("commit");
+    let (commitment, hint) =
+        Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
     let proof = Scheme::batched_prove(
@@ -125,8 +120,7 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         let poly = make_onehot_poly(&layout, 0x51_51_00_02);
         let point = random_point(num_vars, 0x51_51_00_03);
         let opening = opening_from_poly(&poly, &point, &layout);
-        let setup =
-            Scheme::setup_prover(num_vars, 1).expect("setup");
+        let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -135,12 +129,8 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         )
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup);
-        let (commitment, _) = Scheme::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .expect("commit");
+        let (commitment, _) =
+            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         Scheme::batched_verify(
@@ -198,8 +188,7 @@ fn fold_recursive_handle_tamper_rejected() {
         let poly = make_onehot_poly(&layout, 0x51_51_00_04);
         let point = random_point(num_vars, 0x51_51_00_05);
         let opening = opening_from_poly(&poly, &point, &layout);
-        let setup =
-            Scheme::setup_prover(num_vars, 1).expect("setup");
+        let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -208,12 +197,8 @@ fn fold_recursive_handle_tamper_rejected() {
         )
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup);
-        let (commitment, _) = Scheme::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .expect("commit");
+        let (commitment, _) =
+            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let result = Scheme::batched_verify(
@@ -244,8 +229,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         let point = random_point(num_vars, 0x71_71);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup =
-            Scheme::setup_prover(num_vars, 1).expect("setup");
+        let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -254,12 +238,8 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         )
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup);
-        let (commitment, hint) = Scheme::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .expect("commit");
+        let (commitment, hint) =
+            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));

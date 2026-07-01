@@ -453,21 +453,21 @@ impl<'a, E: Clone, F: FieldCore> VerifierOpeningBatch<'a, E, &'a Commitment<F>> 
 }
 
 /// Sample gamma coefficients for the one public row.
-pub fn sample_public_row_coefficients<F, L, T>(
+pub fn sample_public_row_coefficients<F, E, T>(
     shape: &OpeningBatchShape,
     transcript: &mut T,
-) -> Result<Vec<L>, AkitaError>
+) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: ExtField<F>,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
     shape.check()?;
     if shape.num_polynomials() == 1 {
-        return Ok(vec![L::one()]);
+        return Ok(vec![E::one()]);
     }
     Ok((0..shape.num_polynomials())
-        .map(|_| sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_EVAL_BATCH))
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_EVAL_BATCH))
         .collect())
 }
 

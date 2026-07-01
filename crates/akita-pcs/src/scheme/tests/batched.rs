@@ -25,11 +25,9 @@ fn batched_commit_matches_individual_commits() {
         .into_iter()
         .unzip();
     let (commitment_a, hint_a) =
-        Scheme::commit(&setup, std::slice::from_ref(&poly_a), &stack)
-            .unwrap();
+        Scheme::commit(&setup, std::slice::from_ref(&poly_a), &stack).unwrap();
     let (commitment_b, hint_b) =
-        Scheme::commit(&setup, std::slice::from_ref(&poly_b), &stack)
-            .unwrap();
+        Scheme::commit(&setup, std::slice::from_ref(&poly_b), &stack).unwrap();
 
     assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
     assert_eq!(batched_hints, vec![hint_a, hint_b]);
@@ -63,8 +61,7 @@ fn batched_root_direct_fast_path_round_trip() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) =
-        Scheme::commit(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = Scheme::commit(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -161,8 +158,7 @@ fn batched_root_direct_rejects_wrong_opening() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) =
-        Scheme::commit(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = Scheme::commit(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -218,12 +214,8 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
-    let (commitment, hint) = Scheme::commit(
-        &setup,
-        &[poly_a.clone(), poly_b.clone()],
-        &stack,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        Scheme::commit(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 

@@ -3,11 +3,11 @@ use akita_types::dispatch_ring_dim_result;
 use akita_types::{terminal_witness_segment_layout, OpeningBatchShape, RingView};
 
 /// Verifier state carried between suffix fold levels.
-pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
+pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     /// Current opening point for the committed suffix witness.
-    pub opening_point: Vec<L>,
+    pub opening_point: Vec<E>,
     /// Claimed opening value for the current commitment.
-    pub opening: L,
+    pub opening: E,
     /// Current suffix witness commitment.
     pub commitment: &'a RingVec<F>,
     /// Basis used to interpret the current opening point.
@@ -28,18 +28,18 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "prepare_fold_data")]
-fn prepare_fold_data<'a, F, L, T, const D: usize>(
-    proof: &'a AkitaLevelProof<F, L>,
+fn prepare_fold_data<'a, F, E, T, const D: usize>(
+    proof: &'a AkitaLevelProof<F, E>,
     transcript: &mut T,
-    current_state: &'a SuffixVerifierState<'a, F, L>,
+    current_state: &'a SuffixVerifierState<'a, F, E>,
     commitment_rings: &'a [CyclotomicRing<F, D>],
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
+) -> Result<PreparedFoldReplay<'a, F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let lp = &scheduled.params;
@@ -68,13 +68,13 @@ where
     let num_vars = lp.recursive_opening_num_vars()?;
     let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
-    let row_coefficients = vec![L::one()];
+    let row_coefficients = vec![E::one()];
     let FoldEorReplay {
         prepared_points,
         reduction_challenges: _,
         final_relation: eor_trace_final,
         ..
-    } = verify_fold_eor::<F, L, T, D>(
+    } = verify_fold_eor::<F, E, T, D>(
         proof.extension_opening_reduction(),
         &[],
         current_state.opening_point.as_slice(),
@@ -92,7 +92,7 @@ where
     }
     let prepared_point = &prepared_points[0];
     for pt in &prepared_point.padded_point {
-        append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
 
     let w_len = match proof.final_w_len() {
@@ -131,7 +131,7 @@ where
             *final_claim,
             *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
         ),
-        None => (current_state.opening, L::one()),
+        None => (current_state.opening, E::one()),
     };
 
     let fold_grind_nonce = proof.fold_grind_nonce();
@@ -180,17 +180,17 @@ where
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the suffix witness handoff has the wrong shape.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_suffix<'a, F, L, T>(
-    steps: &'a [AkitaLevelProof<F, L>],
+pub(super) fn verify_suffix<'a, F, E, T>(
+    steps: &'a [AkitaLevelProof<F, E>],
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
-    mut current_state: SuffixVerifierState<'a, F, L>,
+    mut current_state: SuffixVerifierState<'a, F, E>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     for (offset, step) in steps.iter().enumerate() {
@@ -213,8 +213,7 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let commitment_view =
-                    RingView::new(current_state.commitment.coeffs(), level_d)?;
+                let commitment_view = RingView::new(current_state.commitment.coeffs(), level_d)?;
                 if commitment_view.num_rings() != current_lp.effective_commit_rows() {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -223,7 +222,7 @@ where
                     // Reconstruct the validated flat commitment as typed rings
                     // for the kernel; owned for the duration of this arm.
                     let commitment_rings = current_state.commitment.try_to_vec::<D_LEVEL>()?;
-                    let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
+                    let prepared = prepare_fold_data::<F, E, T, D_LEVEL>(
                         level_proof,
                         transcript,
                         &current_state,
@@ -232,7 +231,7 @@ where
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
+                    verify_fold::<F, E, T, D_LEVEL>(setup, transcript, prepared)
                 })?;
 
                 let next_level_d = next_params.ring_dimension;
@@ -276,7 +275,7 @@ where
                 }
                 dispatch_ring_dim_result!(level_d, |D_LEVEL| {
                     let commitment_rings = current_state.commitment.try_to_vec::<D_LEVEL>()?;
-                    let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
+                    let prepared = prepare_fold_data::<F, E, T, D_LEVEL>(
                         terminal_proof,
                         transcript,
                         &current_state,
@@ -285,7 +284,7 @@ where
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
+                    verify_fold::<F, E, T, D_LEVEL>(setup, transcript, prepared)
                 })?;
                 // The trailing-Direct witness shape is already validated in
                 // `verify_folded_batched_proof` before this loop.

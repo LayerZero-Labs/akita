@@ -1,12 +1,12 @@
 use super::*;
 
-fn serialize_extension_opening_reduction<L, W>(
-    reduction: Option<&ExtensionOpeningReductionProof<L>>,
+fn serialize_extension_opening_reduction<E, W>(
+    reduction: Option<&ExtensionOpeningReductionProof<E>>,
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
     W: Write,
 {
     if let Some(reduction) = reduction {
@@ -20,12 +20,12 @@ where
     Ok(())
 }
 
-pub(super) fn extension_opening_reduction_serialized_size<L>(
-    reduction: Option<&ExtensionOpeningReductionProof<L>>,
+pub(super) fn extension_opening_reduction_serialized_size<E>(
+    reduction: Option<&ExtensionOpeningReductionProof<E>>,
     compress: Compress,
 ) -> usize
 where
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
 {
     reduction.map_or(0, |reduction| {
         reduction
@@ -37,14 +37,14 @@ where
     })
 }
 
-fn deserialize_extension_opening_reduction<L, R>(
+fn deserialize_extension_opening_reduction<E, R>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
     shape: Option<&ExtensionOpeningReductionShape>,
-) -> Result<Option<ExtensionOpeningReductionProof<L>>, SerializationError>
+) -> Result<Option<ExtensionOpeningReductionProof<E>>, SerializationError>
 where
-    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
     let Some(shape) = shape else {
@@ -54,7 +54,7 @@ where
     let mut partials = Vec::new();
     reserve_shape_len(&mut partials, shape.partials)?;
     for _ in 0..shape.partials {
-        partials.push(L::deserialize_with_mode(
+        partials.push(E::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -78,16 +78,16 @@ fn fold_grind_nonce_serialized_size(compress: Compress) -> usize {
     0u32.serialized_size(compress)
 }
 
-fn serialize_intermediate_fold_wire_prefix<F, L, W>(
+fn serialize_intermediate_fold_wire_prefix<F, E, W>(
     mut writer: W,
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     v: &RingVec<F>,
     fold_grind_nonce: u32,
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
     F: FieldCore + AkitaSerialize,
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
     W: Write,
 {
     serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
@@ -95,33 +95,33 @@ where
     fold_grind_nonce.serialize_with_mode(writer, compress)
 }
 
-fn intermediate_fold_wire_prefix_serialized_size<F, L>(
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+fn intermediate_fold_wire_prefix_serialized_size<F, E>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     v: &RingVec<F>,
     compress: Compress,
 ) -> usize
 where
     F: FieldCore + AkitaSerialize,
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
 {
     extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
         + v.serialized_size(compress)
         + fold_grind_nonce_serialized_size(compress)
 }
 
-type IntermediateFoldWirePrefix<F, L> =
-    (Option<ExtensionOpeningReductionProof<L>>, RingVec<F>, u32);
+type IntermediateFoldWirePrefix<F, E> =
+    (Option<ExtensionOpeningReductionProof<E>>, RingVec<F>, u32);
 
-fn deserialize_intermediate_fold_wire_prefix<F, L, R>(
+fn deserialize_intermediate_fold_wire_prefix<F, E, R>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
     extension_shape: Option<&ExtensionOpeningReductionShape>,
     v_shape: &<RingVec<F> as AkitaDeserialize>::Context,
-) -> Result<IntermediateFoldWirePrefix<F, L>, SerializationError>
+) -> Result<IntermediateFoldWirePrefix<F, E>, SerializationError>
 where
     F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
     let extension_opening_reduction =
@@ -131,39 +131,39 @@ where
     Ok((extension_opening_reduction, v, fold_grind_nonce))
 }
 
-fn serialize_terminal_fold_wire_prefix<L, W>(
+fn serialize_terminal_fold_wire_prefix<E, W>(
     mut writer: W,
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     fold_grind_nonce: u32,
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
     W: Write,
 {
     serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
     fold_grind_nonce.serialize_with_mode(writer, compress)
 }
 
-fn terminal_fold_wire_prefix_serialized_size<L>(
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+fn terminal_fold_wire_prefix_serialized_size<E>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     compress: Compress,
 ) -> usize
 where
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
 {
     extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
         + fold_grind_nonce_serialized_size(compress)
 }
 
-fn deserialize_terminal_fold_wire_prefix<L, R>(
+fn deserialize_terminal_fold_wire_prefix<E, R>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
     extension_shape: Option<&ExtensionOpeningReductionShape>,
-) -> Result<(Option<ExtensionOpeningReductionProof<L>>, u32), SerializationError>
+) -> Result<(Option<ExtensionOpeningReductionProof<E>>, u32), SerializationError>
 where
-    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
     let extension_opening_reduction =
@@ -172,13 +172,13 @@ where
     Ok((extension_opening_reduction, fold_grind_nonce))
 }
 
-fn serialize_stage3_sumcheck<L, W>(
-    stage3_sumcheck: Option<&SetupSumcheckProof<L>>,
+fn serialize_stage3_sumcheck<E, W>(
+    stage3_sumcheck: Option<&SetupSumcheckProof<E>>,
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
     W: Write,
 {
     if let Some(stage3_sumcheck) = stage3_sumcheck {
@@ -195,12 +195,12 @@ where
     Ok(())
 }
 
-fn stage3_sumcheck_serialized_size<L>(
-    stage3_sumcheck: Option<&SetupSumcheckProof<L>>,
+fn stage3_sumcheck_serialized_size<E>(
+    stage3_sumcheck: Option<&SetupSumcheckProof<E>>,
     compress: Compress,
 ) -> usize
 where
-    L: FieldCore + AkitaSerialize,
+    E: FieldCore + AkitaSerialize,
 {
     stage3_sumcheck.map_or(0, |stage3_sumcheck| {
         stage3_sumcheck.claim.serialized_size(compress)
@@ -209,22 +209,22 @@ where
     })
 }
 
-fn deserialize_stage3_sumcheck<L, R>(
+fn deserialize_stage3_sumcheck<E, R>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
     shape: Option<&SetupProductSumcheckShape>,
-) -> Result<Option<SetupSumcheckProof<L>>, SerializationError>
+) -> Result<Option<SetupSumcheckProof<E>>, SerializationError>
 where
-    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
     let Some(shape) = shape else {
         return Ok(None);
     };
     shape.check()?;
-    let claim = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let next_w_eval = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let claim = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let next_w_eval = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let sumcheck =
         SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
     Ok(Some(SetupSumcheckProof {
@@ -234,8 +234,8 @@ where
     }))
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
-    for AkitaLevelProof<F, L>
+impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaLevelProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -364,7 +364,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L> {
+impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaLevelProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             AkitaLevelProof::Intermediate {
@@ -423,8 +423,8 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
 
 impl<
         F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    > AkitaDeserialize for AkitaLevelProof<F, L>
+        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    > AkitaDeserialize for AkitaLevelProof<F, E>
 {
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -454,7 +454,7 @@ impl<
             let mut child_claims = Vec::new();
             reserve_shape_len(&mut child_claims, stage_shape.child_claims)?;
             for _ in 0..stage_shape.child_claims {
-                child_claims.push(L::deserialize_with_mode(
+                child_claims.push(E::deserialize_with_mode(
                     &mut reader,
                     compress,
                     validate,
@@ -468,7 +468,7 @@ impl<
         }
         let stage1 = AkitaStage1Proof {
             stages: stage1_stages,
-            s_claim: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            s_claim: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
             &mut reader,
@@ -490,7 +490,7 @@ impl<
                 validate,
                 &ctx.next_commit_coeffs,
             )?,
-            next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            next_w_eval: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
         });
         let out = Self::Intermediate {
             extension_opening_reduction,
@@ -507,8 +507,8 @@ impl<
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
-    for TerminalLevelProof<F, L>
+impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+    for TerminalLevelProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -547,7 +547,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for TerminalLevelProof<F, L> {
+impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for TerminalLevelProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
@@ -565,8 +565,8 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for TerminalLevelProof<F,
 
 impl<
         F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    > AkitaDeserialize for TerminalLevelProof<F, L>
+        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    > AkitaDeserialize for TerminalLevelProof<F, E>
 {
     type Context = TerminalLevelProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -610,8 +610,8 @@ impl<
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
-    for AkitaBatchedFoldRoot<F, L>
+impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaBatchedFoldRoot<F, E>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -683,7 +683,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F, L> {
+impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
@@ -713,8 +713,8 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
 
 impl<
         F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    > AkitaDeserialize for AkitaBatchedFoldRoot<F, L>
+        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    > AkitaDeserialize for AkitaBatchedFoldRoot<F, E>
 {
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -744,7 +744,7 @@ impl<
             let mut child_claims = Vec::new();
             reserve_shape_len(&mut child_claims, stage_shape.child_claims)?;
             for _ in 0..stage_shape.child_claims {
-                child_claims.push(L::deserialize_with_mode(
+                child_claims.push(E::deserialize_with_mode(
                     &mut reader,
                     compress,
                     validate,
@@ -758,7 +758,7 @@ impl<
         }
         let stage1 = AkitaStage1Proof {
             stages: stage1_stages,
-            s_claim: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            s_claim: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
             &mut reader,
@@ -780,7 +780,7 @@ impl<
                 validate,
                 &ctx.next_commit_coeffs,
             )?,
-            next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            next_w_eval: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
         });
         let out = Self {
             extension_opening_reduction,
@@ -797,8 +797,8 @@ impl<
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
-    for AkitaBatchedRootProof<F, L>
+impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaBatchedRootProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -833,7 +833,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedRootProof<F, L> {
+impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedRootProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(fold) => fold.check(),
@@ -848,8 +848,8 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedRootProof
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
-    for AkitaBatchedProof<F, L>
+impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaBatchedProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -873,7 +873,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, L> {
+impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.root.check()?;
         for step in &self.steps {
@@ -923,8 +923,8 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
 
 impl<
         F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    > AkitaDeserialize for AkitaBatchedProof<F, L>
+        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    > AkitaDeserialize for AkitaBatchedProof<F, E>
 {
     type Context = AkitaBatchedProofShape;
     fn deserialize_with_mode<R: Read>(

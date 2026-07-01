@@ -150,12 +150,12 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
     (sc.round_polys.len(), degree)
 }
 
-pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
+pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     v: &RingVec<F>,
-    stage1: &AkitaStage1Proof<L>,
-    stage2: &AkitaStage2Proof<F, L>,
-    stage3_sumcheck_proof: Option<&SetupSumcheckProof<L>>,
+    stage1: &AkitaStage1Proof<E>,
+    stage2: &AkitaStage2Proof<F, E>,
+    stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
 ) -> LevelProofShape {
     let stage2 = stage2
         .as_intermediate()

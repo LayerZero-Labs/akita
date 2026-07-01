@@ -38,8 +38,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         .map(|poly| opening_from_poly_with_basis(poly, &opening_point, &layout, basis_mode))
         .collect();
 
-    let setup =
-        Scheme::setup_prover(num_vars, total_claims).unwrap();
+    let setup = Scheme::setup_prover(num_vars, total_claims).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -47,8 +46,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let verifier_setup = Scheme::setup_verifier(&setup);
 
     let (commitment, hint) =
-        Scheme::batched_commit(&setup, &polys, &stack)
-            .expect("batched commit");
+        Scheme::batched_commit(&setup, &polys, &stack).expect("batched commit");
 
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));

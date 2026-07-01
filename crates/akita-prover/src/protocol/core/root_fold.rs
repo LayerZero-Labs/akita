@@ -129,7 +129,9 @@ where
 pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
-    stacks: &'stack impl LevelProveStacks<'stack, F,
+    stacks: &'stack impl LevelProveStacks<
+        'stack,
+        F,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -234,7 +236,9 @@ where
 #[inline(never)]
 pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
-    stacks: &'stack impl LevelProveStacks<'stack, F,
+    stacks: &'stack impl LevelProveStacks<
+        'stack,
+        F,
         Commit = C,
         Opening = O,
         Tensor = TS,

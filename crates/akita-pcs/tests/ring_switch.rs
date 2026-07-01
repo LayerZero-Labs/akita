@@ -288,8 +288,7 @@ mod tests {
         let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
         let point = vec![F::zero(); NV];
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -297,10 +296,9 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup, std::slice::from_ref(&poly), &stack
-        )
-        .expect("commitment");
+        let (commitment, batched_hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
+                .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -401,14 +399,16 @@ mod tests {
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
-            let expected =
-                relation_claim_from_rows::<F, D>(
-                    &tau1,
-                    alpha,
-                    instance.v_trusted::<D>().expect("v"),
-                    &commitment.rows().try_to_vec::<D>().expect("commitment rows"),
-                )
-                    .expect("relation claim");
+            let expected = relation_claim_from_rows::<F, D>(
+                &tau1,
+                alpha,
+                instance.v_trusted::<D>().expect("v"),
+                &commitment
+                    .rows()
+                    .try_to_vec::<D>()
+                    .expect("commitment rows"),
+            )
+            .expect("relation claim");
             assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
         }
     }
@@ -434,8 +434,7 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -443,10 +442,9 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup, std::slice::from_ref(&poly), &stack
-        )
-        .expect("commitment");
+        let (commitment, batched_hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
+                .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -538,13 +536,16 @@ mod tests {
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
-            let expected =
-                relation_claim_from_rows::<F, D>(
-                    &tau1,
-                    alpha,
-                    instance.v_trusted::<D>().expect("v"),
-                    &commitment.rows().try_to_vec::<D>().expect("commitment rows"),
-                ).unwrap();
+            let expected = relation_claim_from_rows::<F, D>(
+                &tau1,
+                alpha,
+                instance.v_trusted::<D>().expect("v"),
+                &commitment
+                    .rows()
+                    .try_to_vec::<D>()
+                    .expect("commitment rows"),
+            )
+            .unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
         }
     }
@@ -606,8 +607,7 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -615,10 +615,9 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup, std::slice::from_ref(&poly), &stack
-        )
-        .expect("commitment");
+        let (commitment, batched_hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
+                .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -759,8 +758,7 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -768,10 +766,9 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit(
-            &setup, std::slice::from_ref(&poly), &stack
-        )
-        .expect("commitment");
+        let (commitment, batched_hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
+                .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -847,7 +844,9 @@ mod tests {
         let segment = build_segment_typed_witness::<D, F>(
             artifacts.e_folded.as_ring_slice_trusted::<D>(),
             &recomposed_inner_rows,
-            artifacts.z_folded_centered_trusted::<D>().expect("z centered"),
+            artifacts
+                .z_folded_centered_trusted::<D>()
+                .expect("z centered"),
             artifacts.r.as_ring_slice_trusted::<D>(),
             &level_params,
             1,

@@ -26,34 +26,34 @@ pub struct AkitaStage1Proof<F: FieldCore> {
 
 /// Intermediate-stage payload for stage 2 of a fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaIntermediateStage2Proof<F: FieldCore, L: FieldCore> {
+pub struct AkitaIntermediateStage2Proof<F: FieldCore, E: FieldCore> {
     /// Stage-2 fused sumcheck proof.
-    pub sumcheck_proof: SumcheckProof<L>,
+    pub sumcheck_proof: SumcheckProof<E>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from `v`).
     pub next_w_commitment: RingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
-    pub next_w_eval: L,
+    pub next_w_eval: E,
 }
 
-impl<F: FieldCore, L: FieldCore> AkitaIntermediateStage2Proof<F, L> {
+impl<F: FieldCore, E: FieldCore> AkitaIntermediateStage2Proof<F, E> {
     /// Wire value for the next-witness evaluation claim at stage 2.
-    pub fn next_w_eval(&self) -> L {
+    pub fn next_w_eval(&self) -> E {
         self.next_w_eval
     }
 }
 
 /// Terminal-stage payload for stage 2 of a fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaTerminalStage2Proof<F: FieldCore, L: FieldCore> {
+pub struct AkitaTerminalStage2Proof<F: FieldCore, E: FieldCore> {
     /// Stage-2 fused sumcheck proof.
-    pub sumcheck_proof: SumcheckProof<L>,
+    pub sumcheck_proof: SumcheckProof<E>,
     /// Terminal witness, absorbed via `ABSORB_NEXT_LEVEL_WITNESS_BINDING` in place of
     /// `next_w_commitment`.
     pub final_witness: CleartextWitnessProof<F>,
 }
 
-impl<F: FieldCore, L: FieldCore> AkitaTerminalStage2Proof<F, L> {
+impl<F: FieldCore, E: FieldCore> AkitaTerminalStage2Proof<F, E> {
     /// Borrow the terminal cleartext witness.
     pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
         &self.final_witness
@@ -62,16 +62,16 @@ impl<F: FieldCore, L: FieldCore> AkitaTerminalStage2Proof<F, L> {
 
 /// Proof payload for stage 2 of a fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaStage2Proof<F: FieldCore, L: FieldCore> {
+pub enum AkitaStage2Proof<F: FieldCore, E: FieldCore> {
     /// Intermediate stage-2 payload with a recursive next-witness claim.
-    Intermediate(AkitaIntermediateStage2Proof<F, L>),
+    Intermediate(AkitaIntermediateStage2Proof<F, E>),
     /// Terminal stage-2 payload with a cleartext final witness.
-    Terminal(AkitaTerminalStage2Proof<F, L>),
+    Terminal(AkitaTerminalStage2Proof<F, E>),
 }
 
-impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
+impl<F: FieldCore, E: FieldCore> AkitaStage2Proof<F, E> {
     /// Borrow the intermediate stage-2 payload.
-    pub fn as_intermediate(&self) -> Option<&AkitaIntermediateStage2Proof<F, L>> {
+    pub fn as_intermediate(&self) -> Option<&AkitaIntermediateStage2Proof<F, E>> {
         match self {
             Self::Intermediate(proof) => Some(proof),
             Self::Terminal(_) => None,
@@ -79,7 +79,7 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
     }
 
     /// Mutably borrow the intermediate stage-2 payload.
-    pub fn as_intermediate_mut(&mut self) -> Option<&mut AkitaIntermediateStage2Proof<F, L>> {
+    pub fn as_intermediate_mut(&mut self) -> Option<&mut AkitaIntermediateStage2Proof<F, E>> {
         match self {
             Self::Intermediate(proof) => Some(proof),
             Self::Terminal(_) => None,
@@ -87,7 +87,7 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
     }
 
     /// Borrow the terminal stage-2 payload.
-    pub fn as_terminal(&self) -> Option<&AkitaTerminalStage2Proof<F, L>> {
+    pub fn as_terminal(&self) -> Option<&AkitaTerminalStage2Proof<F, E>> {
         match self {
             Self::Intermediate(_) => None,
             Self::Terminal(proof) => Some(proof),
@@ -95,7 +95,7 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
     }
 
     /// Mutably borrow the terminal stage-2 payload.
-    pub fn as_terminal_mut(&mut self) -> Option<&mut AkitaTerminalStage2Proof<F, L>> {
+    pub fn as_terminal_mut(&mut self) -> Option<&mut AkitaTerminalStage2Proof<F, E>> {
         match self {
             Self::Intermediate(_) => None,
             Self::Terminal(proof) => Some(proof),
@@ -103,7 +103,7 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
     }
 
     /// Borrow the transparent stage-2 sumcheck proof.
-    pub fn sumcheck(&self) -> &SumcheckProof<L> {
+    pub fn sumcheck(&self) -> &SumcheckProof<E> {
         match self {
             Self::Intermediate(proof) => &proof.sumcheck_proof,
             Self::Terminal(proof) => &proof.sumcheck_proof,
@@ -115,7 +115,7 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
     /// # Panics
     ///
     /// Panics if called on a terminal stage-2 proof.
-    pub fn next_w_eval(&self) -> L {
+    pub fn next_w_eval(&self) -> E {
         self.as_intermediate()
             .expect("next_w_eval() called on terminal stage-2 proof")
             .next_w_eval()
@@ -139,26 +139,26 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
 /// This object is not serialized with a tag or length. Its presence and shape
 /// are determined by the verifier's expected proof shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtensionOpeningReductionProof<L: FieldCore> {
+pub struct ExtensionOpeningReductionProof<E: FieldCore> {
     /// Transcript-bound partial evaluations used by the basis-conversion
     /// check.
-    pub partials: Vec<L>,
+    pub partials: Vec<E>,
     /// Degree-two reduction sumcheck.
-    pub sumcheck: SumcheckProof<L>,
+    pub sumcheck: SumcheckProof<E>,
 }
 
 /// Fused stage-3 proof for the public setup contribution and carried witness opening.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupSumcheckProof<L: FieldCore> {
+pub struct SetupSumcheckProof<E: FieldCore> {
     /// Claimed setup contribution fed into the stage-2 final row evaluation.
-    pub claim: L,
+    pub claim: E,
     /// Claimed next-witness opening after the batched stage-3 point projection.
-    pub next_w_eval: L,
+    pub next_w_eval: E,
     /// Degree-two batched product sumcheck carrying setup and next-witness terms.
-    pub sumcheck: SumcheckProof<L>,
+    pub sumcheck: SumcheckProof<E>,
 }
 
-impl<L: FieldCore> SetupSumcheckProof<L> {
+impl<E: FieldCore> SetupSumcheckProof<E> {
     /// Shape descriptor required for headerless deserialization.
     pub fn shape(&self) -> SetupProductSumcheckShape {
         SetupProductSumcheckShape {
@@ -167,7 +167,7 @@ impl<L: FieldCore> SetupSumcheckProof<L> {
     }
 }
 
-impl<L: FieldCore> ExtensionOpeningReductionProof<L> {
+impl<E: FieldCore> ExtensionOpeningReductionProof<E> {
     /// Shape descriptor required for headerless deserialization.
     pub fn shape(&self) -> ExtensionOpeningReductionShape {
         ExtensionOpeningReductionShape {
@@ -188,43 +188,43 @@ impl<L: FieldCore> ExtensionOpeningReductionProof<L> {
 /// proof. Terminal levels carry the final witness inside their terminal stage-2
 /// payload and remember the scheduled final witness length.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaLevelProof<F: FieldCore, L: FieldCore> {
+pub enum AkitaLevelProof<F: FieldCore, E: FieldCore> {
     /// Intermediate recursive fold level.
     Intermediate {
         /// Optional extension-opening reduction payload. `None` for degree-one
         /// openings and proof paths that do not use extension-opening reduction.
-        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
         /// `v = D · ŵ` (ring dim = current level's D).
         v: RingVec<F>,
         /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
         fold_grind_nonce: u32,
         /// Stage-1 norm-check payload.
-        stage1: AkitaStage1Proof<L>,
+        stage1: AkitaStage1Proof<E>,
         /// Stage-2 fused payload.
-        stage2: AkitaStage2Proof<F, L>,
+        stage2: AkitaStage2Proof<F, E>,
         /// Optional stage-3 setup product-sumcheck proof.
-        stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
+        stage3_sumcheck_proof: Option<SetupSumcheckProof<E>>,
     },
     /// Terminal recursive fold level.
     Terminal {
         /// Optional extension-opening reduction payload.
-        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
         /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
         fold_grind_nonce: u32,
         /// Terminal stage-2 payload.
-        stage2: AkitaStage2Proof<F, L>,
+        stage2: AkitaStage2Proof<F, E>,
         /// Scheduled final witness length in field elements.
         final_w_len: usize,
     },
 }
 
-impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
+impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
     /// Construct from typed ring elements for the current level and its
     /// inline two-stage norm-check payloads.
     pub fn new<const D: usize>(
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<L>,
-        stage2: AkitaStage2Proof<F, L>,
+        stage1: AkitaStage1Proof<E>,
+        stage2: AkitaStage2Proof<F, E>,
     ) -> Self {
         Self::Intermediate {
             extension_opening_reduction: None,
@@ -240,10 +240,10 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     #[allow(clippy::too_many_arguments)]
     pub fn new_two_stage<const D: usize>(
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<L>,
-        stage2_sumcheck_proof: SumcheckProof<L>,
+        stage1: AkitaStage1Proof<E>,
+        stage2_sumcheck_proof: SumcheckProof<E>,
         next_w_commitment: RingVec<F>,
-        next_w_eval: L,
+        next_w_eval: E,
     ) -> Self {
         Self::new::<D>(
             v,
@@ -260,12 +260,12 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// extension-opening reduction payloads already produced.
     #[allow(clippy::too_many_arguments)]
     pub fn new_two_stage_many_with_extension_opening_reduction<const D: usize>(
-        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<L>,
-        stage2_sumcheck_proof: SumcheckProof<L>,
+        stage1: AkitaStage1Proof<E>,
+        stage2_sumcheck_proof: SumcheckProof<E>,
         next_w_commitment: RingVec<F>,
-        next_w_eval: L,
+        next_w_eval: E,
     ) -> Self {
         Self::Intermediate {
             extension_opening_reduction,
@@ -284,8 +284,8 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// Construct a terminal level proof.
     #[allow(clippy::too_many_arguments)]
     pub fn new_terminal_with_extension_opening_reduction(
-        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-        stage2_sumcheck: SumcheckProof<L>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
+        stage2_sumcheck: SumcheckProof<E>,
         final_witness: CleartextWitnessProof<F>,
         final_w_len: usize,
         fold_grind_nonce: u32,
@@ -314,7 +314,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     }
 
     /// Borrow the optional extension-opening reduction payload.
-    pub fn extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<L>> {
+    pub fn extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<E>> {
         match self {
             Self::Intermediate {
                 extension_opening_reduction,
@@ -353,9 +353,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     ///
     /// Returns [`AkitaError::InvalidProof`] when the intermediate `v` buffer
     /// cannot be decoded under `D`.
-    pub fn v_as_ring_slice<const D: usize>(
-        &self,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    pub fn v_as_ring_slice<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         match self {
             Self::Intermediate { v, .. } => v.try_to_vec::<D>(),
             Self::Terminal { .. } => Ok(Vec::new()),
@@ -379,7 +377,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// # Panics
     ///
     /// Panics if called on a terminal proof.
-    pub fn stage1(&self) -> &AkitaStage1Proof<L> {
+    pub fn stage1(&self) -> &AkitaStage1Proof<E> {
         match self {
             Self::Intermediate { stage1, .. } => stage1,
             Self::Terminal { .. } => panic!("stage1() called on terminal level proof"),
@@ -387,7 +385,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     }
 
     /// Borrow the intermediate stage-1 payload, if present.
-    pub fn stage1_proof(&self) -> Option<&AkitaStage1Proof<L>> {
+    pub fn stage1_proof(&self) -> Option<&AkitaStage1Proof<E>> {
         match self {
             Self::Intermediate { stage1, .. } => Some(stage1),
             Self::Terminal { .. } => None,
@@ -399,7 +397,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// # Panics
     ///
     /// Panics if called on a terminal proof.
-    pub fn stage1_mut(&mut self) -> &mut AkitaStage1Proof<L> {
+    pub fn stage1_mut(&mut self) -> &mut AkitaStage1Proof<E> {
         match self {
             Self::Intermediate { stage1, .. } => stage1,
             Self::Terminal { .. } => panic!("stage1_mut() called on terminal level proof"),
@@ -407,21 +405,21 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     }
 
     /// Borrow the stage-2 payload.
-    pub fn stage2(&self) -> &AkitaStage2Proof<F, L> {
+    pub fn stage2(&self) -> &AkitaStage2Proof<F, E> {
         match self {
             Self::Intermediate { stage2, .. } | Self::Terminal { stage2, .. } => stage2,
         }
     }
 
     /// Mutably borrow the stage-2 payload.
-    pub fn stage2_mut(&mut self) -> &mut AkitaStage2Proof<F, L> {
+    pub fn stage2_mut(&mut self) -> &mut AkitaStage2Proof<F, E> {
         match self {
             Self::Intermediate { stage2, .. } | Self::Terminal { stage2, .. } => stage2,
         }
     }
 
     /// Borrow the optional intermediate stage-3 setup sumcheck proof.
-    pub fn stage3_sumcheck_proof(&self) -> Option<&SetupSumcheckProof<L>> {
+    pub fn stage3_sumcheck_proof(&self) -> Option<&SetupSumcheckProof<E>> {
         match self {
             Self::Intermediate {
                 stage3_sumcheck_proof,
@@ -436,7 +434,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         &'a self,
         mode: SetupContributionMode,
         next_fold_level_params: Option<&'a LevelParams>,
-    ) -> Result<Option<(&'a SetupSumcheckProof<L>, &'a LevelParams)>, AkitaError> {
+    ) -> Result<Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>, AkitaError> {
         match self {
             Self::Terminal { .. } => Ok(None),
             Self::Intermediate {
@@ -495,7 +493,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     }
 
     /// Claimed evaluation of the next witness `w` at the norm-check output point.
-    pub fn next_w_eval(&self) -> L {
+    pub fn next_w_eval(&self) -> E {
         self.stage2().next_w_eval()
     }
 
@@ -603,23 +601,23 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 /// directly from `final_witness`). The terminal M-row layout also drops the
 /// D-row block, so `v` is not serialized at the terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
+pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     /// Optional extension-opening reduction payload.
-    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
     pub fold_grind_nonce: u32,
     /// Terminal stage-2 payload.
-    pub stage2: AkitaStage2Proof<F, L>,
+    pub stage2: AkitaStage2Proof<F, E>,
 }
 
-impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
+impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
     /// Construct from typed ring elements and a terminal cleartext witness.
     ///
     /// Pass `extension_opening_reduction = None` for opening shapes that do
     /// not use extension-opening reduction.
     pub fn new_with_extension_opening_reduction(
-        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-        stage2_sumcheck: SumcheckProof<L>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
+        stage2_sumcheck: SumcheckProof<E>,
         final_witness: CleartextWitnessProof<F>,
         fold_grind_nonce: u32,
     ) -> Self {
@@ -655,20 +653,20 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
 
 /// Fused batched-root payload for the two-stage folding protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
+pub struct AkitaBatchedFoldRoot<F: FieldCore, E: FieldCore> {
     /// Optional extension-opening reduction payload. `None` until the
     /// extension-opening reduction cutover is wired into the root path.
-    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     /// Aggregated `v = D · ŵ`.
     pub v: RingVec<F>,
     /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
     pub fold_grind_nonce: u32,
     /// Stage-1 norm-check payload.
-    pub stage1: AkitaStage1Proof<L>,
+    pub stage1: AkitaStage1Proof<E>,
     /// Stage-2 fused payload.
-    pub stage2: AkitaStage2Proof<F, L>,
+    pub stage2: AkitaStage2Proof<F, E>,
     /// Optional stage-3 setup product-sumcheck proof.
-    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
+    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<E>>,
 }
 
 /// Root proof payload for fused batched openings.
@@ -683,11 +681,11 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
 ///   witness per claim, in the normalized opening batch claim order
 ///   used by the prover.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
+pub enum AkitaBatchedRootProof<F: FieldCore, E: FieldCore> {
     /// Standard two-stage folded root proof.
-    Fold(AkitaBatchedFoldRoot<F, L>),
+    Fold(AkitaBatchedFoldRoot<F, E>),
     /// 1-fold root: the root level is itself the terminal fold level.
-    Terminal(TerminalLevelProof<F, L>),
+    Terminal(TerminalLevelProof<F, E>),
     /// Zero-fold batched fast path: one cleartext field-element witness per
     /// claim, in the normalized opening batch claim order used by the prover.
     ZeroFold {
@@ -696,9 +694,9 @@ pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
     },
 }
 
-impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
+impl<F: FieldCore, E: FieldCore> AkitaBatchedRootProof<F, E> {
     /// Construct a batched root proof from the root fold-level payload.
-    pub fn new(root: AkitaLevelProof<F, L>) -> Self {
+    pub fn new(root: AkitaLevelProof<F, E>) -> Self {
         let AkitaLevelProof::Intermediate {
             extension_opening_reduction,
             v,
@@ -723,7 +721,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// Attach a stage-3 setup sumcheck proof to a folded root proof.
     pub fn with_stage3_sumcheck_proof(
         mut self,
-        stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
+        stage3_sumcheck_proof: Option<SetupSumcheckProof<E>>,
     ) -> Self {
         if let Self::Fold(fold) = &mut self {
             fold.stage3_sumcheck_proof = stage3_sumcheck_proof;
@@ -734,7 +732,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// Attach extension-opening reduction payloads to a folded root proof.
     pub fn with_extension_opening_reduction(
         mut self,
-        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     ) -> Self {
         if let Self::Fold(fold) = &mut self {
             fold.extension_opening_reduction = extension_opening_reduction;
@@ -744,7 +742,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
 
     /// Construct the terminal-root variant (1-fold case): the root itself is
     /// the terminal fold level.
-    pub fn new_terminal(terminal: TerminalLevelProof<F, L>) -> Self {
+    pub fn new_terminal(terminal: TerminalLevelProof<F, E>) -> Self {
         Self::Terminal(terminal)
     }
 
@@ -754,7 +752,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Borrow the fold payload when this is a fold root.
-    pub fn as_fold(&self) -> Option<&AkitaBatchedFoldRoot<F, L>> {
+    pub fn as_fold(&self) -> Option<&AkitaBatchedFoldRoot<F, E>> {
         match self {
             Self::Fold(fold) => Some(fold),
             Self::Terminal(_) | Self::ZeroFold { .. } => None,
@@ -762,7 +760,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Mutably borrow the fold payload when this is a fold root.
-    pub fn as_fold_mut(&mut self) -> Option<&mut AkitaBatchedFoldRoot<F, L>> {
+    pub fn as_fold_mut(&mut self) -> Option<&mut AkitaBatchedFoldRoot<F, E>> {
         match self {
             Self::Fold(fold) => Some(fold),
             Self::Terminal(_) | Self::ZeroFold { .. } => None,
@@ -770,7 +768,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Borrow the terminal-root payload when this is a terminal root.
-    pub fn as_terminal_root(&self) -> Option<&TerminalLevelProof<F, L>> {
+    pub fn as_terminal_root(&self) -> Option<&TerminalLevelProof<F, E>> {
         match self {
             Self::Terminal(terminal) => Some(terminal),
             Self::Fold(_) | Self::ZeroFold { .. } => None,
@@ -778,7 +776,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Mutably borrow the terminal-root payload when this is a terminal root.
-    pub fn as_terminal_root_mut(&mut self) -> Option<&mut TerminalLevelProof<F, L>> {
+    pub fn as_terminal_root_mut(&mut self) -> Option<&mut TerminalLevelProof<F, E>> {
         match self {
             Self::Terminal(terminal) => Some(terminal),
             Self::Fold(_) | Self::ZeroFold { .. } => None,
@@ -813,7 +811,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Borrow the optional root extension-opening reduction payload.
-    pub fn fold_extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<L>> {
+    pub fn fold_extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<E>> {
         match self {
             Self::Fold(fold) => fold.extension_opening_reduction.as_ref(),
             Self::Terminal(terminal) => terminal.extension_opening_reduction.as_ref(),
@@ -836,7 +834,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Borrow root stage-1 for fold proofs; terminal roots run relation-only stage 2.
-    pub fn fold_stage1(&self) -> Result<Option<&AkitaStage1Proof<L>>, AkitaError> {
+    pub fn fold_stage1(&self) -> Result<Option<&AkitaStage1Proof<E>>, AkitaError> {
         match self {
             Self::Fold(fold) => Ok(Some(&fold.stage1)),
             Self::Terminal(_) => Ok(None),
@@ -860,7 +858,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Borrow root stage-2 for fold and terminal-root proofs.
-    pub fn fold_stage2(&self) -> Result<&AkitaStage2Proof<F, L>, AkitaError> {
+    pub fn fold_stage2(&self) -> Result<&AkitaStage2Proof<F, E>, AkitaError> {
         match self {
             Self::Fold(fold) => Ok(&fold.stage2),
             Self::Terminal(terminal) => Ok(&terminal.stage2),
@@ -872,7 +870,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     pub fn fold_stage3_sumcheck_proof(
         &self,
         mode: SetupContributionMode,
-    ) -> Result<Option<&SetupSumcheckProof<L>>, AkitaError> {
+    ) -> Result<Option<&SetupSumcheckProof<E>>, AkitaError> {
         match self {
             Self::Fold(fold) => match (mode, fold.stage3_sumcheck_proof.as_ref()) {
                 (SetupContributionMode::Direct, None) => Ok(None),
@@ -932,7 +930,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// # Panics
     ///
     /// Panics on terminal-root and zero-fold batched proofs.
-    pub fn next_w_eval(&self) -> L {
+    pub fn next_w_eval(&self) -> E {
         self.as_fold()
             .expect("next_w_eval() called on a non-fold root proof")
             .stage2
@@ -940,7 +938,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 }
 
-impl<F: FieldCore, L: FieldCore> AkitaBatchedFoldRoot<F, L> {
+impl<F: FieldCore, E: FieldCore> AkitaBatchedFoldRoot<F, E> {
     /// Derive the [`LevelProofShape`] for this fold root.
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(
@@ -955,14 +953,14 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedFoldRoot<F, L> {
 
 /// Akita PCS proof for fused batched openings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaBatchedProof<F: FieldCore, L: FieldCore> {
+pub struct AkitaBatchedProof<F: FieldCore, E: FieldCore> {
     /// Batched root proof over all original-polynomial claims.
-    pub root: AkitaBatchedRootProof<F, L>,
+    pub root: AkitaBatchedRootProof<F, E>,
     /// Recursive proof steps following the batched root proof.
-    pub steps: Vec<AkitaLevelProof<F, L>>,
+    pub steps: Vec<AkitaLevelProof<F, E>>,
 }
 
-impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
+impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
     /// Access the terminal cleartext witness of the recursive-suffix path.
     ///
     /// Returns the `final_witness` from the terminal level: either the
@@ -994,7 +992,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
 
     /// Iterate over the intermediate (non-terminal) fold levels of the
     /// recursive suffix.
-    pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaLevelProof<F, L>> {
+    pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaLevelProof<F, E>> {
         self.steps
             .iter()
             .filter_map(AkitaLevelProof::as_intermediate)
@@ -1034,8 +1032,8 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize, L: FieldCore + AkitaSerialize>
-    AkitaBatchedProof<F, L>
+impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize>
+    AkitaBatchedProof<F, E>
 {
     /// Returns the proof size in bytes (uncompressed).
     pub fn size(&self) -> usize {

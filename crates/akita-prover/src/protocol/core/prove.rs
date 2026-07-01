@@ -3,14 +3,13 @@ use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
-    RingSwitchProveBackend, RootPolyMeta, RootPolyShape, RootProvePoly,
-    SuffixOpeningProveBackend, SuffixRingSwitchProveBackend, SuffixTensorProveBackend,
-    TensorBackendFor,
+    RingSwitchProveBackend, RootPolyMeta, RootPolyShape, RootProvePoly, SuffixOpeningProveBackend,
+    SuffixRingSwitchProveBackend, SuffixTensorProveBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
+use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
     validate_level_dispatch, ValidatedScheduleContext, GROUPED_ROOT_DENSE_UNSUPPORTED,
@@ -56,13 +55,13 @@ where
 /// # Errors
 ///
 /// Returns an error if any polynomial cannot produce a direct root witness.
-pub fn prove_root_direct<F, L, const D: usize, P>(
+pub fn prove_root_direct<F, E, const D: usize, P>(
     polys: &[&P],
     hints: &[AkitaCommitmentHint<F>],
-) -> Result<AkitaBatchedProof<F, L>, AkitaError>
+) -> Result<AkitaBatchedProof<F, E>, AkitaError>
 where
     F: FieldCore,
-    L: ExtField<F>,
+    E: ExtField<F>,
     P: DirectRootWitnessSource<F, D>,
 {
     let witnesses = polys
@@ -92,7 +91,9 @@ where
 pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
-    stacks: &'a impl LevelProveStacks<'a, Cfg::Field,
+    stacks: &'a impl LevelProveStacks<
+        'a,
+        Cfg::Field,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -156,10 +157,8 @@ where
         &flat_polys,
         setup_contribution_mode,
     )?;
-    let schedule =
-        effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
-    let schedule_ctx =
-        ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
+    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
+    let schedule_ctx = ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => {
             validate_level_dispatch::<D>(&root.params)?;
@@ -241,7 +240,9 @@ where
 pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
-    stacks: &'a impl LevelProveStacks<'a, Cfg::Field,
+    stacks: &'a impl LevelProveStacks<
+        'a,
+        Cfg::Field,
         Commit = C,
         Opening = O,
         Tensor = TS,
@@ -298,9 +299,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    let root_ring_d = schedule_ctx
-        .level_shape(0)?
-        .ring_dimension;
+    let root_ring_d = schedule_ctx.level_shape(0)?.ring_dimension;
     if root_ring_d != D {
         return Err(AkitaError::InvalidSetup(format!(
             "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"

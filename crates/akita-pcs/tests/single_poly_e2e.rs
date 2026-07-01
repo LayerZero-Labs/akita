@@ -45,8 +45,7 @@ fn run_single_onehot(nv: usize) {
         let pt = random_point(nv, 0xcafe_0000 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup =
-            AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -56,8 +55,9 @@ fn run_single_onehot(nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack)
-        .expect("commit");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack)
+                .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -66,7 +66,19 @@ fn run_single_onehot(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(&setup, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &stack, &mut prover_transcript, BasisMode::Lagrange, akita_types::SetupContributionMode::Direct)
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
+            &setup,
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
         .expect("prove");
 
         let mut serialized = Vec::new();
@@ -118,8 +130,7 @@ fn run_single_dense(nv: usize) {
         let pt = random_point(nv, 0xbabe_0000 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup =
-            AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -129,8 +140,9 @@ fn run_single_dense(nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = AkitaCommitmentScheme::<DenseCfg>::commit(&setup, commit_input, &stack)
-        .expect("commit");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<DenseCfg>::commit(&setup, commit_input, &stack)
+                .expect("commit");
 
         let poly_refs: [&DensePoly<F, DENSE_D>; 1] = [&poly];
         let commitments = [commitment];
@@ -139,7 +151,19 @@ fn run_single_dense(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove(&setup, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &stack, &mut prover_transcript, BasisMode::Lagrange, akita_types::SetupContributionMode::Direct)
+        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove(
+            &setup,
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
         .expect("prove");
 
         let mut serialized = Vec::new();
@@ -243,8 +267,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-        let setup =
-            AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -254,8 +277,9 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack)
-        .expect("commit with oversized setup");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack)
+                .expect("commit with oversized setup");
 
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -264,7 +288,19 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(&setup, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &stack, &mut prover_transcript, BasisMode::Lagrange, akita_types::SetupContributionMode::Direct)
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
+            &setup,
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
         .expect("prove with oversized setup");
 
         let mut serialized = Vec::new();

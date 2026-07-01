@@ -122,24 +122,16 @@ where
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
     let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
-        setup_nv,
-        setup_polys,
-    )
-    .unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .expect("commit");
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
+            .expect("commit");
 
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
     let commitments = [commitment];
@@ -214,24 +206,16 @@ where
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
-        setup_nv,
-        setup_polys,
-    )
-    .unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .expect("commit");
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
+            .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, D, usize>; 1] = [&poly];
     let commitments = [commitment];
@@ -303,22 +287,16 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         .map(|poly| opening_from_poly::<D, _>(poly, &pt, &layout))
         .collect();
 
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
-        setup_nv,
-        setup_polys,
-    )
-    .unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
     let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack)
-            .expect("batched commit");
+        AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
@@ -402,22 +380,16 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .map(|(_, indices)| onehot_lagrange_opening(indices, k, &pt))
         .collect();
 
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
-        setup_nv,
-        setup_polys,
-    )
-    .unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
     let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack)
-            .expect("batched onehot commit");
+    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack)
+        .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];

@@ -42,8 +42,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
     )
     .expect("layout");
-    let setup =
-        AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
     let total = setup
         .expanded
         .shared_matrix

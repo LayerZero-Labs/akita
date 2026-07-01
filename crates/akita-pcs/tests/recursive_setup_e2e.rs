@@ -36,8 +36,8 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"recursive_setup_e2e/onehot";
 /// levels carry the recursive setup-product sumcheck (terminal levels close out
 /// the witness directly and never embed a stage-3 proof), so this is the count
 /// of levels that exercise the Recursive setup-contribution path.
-fn setup_sumcheck_levels<FF: CanonicalField, L: FieldCore>(
-    proof: &AkitaBatchedProof<FF, L>,
+fn setup_sumcheck_levels<FF: CanonicalField, E: FieldCore>(
+    proof: &AkitaBatchedProof<FF, E>,
 ) -> usize {
     let root_fold = match proof.root {
         AkitaBatchedRootProof::Fold(_) => 1,
@@ -102,7 +102,9 @@ fn prove_onehot_with_setup_mode(
 
     let setup = match setup_mode {
         SetupContributionMode::Direct => AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1),
-        SetupContributionMode::Recursive => AkitaCommitmentScheme::<OneHotCfg>::setup_prover_recursion(nv, 1),
+        SetupContributionMode::Recursive => {
+            AkitaCommitmentScheme::<OneHotCfg>::setup_prover_recursion(nv, 1)
+        }
     }
     .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -111,22 +113,21 @@ fn prove_onehot_with_setup_mode(
             .expect("stack");
     let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
     let commit_input = std::slice::from_ref(&poly);
-    let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack)
-    .expect("commit");
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack).expect("commit");
 
     let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let proof =
-        AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
-            &setup,
-            prove_input(&point[..], &poly_refs[..], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-            proof_mode,
-        )
-        .expect("prove");
+    let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
+        &setup,
+        prove_input(&point[..], &poly_refs[..], &commitment, hint),
+        &stack,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+        proof_mode,
+    )
+    .expect("prove");
 
     let proof_shape = proof.shape();
     let mut serialized = Vec::new();

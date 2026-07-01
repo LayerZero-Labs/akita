@@ -308,18 +308,18 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     }
 
     /// Build base-field `gamma` and embedded row rings from transcript-sampled coefficients.
-    pub fn gamma_and_row_rings_from_coefficients<const D: usize, L>(
-        row_coefficients: &[L],
+    pub fn gamma_and_row_rings_from_coefficients<const D: usize, E>(
+        row_coefficients: &[E],
     ) -> Result<(Vec<F>, RingVec<F>), AkitaError>
     where
         F: FromPrimitiveInt,
-        L: FpExtEncoding<F> + ExtField<F>,
+        E: FpExtEncoding<F> + ExtField<F>,
     {
         let mut gamma = Vec::with_capacity(row_coefficients.len());
         let mut row_coefficient_rings = Vec::with_capacity(row_coefficients.len());
         for &coefficient in row_coefficients {
             let ring =
-                embed_ring_subfield_scalar::<F, L, D>(coefficient, AkitaError::InvalidProof)?;
+                embed_ring_subfield_scalar::<F, E, D>(coefficient, AkitaError::InvalidProof)?;
             gamma.push(ring.coefficients()[0]);
             row_coefficient_rings.push(ring);
         }
@@ -445,6 +445,7 @@ mod tests {
         let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
+        let v_zeros = vec![CyclotomicRing::zero(); lp.d_key.row_len()];
         let instance = RingRelationInstance::<F>::from_parts::<D>(
             MRowLayout::WithDBlock,
             test_challenges(&lp, opening_batch.num_polynomials()),
@@ -454,7 +455,7 @@ mod tests {
             vec![F::one(); 3],
             &[CyclotomicRing::one(); 3],
             &[CyclotomicRing::zero(); 2],
-            &[CyclotomicRing::zero(); lp.d_key.row_len()],
+            &v_zeros,
         )
         .expect("same-axis relation");
 

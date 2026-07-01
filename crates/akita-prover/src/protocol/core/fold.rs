@@ -82,38 +82,34 @@ where
     build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
 
-pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
-    pub(in crate::protocol::core) trace_eval_target: L,
-    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
-    pub(in crate::protocol::core) trace_scale: L,
+pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
+    pub(in crate::protocol::core) trace_eval_target: E,
+    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
+    pub(in crate::protocol::core) trace_scale: E,
 }
 
-pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
+pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore, const D: usize> {
     pub(in crate::protocol::core) commitment: RingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
     pub(in crate::protocol::core) extension_opening_reduction:
-        Option<ExtensionOpeningReductionProof<L>>,
-    pub(in crate::protocol::core) trace_eval_target: L,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L>>,
-    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
-    pub(in crate::protocol::core) trace_scale: L,
-    pub(in crate::protocol::core) row_coefficients: Option<Vec<L>>,
+        Option<ExtensionOpeningReductionProof<E>>,
+    pub(in crate::protocol::core) trace_eval_target: E,
+    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
+    pub(in crate::protocol::core) trace_scale: E,
+    pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
 }
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
     point: &RingMultiplierOpeningPoint<F>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let b = point
-        .b_rings_trusted::<D>()?
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
-        })?;
-    let a = point
-        .a_rings_trusted::<D>()?
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
-        })?;
+    let b = point.b_rings_trusted::<D>()?.ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
+    })?;
+    let a = point.a_rings_trusted::<D>()?.ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
+    })?;
     Ok((b, a))
 }
 
@@ -148,16 +144,16 @@ where
     Ok((eval, folded))
 }
 
-pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, C, Q, B, const D: usize>(
+pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, E, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
-    prepared_point: &PreparedOpeningPoint<F, C>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     block_len: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    C: FieldCore,
+    E: FieldCore,
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
@@ -556,17 +552,17 @@ where
     })
 }
 
-pub(in crate::protocol::core) type TerminalFoldResult<F, L> = TerminalLevelProof<F, L>;
+pub(in crate::protocol::core) type TerminalFoldResult<F, E> = TerminalLevelProof<F, E>;
 
-pub(in crate::protocol::core) enum FoldProveOutput<F: FieldCore, L: FieldCore> {
-    Intermediate(Box<ProveLevelOutput<F, L>>),
-    Terminal(Box<TerminalFoldResult<F, L>>),
+pub(in crate::protocol::core) enum FoldProveOutput<F: FieldCore, E: FieldCore> {
+    Intermediate(Box<ProveLevelOutput<F, E>>),
+    Terminal(Box<TerminalFoldResult<F, E>>),
 }
 
-impl<F: FieldCore, L: FieldCore> FoldProveOutput<F, L> {
+impl<F: FieldCore, E: FieldCore> FoldProveOutput<F, E> {
     pub(in crate::protocol::core) fn get_intermediate(
         self,
-    ) -> Result<ProveLevelOutput<F, L>, AkitaError> {
+    ) -> Result<ProveLevelOutput<F, E>, AkitaError> {
         match self {
             Self::Intermediate(out) => Ok(*out),
             Self::Terminal(_) => Err(AkitaError::InvalidInput(
@@ -577,7 +573,7 @@ impl<F: FieldCore, L: FieldCore> FoldProveOutput<F, L> {
 
     pub(in crate::protocol::core) fn get_terminal(
         self,
-    ) -> Result<TerminalFoldResult<F, L>, AkitaError> {
+    ) -> Result<TerminalFoldResult<F, E>, AkitaError> {
         match self {
             Self::Terminal(terminal) => Ok(*terminal),
             Self::Intermediate(_) => Err(AkitaError::InvalidInput(
@@ -603,18 +599,18 @@ type BoundNextWitness<F> = (
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, C, O, TS, R, Cfg, const D: usize>(
+pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg, const D: usize>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     stack: &'stack ProverComputeStack<'stack, F, C, O, TS, R>,
     transcript: &mut T,
     level: usize,
     scheduled: &ExecutionSchedule,
-    prepared_fold: PreparedFold<F, L, D>,
+    prepared_fold: PreparedFold<F, E, D>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
-) -> Result<FoldProveOutput<F, L>, AkitaError>
+) -> Result<FoldProveOutput<F, E>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -624,7 +620,7 @@ where
         + Invertible
         + PseudoMersenneField
         + AkitaSerialize,
-    L: ExtField<F>
+    E: ExtField<F>
         + FpExtEncoding<F>
         + HasUnreducedOps
         + HasOptimizedFold
@@ -637,7 +633,7 @@ where
     R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-    Cfg: CommitmentConfig<Field = F, ExtField = L>,
+    Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let lp = &scheduled.params;
     validate_level_dispatch::<D>(lp)?;
@@ -690,7 +686,7 @@ where
     } else {
         MRowLayout::WithDBlock
     };
-    let rs = ring_switch_finalize::<F, L, T, D>(
+    let rs = ring_switch_finalize::<F, E, T, D>(
         &prepared_fold.instance,
         expanded.as_ref(),
         transcript,
@@ -705,36 +701,36 @@ where
     } else {
         prepared_fold.instance.v_trusted::<D>()?
     };
-    let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
+    let relation_claim = relation_claim_from_rows_extension::<F, E, D>(
         &rs.tau1,
         rs.alpha,
         relation_rows,
         &commitment_u,
     )?;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
-        (None, vec![L::zero(); rs.col_bits + rs.ring_bits], L::zero())
+        (None, vec![E::zero(); rs.col_bits + rs.ring_bits], E::zero())
     } else {
-        let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, L, T>(transcript, &rs)?;
+        let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, E, T>(transcript, &rs)?;
         transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
         (Some(stage1_proof), stage1_point, s_claim)
     };
-    let batching_coeff: L = if is_terminal_fold {
-        L::zero()
+    let batching_coeff: E = if is_terminal_fold {
+        E::zero()
     } else {
-        sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
+        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
     };
     let trace_coeff = {
         let trace_gamma = if is_terminal_fold {
-            sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
+            sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
         } else {
             batching_coeff
         };
         stage2_trace_coeff(batching_coeff, trace_gamma, is_terminal_fold)
     };
     let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
-    ensure_trace_stage2_supported(L::EXT_DEGREE)?;
+    ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
-        Some(build_root_stage2_trace_table::<F, L, D>(
+        Some(build_root_stage2_trace_table::<F, E, D>(
             lp,
             &prepared_fold.instance,
             prepared_fold
@@ -749,7 +745,7 @@ where
             rs.live_x_cols,
         )?)
     } else if let Some(prepared) = prepared_fold.trace_prepared_point.as_ref() {
-        Some(build_recursive_stage2_trace_table::<F, L, D>(
+        Some(build_recursive_stage2_trace_table::<F, E, D>(
             lp,
             &prepared_fold.instance,
             prepared,
@@ -767,7 +763,7 @@ where
     let live_x_cols = rs.live_x_cols;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
-    let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, L, T>(
+    let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
         transcript,
         batching_coeff,
         rs,
@@ -795,7 +791,7 @@ where
         };
         let proof_w_eval = w_eval;
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
-        let stage3_sumcheck_proof = prove_stage3::<F, L, T, D>(
+        let stage3_sumcheck_proof = prove_stage3::<F, E, T, D>(
             setup_contribution_mode,
             expanded.as_ref(),
             prefix_slots,
@@ -947,13 +943,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_stage1<F, L, T>(
+pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
-    rs: &RingSwitchOutput<L>,
-) -> Result<(AkitaStage1Proof<L>, Vec<L>, L), AkitaError>
+    rs: &RingSwitchOutput<E>,
+) -> Result<(AkitaStage1Proof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -972,19 +968,19 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_stage2<F, L, T>(
+fn prove_stage2<F, E, T>(
     transcript: &mut T,
-    batching_coeff: L,
-    rs: RingSwitchOutput<L>,
-    stage1_point: &[L],
-    s_claim: L,
-    relation_claim: L,
-    trace_compact: Option<TraceTable<L>>,
-    trace_opening_claim: L,
-) -> Result<Stage2ProveResult<L>, AkitaError>
+    batching_coeff: E,
+    rs: RingSwitchOutput<E>,
+    stage1_point: &[E],
+    s_claim: E,
+    relation_claim: E,
+    trace_compact: Option<TraceTable<E>>,
+    trace_opening_claim: E,
+) -> Result<Stage2ProveResult<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -1005,37 +1001,37 @@ where
     )?;
     let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
         .prove::<F, T, _>(transcript, |tr| {
-            sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
         })?;
     Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
+pub(in crate::protocol::core) fn prove_stage3<F, E, T, const D: usize>(
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &LevelParams,
     next_level_params: &LevelParams,
     instance: &RingRelationInstance<F>,
-    tau1: &[L],
-    alpha: L,
-    sumcheck_challenges: &[L],
-    stage2_next_w_eval: L,
+    tau1: &[E],
+    alpha: E,
+    sumcheck_challenges: &[E],
+    stage2_next_w_eval: E,
     logical_w: &[i8],
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
     transcript: &mut T,
-) -> Result<Option<Stage3ProveOutput<L>>, AkitaError>
+) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
     T: Transcript<F>,
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let eta = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+            let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
             let mut stage3_prover = AkitaStage3Prover::new::<F, T, D>(
                 expanded,
                 prefix_slots,
@@ -1054,7 +1050,7 @@ where
                 transcript,
             )?;
             let output = stage3_prover.prove::<F, T, _>(transcript, |tr| {
-                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
             transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);
             Ok(Some(Stage3ProveOutput {
