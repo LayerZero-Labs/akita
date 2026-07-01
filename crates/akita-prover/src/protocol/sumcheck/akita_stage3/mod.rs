@@ -69,7 +69,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         prefix_slots: &SetupPrefixProverRegistry<F>,
         lp: &LevelParams,
         next_fold_level_params: &LevelParams,
-        relation: &RingRelationInstance<F, D>,
+        relation: &RingRelationInstance<F>,
         tau1: &[E],
         alpha: E,
         stage2_challenges: &[E],
@@ -239,7 +239,7 @@ fn build_setup_product_term<F, E, T, const D: usize>(
     prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &LevelParams,
     next_fold_level_params: &LevelParams,
-    relation: &RingRelationInstance<F, D>,
+    relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
@@ -368,7 +368,7 @@ where
 /// evaluation.
 fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
     lp: &LevelParams,
-    relation: &RingRelationInstance<F, D>,
+    relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
@@ -405,7 +405,7 @@ where
 
 /// Build the setup-contribution artifact from prover-owned relation data.
 fn create_setup_contribution_inputs<F, E, const D: usize>(
-    relation: &RingRelationInstance<F, D>,
+    relation: &RingRelationInstance<F>,
     lp: &LevelParams,
     tau1: &[E],
 ) -> Result<SetupContributionPlanInputs<E>, AkitaError>

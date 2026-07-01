@@ -141,7 +141,7 @@ fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
 }
 
 fn cyclic_consistency_z_product<F, const D: usize>(
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     z_folded_centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
@@ -184,7 +184,7 @@ where
                 reduced += z_block.scale(&scalar);
             } else {
                 let a_rings = ring_multiplier_point
-                    .a_rings()
+                    .a_rings_trusted::<D>()?
                     .ok_or(AkitaError::InvalidProof)?;
                 let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
                 add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
@@ -215,7 +215,7 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     t_hat: &FlatDigitBlocks<D>,
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     e_folded: &[CyclotomicRing<F, D>],
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     row_coefficient_rings: &[CyclotomicRing<F, D>],
     z_folded_centered: &[[i32; D]],
     z_folded_centered_inf_norm: u32,

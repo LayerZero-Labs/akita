@@ -130,7 +130,7 @@ pub(crate) type RingSwitchSegmentLayout = RingRelationSegmentLayout;
 
 /// Fixed public relation inputs for verifier ring-switch replay.
 pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
-    pub relation: &'a RingRelationInstance<F, D>,
+    pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
     pub lp: &'a LevelParams,
 }
@@ -533,7 +533,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         x_challenges: &[E],
         setup: &AkitaExpandedSetup<F>,
         opening_point: &RingOpeningPoint<F>,
-        ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+        ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
         alpha: E,
         setup_claim: Option<E>,
     ) -> Result<E, AkitaError>
@@ -700,7 +700,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     &z_block_low_eq,
                     z_offset_low,
                     self.block_len,
-                    |idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows),
+                    |idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows),
                 )?];
                 let z_offset_high = layout.offset_z >> z_offset_low_bits;
                 let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
@@ -716,7 +716,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 .evaluate()
             } else {
                 let a_evals_by_point = vec![(0..self.block_len)
-                    .map(|idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows))
+                    .map(|idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows))
                     .collect::<Result<Vec<_>, _>>()?];
                 ZDenseSlicesEvaluator {
                     g1_commit: &g1_commit,

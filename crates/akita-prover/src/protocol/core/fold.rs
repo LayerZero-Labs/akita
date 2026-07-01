@@ -16,9 +16,9 @@ use akita_types::validate_level_dispatch;
 use akita_types::validate_segment_typed_z_payload;
 use akita_types::CleartextWitnessShape;
 
-fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
+fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
@@ -32,7 +32,7 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
 #[allow(clippy::too_many_arguments)]
 fn build_recursive_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     prepared: &PreparedOpeningPoint<F, E, D>,
     trace_scale: E,
     output_scale: E,
@@ -52,7 +52,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn build_root_stage2_trace_table<F, E, const D: usize>(
     lp: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     prepared_point: &PreparedOpeningPoint<F, E, D>,
     row_coefficients: &[E],
     trace_claim_scales: Option<&[E]>,
@@ -90,7 +90,7 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
     pub(in crate::protocol::core) commitment: RingVec<F>,
-    pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
+    pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
@@ -102,14 +102,18 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
 }
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
-    point: &RingMultiplierOpeningPoint<F, D>,
+    point: &RingMultiplierOpeningPoint<F>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let b = point.b_rings().ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
-    })?;
-    let a = point.a_rings().ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
-    })?;
+    let b = point
+        .b_rings_trusted::<D>()?
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
+        })?;
+    let a = point
+        .a_rings_trusted::<D>()?
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
+        })?;
     Ok((b, a))
 }
 
@@ -117,7 +121,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     poly: &Q,
-    point: &RingMultiplierOpeningPoint<F, D>,
+    point: &RingMultiplierOpeningPoint<F>,
     block_len: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
@@ -699,7 +703,7 @@ where
     let relation_rows = if is_terminal_fold {
         &[][..]
     } else {
-        prepared_fold.instance.v.as_slice()
+        prepared_fold.instance.v_trusted::<D>()?
     };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
@@ -827,7 +831,7 @@ where
         let w_commitment_proof = committed_commitment.clone();
         let level_proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: prepared_fold.extension_opening_reduction,
-            v: RingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
+            v: prepared_fold.instance.v().clone().into_compact(),
             fold_grind_nonce,
             stage1: stage1_proof,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
@@ -1013,7 +1017,7 @@ pub(in crate::protocol::core) fn prove_stage3<F, L, T, const D: usize>(
     prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &LevelParams,
     next_level_params: &LevelParams,
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     tau1: &[L],
     alpha: L,
     sumcheck_challenges: &[L],

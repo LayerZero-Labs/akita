@@ -410,16 +410,16 @@ mod tests {
             num_blocks_per_claim: lp.num_blocks,
             num_claims,
         };
-        let instance = RingRelationInstance::<F, D>::new(
+        let instance = RingRelationInstance::<F>::from_parts::<D>(
             m_row_layout,
             challenges,
             opening_point,
             ring_multiplier_point,
             opening_batch,
             vec![F::zero(); num_claims],
-            vec![CyclotomicRing::<F, D>::zero(); num_claims],
-            vec![CyclotomicRing::<F, D>::zero(); num_claims],
-            Vec::new(),
+            &vec![CyclotomicRing::<F, D>::zero(); num_claims],
+            &vec![CyclotomicRing::<F, D>::zero(); num_claims],
+            &[],
         )?;
         instance.segment_layout(lp)
     }

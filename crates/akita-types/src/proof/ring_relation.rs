@@ -4,7 +4,7 @@ use super::OpeningBatchShape;
 use crate::FpExtEncoding;
 use crate::{
     embed_ring_subfield_scalar, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint,
+    RingOpeningPoint, RingVec,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
@@ -43,7 +43,7 @@ pub struct RingRelationOpeningCounts {
 }
 
 /// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
-pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usize>(
+pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
     opening_counts: RingRelationOpeningCounts,
     _m_row_layout: MRowLayout,
@@ -96,21 +96,26 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usi
 }
 
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
+///
+/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
+/// closures borrow typed ring rows via [`Self::y_trusted`], [`Self::v_trusted`],
+/// and [`Self::row_coefficient_rings_trusted`].
 #[derive(Debug, Clone)]
-pub struct RingRelationInstance<F: FieldCore, const D: usize> {
+pub struct RingRelationInstance<F: FieldCore> {
     m_row_layout: MRowLayout,
     pub challenges: Challenges,
     opening_point: RingOpeningPoint<F>,
-    ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: RingMultiplierOpeningPoint<F>,
     opening_batch: OpeningBatchShape,
     gamma: Vec<F>,
-    row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
-    y: Vec<CyclotomicRing<F, D>>,
-    pub v: Vec<CyclotomicRing<F, D>>,
+    row_coefficient_rings: RingVec<F>,
+    y: RingVec<F>,
+    v: RingVec<F>,
+    ring_dim: usize,
 }
 
-impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
-    /// Construct a validated ring-relation statement from already-sampled inputs.
+impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
+    /// Construct a validated ring-relation statement from D-free ring storage.
     ///
     /// Does not sample from the transcript; callers must absorb/sample before calling.
     #[allow(clippy::too_many_arguments)]
@@ -118,25 +123,52 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         m_row_layout: MRowLayout,
         challenges: Challenges,
         opening_point: RingOpeningPoint<F>,
-        ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
         opening_batch: OpeningBatchShape,
         gamma: Vec<F>,
-        row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
-        y: Vec<CyclotomicRing<F, D>>,
-        v: Vec<CyclotomicRing<F, D>>,
+        row_coefficient_rings: RingVec<F>,
+        y: RingVec<F>,
+        v: RingVec<F>,
+        ring_dim: usize,
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
         if gamma.len() != opening_batch.num_polynomials()
-            || row_coefficient_rings.len() != opening_batch.num_polynomials()
+            || row_coefficient_rings.count() != opening_batch.num_polynomials()
         {
             return Err(AkitaError::InvalidInput(
                 "ring relation gamma/row coefficients length mismatch".to_string(),
             ));
         }
-        if y.is_empty() {
+        if y.count() == 0 {
             return Err(AkitaError::InvalidInput(
                 "ring relation y must contain at least the consistency row".to_string(),
             ));
+        }
+        if ring_dim == 0 {
+            return Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: 0,
+            });
+        }
+        if !row_coefficient_rings.can_decode_vec(ring_dim)
+            || !y.can_decode_vec(ring_dim)
+            || !v.can_decode_vec(ring_dim)
+        {
+            return Err(AkitaError::InvalidSize {
+                expected: ring_dim,
+                actual: row_coefficient_rings.coeff_len(),
+            });
+        }
+        for (idx, chunk) in row_coefficient_rings
+            .coeffs()
+            .chunks_exact(ring_dim)
+            .enumerate()
+        {
+            if gamma.get(idx) != Some(&chunk[0]) {
+                return Err(AkitaError::InvalidInput(
+                    "ring relation gamma does not match row coefficient rings".to_string(),
+                ));
+            }
         }
         Ok(Self {
             m_row_layout,
@@ -148,7 +180,40 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             row_coefficient_rings,
             y,
             v,
+            ring_dim,
         })
+    }
+
+    /// Construct from typed kernel outputs at a ring-relation boundary.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_parts<const D: usize>(
+        m_row_layout: MRowLayout,
+        challenges: Challenges,
+        opening_point: RingOpeningPoint<F>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
+        opening_batch: OpeningBatchShape,
+        gamma: Vec<F>,
+        row_coefficient_rings: &[CyclotomicRing<F, D>],
+        y: &[CyclotomicRing<F, D>],
+        v: &[CyclotomicRing<F, D>],
+    ) -> Result<Self, AkitaError> {
+        Self::new(
+            m_row_layout,
+            challenges,
+            opening_point,
+            ring_multiplier_point,
+            opening_batch,
+            gamma,
+            RingVec::from_ring_elems(row_coefficient_rings),
+            RingVec::from_ring_elems(y),
+            RingVec::from_ring_elems(v),
+            D,
+        )
+    }
+
+    /// Stored ring dimension (coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
     }
 
     pub fn m_row_layout(&self) -> MRowLayout {
@@ -163,7 +228,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         &self.opening_point
     }
 
-    pub fn ring_multiplier_point(&self) -> &RingMultiplierOpeningPoint<F, D> {
+    pub fn ring_multiplier_point(&self) -> &RingMultiplierOpeningPoint<F> {
         &self.ring_multiplier_point
     }
 
@@ -171,12 +236,61 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         &self.gamma
     }
 
-    pub fn row_coefficient_rings(&self) -> &[CyclotomicRing<F, D>] {
+    /// Public D-block rows in flat ring storage.
+    pub fn v(&self) -> &RingVec<F> {
+        &self.v
+    }
+
+    /// Relation RHS rows in flat ring storage.
+    pub fn y(&self) -> &RingVec<F> {
+        &self.y
+    }
+
+    /// Row-coefficient rings embedded in flat ring storage.
+    pub fn row_coefficient_rings(&self) -> &RingVec<F> {
         &self.row_coefficient_rings
     }
 
-    pub fn y(&self) -> &[CyclotomicRing<F, D>] {
-        &self.y
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "ring relation instance ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if !self.row_coefficient_rings.can_decode_vec(D)
+            || !self.y.can_decode_vec(D)
+            || !self.v.can_decode_vec(D)
+        {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.y.coeff_len(),
+            });
+        }
+        self.ring_multiplier_point.ensure_ring_dim::<D>()
+    }
+
+    /// Borrow `y` rows after [`Self::ensure_ring_dim`].
+    pub fn y_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.y.as_ring_slice::<D>()
+    }
+
+    /// Borrow `v` rows after [`Self::ensure_ring_dim`].
+    pub fn v_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.v.as_ring_slice::<D>()
+    }
+
+    /// Borrow row-coefficient rings after [`Self::ensure_ring_dim`].
+    pub fn row_coefficient_rings_trusted<const D: usize>(
+        &self,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.row_coefficient_rings.as_ring_slice::<D>()
     }
 
     /// Validate layout-dependent D-row payload shape.
@@ -185,7 +299,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             MRowLayout::WithDBlock => lp.d_key.row_len(),
             MRowLayout::WithoutDBlock => 0,
         };
-        if self.v.len() != expected {
+        if self.v.count() != expected {
             return Err(AkitaError::InvalidInput(
                 "ring relation v rows do not match M-row layout".to_string(),
             ));
@@ -194,9 +308,9 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
     }
 
     /// Build base-field `gamma` and embedded row rings from transcript-sampled coefficients.
-    pub fn gamma_and_row_rings_from_coefficients<L>(
+    pub fn gamma_and_row_rings_from_coefficients<const D: usize, L>(
         row_coefficients: &[L],
-    ) -> Result<(Vec<F>, Vec<CyclotomicRing<F, D>>), AkitaError>
+    ) -> Result<(Vec<F>, RingVec<F>), AkitaError>
     where
         F: FromPrimitiveInt,
         L: FpExtEncoding<F> + ExtField<F>,
@@ -209,7 +323,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             gamma.push(ring.coefficients()[0]);
             row_coefficient_rings.push(ring);
         }
-        Ok((gamma, row_coefficient_rings))
+        Ok((gamma, RingVec::from_ring_elems(&row_coefficient_rings)))
     }
 
     /// Witness-column segment layout shared by prover and verifier ring-switch paths.
@@ -217,7 +331,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         &self,
         lp: &LevelParams,
     ) -> Result<RingRelationSegmentLayout, AkitaError> {
-        let lens = ring_relation_segment_lengths::<F, D>(
+        let lens = ring_relation_segment_lengths::<F>(
             lp,
             RingRelationOpeningCounts {
                 num_claims: self.opening_batch.num_polynomials(),
@@ -305,16 +419,17 @@ mod tests {
         let opening_batch = OpeningBatchShape::new(2, 1).expect("valid opening batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let err = RingRelationInstance::<F, D>::new(
+        let err = RingRelationInstance::<F>::new(
             MRowLayout::WithoutDBlock,
             test_challenges(&lp, opening_batch.num_polynomials()),
             opening_point,
             ring_multiplier_point,
             opening_batch,
             vec![F::one()],
-            vec![CyclotomicRing::one()],
-            Vec::new(),
-            Vec::new(),
+            RingVec::from_ring_elems::<D>(&[CyclotomicRing::one()]),
+            RingVec::from_ring_elems::<D>(&[]),
+            RingVec::from_ring_elems::<D>(&[]),
+            D,
         )
         .expect_err("empty y must be rejected");
         assert!(
@@ -330,21 +445,21 @@ mod tests {
         let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let instance = RingRelationInstance::<F, D>::new(
+        let instance = RingRelationInstance::<F>::from_parts::<D>(
             MRowLayout::WithDBlock,
             test_challenges(&lp, opening_batch.num_polynomials()),
             opening_point,
             ring_multiplier_point,
             opening_batch,
             vec![F::one(); 3],
-            vec![CyclotomicRing::one(); 3],
-            vec![CyclotomicRing::zero(); 2],
-            vec![CyclotomicRing::zero(); lp.d_key.row_len()],
+            &[CyclotomicRing::one(); 3],
+            &[CyclotomicRing::zero(); 2],
+            &[CyclotomicRing::zero(); lp.d_key.row_len()],
         )
         .expect("same-axis relation");
 
         let layout = instance.segment_layout(&lp).expect("layout");
-        let lens = ring_relation_segment_lengths::<F, D>(
+        let lens = ring_relation_segment_lengths::<F>(
             &lp,
             RingRelationOpeningCounts {
                 num_claims: instance.opening_batch().num_polynomials(),

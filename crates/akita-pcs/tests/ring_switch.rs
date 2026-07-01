@@ -240,13 +240,13 @@ mod tests {
     fn nonconstant_ring_multiplier_point<F, const D: usize>(
         block_len: usize,
         num_blocks: usize,
-    ) -> RingMultiplierOpeningPoint<F, D>
+    ) -> RingMultiplierOpeningPoint<F>
     where
         F: FieldCore + FromPrimitiveInt,
     {
         let a = (0..block_len)
             .map(|idx| {
-                CyclotomicRing::from_coefficients(from_fn(|k| {
+                CyclotomicRing::<F, D>::from_coefficients(from_fn(|k| {
                     if k % 17 == idx % 17 {
                         F::from_u64(((idx + 3 * k + 5) % 11 + 1) as u64)
                     } else {
@@ -257,7 +257,7 @@ mod tests {
             .collect();
         let b = (0..num_blocks)
             .map(|idx| {
-                CyclotomicRing::from_coefficients(from_fn(|k| {
+                CyclotomicRing::<F, D>::from_coefficients(from_fn(|k| {
                     if k % 19 == idx % 19 {
                         F::from_u64(((2 * idx + k + 7) % 13 + 1) as u64)
                     } else {
@@ -266,7 +266,7 @@ mod tests {
                 }))
             })
             .collect();
-        RingMultiplierOpeningPoint::from_ring(a, b)
+        RingMultiplierOpeningPoint::from_ring::<D>(a, b)
     }
 
     #[test]
@@ -320,11 +320,13 @@ mod tests {
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars: ring_multiplier_point
-                    .b_rings()
-                    .expect("nonconstant test point has ring b weights"),
+                    .b_rings_trusted::<D>()
+                    .expect("nonconstant test point has ring b weights")
+                    .expect("ring b weights"),
                 fold_scalars: ring_multiplier_point
-                    .a_rings()
-                    .expect("nonconstant test point has ring a weights"),
+                    .a_rings_trusted::<D>()
+                    .expect("nonconstant test point has ring a weights")
+                    .expect("ring a weights"),
                 block_len: lp.block_len,
             },
         )
@@ -403,7 +405,7 @@ mod tests {
                 relation_claim_from_rows::<F, D>(
                     &tau1,
                     alpha,
-                    &instance.v,
+                    instance.v_trusted::<D>().expect("v"),
                     &commitment.rows().try_to_vec::<D>().expect("commitment rows"),
                 )
                     .expect("relation claim");
@@ -540,7 +542,7 @@ mod tests {
                 relation_claim_from_rows::<F, D>(
                     &tau1,
                     alpha,
-                    &instance.v,
+                    instance.v_trusted::<D>().expect("v"),
                     &commitment.rows().try_to_vec::<D>().expect("commitment rows"),
                 ).unwrap();
             assert_eq!(got, expected, "row {row} mismatch");

@@ -144,7 +144,7 @@ pub struct RingSwitchBuildOutput<F: FieldCore> {
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
-    instance: &RingRelationInstance<F, D>,
+    instance: &RingRelationInstance<F>,
     witness: RingRelationWitness<F>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
@@ -181,6 +181,7 @@ where
     let decomposed_inner_rows = FlatDigitBlocks::<D>::from_digit_blocks(&hint.into_flat_parts()?)?;
     let opening_batch = instance.opening_batch();
 
+    instance.ensure_ring_dim::<D>()?;
     let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
         ring_switch_ctx,
         lp,
@@ -190,10 +191,10 @@ where
         &recomposed_inner_rows,
         &e_folded,
         instance.ring_multiplier_point(),
-        instance.row_coefficient_rings(),
+        instance.row_coefficient_rings_trusted::<D>()?,
         &z_folded_rings.centered_coeffs_trusted::<D>(),
         z_folded_rings.centered_inf_norm,
-        instance.y(),
+        instance.y_trusted::<D>()?,
         opening_batch.num_polynomials(),
         lp.num_blocks,
         lp.inner_width(),

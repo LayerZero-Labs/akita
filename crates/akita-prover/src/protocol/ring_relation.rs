@@ -352,7 +352,7 @@ impl RingRelationProver {
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         opening_point: RingOpeningPoint<F>,
-        ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
         fold_claims: ProverOpeningBatch<'a, PointF, P, F>,
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
@@ -360,7 +360,7 @@ impl RingRelationProver {
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
-    ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F>), AkitaError>
+    ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         PointF: Clone,
@@ -479,16 +479,16 @@ impl RingRelationProver {
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
 
-        let instance = RingRelationInstance::new(
+        let instance = RingRelationInstance::from_parts::<D>(
             m_row_layout,
             challenges,
             opening_point,
             ring_multiplier_point,
             opening_batch,
             gamma,
-            row_coefficient_rings,
-            y,
-            v,
+            &row_coefficient_rings,
+            &y,
+            &v,
         )?;
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness::from_parts::<D>(

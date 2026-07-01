@@ -188,7 +188,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
         VerifierOpeningBatch<'a, E, &'a [CyclotomicRing<F, D>]>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) ring_opening_point: RingOpeningPoint<F>,
-    pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
+    pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F>,
     pub(in crate::protocol::core) w_len: usize,
     pub(in crate::protocol::core) stage1: Option<&'a AkitaStage1Proof<E>>,
     pub(in crate::protocol::core) stage2: &'a AkitaStage2Proof<F, E>,
@@ -277,7 +277,7 @@ fn verify_stage2<F, E, T, const D: usize>(
     num_segments: usize,
     setup_claim: Option<E>,
     ring_opening_point: &RingOpeningPoint<F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     trace: Option<TraceClaim<F, E, D>>,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -409,25 +409,26 @@ where
         prepared.fold_grind_nonce,
     )?;
     let (gamma, row_coefficient_rings) =
-        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<E>(
+        RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
             &prepared.row_coefficients,
         )?;
     let n_d_active = match prepared.m_row_layout {
         MRowLayout::WithDBlock => prepared.lp.d_key.row_len(),
         MRowLayout::WithoutDBlock => 0,
     };
+    let v_ring = RingVec::from_ring_elems(&prepared.v);
     let y_v_slice = match prepared.m_row_layout {
-        MRowLayout::WithDBlock => prepared.v.as_slice(),
+        MRowLayout::WithDBlock => v_ring.as_ring_slice::<D>()?,
         MRowLayout::WithoutDBlock => &[],
     };
-    let relation_y = generate_y::<F, D>(
+    let relation_y = RingVec::from_ring_elems(&generate_y::<F, D>(
         y_v_slice,
         commitment_rows,
         n_d_active,
         prepared.lp.effective_commit_rows(),
         prepared.lp.b_inner_rows_per_group(),
         prepared.lp.a_key.row_len(),
-    )?;
+    )?);
     let relation_instance = RingRelationInstance::new(
         prepared.m_row_layout,
         stage1_challenges,
@@ -437,7 +438,8 @@ where
         gamma,
         row_coefficient_rings,
         relation_y,
-        prepared.v,
+        v_ring,
+        D,
     )?;
     let ring_switch_replay = RingSwitchReplay {
         relation: &relation_instance,
@@ -470,7 +472,7 @@ where
     let relation_claim = relation_claim_from_rows_extension::<F, E, D>(
         &rs.tau1,
         rs.alpha,
-        &relation_instance.v,
+        &relation_instance.v_trusted::<D>()?,
         commitment_rows,
     )?;
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
