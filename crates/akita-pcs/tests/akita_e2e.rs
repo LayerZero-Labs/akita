@@ -18,7 +18,6 @@ use akita_prover::OneHotPoly;
 use akita_prover::{CommitmentProver, ProverCommitmentGroup, ProverOpeningBatch};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_transcript::AkitaTranscript;
-use akita_types::CommitmentGroupScheduleKey;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
 use akita_types::{
     schedule_terminal_direct_witness_shape, CleartextWitnessProof, CleartextWitnessShape, Schedule,
@@ -27,6 +26,7 @@ use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommitmentGroup,
     PointVariableSelection, RingCommitment, VerifierOpeningBatch,
 };
+use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey};
 use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
