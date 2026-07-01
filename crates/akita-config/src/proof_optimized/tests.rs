@@ -368,6 +368,37 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
         SetupMatrixEnvelope { max_setup_len }
     }
 
+    const MAX_NV: usize = 30;
+    let exhaustive = exhaustive_envelope::<fp128::D64OneHot>(MAX_NV, 4);
+    let endpoint = super::proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(MAX_NV, 4)
+        .expect("endpoint poly scan");
+    assert_eq!(
+        exhaustive.max_setup_len, endpoint.max_setup_len,
+        "D64OneHot nv<={MAX_NV}: endpoint scan must match exhaustive poly scan"
+    );
+}
+
+#[test]
+#[ignore = "full envelope exhaustive cross-check is slow; run before envelope logic changes"]
+fn setup_envelope_endpoint_poly_scan_full_manual() {
+    fn exhaustive_envelope<Cfg: CommitmentConfig>(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> SetupMatrixEnvelope {
+        let mut max_setup_len = 1usize;
+        let poly_counts = super::setup_envelope_poly_counts(max_num_batched_polys);
+        for num_vars in 1..=max_num_vars {
+            for &num_polys in &poly_counts {
+                let opening_batch =
+                    worst_case_grouped_opening_batch_for_shape(num_vars, num_polys).unwrap();
+                if let Ok(Some(envelope)) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch) {
+                    max_setup_len = max_setup_len.max(envelope.max_setup_len);
+                }
+            }
+        }
+        SetupMatrixEnvelope { max_setup_len }
+    }
+
     for max_nv in [16usize, 24, 30] {
         let exhaustive = exhaustive_envelope::<fp128::D64OneHot>(max_nv, 4);
         let endpoint = super::proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(max_nv, 4)
