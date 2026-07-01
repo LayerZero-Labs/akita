@@ -280,7 +280,10 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// additions instead of `O(D^2)` for a generic multiply.
     #[inline]
     pub fn mul_accumulate_all_ones_into(&self, dst: &mut Self) {
-        let total = self.coeffs.iter().fold(F::zero(), |acc, coeff| acc + *coeff);
+        let total = self
+            .coeffs
+            .iter()
+            .fold(F::zero(), |acc, coeff| acc + *coeff);
         let mut prefix = F::zero();
         for (dst_coeff, coeff) in dst.coeffs.iter_mut().zip(self.coeffs.iter()) {
             prefix += *coeff;

@@ -10,7 +10,9 @@
 //! [`policy_of`] bridge. Fallback is the default for every preset.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
+};
 use akita_planner::{
     fold_level_params_from_entry, generated::table_entry, generated_schedule_lookup_key,
     validate_catalog_identity, PlannerPolicy,
@@ -247,7 +249,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::Field: FromPrimitiveInt,
     {
         let policy = policy_of::<Self>();
-        let keys = proof_optimized::envelope_schedule_lookup_keys(
+        let keys = proof_optimized::fold_a_ones_schedule_lookup_keys(
             setup.seed().max_num_vars,
             setup.seed().max_num_batched_polys,
         );
@@ -260,14 +262,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 Self::fold_challenge_shape_at_level,
             )?;
         }
-        let mut table =
-            FoldAOnesTable::empty_for_seed(setup.seed().public_matrix_seed);
+        let mut table = FoldAOnesTable::empty_for_seed(setup.seed().public_matrix_seed);
         let mut miss_schedules = Vec::new();
         for key in keys {
             let mut warmed = false;
             if let Some(ref catalog_table) = catalog {
-                if let Some(entry) =
-                    table_entry(*catalog_table, generated_schedule_lookup_key(key))
+                if let Some(entry) = table_entry(*catalog_table, generated_schedule_lookup_key(key))
                 {
                     let level_params = fold_level_params_from_entry(
                         entry,

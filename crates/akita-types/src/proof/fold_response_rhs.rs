@@ -10,13 +10,17 @@
 //! flat vector, and M-row indices such as [`LevelParams::a_start`] are unrelated
 //! to flat offsets.
 
-use crate::{gadget_row_scalars, LevelParams, MRowLayout, PublicMatrixSeed, RingMultiplierOpeningPoint};
+use crate::AkitaExpandedSetup;
 use crate::Schedule;
+use crate::{
+    gadget_row_scalars, LevelParams, MRowLayout, PublicMatrixSeed, RingMultiplierOpeningPoint,
+};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_field::{cfg_into_iter, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
-use crate::AkitaExpandedSetup;
+use akita_field::{
+    cfg_into_iter, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase,
+};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -67,12 +71,8 @@ macro_rules! fold_a_ones_lookup {
     };
 }
 
-fn rings_to_coeff_rows<F: FieldCore, const D: usize>(
-    rows: &[CyclotomicRing<F, D>],
-) -> Vec<Vec<F>> {
-    rows.iter()
-        .map(|row| row.coefficients().to_vec())
-        .collect()
+fn rings_to_coeff_rows<F: FieldCore, const D: usize>(rows: &[CyclotomicRing<F, D>]) -> Vec<Vec<F>> {
+    rows.iter().map(|row| row.coefficients().to_vec()).collect()
 }
 
 fn rehydrate_ring<F: FieldCore, const D: usize>(
@@ -243,9 +243,7 @@ impl<F: FieldCore> FoldAOnesTable<F> {
     {
         for lp in level_params {
             let ring_dim = lp.ring_dimension;
-            crate::dispatch_ring_dim_result!(ring_dim, |D| self.ensure_a_ones::<D>(
-                setup, lp
-            ))?;
+            crate::dispatch_ring_dim_result!(ring_dim, |D| self.ensure_a_ones::<D>(setup, lp))?;
         }
         Ok(())
     }
@@ -291,18 +289,14 @@ impl<F: FieldCore> FoldAOnesTable<F> {
         let ring_dim = lp.ring_dimension;
         crate::dispatch_ring_dim_result!(ring_dim, |D| {
             Ok(match D {
-                32 => rings_to_coeff_rows::<F, 32>(
-                    &self.a_shift_rows_at_32(lp, committed_shift)?,
-                ),
-                64 => rings_to_coeff_rows::<F, 64>(
-                    &self.a_shift_rows_at_64(lp, committed_shift)?,
-                ),
-                128 => rings_to_coeff_rows::<F, 128>(
-                    &self.a_shift_rows_at_128(lp, committed_shift)?,
-                ),
-                256 => rings_to_coeff_rows::<F, 256>(
-                    &self.a_shift_rows_at_256(lp, committed_shift)?,
-                ),
+                32 => rings_to_coeff_rows::<F, 32>(&self.a_shift_rows_at_32(lp, committed_shift)?),
+                64 => rings_to_coeff_rows::<F, 64>(&self.a_shift_rows_at_64(lp, committed_shift)?),
+                128 => {
+                    rings_to_coeff_rows::<F, 128>(&self.a_shift_rows_at_128(lp, committed_shift)?)
+                }
+                256 => {
+                    rings_to_coeff_rows::<F, 256>(&self.a_shift_rows_at_256(lp, committed_shift)?)
+                }
                 _ => unreachable!("dispatch_ring_dim_result already filtered unsupported D"),
             })
         })
@@ -621,8 +615,7 @@ where
         reader
             .read_exact(&mut setup_seed)
             .map_err(SerializationError::from)?;
-        let bucket_count =
-            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let bucket_count = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut table = Self::empty_for_seed(setup_seed);
         for _ in 0..bucket_count {
             let ring_dim = u64::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -719,7 +712,9 @@ pub fn all_coeffs_one_ring<F: FieldCore, const D: usize>() -> CyclotomicRing<F, 
     CyclotomicRing::from_coefficients([F::one(); D])
 }
 
-fn accumulate_a_ones_row<F, const D: usize>(setup_row: &[CyclotomicRing<F, D>]) -> CyclotomicRing<F, D>
+fn accumulate_a_ones_row<F, const D: usize>(
+    setup_row: &[CyclotomicRing<F, D>],
+) -> CyclotomicRing<F, D>
 where
     F: FieldCore + CanonicalField,
 {
@@ -993,8 +988,8 @@ mod tests {
     }
 
     fn sample_lp() -> LevelParams {
-        use akita_challenges::SparseChallengeConfig;
         use crate::SisModulusFamily;
+        use akita_challenges::SparseChallengeConfig;
         LevelParams::params_only(
             SisModulusFamily::Q32,
             D,
@@ -1042,8 +1037,8 @@ mod tests {
         const D_WARM: usize = 32;
         use crate::derive_public_matrix_flat;
         use crate::sample_public_matrix_seed;
-        use akita_challenges::SparseChallengeConfig;
         use crate::SisModulusFamily;
+        use akita_challenges::SparseChallengeConfig;
         let setup_seed = crate::AkitaSetupSeed {
             max_num_vars: 4,
             max_num_batched_polys: 1,
@@ -1055,8 +1050,7 @@ mod tests {
             setup_seed.max_setup_len,
             &setup_seed.public_matrix_seed,
         );
-        let setup =
-            AkitaExpandedSetup::from_verified_parts(setup_seed, matrix).expect("setup");
+        let setup = AkitaExpandedSetup::from_verified_parts(setup_seed, matrix).expect("setup");
         let lp = LevelParams::params_only(
             SisModulusFamily::Q32,
             D_WARM,
@@ -1111,8 +1105,7 @@ mod tests {
             }
             acc
         };
-        let got = a_ones_from_setup::<F, D>(&setup, &lp)
-            .expect("ones")[0];
+        let got = a_ones_from_setup::<F, D>(&setup, &lp).expect("ones")[0];
         assert_eq!(got, expected);
         assert_ne!(got, wrong);
     }

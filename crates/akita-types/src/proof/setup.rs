@@ -516,12 +516,8 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
             validate,
             &(),
         )?);
-        let prefix_slots = SetupPrefixVerifierRegistry::deserialize_with_mode(
-            reader,
-            compress,
-            validate,
-            &(),
-        )?;
+        let prefix_slots =
+            SetupPrefixVerifierRegistry::deserialize_with_mode(reader, compress, validate, &())?;
         Ok(Self {
             fold_a_ones: FoldAOnesTable::empty_for_seed(expanded.seed().public_matrix_seed),
             expanded,

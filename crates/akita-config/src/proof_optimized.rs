@@ -191,6 +191,28 @@ pub(crate) fn envelope_schedule_lookup_keys(
     keys
 }
 
+/// Schedule lookup keys for setup-time fold `A · 1` warming.
+///
+/// Unlike [`envelope_schedule_lookup_keys`], this scans every batch size in
+/// `1..=max_num_batched_polys`. Level-0 fold geometry depends on
+/// `num_polynomials`, so intermediate counts must be warmed even when setup
+/// matrix sizing uses only endpoint batch sizes.
+pub(crate) fn fold_a_ones_schedule_lookup_keys(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Vec<AkitaScheduleLookupKey> {
+    let mut keys = Vec::new();
+    for num_vars in 1..=max_num_vars {
+        for num_polys in 1..=max_num_batched_polys {
+            let key = AkitaScheduleLookupKey::new(num_vars, num_polys);
+            if key.validate().is_ok() {
+                keys.push(key);
+            }
+        }
+    }
+    keys
+}
+
 /// Worst-case opening batch for a `(num_vars, num_polynomials)` shape.
 pub fn worst_case_grouped_opening_batch_for_shape(
     num_vars: usize,

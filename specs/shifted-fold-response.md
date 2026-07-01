@@ -333,8 +333,10 @@ The public shift `eta` is applied at lookup time.
 
 Warming happens once at prover setup:
 
-1. `CommitmentConfig::warm_fold_a_ones_at_setup` scans the same
-   `(num_vars, num_polynomials)` envelope as `max_setup_matrix_size`.
+1. `CommitmentConfig::warm_fold_a_ones_at_setup` scans every
+   `(num_vars, num_polynomials)` with `num_polynomials` in
+   `1..=max_num_batched_polys` (level-0 fold geometry depends on batch size;
+   unlike setup-matrix envelope sizing, intermediate counts must be warmed).
 2. For catalog presets, fold geometries come from
    `akita_planner::fold_level_params_from_entry` (no full `Schedule`
    materialization). Catalog misses fall back to `runtime_schedule`.

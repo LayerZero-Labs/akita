@@ -277,7 +277,11 @@ pub(crate) fn save_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: FieldCore + Valid + CanonicalField + RandomSampling + akita_serialization::AkitaDeserialize<Context = ()>,
+    F: FieldCore
+        + Valid
+        + CanonicalField
+        + RandomSampling
+        + akita_serialization::AkitaDeserialize<Context = ()>,
     const D: usize,
     Cfg: CommitmentConfig<Field = F>,
 >(
@@ -317,9 +321,10 @@ pub(crate) fn load_prover_setup<
         AkitaError::InvalidSetup(format!("Failed to deserialize setup-prefix slots: {e}"))
     })?;
     use std::io::BufRead;
-    let fold_a_ones = if reader.fill_buf().map_err(|e| {
-        AkitaError::InvalidSetup(format!("Failed to peek setup cache tail: {e}"))
-    })?.is_empty()
+    let fold_a_ones = if reader
+        .fill_buf()
+        .map_err(|e| AkitaError::InvalidSetup(format!("Failed to peek setup cache tail: {e}")))?
+        .is_empty()
     {
         tracing::info!("Cached setup has no fold A-ones section; warming at load");
         Cfg::warm_fold_a_ones_at_setup(&setup)?
