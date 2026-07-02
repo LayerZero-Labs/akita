@@ -190,7 +190,10 @@ where
         instance.ensure_ring_dim::<D>()?;
         let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
             ring_switch_ctx,
-            lp,
+            crate::protocol::ring_relation::RelationQuotientShape::from_level(
+                lp,
+                instance.m_row_layout(),
+            )?,
             &instance.challenges,
             e_hat.flat_digits(),
             &decomposed_inner_rows,

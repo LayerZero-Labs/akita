@@ -24,7 +24,7 @@ pub use api::{
     batched_commit, batched_commit_with_params, commit, commit_group, commit_setup_prefix,
     commit_with_params, prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup,
     CommitmentProver, CommitmentWithHint, CommittedGroupHandle, CommittedGroupScheduleMeta,
-    CommittedGroupWithHint,
+    CommittedGroupWithHint, SetupPrefixCommitShape,
 };
 
 pub use backend::{

@@ -30,7 +30,7 @@ mod relation_quotient;
 mod repeated_b;
 
 pub use akita_types::generate_y;
-pub use relation_quotient::compute_relation_quotient;
+pub use relation_quotient::{compute_relation_quotient, RelationQuotientShape};
 
 fn absorb_terminal_e_folded_fields<F, T, const D: usize>(
     transcript: &mut T,
@@ -286,10 +286,16 @@ where
     Ok(rows)
 }
 
+/// Compute and absorb the D-block rows `v = D * e_hat`.
+///
+/// D-role kernel: `d_row_len` is the D-matrix row count and `e_hat` carries
+/// the opening digits at the D-role ring dimension. Callers extract both from
+/// the schedule; this function must not read schedule types.
 fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB>,
     transcript: &mut T,
-    lp: &LevelParams,
+    d_row_len: usize,
+    log_basis: u32,
     e_hat: &FlatDigitBlocks<D>,
     m_row_layout: MRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -307,7 +313,7 @@ where
                 e_hat_planes = e_hat.flat_digits().len()
             )
             .entered();
-            let v = compute_v_rows(backend, prepared, lp.d_key.row_len(), e_hat, lp.log_basis)?;
+            let v = compute_v_rows(backend, prepared, d_row_len, e_hat, log_basis)?;
             // Absorb `v` via the canonical D-free flat encoder (byte-identical to
             // the former `RingSliceSerializer` typed path; S2 byte-identity test).
             akita_types::RingVec::from_ring_elems(&v).append_flat_to_transcript(
@@ -438,7 +444,8 @@ impl RingRelationProver {
         let v = compute_v_rows_for_layout::<F, T, RB, D>(
             ring_switch_ctx,
             transcript,
-            &lp,
+            lp.d_key.row_len(),
+            lp.log_basis,
             &e_hat,
             m_row_layout,
         )?;

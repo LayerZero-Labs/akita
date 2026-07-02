@@ -103,13 +103,27 @@ else
   echo "  none"
 fi
 
+strip_test_mods() {
+  # Drop inline #[cfg(test)] mod bodies (by convention at file bottom) so
+  # test-only helpers do not count as violations. Out-of-line `mod tests;`
+  # declarations contain no code and are unaffected.
+  awk '/^#\[cfg\(test\)\]$/ { held = $0; getline nxt; if (nxt ~ /^mod .*\{/) exit; print held; print nxt; next } { print }' "$1"
+}
+
 count_violations() {
   # const-D fns whose parameter list mentions a schedule type. Multiline
-  # regex over fn signatures (up to the body brace / semicolon).
+  # regex over fn signatures (up to the body brace / semicolon), test
+  # modules stripped.
   local dir="$1"
-  rg -U --multiline-dotall \
-    'fn \w+<[^>]*const D[^>]*>\s*\([^;{]*?(LevelParams|ExecutionSchedule|ValidatedScheduleContext|RingDimPlan)' \
-    "$dir" -g '*.rs' -o -r 'x' 2>/dev/null | wc -l | tr -d ' '
+  local total=0
+  local n
+  while IFS= read -r f; do
+    n="$(strip_test_mods "$f" | rg -U --multiline-dotall \
+      'fn \w+<[^>]*const D[^>]*>\s*\([^;{]*?(LevelParams|ExecutionSchedule|ValidatedScheduleContext|RingDimPlan)' \
+      -o -r 'x' 2>/dev/null | wc -l | tr -d ' ')"
+    total=$((total + n))
+  done < <(rg -l 'const D' "$dir" -g '*.rs' 2>/dev/null)
+  echo "$total"
 }
 
 echo
@@ -123,9 +137,9 @@ if [[ "$mode" == "report" && "$pv" -gt 0 ]]; then
   for f in $(rg -U --multiline-dotall \
       'fn \w+<[^>]*const D[^>]*>\s*\([^;{]*?(LevelParams|ExecutionSchedule|ValidatedScheduleContext|RingDimPlan)' \
       crates/akita-prover/src -g '*.rs' -l 2>/dev/null); do
-    rg -U --multiline-dotall -o \
+    strip_test_mods "$f" | rg -U --multiline-dotall -o \
       'fn (\w+)<[^>]*const D[^>]*>\s*\([^;{]*?(?:LevelParams|ExecutionSchedule|ValidatedScheduleContext|RingDimPlan)' \
-      "$f" -r "  $f: fn \$1" 2>/dev/null | sort -u
+      -r "  $f: fn \$1" 2>/dev/null | sort -u
   done
 fi
 

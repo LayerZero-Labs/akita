@@ -12,4 +12,4 @@ pub use commitment::{
 };
 pub use scheme::CommitmentProver;
 pub use setup::AkitaProverSetup;
-pub use setup_prefix::commit_setup_prefix;
+pub use setup_prefix::{commit_setup_prefix, SetupPrefixCommitShape};

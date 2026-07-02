@@ -206,10 +206,76 @@ where
 /// Returns an error if the claim grouping, row layout, or split-eq witness
 /// dimensions are inconsistent.
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
+/// Extracted level geometry for the fused relation-quotient kernel, grouped
+/// by row role (canonical order: consistency | D | COMMIT | B_inner | A).
+///
+/// Callers derive this from `LevelParams`; the kernel itself must not read
+/// schedule types. Under per-role ring dimensions (mixed-row spec) each role
+/// group additionally gains its own ring dimension; this struct is where
+/// those dims will attach.
+#[derive(Clone, Copy, Debug)]
+pub struct RelationQuotientShape {
+    /// Digit basis shared by all decompositions (`log_basis`).
+    pub log_basis: u32,
+    /// A-role: witness block length (`block_len`).
+    pub block_len: usize,
+    /// A-role: inner commit digit depth (`num_digits_commit`).
+    pub num_digits_commit: usize,
+    /// A-role: A-matrix row count (`a_key.row_len()`).
+    pub n_a: usize,
+    /// B-role: COMMIT/B-matrix row count (`b_key.row_len()`).
+    pub n_b: usize,
+    /// B-role: first-tier `B'` width for tiered layouts (`b_key.col_len()`).
+    pub b_width: usize,
+    /// B-role: second-tier `F` row count when tiered (`f_key.row_len()`).
+    pub n_f: Option<usize>,
+    /// D-role: D-matrix row count (`d_key.row_len()`).
+    pub n_d: usize,
+    /// D-role: opening digit depth (`num_digits_open`).
+    pub num_digits_open: usize,
+    /// Total M rows for this layout.
+    pub num_rows: usize,
+    /// Row-group start offsets in canonical order.
+    pub d_start: usize,
+    pub f_start: usize,
+    pub b_inner_start: usize,
+    pub a_start: usize,
+}
+
+impl RelationQuotientShape {
+    /// Extract the relation-quotient geometry from level params.
+    ///
+    /// Public-output M rows are enforced by the fused trace term, not M
+    /// itself, so the public row count is pinned to zero here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the layout arithmetic overflows.
+    pub fn from_level(lp: &LevelParams, m_row_layout: MRowLayout) -> Result<Self, AkitaError> {
+        const NUM_PUBLIC_M_ROWS: usize = 0;
+        Ok(Self {
+            log_basis: lp.log_basis,
+            block_len: lp.block_len,
+            num_digits_commit: lp.num_digits_commit,
+            n_a: lp.a_key.row_len(),
+            n_b: lp.b_key.row_len(),
+            b_width: lp.b_key.col_len(),
+            n_f: lp.f_key.as_ref().map(|fk| fk.row_len()),
+            n_d: lp.d_key.row_len(),
+            num_digits_open: lp.num_digits_open,
+            num_rows: lp.m_row_count_for(1, NUM_PUBLIC_M_ROWS, m_row_layout)?,
+            d_start: lp.d_start(NUM_PUBLIC_M_ROWS)?,
+            f_start: lp.f_start(NUM_PUBLIC_M_ROWS, m_row_layout)?,
+            b_inner_start: lp.b_inner_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?,
+            a_start: lp.a_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?,
+        })
+    }
+}
+
 #[tracing::instrument(skip_all, name = "compute_relation_quotient")]
 pub fn compute_relation_quotient<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
-    lp: &LevelParams,
+    shape: RelationQuotientShape,
     challenges: &Challenges,
     e_hat_flat: &[[i8; D]],
     t_hat: &FlatDigitBlocks<D>,
@@ -231,7 +297,7 @@ where
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+    validate_i8_setup_log_basis(shape.log_basis, "for i8 prover decomposition")?;
     if num_polys == 0 {
         return Err(AkitaError::InvalidProof);
     }
@@ -256,16 +322,16 @@ where
     }
     if e_hat_flat.len()
         != expected_challenges
-            .checked_mul(lp.num_digits_open)
+            .checked_mul(shape.num_digits_open)
             .ok_or(AkitaError::InvalidProof)?
     {
         return Err(AkitaError::InvalidProof);
     }
-    let n_b = lp.b_key.row_len();
-    let n_d = lp.d_key.row_len();
-    let n_a = lp.a_key.row_len();
+    let n_b = shape.n_b;
+    let n_d = shape.n_d;
+    let n_a = shape.n_a;
     let expected_t_hat_block_digits = n_a
-        .checked_mul(lp.num_digits_open)
+        .checked_mul(shape.num_digits_open)
         .ok_or(AkitaError::InvalidProof)?;
     let expected_t_hat_flat_digits = expected_inner_rows
         .checked_mul(expected_t_hat_block_digits)
@@ -285,20 +351,18 @@ where
         MRowLayout::WithDBlock => n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    let tiered = lp.f_key.is_some();
-    // Public-output M rows are enforced by the fused trace term, not M itself.
-    const NUM_PUBLIC_M_ROWS: usize = 0;
-    let num_rows = lp.m_row_count_for(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let tiered = shape.n_f.is_some();
+    let num_rows = shape.num_rows;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
     // Canonical row layout: consistency (1) | D (n_d_active) |
     //   COMMIT (F when tiered, else B) | B_inner (tiered) | A.
     // Public openings bind through the fused trace term, not M rows.
-    let d_start = lp.d_start(NUM_PUBLIC_M_ROWS)?;
-    let f_start = lp.f_start(NUM_PUBLIC_M_ROWS, m_row_layout)?;
-    let b_inner_start = lp.b_inner_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
-    let a_start = lp.a_start(1, NUM_PUBLIC_M_ROWS, m_row_layout)?;
+    let d_start = shape.d_start;
+    let f_start = shape.f_start;
+    let b_inner_start = shape.b_inner_start;
+    let a_start = shape.a_start;
 
     if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidProof);
@@ -327,7 +391,7 @@ where
             n_d: n_d_active,
             n_b: relation_n_b,
             n_a,
-            log_basis: lp.log_basis,
+            log_basis: shape.log_basis,
         },
     )?;
     if relation_rows.d_cyclic.len() != n_d_active
@@ -369,7 +433,7 @@ where
             t_hat,
             &[num_polys],
             blocks_per_claim,
-            lp.log_basis,
+            shape.log_basis,
         )?
     };
     if !tiered && commitment_cyclic_rows.len() != n_b {
@@ -387,10 +451,10 @@ where
         Vec<[i8; D]>,
     );
     let tiered_rows: Option<TieredRows<F, D>> = if tiered {
-        let f_key = lp.f_key.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let n_f = shape.n_f.ok_or(AkitaError::InvalidProof)?;
         let n_b_small = n_b;
-        let width_small = lp.b_key.col_len();
-        let delta_open = lp.num_digits_open;
+        let width_small = shape.b_width;
+        let delta_open = shape.num_digits_open;
         let t_flat = t_hat.flat_digits();
         if width_small == 0 || !t_flat.len().is_multiple_of(width_small) {
             return Err(AkitaError::InvalidProof);
@@ -398,8 +462,9 @@ where
         let mut b_inner_cyclic: Vec<CyclotomicRing<F, D>> = Vec::new();
         let mut u_concat_neg: Vec<CyclotomicRing<F, D>> = Vec::new();
         for chunk in t_flat.chunks(width_small) {
-            let neg = backend.digit_rows::<D>(prepared, n_b_small, chunk, lp.log_basis)?;
-            let cyc = backend.cyclic_digit_rows::<D>(prepared, n_b_small, chunk, lp.log_basis)?;
+            let neg = backend.digit_rows::<D>(prepared, n_b_small, chunk, shape.log_basis)?;
+            let cyc =
+                backend.cyclic_digit_rows::<D>(prepared, n_b_small, chunk, shape.log_basis)?;
             if neg.len() != n_b_small || cyc.len() != n_b_small {
                 return Err(AkitaError::InvalidProof);
             }
@@ -411,15 +476,11 @@ where
             .chunks_mut(delta_open)
             .zip(u_concat_neg.iter())
         {
-            ring.balanced_decompose_pow2_i8_into(dst, lp.log_basis);
+            ring.balanced_decompose_pow2_i8_into(dst, shape.log_basis);
         }
-        let f_cyclic = backend.cyclic_digit_rows::<D>(
-            prepared,
-            f_key.row_len(),
-            &u_concat_digits,
-            lp.log_basis,
-        )?;
-        if f_cyclic.len() != f_key.row_len()
+        let f_cyclic =
+            backend.cyclic_digit_rows::<D>(prepared, n_f, &u_concat_digits, shape.log_basis)?;
+        if f_cyclic.len() != n_f
             || f_cyclic.len() != (b_inner_start - f_start)
             || b_inner_cyclic.len() != (a_start - b_inner_start)
         {
@@ -439,9 +500,9 @@ where
         let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
             ring_multiplier_point,
             z_folded_centered,
-            lp.block_len,
-            lp.num_digits_commit,
-            lp.log_basis,
+            shape.block_len,
+            shape.num_digits_commit,
+            shape.log_basis,
         )?;
         quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
     };
