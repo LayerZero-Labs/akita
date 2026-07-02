@@ -154,6 +154,7 @@ where
         stage1: stage1_proof,
         stage2,
         next_w_commitment,
+        next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.ring_dimension),
         terminal_replay,
         stage3,
         trace_prepared_point: Some(prepared_point.clone()),

@@ -287,9 +287,9 @@ Mixed-D:
 - [x] Root polynomial inputs do not force `D` through PCS orchestration. Any
       remaining `DensePoly<F, D>`, `OneHotPoly<F, D>`, or `SparseRingPoly<F, D>`
       usage is confined to implementation views or kernel-entry conversions.
-- [ ] Verifier-reachable shape mismatches return errors, not panics.
+- [x] Verifier-reachable shape mismatches return errors, not panics.
 - [x] Uniform-D existing E2E tests still pass.
-- [ ] A mixed-D-per-level fixture proves and verifies through the normal
+- [x] A mixed-D-per-level fixture proves and verifies through the normal
       public PCS API, not a special test-only typed path.
 - [x] `rg "AkitaCommitmentScheme<.*const D|CommitmentProver<.*,.*D|CommitmentVerifier<.*,.*D|AkitaProverSetup<.*,.*D|AkitaCommitmentHint<.*,.*D|ProverOpeningBatch<.*,.*D" crates`
       has no protocol-facing hits at merge time.

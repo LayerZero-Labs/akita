@@ -255,6 +255,8 @@ where
         stage1: stage1_proof,
         stage2,
         next_w_commitment,
+        next_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
+            .then_some(next_fold_level_params.ring_dimension),
         terminal_replay,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         trace_prepared_point: Some(prepared_point.clone()),

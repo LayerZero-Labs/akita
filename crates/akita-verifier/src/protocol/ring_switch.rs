@@ -151,6 +151,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     w_commitment: &RingVec<F>,
+    next_ring_dim: usize,
     transcript: &mut T,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
@@ -160,7 +161,10 @@ where
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
-    if !w_commitment.can_decode_vec(D) {
+    // The next-witness commitment is shaped at the *next* level's schedule
+    // ring dimension, which may differ from this level's dispatch `D` in
+    // mixed-D schedules.
+    if next_ring_dim == 0 || !w_commitment.can_decode_vec(next_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
     transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);

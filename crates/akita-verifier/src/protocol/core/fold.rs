@@ -194,6 +194,11 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) stage1: Option<&'a AkitaStage1Proof<E>>,
     pub(in crate::protocol::core) stage2: &'a AkitaStage2Proof<F, E>,
     pub(in crate::protocol::core) next_w_commitment: Option<&'a RingVec<F>>,
+    /// Schedule ring dimension of the next fold level. `Some` for
+    /// intermediate levels (the dimension `next_w_commitment` is shaped at,
+    /// which may differ from the current level's `D` in mixed-D schedules);
+    /// `None` for terminal levels.
+    pub(in crate::protocol::core) next_ring_dim: Option<usize>,
     pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
     pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E>>,
@@ -453,10 +458,12 @@ where
     let rs = match prepared.stage2 {
         AkitaStage2Proof::Intermediate(_) => {
             let next_w_commitment = prepared.next_w_commitment.ok_or(AkitaError::InvalidProof)?;
+            let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
             ring_switch_verifier::<F, E, T, D>(
                 &ring_switch_replay,
                 prepared.w_len,
                 next_w_commitment,
+                next_ring_dim,
                 transcript,
             )?
         }
