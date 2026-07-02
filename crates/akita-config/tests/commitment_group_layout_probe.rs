@@ -3,7 +3,7 @@ use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_planner::{find_schedule, PlannerPolicy};
 use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
-use akita_types::{AkitaScheduleLookupKey, LevelParams, Step};
+use akita_types::{CommitmentGroupScheduleKey, LevelParams, Step};
 
 type Cfg = fp128::D64OneHot;
 
@@ -32,7 +32,7 @@ fn layout_summary(
     num_vars: usize,
     max_basis: u32,
 ) -> Result<LayoutSummary, AkitaError> {
-    let key = AkitaScheduleLookupKey::new(num_vars, 1);
+    let key = CommitmentGroupScheduleKey::new(num_vars, 1);
     let schedule = find_schedule(
         key,
         policy,

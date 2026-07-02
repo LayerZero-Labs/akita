@@ -304,7 +304,7 @@ Use current `main` paths, not the stale older plan.
 - `src/protocol/commitment/transcript_append.rs`. Extracted in the first `akita-types` cut.
 - `src/protocol/commitment/generated/`. Extracted in the first `akita-types` cut.
 - `src/protocol/commitment/utils/flat_matrix.rs`, because `FlatMatrix` and `RingMatrixView` are shared setup/view data used by both verifier replay and prover matrix operations. Extracted before setup-shape ownership moves.
-- Schedule/layout contract portions of `src/protocol/commitment/schedule.rs`: `AkitaScheduleInputs`, `AkitaRootBatchSummary`, `AkitaScheduleLookupKey`, `AkitaSchedulePlan`, planned-step data shapes, and the `ScheduleProvider` trait. These are extracted into `akita-types` as shared contracts only; schedule search, table generation, and runtime materialization remain outside `akita-types`.
+- Schedule/layout contract portions of `src/protocol/commitment/schedule.rs`: `AkitaScheduleInputs`, `AkitaRootBatchSummary`, `CommitmentGroupScheduleKey`, `AkitaSchedulePlan`, planned-step data shapes, and the `ScheduleProvider` trait. These are extracted into `akita-types` as shared contracts only; schedule search, table generation, and runtime materialization remain outside `akita-types`.
 - `src/protocol/commitment/schedule_types.rs`, which owned the shared runtime `Schedule`, `Step`, and `WitnessShape` data shapes used by configs, prover/verifier wiring, examples, tests, and planner output translation. The shared data shapes and `AkitaSchedulePlan` to `Schedule` conversion are now extracted into `akita-types`; the obsolete root file has been deleted.
 - `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search. Extracted in the schedule-boundary cut.
 - Shared recursive witness-size formulas (`w_ring_element_count_with_counts_for_layout*` and `r_decomp_levels`) used by schedule/config/verifier layout validation. These are layout math, not prover witness construction, so they live with schedule contracts rather than in `ring_switch`.
@@ -756,7 +756,7 @@ the general scheduling abstraction.
 
 The in-place schedule split introduces an explicit schedule-provider boundary:
 runtime prover/verifier code asks a provider for a `AkitaSchedulePlan` by
-`AkitaScheduleLookupKey`. `akita-types` owns the inert public contracts for
+`CommitmentGroupScheduleKey`. `akita-types` owns the inert public contracts for
 that boundary: schedule keys, batch summaries, planned schedule data shapes,
 runtime `Schedule`/`Step`/`WitnessShape` data shapes, generated table
 representation, and the `ScheduleProvider` trait. It must not own DP search,
@@ -996,7 +996,7 @@ Phase 2: dependency-breaking in-place splits.
 - Split Akita-specific sumcheck stage code into shared proof shapes, prover structs, and verifier structs.
 - Split schedule/config/planner responsibilities in place: shared shapes, planner search, prover sizing, and verifier validation.
 - First schedule split: move shared runtime schedule shapes (`Schedule`, `Step`, `WitnessShape`) and digit decomposition math into `akita-types`, and make generated SIS floor data available as the runtime-facing audit source.
-- Second schedule split: move planned-schedule data shapes (`AkitaScheduleInputs`, `AkitaRootBatchSummary`, `AkitaScheduleLookupKey`, `AkitaSchedulePlan`, and planned-step structs) into `akita-types`, and introduce an explicit `ScheduleProvider` boundary so runtime crates consume generated or externally supplied schedules without making `akita-types` own planner search.
+- Second schedule split: move planned-schedule data shapes (`AkitaScheduleInputs`, `AkitaRootBatchSummary`, `CommitmentGroupScheduleKey`, `AkitaSchedulePlan`, and planned-step structs) into `akita-types`, and introduce an explicit `ScheduleProvider` boundary so runtime crates consume generated or externally supplied schedules without making `akita-types` own planner search.
 - Planner extraction cut: remove the remaining in-tree planner module imports from runtime config/commitment code by moving the search-backed implementation behind `akita-planner` and an explicit `PlannerConfig` trait. Preserve current batching by keeping the root aggregate crate's generated-table miss fallback search-backed for now; do not solve this by growing generated tables around ad hoc production batch shapes.
 - Gate: transcript regression fixtures stay byte-identical; `rg` checks confirm transcript modules do not import challenge modules and verifier-oriented modules do not import planner search.
 
