@@ -412,7 +412,7 @@ fn setup_envelope_endpoint_poly_scan_full_manual() {
             }
         }
         let mut envelope = SetupMatrixEnvelope { max_setup_len };
-        if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+        if Cfg::decomposition().log_commit_bound == 1 {
             crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<
                 Cfg,
             >(max_num_vars, max_num_batched_polys, &mut envelope)
