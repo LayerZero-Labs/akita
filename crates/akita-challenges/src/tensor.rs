@@ -5,9 +5,8 @@
 //! `√num_blocks` and presents the logical fold challenge at block `(p, q)` as
 //! the negacyclic tensor product `left[p] · right[q]`. This shrinks transcript
 //! challenge sampling from `O(num_blocks)` to `O(√num_blocks)` per claim
-//! while leaving the downstream fold semantics unchanged: callers see a
-//! uniform flat view through [`FoldingChallenges::expand_integer`] /
-//! [`FoldingChallenges::evals_at_pows`].
+//! while leaving the downstream fold semantics unchanged through structured
+//! evaluation and factor-aware prover kernels.
 //!
 //! Sampling labels are taken as a [`ChallengeLabels`] parameter so callers can
 //! choose stage-specific transcript wiring explicitly.
@@ -17,11 +16,9 @@
 //! [`ChallengeLabels`] is the transcript metadata for one sampling round,
 //! [`FoldingChallenges`] is the sampled runtime container, and
 //! [`TensorChallenges`] is the factored tensor state whose left/right lengths
-//! are part of the invariant. Materialized logical challenges use
-//! [`IntegerChallenge`], because tensor products can widen coefficients beyond
-//! the sampled [`SparseChallenge`] range.
+//! are part of the invariant.
 
-use crate::{IntegerChallenge, SparseChallenge, SparseChallengeConfig};
+use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 use akita_transcript::labels;
 use sha3::{Digest, Sha3_256};
@@ -434,32 +431,11 @@ impl TensorChallenges {
         Ok((claim_idx, local_idx, left, right))
     }
 
-    /// Materialize tensor products into logical block order.
-    ///
-    /// This expansion is intentionally separate from the evaluation helpers
-    /// below: it produces the widened integer polynomials consumed by fold
-    /// kernels, while the evaluation helpers produce field evaluations.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any tensor product has malformed inputs or overflows
-    /// its integer coefficient representation.
-    pub fn expand_integer<const D: usize>(&self) -> Result<Vec<IntegerChallenge>, AkitaError> {
-        self.validate::<D>()?;
-        let total_blocks = self.total_blocks()?;
-        let mut out = Vec::with_capacity(total_blocks);
-        for block_idx in 0..total_blocks {
-            let (_, _, left, right) = self.factors_for_logical_block(block_idx)?;
-            out.push(IntegerChallenge::tensor_product::<D>(left, right)?);
-        }
-        Ok(out)
-    }
-
     /// Evaluate reduced tensor products in logical block order.
     ///
     /// This mirrors [`Challenges::evals_at_pows`] for the tensor payload:
     /// it produces one field element per logical block without returning the
-    /// intermediate [`IntegerChallenge`] values.
+    /// intermediate tensor-product polynomials.
     ///
     /// # Errors
     ///

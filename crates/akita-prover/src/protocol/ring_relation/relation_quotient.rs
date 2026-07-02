@@ -546,52 +546,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::{IntegerChallenge, SparseChallenge, TensorChallenges};
+    use crate::backend::test_support::tensor_oracle_challenges;
+    use akita_challenges::SparseChallenge;
     use akita_field::Prime128OffsetA7F7 as F;
-
-    fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
-        TensorChallenges {
-            left: vec![
-                SparseChallenge {
-                    positions: vec![0],
-                    coeffs: vec![1],
-                },
-                SparseChallenge {
-                    positions: vec![(D - 1) as u32],
-                    coeffs: vec![1],
-                },
-                SparseChallenge {
-                    positions: vec![2],
-                    coeffs: vec![-1],
-                },
-                SparseChallenge {
-                    positions: vec![5],
-                    coeffs: vec![1],
-                },
-            ],
-            right: vec![
-                SparseChallenge {
-                    positions: vec![1],
-                    coeffs: vec![1],
-                },
-                SparseChallenge {
-                    positions: vec![3],
-                    coeffs: vec![-1],
-                },
-                SparseChallenge {
-                    positions: vec![0],
-                    coeffs: vec![1],
-                },
-                SparseChallenge {
-                    positions: vec![4],
-                    coeffs: vec![1],
-                },
-            ],
-            left_len: 2,
-            right_len: 2,
-            num_claims: 2,
-        }
-    }
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
@@ -599,15 +556,23 @@ mod tests {
         }))
     }
 
-    fn add_integer_reference_high_half<const D: usize>(
+    fn sparse_challenge_as_ring<const D: usize>(
+        challenge: &SparseChallenge,
+    ) -> CyclotomicRing<F, D> {
+        let mut coeffs = [F::zero(); D];
+        for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+            coeffs[pos as usize] += F::from_i64(i64::from(coeff));
+        }
+        CyclotomicRing::from_coefficients(coeffs)
+    }
+
+    fn add_ring_product_reference_high_half<const D: usize>(
         quotient: &mut [F],
-        challenge: &IntegerChallenge,
+        challenge: &CyclotomicRing<F, D>,
         ring: &CyclotomicRing<F, D>,
     ) {
         let rc = ring.coefficients();
-        for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-            let c = F::from_i64(i64::from(coeff));
-            let p = pos as usize;
+        for (p, &c) in challenge.coefficients().iter().enumerate() {
             for s in (D - p)..D {
                 quotient[p + s - D] += c * rc[s];
             }
@@ -615,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn tensor_high_half_streaming_matches_expanded_reference() {
+    fn tensor_high_half_streaming_matches_ring_multiplication_reference() {
         const D: usize = 8;
         let tensor = tensor_oracle_challenges::<D>();
         let rings = (0..tensor.total_blocks().unwrap())
@@ -626,11 +591,13 @@ mod tests {
         };
 
         let got = parallel_high_half_accumulate::<F, _, D>(&challenges, |idx| rings[idx]).unwrap();
-        let products = tensor.expand_integer::<D>().unwrap();
         let mut expected = vec![F::zero(); D];
-        for (idx, product) in products.iter().enumerate() {
+        for idx in 0..tensor.total_blocks().unwrap() {
             if let Some(ring) = rings[idx] {
-                add_integer_reference_high_half::<D>(&mut expected, product, &ring);
+                let (_, _, left, right) = tensor.factors_for_logical_block(idx).unwrap();
+                let challenge =
+                    sparse_challenge_as_ring::<D>(left) * sparse_challenge_as_ring::<D>(right);
+                add_ring_product_reference_high_half::<D>(&mut expected, &challenge, &ring);
             }
         }
 

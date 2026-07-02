@@ -2,8 +2,8 @@
 
 use akita_challenges::{
     preview_folding_challenges, sample_folding_challenges, sample_sparse_challenges,
-    tensor_left_digest, ChallengeLabels, ChallengeShape, Challenges, IntegerChallenge,
-    SparseChallenge, SparseChallengeConfig, TensorChallenges,
+    tensor_left_digest, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
+    SparseChallengeConfig, TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
@@ -38,17 +38,6 @@ fn l1_norm(c: &SparseChallenge) -> u64 {
         .iter()
         .map(|&v| (v as i32).unsigned_abs() as u64)
         .sum()
-}
-
-/// Local helper: convert an integer challenge to dense ring coefficients.
-fn integer_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
-    c: &IntegerChallenge,
-) -> [F; D] {
-    let mut out = [F::zero(); D];
-    for (&pos, &coeff) in c.positions.iter().zip(c.coeffs.iter()) {
-        out[pos as usize] += F::from_i64(i64::from(coeff));
-    }
-    out
 }
 
 /// Local helper: scalar power table `[1, alpha, alpha^2, ..., alpha^{D-1}]`.
@@ -111,6 +100,25 @@ fn dense_negacyclic_mul<F: FieldCore, const D: usize>(lhs: &[F; D], rhs: &[F; D]
         }
     }
     out
+}
+
+fn eval_dense_at_pows<F: FieldCore, const D: usize>(coeffs: &[F; D], alpha_pows: &[F]) -> F {
+    coeffs
+        .iter()
+        .zip(alpha_pows.iter())
+        .fold(F::zero(), |acc, (&coeff, &power)| acc + coeff * power)
+}
+
+fn tensor_product_eval<F: FieldCore + CanonicalField, const D: usize>(
+    left: &SparseChallenge,
+    right: &SparseChallenge,
+    alpha_pows: &[F],
+) -> F {
+    let product = dense_negacyclic_mul(
+        &sparse_challenge_to_dense::<F, D>(left).unwrap(),
+        &sparse_challenge_to_dense::<F, D>(right).unwrap(),
+    );
+    eval_dense_at_pows(&product, alpha_pows)
 }
 
 #[test]
@@ -391,24 +399,26 @@ fn exact_shell_sampling_handles_weight_above_sign_stack_chunk() {
 }
 
 #[test]
-fn tensor_product_matches_dense_ring_product() {
+fn dense_negacyclic_product_reference_handles_wrap_and_cancellation() {
     const TD: usize = 8;
     let left = SparseChallenge {
-        positions: vec![0, 6],
-        coeffs: vec![2, -1],
+        positions: vec![0, 1],
+        coeffs: vec![1, 1],
     };
     let right = SparseChallenge {
-        positions: vec![3, 5],
-        coeffs: vec![1, 4],
+        positions: vec![0, TD as u32 - 1],
+        coeffs: vec![1, 1],
     };
 
-    let product = IntegerChallenge::tensor_product::<TD>(&left, &right).unwrap();
     let dense_product = dense_negacyclic_mul(
         &sparse_challenge_to_dense::<F, TD>(&left).unwrap(),
         &sparse_challenge_to_dense::<F, TD>(&right).unwrap(),
     );
+    let mut expected = [F::zero(); TD];
+    expected[1] = F::one();
+    expected[TD - 1] = F::one();
 
-    assert_eq!(integer_challenge_to_dense::<F, TD>(&product), dense_product);
+    assert_eq!(dense_product, expected);
 }
 
 #[test]
@@ -442,7 +452,7 @@ fn tensor_sampling_uses_two_vectors() {
     assert_eq!(tensor.right_len, 4);
     assert_eq!(tensor.left.len(), 4);
     assert_eq!(tensor.right.len(), 8);
-    assert_eq!(tensor.expand_integer::<TD>().unwrap().len(), 16);
+    assert_eq!(tensor.total_blocks().unwrap(), 16);
 }
 
 #[test]
@@ -609,7 +619,7 @@ fn tensor_left_digest_rejects_duplicate_positions() {
 }
 
 #[test]
-fn tensor_lazy_evals_match_expanded_products() {
+fn tensor_lazy_evals_match_ring_product_reference() {
     const TD: usize = 8;
     let cfg = SparseChallengeConfig::Uniform {
         weight: 2,
@@ -633,19 +643,18 @@ fn tensor_lazy_evals_match_expanded_products() {
     let Challenges::Tensor { factored } = &challenges else {
         panic!("expected tensor challenges");
     };
-    let expanded = factored
-        .expand_integer::<TD>()
-        .unwrap()
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows))
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let expected = (0..factored.total_blocks().unwrap())
+        .map(|block_idx| {
+            let (_, _, left, right) = factored.factors_for_logical_block(block_idx).unwrap();
+            tensor_product_eval::<F, TD>(left, right, &alpha_pows)
+        })
+        .collect::<Vec<_>>();
 
-    assert_eq!(lazy, expanded);
+    assert_eq!(lazy, expected);
 }
 
 #[test]
-fn tensor_factored_aggregate_matches_expanded_products() {
+fn tensor_factored_aggregate_matches_ring_product_reference() {
     const TD: usize = 8;
     let tensor = TensorChallenges {
         left: vec![
@@ -714,13 +723,13 @@ fn tensor_factored_aggregate_matches_expanded_products() {
         .eval_factored_aggregate_at_pows::<F, F, TD>(claim_idx, &u_weights, &v_weights, &alpha_pows)
         .unwrap();
 
-    let expanded = tensor.expand_integer::<TD>().unwrap();
-    let start = claim_idx * tensor.left_len * tensor.right_len;
     let mut expected = F::zero();
     for (p, &u) in u_weights.iter().enumerate() {
         for (q, &v) in v_weights.iter().enumerate() {
-            let idx = start + p * tensor.right_len + q;
-            expected += u * v * expanded[idx].eval_at_pows::<F, F, TD>(&alpha_pows).unwrap();
+            let block_idx =
+                claim_idx * tensor.left_len * tensor.right_len + p * tensor.right_len + q;
+            let (_, _, left, right) = tensor.factors_for_logical_block(block_idx).unwrap();
+            expected += u * v * tensor_product_eval::<F, TD>(left, right, &alpha_pows);
         }
     }
 
@@ -728,7 +737,7 @@ fn tensor_factored_aggregate_matches_expanded_products() {
 }
 
 #[test]
-fn tensor_evals_at_pows_match_expanded_integer_reference() {
+fn tensor_evals_at_pows_match_ring_product_reference() {
     const TD: usize = 8;
     let tensor = TensorChallenges {
         left: vec![
@@ -758,11 +767,11 @@ fn tensor_evals_at_pows_match_expanded_integer_reference() {
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(13));
 
     let got = tensor.evals_at_pows::<F, F, TD>(&alpha_pows).unwrap();
-    let expected = tensor
-        .expand_integer::<TD>()
-        .unwrap()
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows).unwrap())
+    let expected = (0..tensor.total_blocks().unwrap())
+        .map(|block_idx| {
+            let (_, _, left, right) = tensor.factors_for_logical_block(block_idx).unwrap();
+            tensor_product_eval::<F, TD>(left, right, &alpha_pows)
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(got, expected);

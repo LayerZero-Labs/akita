@@ -1,45 +1,15 @@
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
+use crate::backend::test_support::{
+    aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
+};
 use crate::compute::RootPolyShape;
 use crate::DensePoly;
-use akita_challenges::TensorChallenges;
 use akita_field::RandomSampling;
 use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
 use akita_types::FlatMatrix;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-
-fn aggregate_witnesses<F: FieldCore, const D: usize>(
-    witnesses: &[DecomposeFoldWitness<F, D>],
-) -> DecomposeFoldWitness<F, D> {
-    let mut acc = witnesses[0].clone();
-    for witness in &witnesses[1..] {
-        for (dst, src) in acc
-            .z_folded_rings
-            .iter_mut()
-            .zip(witness.z_folded_rings.iter())
-        {
-            *dst += *src;
-        }
-        for (dst, src) in acc
-            .centered_coeffs
-            .iter_mut()
-            .zip(witness.centered_coeffs.iter())
-        {
-            for k in 0..D {
-                dst[k] += src[k];
-            }
-        }
-    }
-    acc.centered_inf_norm = acc
-        .centered_coeffs
-        .iter()
-        .flat_map(|coeffs| coeffs.iter())
-        .map(|coeff| coeff.unsigned_abs())
-        .max()
-        .unwrap_or(0);
-    acc
-}
 
 fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, D, I>) -> DensePoly<F, D>
 where
@@ -57,50 +27,6 @@ where
         coeffs[ring_idx].coeffs[coeff_idx] += F::one();
     }
     DensePoly::<F, D>::from_ring_coeffs(coeffs)
-}
-
-fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
-    TensorChallenges {
-        left: vec![
-            SparseChallenge {
-                positions: vec![0],
-                coeffs: vec![1],
-            },
-            SparseChallenge {
-                positions: vec![(D - 1) as u32],
-                coeffs: vec![1],
-            },
-            SparseChallenge {
-                positions: vec![2],
-                coeffs: vec![-1],
-            },
-            SparseChallenge {
-                positions: vec![5],
-                coeffs: vec![1],
-            },
-        ],
-        right: vec![
-            SparseChallenge {
-                positions: vec![1],
-                coeffs: vec![1],
-            },
-            SparseChallenge {
-                positions: vec![3],
-                coeffs: vec![-1],
-            },
-            SparseChallenge {
-                positions: vec![0],
-                coeffs: vec![1],
-            },
-            SparseChallenge {
-                positions: vec![4],
-                coeffs: vec![1],
-            },
-        ],
-        left_len: 2,
-        right_len: 2,
-        num_claims: 2,
-    }
 }
 
 fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>
@@ -891,7 +817,7 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
 }
 
 #[test]
-fn single_chunk_onehot_tensor_decompose_fold_matches_expanded_reference() {
+fn single_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_reference() {
     type F = Prime24Offset3;
     const D: usize = 8;
 
@@ -928,17 +854,12 @@ fn single_chunk_onehot_tensor_decompose_fold_matches_expanded_reference() {
         )
         .unwrap(),
     ];
-    let expanded = tensor
-        .expand_integer::<D>()
-        .unwrap()
-        .into_iter()
-        .map(|challenge| challenge.try_to_sparse_i8().unwrap())
-        .collect::<Vec<_>>();
+    let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
 
     let expected = aggregate_witnesses(
         &polys
             .iter()
-            .zip(expanded.chunks(4))
+            .zip(product_challenges.chunks(4))
             .map(|(poly, challenges)| poly.decompose_fold(challenges, block_len, num_digits, 0))
             .collect::<Vec<_>>(),
     );
@@ -953,7 +874,7 @@ fn single_chunk_onehot_tensor_decompose_fold_matches_expanded_reference() {
 }
 
 #[test]
-fn multi_chunk_onehot_tensor_decompose_fold_matches_expanded_reference() {
+fn multi_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_reference() {
     type F = Prime24Offset3;
     const D: usize = 8;
 
@@ -1006,17 +927,12 @@ fn multi_chunk_onehot_tensor_decompose_fold_matches_expanded_reference() {
         )
         .unwrap(),
     ];
-    let expanded = tensor
-        .expand_integer::<D>()
-        .unwrap()
-        .into_iter()
-        .map(|challenge| challenge.try_to_sparse_i8().unwrap())
-        .collect::<Vec<_>>();
+    let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
 
     let expected = aggregate_witnesses(
         &polys
             .iter()
-            .zip(expanded.chunks(4))
+            .zip(product_challenges.chunks(4))
             .map(|(poly, challenges)| poly.decompose_fold(challenges, block_len, num_digits, 0))
             .collect::<Vec<_>>(),
     );

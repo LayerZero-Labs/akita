@@ -33,9 +33,8 @@ protocol continues to consume a single logical challenge per `(claim, block)`.
 The key implementation surfaces are:
 
 - `akita-challenges`: introduces `ChallengeShape`, `Challenges`,
-  `TensorChallenges`, `IntegerChallenge`, `sample_folding_challenges`,
-  `tensor_split`, `tensor_left_digest`, and exact tensor-product evaluation
-  helpers.
+  `TensorChallenges`, `sample_folding_challenges`, `tensor_split`,
+  `tensor_left_digest`, and exact tensor-product evaluation helpers.
 - `akita-transcript`: adds stage-1 tensor labels
   `CHALLENGE_TENSOR_FOLD_LEFT`, `ABSORB_TENSOR_FOLD_LEFT`, and
   `CHALLENGE_TENSOR_FOLD_RIGHT`.
@@ -75,21 +74,19 @@ benchmark matrix.
 4. The logical block order is unchanged. For claim `c` and local block
    `b = p * right_len + q`, the logical challenge is the negacyclic ring product
    `left[c, p] * right[c, q]`.
-5. Tensor products use `IntegerChallenge`, not `SparseChallenge`, because
-   multiplying two sparse challenges can create coefficients outside the `i8`
-   sampler envelope. `tensor_product_matches_dense_ring_product` protects the
-   integer negacyclic product.
+5. Tensor products are logical ring products, not `SparseChallenge` values,
+   because multiplying two sparse challenges can create coefficients outside the
+   `i8` sampler envelope. Tests use dense negacyclic ring multiplication as the
+   reference model.
 6. Evaluation at a ring-switch point is exact in `Z[X] / (X^D + 1)`. The
    verifier cannot use only `eval(left, alpha) * eval(right, alpha)` at a
    generic `alpha`; it must subtract the wrap quotient multiplied by
    `alpha^D + 1`. This is protected by
    `tensor_product_only_formula_is_not_exact_for_generic_alpha`,
    `tensor_exact_aggregate_collapses_to_product_at_negacyclic_root`, and
-   `tensor_evals_at_pows_match_expanded_integer_reference`.
-7. Prover and verifier see the same logical challenge stream. Prover backends may
-   materialize the `IntegerChallenge` products for folding, while the verifier may
-   keep tensor factors and evaluate weighted aggregates lazily; both must match
-   the expanded flat reference.
+   `tensor_evals_at_pows_match_ring_product_reference`.
+7. Prover and verifier see the same logical challenge stream. Both keep tensor
+   factors and must match the direct ring-product reference.
 8. Multipoint batching preserves claim routing. `Challenges::select_claims`
    returns a tensor-shaped subset for point-local folds, preserving left/right
    factor grouping by selected claim.
@@ -144,10 +141,10 @@ benchmark matrix.
       prover and verifier code.
 - [x] Tensor sampling uses two sparse challenge vectors per claim and absorbs a
       canonical digest of the left vector before deriving the right vector.
-- [x] Tensor products are represented with widened integer coefficients and
-      match dense negacyclic multiplication in `Z[X] / (X^D + 1)`.
+- [x] Tensor products stay implicit as factor pairs and match dense negacyclic
+      multiplication in `Z[X] / (X^D + 1)`.
 - [x] Tensor evaluations at `alpha` include the negacyclic wrap correction and
-      match expanded integer references.
+      match direct ring-product references.
 - [x] The verifier can evaluate factored tensor aggregates for carry summaries
       without materializing every logical block challenge.
 - [x] The prover's batched root fold can route tensor challenges through
@@ -169,13 +166,13 @@ benchmark matrix.
 
 Focused tensor tests added by this branch:
 
-- `cargo test --release -p akita-challenges tensor_product_matches_dense_ring_product`
+- `cargo test --release -p akita-challenges dense_negacyclic_product_reference_handles_wrap_and_cancellation`
 - `cargo test --release -p akita-challenges tensor_sampling_uses_two_vectors`
 - `cargo test --release -p akita-challenges tensor_sampling_absorbs_left_digest_before_right`
 - `cargo test --release -p akita-challenges tensor_left_digest_rejects_duplicate_positions`
-- `cargo test --release -p akita-challenges tensor_lazy_evals_match_expanded_products`
-- `cargo test --release -p akita-challenges tensor_factored_aggregate_matches_expanded_products`
-- `cargo test --release -p akita-challenges tensor_evals_at_pows_match_expanded_integer_reference`
+- `cargo test --release -p akita-challenges tensor_lazy_evals_match_ring_product_reference`
+- `cargo test --release -p akita-challenges tensor_factored_aggregate_matches_ring_product_reference`
+- `cargo test --release -p akita-challenges tensor_evals_at_pows_match_ring_product_reference`
 - `cargo test --release -p akita-challenges tensor_product_only_formula_is_not_exact_for_generic_alpha`
 - `cargo test --release -p akita-challenges tensor_exact_aggregate_collapses_to_product_at_negacyclic_root`
 - `cargo test --release -p akita-verifier factored_carry_summary_matches_flat_for_tensor_challenges`
@@ -280,8 +277,8 @@ block count.
 The tensor sampler uses the same sparse challenge families as the flat sampler.
 The crucial difference is interpretation: a sampled tensor factor is a normal
 `SparseChallenge`, but the logical block challenge is a ring product of two
-factors and therefore may have larger integer coefficients. `IntegerChallenge`
-is the canonical materialized form of those products.
+factors and therefore may have larger integer coefficients. The implementation
+keeps that product implicit and contracts/evaluates it from the factors.
 
 #### Transcript Flow
 
@@ -382,9 +379,8 @@ The output remains a normal `DecomposeFoldWitness`: `z_pre`, centered
 coefficients, and the centered infinity norm used for the fold-bound check.
 
 The ring-relation quotient uses the same tensor payload without allocating the
-logical `IntegerChallenge` vector: the high-half quotient term streams the
-left/right sparse factors directly and keeps the expanded product only as a
-test oracle.
+logical product vector: the high-half quotient term streams the left/right
+sparse factors directly and tests against a direct ring-product oracle.
 
 #### Verifier Path
 
@@ -409,8 +405,8 @@ sum_block eq_low[offset + block] * c_block(alpha)
 For tensor challenges, the low block bits split into right bits first and then
 left bits. The verifier builds separable right weights `v[q]` and left weights
 `u[p]` for each carry case, then calls
-`eval_factored_aggregate_at_pows` for each claim. This exactly matches the flat
-expanded summary while avoiding a logical block loop in the cases where row
+`eval_factored_aggregate_at_pows` for each claim. This exactly matches the
+logical flat summary while avoiding a logical block loop in the cases where row
 weights factor through the tensor split.
 
 Non-challenge row data, setup contribution logic, ZK blinding segment layout,
@@ -492,7 +488,7 @@ recursive level's schedule and security envelope.
    `O(sqrt(B))` target for challenge-dependent structured rows.
 2. **Use `SparseChallenge` for tensor products.** This would assume product
    coefficients fit the `i8` sampler envelope. The assumption is false in
-   general, so the branch introduces `IntegerChallenge`.
+   general, so the branch keeps products implicit instead of narrowing them.
 3. **Sample right challenges without absorbing a left digest.** This would lose
    the intended two-stage Fiat-Shamir binding. The digest makes the right
    challenge depend on the exact sampled left vector.

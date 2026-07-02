@@ -59,10 +59,10 @@ The affected surfaces are:
    C[c,p,q] = L[c,p] * R[c,q] in Z[X] / (X^D + 1).
    ```
 
-3. The folded witness is byte-identical to the current expanded tensor product
+3. The folded witness is byte-identical to a direct negacyclic tensor-product
    reference. Only the order of contraction changes.
-4. The relation quotient is byte-identical to the current expanded tensor
-   product reference.
+4. The relation quotient is byte-identical to a direct negacyclic tensor-product
+   reference.
 5. The verifier path remains factored and exact. In particular, ring-switch
    evaluation after tensoring must include the negacyclic wrap correction. It is
    not the same as evaluating two individually ring-switched factors and
@@ -97,13 +97,13 @@ The affected surfaces are:
 - [x] `scripts/check_profile_ci_features.sh` knows that
       `onehot_fp128_d64_tensor` requires the tensor schedule feature.
 - [x] The folded-witness prover path for tensor challenges computes the same
-      output as the expanded `IntegerChallenge` reference without materializing
-      one logical challenge per `(claim, block)`.
+      output as a direct negacyclic tensor-product reference without
+      materializing one logical challenge per `(claim, block)`.
 - [x] The one-hot tensor folded-witness path does not recompute the same rotated
       tensor product for every worker chunk.
 - [x] The relation quotient tensor path avoids allocating the full logical
-      challenge vector and has a reference test against the current expanded
-      product path.
+      challenge vector and has a reference test against direct ring
+      multiplication.
 - [x] Previewed tensor challenges and live sampled tensor challenges match for
       the same transcript state and nonce.
 - [x] Tensor fold grind uses a distinct tensor-chaos `t_star` formula, with a
@@ -159,7 +159,7 @@ w = sparse support per factor challenge
 W = support of a materialized tensor product challenge
 ```
 
-The current expanded tensor folded-witness path does this shape of work:
+The old materialized tensor folded-witness path did this shape of work:
 
 ```text
 for c in C:
@@ -225,7 +225,7 @@ HighHalf((L_p * R_q) * S_pq)_t
 ```
 
 The implementation may use a clearer equivalent routine, but it must be tested
-against the expanded tensor product path.
+against a direct negacyclic tensor-product reference.
 
 ## Design
 
@@ -234,8 +234,8 @@ against the expanded tensor product path.
 The tensor challenge feature already has the right verifier idea, but several
 prover and profile paths still erase the structure.
 
-1. Dense tensor folding materializes logical tensor products through
-   `materialize_tensor_challenges` and `expand_integer::<D>()`.
+1. Dense tensor folding used to materialize logical tensor products before
+   folding.
 2. Sparse-ring tensor folding also expands the tensor product before folding.
 3. One-hot tensor folding avoids one global logical vector, but it still derives
    per-block tensor products and rotated challenge tables inside worker chunks.
@@ -263,9 +263,9 @@ The cutover has three layers.
 2. Prover kernels consume tensor factors directly.
 
    Add backend-owned contraction routines that accept `TensorChallenges` or a
-   borrowed factor view. These routines should not call
-   `expand_integer::<D>()` on the hot path. A test-only reference may still use
-   expansion.
+   borrowed factor view. These routines should not materialize a full logical
+   tensor-product vector on the hot path. Tests should use direct negacyclic
+   multiplication references instead of a prover-facing expansion path.
 
 3. Fold grind policy remains explicit.
 
@@ -620,14 +620,14 @@ it no longer overstates prover-side optimization. The Akita Book should state:
 
 2. Add reference tests.
 
-   Add small tests that compare expanded tensor products to the new contraction
-   kernels for dense, one-hot, sparse-ring, and quotient accumulation. Add a
-   preview-versus-live tensor challenge test for fold grind.
+   Add small tests that compare direct negacyclic tensor-product references to
+   the new contraction kernels for dense, one-hot, sparse-ring, and quotient
+   accumulation. Add a preview-versus-live tensor challenge test for fold grind.
 
 3. Cut over folded witness kernels.
 
-   Replace hot-path calls to `expand_integer::<D>()` with factor contraction.
-   Keep expansion only in tests or non-hot debug helpers.
+   Replace materialized tensor-product paths with factor contraction.
+   Keep test references independent of the integer expansion path.
 
 4. Cut over relation quotient accumulation.
 

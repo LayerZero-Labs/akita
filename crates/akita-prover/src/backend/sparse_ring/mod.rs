@@ -807,86 +807,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DecomposeFoldWitness;
+    use crate::backend::test_support::{
+        aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
+    };
     use crate::DensePoly;
-    use akita_challenges::{SparseChallenge, TensorChallenges};
     use akita_field::Prime128OffsetA7F7 as F;
-
-    fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
-        TensorChallenges {
-            left: vec![
-                SparseChallenge {
-                    positions: vec![0],
-                    coeffs: vec![1],
-                },
-                SparseChallenge {
-                    positions: vec![(D - 1) as u32],
-                    coeffs: vec![1],
-                },
-                SparseChallenge {
-                    positions: vec![2],
-                    coeffs: vec![-1],
-                },
-                SparseChallenge {
-                    positions: vec![5],
-                    coeffs: vec![1],
-                },
-            ],
-            right: vec![
-                SparseChallenge {
-                    positions: vec![1],
-                    coeffs: vec![1],
-                },
-                SparseChallenge {
-                    positions: vec![3],
-                    coeffs: vec![-1],
-                },
-                SparseChallenge {
-                    positions: vec![0],
-                    coeffs: vec![1],
-                },
-                SparseChallenge {
-                    positions: vec![4],
-                    coeffs: vec![1],
-                },
-            ],
-            left_len: 2,
-            right_len: 2,
-            num_claims: 2,
-        }
-    }
-
-    fn aggregate_witnesses<Fp: FieldCore, const D: usize>(
-        witnesses: &[DecomposeFoldWitness<Fp, D>],
-    ) -> DecomposeFoldWitness<Fp, D> {
-        let mut acc = witnesses[0].clone();
-        for witness in &witnesses[1..] {
-            for (dst, src) in acc
-                .z_folded_rings
-                .iter_mut()
-                .zip(witness.z_folded_rings.iter())
-            {
-                *dst += *src;
-            }
-            for (dst, src) in acc
-                .centered_coeffs
-                .iter_mut()
-                .zip(witness.centered_coeffs.iter())
-            {
-                for k in 0..D {
-                    dst[k] += src[k];
-                }
-            }
-        }
-        acc.centered_inf_norm = acc
-            .centered_coeffs
-            .iter()
-            .flat_map(|coeffs| coeffs.iter())
-            .map(|coeff| coeff.unsigned_abs())
-            .max()
-            .unwrap_or(0);
-        acc
-    }
 
     #[test]
     fn sparse_ring_fold_matches_dense_reference() {
@@ -916,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn sparse_ring_tensor_decompose_fold_matches_expanded_reference() {
+    fn sparse_ring_tensor_decompose_fold_matches_negacyclic_product_reference() {
         const D: usize = 8;
         let block_len = 2;
         let num_digits = 1;
@@ -935,17 +860,12 @@ mod tests {
             )
             .unwrap(),
         ];
-        let expanded = tensor
-            .expand_integer::<D>()
-            .unwrap()
-            .into_iter()
-            .map(|challenge| challenge.try_to_sparse_i8().unwrap())
-            .collect::<Vec<_>>();
+        let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
 
         let expected = aggregate_witnesses(
             &polys
                 .iter()
-                .zip(expanded.chunks(4))
+                .zip(product_challenges.chunks(4))
                 .map(|(poly, challenges)| poly.decompose_fold(challenges, block_len, num_digits, 0))
                 .collect::<Vec<_>>(),
         );
