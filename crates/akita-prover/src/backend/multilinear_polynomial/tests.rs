@@ -53,15 +53,17 @@ fn multilinear_polynomial_forwards_onehot_chunk_size_from_inner() {
     let onehot = OneHotPoly::<Prime24Offset3>::new(256, D, vec![Some(1), None]).unwrap();
     let dense = sample_dense::<D>();
     assert_eq!(
-        RootPolyShape::onehot_chunk_size(
-            &MultilinearPolynomial::<Prime24Offset3, D, usize>::onehot(onehot)
-        ),
+        RootPolyShape::<Prime24Offset3, D>::onehot_chunk_size(&MultilinearPolynomial::<
+            Prime24Offset3,
+            usize,
+        >::onehot(onehot)),
         Some(256)
     );
     assert_eq!(
-        RootPolyShape::onehot_chunk_size(
-            &MultilinearPolynomial::<Prime24Offset3, D, usize>::dense(dense)
-        ),
+        RootPolyShape::<Prime24Offset3, D>::onehot_chunk_size(&MultilinearPolynomial::<
+            Prime24Offset3,
+            usize,
+        >::dense(dense)),
         None
     );
 }
@@ -96,7 +98,8 @@ fn multilinear_kernel_homogeneous_dense_tensor_batch_matches_inner() {
             &backend, None, dense_view, &point,
         )
         .unwrap();
-    let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
+    let batch_view =
+        <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
     let got = TensorProjectionBatchKernel::<
         MultilinearPolynomialBatchView<'_, F, D>,
         F,
@@ -140,7 +143,8 @@ fn multilinear_kernel_homogeneous_onehot_tensor_batch_matches_inner() {
             &point,
         )
         .unwrap();
-    let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
+    let batch_view =
+        <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
     let got = TensorProjectionBatchKernel::<
         MultilinearPolynomialBatchView<'_, F, D>,
         F,
@@ -174,14 +178,15 @@ fn multilinear_kernel_mixed_batch_column_partials_falls_back_per_poly() {
     let expected = wrapped_refs
         .iter()
         .map(|poly| {
-            let view = poly.tensor_view().unwrap();
+            let view = RootTensorSource::<F, D>::tensor_view(*poly).unwrap();
             TensorProjectionKernel::<MultilinearPolynomialView<'_, F, D>, F, E, D>::column_partials(
                 &backend, None, view, &point,
             )
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
+    let batch_view =
+        <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
     let got = TensorProjectionBatchKernel::<
         MultilinearPolynomialBatchView<'_, F, D>,
         F,
@@ -212,7 +217,8 @@ fn multilinear_kernel_mixed_batch_sparse_linear_combination_returns_none() {
     let coeffs = vec![E::one(), E::one()];
     let backend = CpuBackend;
 
-    let batch_view = MultilinearPolynomial::<F, D>::tensor_batch(&wrapped_refs).unwrap();
+    let batch_view =
+        <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
     let got = TensorProjectionBatchKernel::<
         MultilinearPolynomialBatchView<'_, F, D>,
         F,
@@ -239,7 +245,9 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
         MultilinearPolynomial::onehot(onehot),
     ];
     let wrapped_refs = [&wrapped[0], &wrapped[1]];
-    let batch_view = MultilinearPolynomial::<F, D>::opening_batch(&wrapped_refs).unwrap();
+    let batch_view =
+        <MultilinearPolynomial<F> as RootOpeningSource<F, D>>::opening_batch(&wrapped_refs)
+            .unwrap();
     let outcome =
         OpeningBatchKernel::<MultilinearPolynomialBatchView<'_, F, D>, F, D>::decompose_fold_batch(
             &CpuBackend,

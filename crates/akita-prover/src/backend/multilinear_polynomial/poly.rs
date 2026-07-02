@@ -22,14 +22,14 @@ use crate::{DensePoly, OneHotIndex, OneHotPoly};
 /// Wrappers take ownership of the inner polynomial by move so `P` has no lifetime
 /// parameter and participates in generic `commit<P, B>` like `DensePoly`.
 #[derive(Debug, Clone)]
-pub enum MultilinearPolynomial<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub enum MultilinearPolynomial<F: FieldCore, I: OneHotIndex = usize> {
     /// Dense multilinear polynomial.
     Dense(DensePoly<F>),
     /// One-hot multilinear polynomial.
     OneHot(OneHotPoly<F, I>),
 }
 
-impl<F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<F, D, I> {
+impl<F: FieldCore, I: OneHotIndex> MultilinearPolynomial<F, I> {
     /// Wrap a dense polynomial.
     pub fn dense(poly: DensePoly<F>) -> Self {
         Self::Dense(poly)
@@ -41,17 +41,19 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<F, D, I
     }
 }
 
-/// Borrowed dispatch view for an Akita-owned multilinear root wrapper.
+/// Borrowed dispatch view for an Akita-owned multilinear root wrapper at
+/// dimension `D`.
 #[derive(Debug, Clone, Copy)]
 pub struct MultilinearPolynomialView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
-    poly: &'a MultilinearPolynomial<F, D, I>,
+    poly: &'a MultilinearPolynomial<F, I>,
 }
 
-/// Same-point batch dispatch view over multilinear root wrappers.
+/// Same-point batch dispatch view over multilinear root wrappers at
+/// dimension `D`.
 #[derive(Debug, Clone, Copy)]
 pub struct MultilinearPolynomialBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize>
 {
-    polys: &'a [&'a MultilinearPolynomial<F, D, I>],
+    polys: &'a [&'a MultilinearPolynomial<F, I>],
 }
 
 impl<'a, F, const D: usize, I> MultilinearPolynomialView<'a, F, D, I>
@@ -76,7 +78,7 @@ where
     F: FieldCore,
     I: OneHotIndex,
 {
-    pub(super) fn polys(self) -> &'a [&'a MultilinearPolynomial<F, D, I>] {
+    pub(super) fn polys(self) -> &'a [&'a MultilinearPolynomial<F, I>] {
         self.polys
     }
 
@@ -126,7 +128,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> RootPolyMeta<F> for MultilinearPolynomial<F, D, I>
+impl<F, I> RootPolyMeta<F> for MultilinearPolynomial<F, I>
 where
     F: FieldCore,
     I: OneHotIndex,
@@ -153,7 +155,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<F, D, I>
+impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<F, I>
 where
     F: FieldCore,
     I: OneHotIndex,
@@ -180,7 +182,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> RootCommitSource<F, D> for MultilinearPolynomial<F, D, I>
+impl<F, const D: usize, I> RootCommitSource<F, D> for MultilinearPolynomial<F, I>
 where
     F: FieldCore,
     I: OneHotIndex,
@@ -195,7 +197,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> RootOpeningSource<F, D> for MultilinearPolynomial<F, D, I>
+impl<F, const D: usize, I> RootOpeningSource<F, D> for MultilinearPolynomial<F, I>
 where
     F: FieldCore,
     I: OneHotIndex,
@@ -221,7 +223,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> RootTensorSource<F, D> for MultilinearPolynomial<F, D, I>
+impl<F, const D: usize, I> RootTensorSource<F, D> for MultilinearPolynomial<F, I>
 where
     F: FieldCore,
     I: OneHotIndex,
@@ -247,7 +249,7 @@ where
     }
 }
 
-impl<F, const D: usize, I> DirectRootWitnessSource<F, D> for MultilinearPolynomial<F, D, I>
+impl<F, const D: usize, I> DirectRootWitnessSource<F, D> for MultilinearPolynomial<F, I>
 where
     F: FieldCore + CanonicalField,
     I: OneHotIndex,

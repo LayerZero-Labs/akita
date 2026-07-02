@@ -967,10 +967,10 @@ mod tests {
             },
         )
         .with_onehot_chunk_size(256);
-        let wrong_wrapped = MultilinearPolynomial::<F, D, u16>::onehot(
+        let wrong_wrapped = MultilinearPolynomial::<F, u16>::onehot(
             OneHotPoly::<F, u16>::new(64, D, vec![Some(1), None]).unwrap(),
         );
-        let ok_wrapped = MultilinearPolynomial::<F, D, u16>::onehot(
+        let ok_wrapped = MultilinearPolynomial::<F, u16>::onehot(
             OneHotPoly::<F, u16>::new(256, D, vec![Some(1), None]).unwrap(),
         );
 
