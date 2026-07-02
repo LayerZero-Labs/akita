@@ -206,26 +206,23 @@ fn round_trip_proof(proof: &AkitaBatchedProof<F, F>) -> AkitaBatchedProof<F, F> 
     .expect("deserialize")
 }
 
-// Deferred (D128-tensor follow-up): the tensor fold challenge applies an `ω²`
-// factor to the effective challenge L1 mass, and under the safe
-// `onehot_chunk_size = 1` default (`nonzeros = D`) the A-role collision pushes
-// the D64 tensor family past its secure threshold, so every level degrades to
-// cleartext and no tensor-shaped root fold is emitted. Re-enable once the tensor
-// family is migrated to D=128.
+// Keep one small active root tensor proof/verify case. The larger sizes remain
+// opt-in because this test uses the full PCS setup/prove/verify path.
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
 fn single_onehot_tensor_nv15() {
     run_single_onehot_tensor(15);
 }
 
+// Deferred larger tensor e2e cases. The active nv15 test above covers the root
+// tensor proof/verify path; these remain useful local stress tests.
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
+#[ignore = "larger tensor e2e stress test; nv15 covers active root tensor proof/verify"]
 fn single_onehot_tensor_nv20() {
     run_single_onehot_tensor(20);
 }
 
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
+#[ignore = "larger tensor e2e stress test; nv15 covers active root tensor proof/verify"]
 fn single_onehot_tensor_nv22() {
     run_single_onehot_tensor(22);
 }

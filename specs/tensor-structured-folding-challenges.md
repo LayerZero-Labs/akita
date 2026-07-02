@@ -363,13 +363,15 @@ For a tensor challenge set, the code calls `Challenges::select_claims` to produc
 the point-local tensor factors and requires the backend to implement
 `decompose_fold_tensor_batched`. This branch adds tensor kernels for:
 
-- `DensePoly`: materializes integer tensor challenges and accumulates over
-  cached digit planes when available, otherwise decomposes ring coefficients in
-  partitioned chunks.
-- `OneHotPoly`: reuses the sparse one-hot block representation and rotated
-  integer tensor challenges so accumulation is proportional to nonzero rings.
+- `DensePoly`: contracts one tensor factor at a time over cached digit planes
+  when available, otherwise decomposes ring coefficients in partitioned chunks
+  and applies the same factor contraction.
+- `OneHotPoly`: reuses the sparse one-hot block representation, rotates only
+  the right tensor factor per block, and applies the left factor to the
+  accumulated temporary rows.
 - `SparseRingPoly`: flattens sparse ring blocks across the batched claims and
-  accumulates rotated integer challenges over sparse entries.
+  streams right-factor rotated rows into a temporary accumulator before the
+  left-factor pass.
 - `RootTensorProjectionPoly`: dispatches homogeneous dense projections to the
   dense tensor kernel and homogeneous sparse projections to the sparse-ring
   tensor kernel. Mixed projection batches report unsupported.
@@ -378,6 +380,11 @@ the point-local tensor factors and requires the backend to implement
 
 The output remains a normal `DecomposeFoldWitness`: `z_pre`, centered
 coefficients, and the centered infinity norm used for the fold-bound check.
+
+The ring-relation quotient uses the same tensor payload without allocating the
+logical `IntegerChallenge` vector: the high-half quotient term streams the
+left/right sparse factors directly and keeps the expanded product only as a
+test oracle.
 
 #### Verifier Path
 

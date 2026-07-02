@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
 use akita_challenges::{
-    sample_folding_challenges, sample_sparse_challenges, tensor_left_digest, ChallengeLabels,
-    ChallengeShape, Challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
-    TensorChallenges,
+    preview_folding_challenges, sample_folding_challenges, sample_sparse_challenges,
+    tensor_left_digest, ChallengeLabels, ChallengeShape, Challenges, IntegerChallenge,
+    SparseChallenge, SparseChallengeConfig, TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
@@ -559,6 +559,40 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         sampled.right, nodigest_right,
         "right challenges must be bound to the tensor-left output digest"
     );
+}
+
+#[test]
+fn tensor_preview_matches_live_sample_without_advancing_transcript() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    transcript.append_field(b"seed", &F::from_u64(0x7171));
+
+    let previewed = preview_folding_challenges::<TD>(
+        &transcript,
+        8,
+        2,
+        &cfg,
+        &ChallengeShape::Tensor,
+        fold_challenge_labels(),
+        7,
+    )
+    .unwrap();
+    let live = sample_folding_challenges::<F, _, TD>(
+        &mut transcript,
+        8,
+        2,
+        &cfg,
+        &ChallengeShape::Tensor,
+        fold_challenge_labels(),
+        7,
+    )
+    .unwrap();
+
+    assert_eq!(previewed, live);
 }
 
 #[test]

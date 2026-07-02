@@ -104,15 +104,15 @@ The affected surfaces are:
 - [x] The relation quotient tensor path avoids allocating the full logical
       challenge vector and has a reference test against the current expanded
       product path.
-- [ ] Previewed tensor challenges and live sampled tensor challenges match for
+- [x] Previewed tensor challenges and live sampled tensor challenges match for
       the same transcript state and nonce.
 - [x] Tensor fold grind uses a distinct tensor-chaos `t_star` formula, with a
       descriptor-bound formula tag and tests against the current
       `WorstCaseBetaOnly` fallback.
-- [ ] The old ignored tensor end-to-end tests are either made active at a small
+- [x] The old ignored tensor end-to-end tests are either made active at a small
       deterministic size or replaced by active coverage that proves and verifies
       the tensor root path.
-- [ ] Documentation states that the current tensor preset is root fold only and
+- [x] Documentation states that the current tensor preset is root fold only and
       that recursive folds remain flat.
 - [x] `ChallengeShape::effective_l2_sq_max` is corrected to the deterministic
       materialized-product L2 envelope, so tensor grind never interprets
