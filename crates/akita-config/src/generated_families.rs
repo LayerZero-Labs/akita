@@ -331,6 +331,41 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         tensor_verifier::fp128::D64OneHotTensor
     ),
+    // Multi-chunk (distributed-prover) companions of the D64 families. Same
+    // `(num_vars, num_polynomials)` keys as their siblings; schedules differ
+    // because the policy prices the chunked witness layout.
+    family_row!(
+        "fp128_d64_onehot_multi_chunk",
+        "FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-onehot-multi-chunk",
+        1,
+        50,
+        fp128::D64OneHotMultiChunk
+    ),
+    family_row!(
+        "fp128_d64_onehot_multi_chunk_w2r2",
+        "FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES",
+        "fp128-d64-onehot-multi-chunk-w2r2",
+        1,
+        50,
+        fp128::D64OneHotMultiChunkW2R2
+    ),
+    family_row!(
+        "fp128_d64_onehot_multi_chunk_w4r2",
+        "FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES",
+        "fp128-d64-onehot-multi-chunk-w4r2",
+        1,
+        50,
+        fp128::D64OneHotMultiChunkW4R2
+    ),
+    family_row!(
+        "fp128_d64_full_multi_chunk",
+        "FP128_D64_FULL_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-full-multi-chunk",
+        1,
+        50,
+        fp128::D64FullMultiChunk
+    ),
     // Tiered companion of `fp128_d64_onehot`
     family_row!(
         "fp128_d64_onehot_tiered",

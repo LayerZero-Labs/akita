@@ -59,9 +59,15 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp128_d64` | 32 | 1 | `direct` |
 | `onehot_fp128_d64` | 32 | 1 | `recursive` |
 | `onehot_fp128_d64` | 30 | 4 | `direct` |
+| `onehot_fp128_d64_multi_chunk_w2r2` | 32 | 1 | `direct` |
+| `onehot_fp128_d64_multi_chunk_w4r2` | 32 | 1 | `direct` |
+| `onehot_fp128_d64_multi_chunk_w8r2` | 32 | 1 | `direct` |
 
 fp32/fp64 use `nv=28` because the ext-degree-4 challenge schedule exceeds the 1
 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget at higher `num_vars`.
+The multi-chunk row runs in its own parallel CI group. It exercises the
+distributed chunked relation shape on a single hosted runner; after the
+introducing PR lands, it is compared against merge-base like the other rows.
 
 Report pipeline: `scripts/profile_bench_report.py`.
 Coverage matrix spec: `specs/profile-bench-coverage-matrix.md`.

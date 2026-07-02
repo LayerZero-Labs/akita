@@ -112,7 +112,7 @@ where
     ))
 }
 
-fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
+pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F, D>>,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
     let Some((first, rest)) = witnesses.split_first() else {
@@ -318,6 +318,72 @@ where
     }
 }
 
+/// Validate the chunked-witness configuration at the prover boundary (no-panic
+/// contract), before any witness math. Mirrors the planner entry guard and the
+/// verifier layout resolution.
+pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
+    lp.witness_chunk.validate()?;
+    let w = lp.witness_chunk.num_chunks;
+    if w > 1 {
+        if !lp.num_blocks.is_multiple_of(w) {
+            return Err(AkitaError::InvalidSetup(
+                "witness chunk count must divide num_blocks".to_string(),
+            ));
+        }
+        if !(lp.num_blocks / w).is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "witness chunk block window must be a power of two".to_string(),
+            ));
+        }
+        if lp.tier_split > 1 {
+            return Err(AkitaError::InvalidSetup(
+                "multi-chunk witness layout for tiered commitments is not supported".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Restrict sparse fold challenges to one chunk's global block window
+/// `[chunk·blocks_per_chunk, (chunk+1)·blocks_per_chunk)`, zeroing all other
+/// blocks. Folding under these yields the partial response `z_i = Σ_{j∈I_i}
+/// c_j s_j`.
+pub(super) fn window_sparse_challenges(
+    challenges: &Challenges,
+    chunk: usize,
+    blocks_per_chunk: usize,
+) -> Result<Challenges, AkitaError> {
+    match challenges {
+        Challenges::Sparse {
+            challenges: sparse,
+            num_blocks_per_claim,
+            num_claims,
+        } => {
+            let lo = chunk * blocks_per_chunk;
+            let hi = lo + blocks_per_chunk;
+            let windowed: Vec<SparseChallenge> = sparse
+                .iter()
+                .enumerate()
+                .map(|(idx, ch)| {
+                    let block = idx % num_blocks_per_claim;
+                    if (lo..hi).contains(&block) {
+                        ch.clone()
+                    } else {
+                        SparseChallenge {
+                            positions: Vec::new(),
+                            coeffs: Vec::new(),
+                        }
+                    }
+                })
+                .collect();
+            Challenges::from_sparse(windowed, *num_blocks_per_claim, *num_claims)
+        }
+        Challenges::Tensor { .. } => Err(AkitaError::InvalidSetup(
+            "chunked fold response requires sparse fold challenges".to_string(),
+        )),
+    }
+}
+
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
 pub struct RingRelationProver;
 
@@ -369,6 +435,7 @@ impl RingRelationProver {
         RB: DigitRowsComputeBackend<F>,
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+        validate_chunked_witness_cfg(&lp)?;
         let opening_batch = fold_claims.to_opening_shape::<F>()?;
         let polys = fold_claims.flat_polys();
         let group_sizes = opening_batch.num_polys_per_commitment_group();
@@ -449,7 +516,10 @@ impl RingRelationProver {
                 .collect();
             absorb_terminal_e_folded_fields::<F, T, D>(transcript, &e_folded_flat)?;
         }
-        let (z_folded_rings, challenges, fold_grind_nonce) =
+        // Distributed-prover chunked layout: the grind emits one folded response
+        // per block window (`z_i`), and the global response is their sum
+        // (`Σ_i z_i = z`, exact coefficient-wise i32 accumulation).
+        let (z_folded_rings, z_folded_centered_per_chunk, challenges, fold_grind_nonce) =
             fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
                 opening_backend,
                 Some(opening_ctx.prepared()),
@@ -492,6 +562,7 @@ impl RingRelationProver {
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
             z_folded_rings,
+            z_folded_centered_per_chunk,
             fold_grind_nonce,
             e_hat,
             e_folded,

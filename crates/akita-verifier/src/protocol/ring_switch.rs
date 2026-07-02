@@ -14,7 +14,7 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
     LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-    RingRelationSegmentLayout, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
+    SetupContributionPlanInputs, TerminalWitnessTranscriptParts, WitnessLayout,
 };
 
 use super::slice_mle::{
@@ -122,10 +122,10 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_f: usize,
     pub(crate) rows: usize,
     pub(crate) num_polys: usize,
-    pub(crate) witness_segment_layout: RingRelationSegmentLayout,
+    /// Resolved witness column layout (one chunk for the single-chunk case,
+    /// `W` chunks for the distributed-prover layout).
+    pub(crate) chunk_layout: WitnessLayout,
 }
-
-pub(crate) type RingSwitchSegmentLayout = RingRelationSegmentLayout;
 
 /// Fixed public relation inputs for verifier ring-switch replay.
 pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
@@ -259,7 +259,8 @@ where
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let prepared_row_eval = prepare_ring_switch_row_eval::<F, E, D>(replay, alpha, &tau1)?;
+    let prepared_row_eval =
+        prepare_ring_switch_row_eval::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
 
     Ok(RingSwitchVerifyCoreOutput {
         prepared_row_eval,
@@ -288,6 +289,7 @@ pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E, D>,
     alpha: E,
     tau1: &[E],
+    witness_ring_len: Option<usize>,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -295,7 +297,7 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
-    let witness_segment_layout = relation.segment_layout(lp)?;
+    let chunk_layout = relation.segment_layout(lp, witness_ring_len)?;
     let opening_batch = relation.opening_batch();
     prepare_ring_switch_row_eval_inner::<F, E, D>(
         &relation.challenges,
@@ -305,7 +307,7 @@ where
         opening_batch.num_polynomials(),
         replay.row_coefficients,
         relation.m_row_layout(),
-        witness_segment_layout,
+        chunk_layout,
     )
 }
 
@@ -318,7 +320,7 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     num_polys: usize,
     gamma: &[E],
     m_row_layout: MRowLayout,
-    witness_segment_layout: RingRelationSegmentLayout,
+    chunk_layout: WitnessLayout,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -470,7 +472,7 @@ where
         n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         rows,
         num_polys,
-        witness_segment_layout,
+        chunk_layout,
     })
 }
 
@@ -492,8 +494,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
     }
 
-    pub(crate) fn segment_layout(&self) -> Result<RingSwitchSegmentLayout, AkitaError> {
-        Ok(self.witness_segment_layout)
+    pub(crate) fn chunk_layout(&self) -> &WitnessLayout {
+        &self.chunk_layout
     }
 
     pub(crate) fn create_setup_contribution_inputs(&self) -> SetupContributionPlanInputs<E> {
@@ -541,8 +543,14 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         E: FpExtEncoding<F> + FromPrimitiveInt,
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;
-        // ----- Witness-layout offsets ----------------------------------------
-        let layout = self.segment_layout()?;
+        // ----- Witness layout (chunk list) -----------------------------------
+        let layout = self.chunk_layout();
+        let blocks_per_chunk = layout.blocks_per_chunk;
+        if blocks_per_chunk == 0 || !blocks_per_chunk.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "witness chunk block window must be a power of two".to_string(),
+            ));
+        }
         validate_log_basis(self.log_basis)?;
         if opening_point.b.len() != self.num_blocks || opening_point.a.len() < self.block_len {
             return Err(AkitaError::InvalidProof);
@@ -552,27 +560,29 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         {
             return Err(AkitaError::InvalidProof);
         }
+        if self.num_t_vectors != self.num_claims {
+            return Err(AkitaError::InvalidProof);
+        }
 
         // ----- Shared precomputes --------------------------------------------
         let alpha_pows = scalar_powers(alpha, D);
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
+        let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
 
-        // Eq table over the low `log₂(num_blocks)` bits, shared by e-hat/T
-        // peeled summaries and by `SetupEvaluator` direct mode.
-        let offset_low_bits = self.num_blocks.trailing_zeros() as usize;
-        if offset_low_bits > x_challenges.len() {
+        // e/t block peel is over `blocks_per_chunk` (`== num_blocks` single-chunk);
+        // the `eq_low` table is shared across chunks. z peels `block_len`.
+        let block_bits = blocks_per_chunk.trailing_zeros() as usize;
+        if block_bits > x_challenges.len() {
             return Err(AkitaError::InvalidSize {
-                expected: offset_low_bits,
+                expected: block_bits,
                 actual: x_challenges.len(),
             });
         }
-        let eq_low = EqPolynomial::evals(&x_challenges[..offset_low_bits])?;
-        let block_offset_low = layout.offset_e & (self.num_blocks - 1);
-        debug_assert_eq!(block_offset_low, layout.offset_t & (self.num_blocks - 1));
+        let eq_low = EqPolynomial::evals(&x_challenges[..block_bits])?;
+        let high_challenges = &x_challenges[block_bits..];
+        let x_low_challenges = &x_challenges[..block_bits];
 
-        // `z` peels `block_len` (not `num_blocks`) and uses its own
-        // low-bit eq table.
         let z_offset_low_bits = self.block_len.trailing_zeros() as usize;
         if z_offset_low_bits > x_challenges.len() {
             return Err(AkitaError::InvalidSize {
@@ -582,9 +592,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
         let z_block_low_eq = EqPolynomial::evals(&x_challenges[..z_offset_low_bits])?;
 
-        let high_challenges = &x_challenges[offset_low_bits..];
-
-        let x_low_challenges = &x_challenges[..offset_low_bits];
         let total_blocks = self.total_blocks();
         if let Some(c_alphas) = self.c_alphas.as_flat() {
             if c_alphas.len() != total_blocks {
@@ -594,35 +601,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 });
             }
         }
-        let challenge_block_summaries: Vec<[E; 2]> =
-            self.c_alphas.summarize_all_block_carries::<F, D>(
-                self.num_claims,
-                x_low_challenges,
-                &eq_low,
-                block_offset_low,
-                self.num_blocks,
-            )?;
-        if self.num_t_vectors != self.num_claims {
-            return Err(AkitaError::InvalidProof);
-        }
-
-        // ----- E-hat ---------------------------------------------------------
-        let e_offset_high = layout.offset_e >> offset_low_bits;
-        let eq_hi_e_table = high_eq_window(
-            high_challenges,
-            e_offset_high,
-            self.num_claims * self.depth_open,
-        );
-        let e_structured_contribution = {
-            let _span = tracing::info_span!("e_structured").entered();
-            EStructuredSlicesEvaluator {
-                gadget_vector: &g1_open,
-                challenge_block_summaries: &challenge_block_summaries,
-                challenge_weight: self.eq_tau1[0],
-                high_eq_table: &eq_hi_e_table,
-            }
-            .evaluate()
-        };
 
         // Canonical A-block start (tiered-aware): consistency | public | D |
         // COMMIT (F when tiered, else B) | B_inner (tiered) | A.
@@ -637,31 +615,113 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             0
         };
         let a_start = 1 + self.n_d_active() + (commit_rows_pg + b_inner_rows_pg);
-
-        // ----- T -------------------------------------------------------------
-        let t_offset_high = layout.offset_t >> offset_low_bits;
         let a_row_count = self.rows.saturating_sub(a_start);
-        let eq_hi_t_table = high_eq_window(
-            high_challenges,
-            t_offset_high,
-            self.num_claims * self.depth_open * a_row_count,
-        );
-        let t_structured_contribution = {
-            let _span = tracing::info_span!("t_structured").entered();
-            TStructuredSlicesEvaluator {
-                gadget_vector: &g1_open,
-                challenge_block_summaries: &challenge_block_summaries,
-                a_row_weights: &self.eq_tau1[a_start..self.rows],
-                high_eq_table: &eq_hi_t_table,
-            }
-            .evaluate()
-        };
 
-        // ----- Fused D·ŵ + B·t̂ + A·ẑ ---------------------------------------
+        // ----- E-hat / T-hat / Z structured: fold over chunks ----------------
+        // `e`/`t` are partitioned (each chunk covers a disjoint global block
+        // window, so the contributions sum to the whole component); `z` is
+        // replicated (each chunk carries a full `block_len` fold). The cost
+        // asymmetry falls out of the chunk geometry, not control flow.
+        let mut e_structured_contribution = E::zero();
+        let mut t_structured_contribution = E::zero();
+        let mut z_structured_contribution = E::zero();
+        {
+            let _span = tracing::info_span!("structured_chunks").entered();
+            for chunk in &layout.chunks {
+                // e and t share the in-window block residue: `|e^j|` is a
+                // multiple of `blocks_per_chunk`, so `offset_t ≡ offset_e`.
+                let block_offset_low = chunk.offset_e & (blocks_per_chunk - 1);
+                let summaries = self.c_alphas.summarize_chunk_block_carries::<F, D>(
+                    self.num_claims,
+                    x_low_challenges,
+                    &eq_low,
+                    block_offset_low,
+                    chunk.global_block_base,
+                    blocks_per_chunk,
+                    self.num_blocks,
+                )?;
+
+                let e_offset_high = chunk.offset_e >> block_bits;
+                let eq_hi_e_table = high_eq_window(
+                    high_challenges,
+                    e_offset_high,
+                    self.num_claims * self.depth_open,
+                );
+                e_structured_contribution += EStructuredSlicesEvaluator {
+                    gadget_vector: &g1_open,
+                    challenge_block_summaries: &summaries,
+                    challenge_weight: self.eq_tau1[0],
+                    high_eq_table: &eq_hi_e_table,
+                }
+                .evaluate();
+
+                let t_offset_high = chunk.offset_t >> block_bits;
+                let eq_hi_t_table = high_eq_window(
+                    high_challenges,
+                    t_offset_high,
+                    self.num_claims * self.depth_open * a_row_count,
+                );
+                t_structured_contribution += TStructuredSlicesEvaluator {
+                    gadget_vector: &g1_open,
+                    challenge_block_summaries: &summaries,
+                    a_row_weights: &self.eq_tau1[a_start..self.rows],
+                    high_eq_table: &eq_hi_t_table,
+                }
+                .evaluate();
+            }
+
+            // z dispatches once on `block_len` (chunk-independent); the chunk
+            // loop sits outside the case split. Chunk `j>0` exercises a nonzero
+            // in-block shift `z_lo = offset_z mod block_len`.
+            if self.block_len.is_power_of_two() {
+                for chunk in &layout.chunks {
+                    let z_offset_low = chunk.offset_z & (self.block_len - 1);
+                    let a_block_summary = vec![summarize_pow2_multiplier_block_carries(
+                        &z_block_low_eq,
+                        z_offset_low,
+                        self.block_len,
+                        |idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows),
+                    )?];
+                    let z_offset_high = chunk.offset_z >> z_offset_low_bits;
+                    let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
+                    let eq_hi_z_table =
+                        high_eq_window(&x_challenges[z_offset_low_bits..], z_offset_high, z_hi_len);
+                    z_structured_contribution += ZStructuredPow2SlicesEvaluator {
+                        g1_commit: &g1_commit,
+                        fold_gadget: &fold_gadget,
+                        a_block_summary: &a_block_summary,
+                        consistency_weight: self.eq_tau1[0],
+                        high_eq_table: &eq_hi_z_table,
+                    }
+                    .evaluate();
+                }
+            } else {
+                // `a_evals_by_point` is chunk-independent (a[blk] is global), so
+                // the dense `z` segment is identical in every chunk; only the
+                // offset shifts.
+                let a_evals_by_point = vec![(0..self.block_len)
+                    .map(|idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows))
+                    .collect::<Result<Vec<_>, _>>()?];
+                for chunk in &layout.chunks {
+                    z_structured_contribution += ZDenseSlicesEvaluator {
+                        g1_commit: &g1_commit,
+                        fold_gadget: &fold_gadget,
+                        consistency_weight: self.eq_tau1[0],
+                        a_evals_by_point: &a_evals_by_point,
+                        full_vec_randomness: x_challenges,
+                        offset_z: chunk.offset_z,
+                        block_len: self.block_len,
+                    }
+                    .evaluate()?;
+                }
+            }
+        }
+
+        // ----- Fused D·ŵ + B·t̂ + A·ẑ (one shared setup scan) ---------------
         let setup_contribution = {
             let _span = tracing::info_span!("setup_contribution").entered();
-            let result = if let Some(claim) = setup_claim {
-                Ok(claim)
+            if let Some(claim) = setup_claim {
+                claim
             } else {
                 let setup_contribution_inputs = self.create_setup_contribution_inputs();
                 let evaluator = SetupEvaluator::new(
@@ -671,85 +731,39 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     Some(&z_block_low_eq),
                     &alpha_pows,
                     &fold_gadget,
-                    layout.offset_e,
-                    layout.offset_t,
-                    layout.offset_z,
-                    layout.offset_u,
-                    Some(&eq_hi_e_table),
-                    Some(&eq_hi_t_table),
+                    layout,
                 );
                 match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
-                    SetupEvaluation::Direct(value) => Ok(value),
+                    SetupEvaluation::Direct(value) => value,
                     #[cfg(test)]
-                    SetupEvaluation::Recursive(_) => Err(AkitaError::InvalidSetup(
-                        "setup evaluator returned recursive output for direct mode".into(),
-                    )),
+                    SetupEvaluation::Recursive(_) => {
+                        return Err(AkitaError::InvalidSetup(
+                            "setup evaluator returned recursive output for direct mode".into(),
+                        ))
+                    }
                 }
-            };
-            result?
-        };
-
-        // ----- Z (consistency-row) ------------------------------------------
-        let z_structured_contribution = {
-            let _span = tracing::info_span!("z_structured").entered();
-            let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
-            if self.block_len.is_power_of_two() {
-                let z_offset_low = layout.offset_z & (self.block_len - 1);
-                let a_block_summary = vec![summarize_pow2_multiplier_block_carries(
-                    &z_block_low_eq,
-                    z_offset_low,
-                    self.block_len,
-                    |idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows),
-                )?];
-                let z_offset_high = layout.offset_z >> z_offset_low_bits;
-                let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
-                let eq_hi_z_table =
-                    high_eq_window(&x_challenges[z_offset_low_bits..], z_offset_high, z_hi_len);
-                ZStructuredPow2SlicesEvaluator {
-                    g1_commit: &g1_commit,
-                    fold_gadget: &fold_gadget,
-                    a_block_summary: &a_block_summary,
-                    consistency_weight: self.eq_tau1[0],
-                    high_eq_table: &eq_hi_z_table,
-                }
-                .evaluate()
-            } else {
-                let a_evals_by_point = vec![(0..self.block_len)
-                    .map(|idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows))
-                    .collect::<Result<Vec<_>, _>>()?];
-                ZDenseSlicesEvaluator {
-                    g1_commit: &g1_commit,
-                    fold_gadget: &fold_gadget,
-                    consistency_weight: self.eq_tau1[0],
-                    a_evals_by_point: &a_evals_by_point,
-                    full_vec_randomness: x_challenges,
-                    offset_z: layout.offset_z,
-                    block_len: self.block_len,
-                }
-                .evaluate()?
             }
         };
 
-        // ----- r-tail --------------------------------------------------------
+        // ----- r-tail (single shared quotient on the last chunk) -------------
         let r_contribution = {
             let r_gadget =
                 gadget_row_scalars::<F>(r_decomp_levels::<F>(self.log_basis), self.log_basis);
             let denom = alpha_pows[D - 1] * alpha + E::one();
-            compute_r_contribution(self, x_challenges, layout.offset_r, denom, &r_gadget)?
+            let offset_r = layout.r_offset()?;
+            compute_r_contribution(self, x_challenges, offset_r, denom, &r_gadget)?
         };
 
-        // ----- Tiered B_inner RHS: -recompose(û_concat) ----------------------
-        // The B_inner block enforces `B'·t̂_slice - recompose(û) = 0`. The B'
-        // matrix part is in `setup_contribution`; this is the witness-side
-        // `-recompose(û)` term (a constant gadget map on the `û_concat`
-        // columns), weighted by the B_inner row eq. Zero for single-tier.
+        // ----- Tiered B_inner RHS: -recompose(û_concat) (single-chunk only) --
         let u_recompose_contribution = if self.tier_split > 1 {
+            let (last_chunk, _) = layout.last_chunk()?;
+            let offset_u = last_chunk.offset_u.ok_or_else(|| {
+                AkitaError::InvalidSetup("tiered level is missing the û_concat offset".to_string())
+            })?;
             let n_d_active = self.n_d_active();
             let f_start = 1 + n_d_active;
             let b_inner_start = f_start + commit_rows_pg;
-            let n_b_small = self.n_b;
-            let inner_rows_pg = self.tier_split * n_b_small;
-            let offset_u = layout.offset_u;
+            let inner_rows_pg = self.tier_split * self.n_b;
             let mut acc = E::zero();
             for slice_row in 0..inner_rows_pg {
                 let row = b_inner_start + slice_row;
