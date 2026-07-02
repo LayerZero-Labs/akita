@@ -9,115 +9,104 @@ use super::{
 #[rustfmt::skip]
 pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGroupBatchScheduleTableEntry] = &[
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 14, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 5, r_vars: 3, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 6, r_vars: 2, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 14, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 6, r_vars: 2, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 7, r_vars: 1, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 14, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 7, r_vars: 1, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 7, r_vars: 1, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 14, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 2 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 7, r_vars: 1, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 7, r_vars: 1, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 7, r_vars: 2, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 8, r_vars: 1, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 7, r_vars: 2, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 7, r_vars: 2, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 1, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 1, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 1 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 7, num_polynomials: 2 }, m_vars: 1, r_vars: 0, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 1, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 1, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 2, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 7, r_vars: 3, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 2, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 2, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 1, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 1, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 2 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 1, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 1, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 8, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 2, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 2, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 1, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 1 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 8, num_polynomials: 2 }, m_vars: 1, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 2, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 1, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 1 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 1 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 1 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 1 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 2, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 1, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -125,7 +114,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 1 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 2 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 2, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 1, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -133,16 +122,16 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 1 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 1 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 9, num_polynomials: 1 }, m_vars: 2, r_vars: 1, log_basis: 2, n_a: 1, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
@@ -163,7 +152,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 1 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -171,7 +160,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 1 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 1 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -179,18 +168,18 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 1 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 4, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 1 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 2 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 4, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -213,8 +202,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 1 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -222,34 +211,34 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 1 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 10, num_polynomials: 2 }, m_vars: 3, r_vars: 1, log_basis: 2, n_a: 2, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 3, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 4, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 4, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 4, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -257,8 +246,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 2 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 4, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 2 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -266,27 +255,27 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 6, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -294,9 +283,9 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 2 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 1 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 3, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 11, num_polynomials: 2 }, m_vars: 4, r_vars: 1, log_basis: 2, n_a: 4, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 4, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -304,8 +293,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -313,8 +302,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -322,7 +311,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 5, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -332,7 +321,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 2 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 2 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 5, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -342,47 +331,47 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 13, r_vars: 6, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 5, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 2 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 5, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 1 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 12, num_polynomials: 2 }, m_vars: 5, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 5, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 26, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 26, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -392,7 +381,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 26, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 26, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -402,7 +391,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 26, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 26, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 6, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -412,7 +401,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 26, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 2 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 26, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 2 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 6, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -422,8 +411,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 27, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 13, r_vars: 8, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 27, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -432,8 +421,8 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 27, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 13, r_vars: 8, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 27, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 8, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -442,7 +431,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 27, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 27, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -452,7 +441,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 27, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 2 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 27, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 1 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 13, num_polynomials: 2 }, m_vars: 6, r_vars: 1, log_basis: 2, n_a: 5, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -483,22 +472,20 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 28, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 14, num_polynomials: 1 }, m_vars: 2, r_vars: 6, log_basis: 2, n_a: 2, conservative_n_b: 2 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 7, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 7, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 28, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 14, num_polynomials: 1 }, m_vars: 2, r_vars: 6, log_basis: 2, n_a: 2, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 14, num_polynomials: 2 }, m_vars: 4, r_vars: 4, log_basis: 2, n_a: 4, conservative_n_b: 2 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 7, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 7, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -525,7 +512,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 29, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 14, num_polynomials: 1 }, m_vars: 2, r_vars: 6, log_basis: 2, n_a: 2, conservative_n_b: 2 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 7, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -547,7 +534,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 30, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -558,7 +545,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 30, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -579,7 +566,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 30, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 2 }, m_vars: 6, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 30, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 2 }, m_vars: 6, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 8, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -591,7 +578,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 31, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -602,11 +589,11 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 31, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }] }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 9, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 11, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 10, r_vars: 4, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -623,7 +610,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 31, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 2 }, m_vars: 6, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 31, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 1 }, m_vars: 4, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 15, num_polynomials: 2 }, m_vars: 6, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -634,7 +621,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 32, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 32, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -645,7 +632,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 32, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 32, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -656,7 +643,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 32, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 32, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 9, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -667,7 +654,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 32, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 2 }, m_vars: 7, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 32, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 2 }, m_vars: 7, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 9, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -678,7 +665,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 33, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 33, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -689,7 +676,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 33, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 33, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 10, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 5, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -700,7 +687,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 33, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 33, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -711,7 +698,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 33, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 2 }, m_vars: 7, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 33, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 1 }, m_vars: 6, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 16, num_polynomials: 2 }, m_vars: 7, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -722,7 +709,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 34, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 34, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -733,7 +720,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 34, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 34, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -744,7 +731,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 34, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 34, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 10, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -755,7 +742,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 34, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 2 }, m_vars: 9, r_vars: 2, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 34, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 2 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 10, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -766,7 +753,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 35, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 35, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 11, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -777,7 +764,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 35, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 35, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 11, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -788,7 +775,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 35, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 35, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 10, n_a: 11, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -799,7 +786,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 35, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 7, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 2 }, m_vars: 9, r_vars: 2, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 35, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 1 }, m_vars: 7, r_vars: 4, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 17, num_polynomials: 2 }, m_vars: 10, r_vars: 1, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 10, n_a: 11, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -810,7 +797,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 36, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 36, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 12, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -821,7 +808,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 36, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 36, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 12, n_a: 10, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -832,7 +819,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 36, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 36, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 11, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -843,7 +830,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 36, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 2 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 36, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 2 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 11, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -854,7 +841,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 37, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 37, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 12, n_a: 11, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -865,7 +852,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 37, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 37, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 12, n_a: 11, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -876,7 +863,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 37, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 37, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 12, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -887,7 +874,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 37, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 2 }, m_vars: 9, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 37, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 1 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 1 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 18, num_polynomials: 2 }, m_vars: 10, r_vars: 2, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 12, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -898,7 +885,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 38, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 38, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -909,7 +896,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 38, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 38, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -920,7 +907,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 38, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 38, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 12, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -931,7 +918,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 38, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 2 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 38, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 2 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 12, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -942,7 +929,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 39, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 39, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -953,7 +940,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 39, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 39, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 9, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 12, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -964,7 +951,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 39, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 39, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -976,7 +963,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 39, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 9, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 2 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 39, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 1 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 6, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 19, num_polynomials: 2 }, m_vars: 10, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 20, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1024,7 +1011,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 40, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 1 }, m_vars: 10, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 2 }, m_vars: 10, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 40, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 1 }, m_vars: 10, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 2 }, m_vars: 11, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 21, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1072,7 +1059,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 41, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 1 }, m_vars: 10, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 2 }, m_vars: 10, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 41, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 1 }, m_vars: 10, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 20, num_polynomials: 2 }, m_vars: 11, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 22, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1084,7 +1071,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 42, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 42, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1096,7 +1083,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 42, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 42, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 7, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1108,7 +1095,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 42, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 42, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1120,7 +1107,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 42, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 2 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 42, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 2 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 13, n_a: 12, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1132,7 +1119,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 43, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 43, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 13, n_a: 13, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1144,7 +1131,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 43, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 43, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 13, n_a: 13, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 10, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1156,7 +1143,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 43, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 43, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 13, n_a: 13, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1168,7 +1155,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 43, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 10, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 2 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 43, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 1 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 21, num_polynomials: 2 }, m_vars: 11, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 13, n_a: 13, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1216,7 +1203,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 44, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 1 }, m_vars: 11, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 2 }, m_vars: 12, r_vars: 4, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 44, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 1 }, m_vars: 11, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 2 }, m_vars: 12, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 25, r_vars: 13, n_a: 13, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1264,7 +1251,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 45, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 1 }, m_vars: 11, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 2 }, m_vars: 12, r_vars: 4, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 45, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 1 }, m_vars: 11, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 22, num_polynomials: 2 }, m_vars: 12, r_vars: 4, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 16, n_a: 13, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1276,7 +1263,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 46, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 46, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 17, n_a: 13, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1288,7 +1275,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 46, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 46, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 17, n_a: 13, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1300,7 +1287,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 46, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 46, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 16, n_a: 14, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1312,7 +1299,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 46, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 2 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 46, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 2 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 24, r_vars: 16, n_a: 14, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1324,7 +1311,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 47, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 47, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 18, n_a: 13, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1336,7 +1323,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 47, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 47, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 23, r_vars: 18, n_a: 13, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 11, n_a: 7, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 8, n_a: 5, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1348,7 +1335,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 47, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 47, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 28, r_vars: 13, n_a: 14, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 13, n_a: 7, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1360,7 +1347,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 47, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 2 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 47, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 1 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 7, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 23, num_polynomials: 2 }, m_vars: 12, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 28, r_vars: 13, n_a: 14, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 13, n_a: 7, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1408,7 +1395,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 48, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 1 }, m_vars: 12, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 2 }, m_vars: 12, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 48, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 1 }, m_vars: 12, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 2 }, m_vars: 13, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 25, r_vars: 17, n_a: 14, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 12, n_a: 7, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1456,7 +1443,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 49, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 1 }, m_vars: 12, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 2 }, m_vars: 12, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 49, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 1 }, m_vars: 12, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 24, num_polynomials: 2 }, m_vars: 13, r_vars: 5, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 26, r_vars: 17, n_a: 14, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 12, n_a: 7, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1468,7 +1455,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 50, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 12, r_vars: 7, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 50, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 13, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 25, r_vars: 19, n_a: 14, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 12, n_a: 7, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1480,7 +1467,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 50, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 12, r_vars: 7, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 12, r_vars: 7, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 50, num_polynomials: 1 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 13, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 13, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 25, r_vars: 19, n_a: 14, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 18, r_vars: 12, n_a: 7, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1492,7 +1479,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 50, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 12, r_vars: 7, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 50, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 13, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 27, r_vars: 17, n_a: 14, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 12, n_a: 7, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
@@ -1504,7 +1491,7 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES: &[GeneratedGrou
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 50, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 12, r_vars: 7, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 2 }, m_vars: 13, r_vars: 6, log_basis: 2, n_a: 9, conservative_n_b: 2 }] }, steps: &[
+    GeneratedGroupBatchScheduleTableEntry { key: GeneratedScheduleLookupKey { final_group: GeneratedCommitmentGroupScheduleKey { num_vars: 50, num_polynomials: 4 }, precommitteds: &[GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 1 }, m_vars: 13, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }, GeneratedCommitmentGroupLayout { key: GeneratedCommitmentGroupScheduleKey { num_vars: 25, num_polynomials: 2 }, m_vars: 13, r_vars: 6, log_basis: 2, n_a: 8, conservative_n_b: 2 }] }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 27, r_vars: 17, n_a: 14, n_b: 2, n_d: 2, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 19, r_vars: 12, n_a: 7, n_b: 2, n_d: 1, tier_split: None, n_f: None }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 15, r_vars: 8, n_a: 6, n_b: 1, n_d: 1, tier_split: None, n_f: None }),

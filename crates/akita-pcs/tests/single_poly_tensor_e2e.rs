@@ -15,17 +15,18 @@ use akita_verifier::CommitmentVerifier;
 use common::*;
 
 const TENSOR_D: usize = D64OneHotTensor::D;
-const TENSOR_K: usize = TENSOR_D;
 
 fn run_single_onehot_tensor(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
+        let tensor_k = D64OneHotTensor::onehot_chunk_size();
         let layout = D64OneHotTensor::get_params_for_batched_commitment(
             &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
-        assert_eq!(total_ring * TENSOR_K, 1usize << nv);
+        let total_field = layout.num_blocks * layout.block_len * TENSOR_D;
+        assert_eq!(total_field, 1usize << nv);
+        let total_chunks = total_field / tensor_k;
         assert_eq!(
             layout.fold_challenge_shape,
             akita_challenges::TensorChallengeShape::Tensor,
@@ -33,10 +34,10 @@ fn run_single_onehot_tensor(nv: usize) {
         );
 
         let mut rng = StdRng::seed_from_u64(0xfeed_d00d_0000 + nv as u64);
-        let indices: Vec<Option<u8>> = (0..total_ring)
-            .map(|_| Some(rng.gen_range(0..TENSOR_K) as u8))
+        let indices: Vec<Option<u8>> = (0..total_chunks)
+            .map(|_| Some(rng.gen_range(0..tensor_k) as u8))
             .collect();
-        let poly = OneHotPoly::<F, TENSOR_D, u8>::new(TENSOR_K, indices).expect("onehot poly");
+        let poly = OneHotPoly::<F, TENSOR_D, u8>::new(tensor_k, indices).expect("onehot poly");
 
         let pt = random_point(nv, 0xc0ff_ee00 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
