@@ -717,7 +717,7 @@ mod tests {
     fn reject_unsupported_grouped_root_rejects_generic_multi_group() {
         let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped batch");
         let err = reject_unsupported_grouped_root(&batch, SetupContributionMode::Direct)
-        .expect_err("multi-group verify must reject before schedule lookup");
+            .expect_err("multi-group verify must reject before schedule lookup");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

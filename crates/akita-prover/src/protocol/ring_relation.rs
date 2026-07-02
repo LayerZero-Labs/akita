@@ -7,9 +7,7 @@ use crate::compute::{
     OpeningFoldKernel, OperationCtx, RootOpeningSource,
 };
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{
-    DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningBatch,
-};
+use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningBatch};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, IntegerChallenge, SparseChallenge};
