@@ -11,8 +11,8 @@ The PR stack should have three semantic PRs:
 2. Introduce commitment compression: compress `v` at every fold and compress
    next-level `u` at every non-penultimate fold.
 3. Finish the terminal-tail cutover: remove the final recursive `u` and bind
-   terminal `t` directly, with a terminal M-row layout that drops both D and
-   COMMIT/B rows.
+   terminal `t` directly, with a terminal M-row layout that drops both D and B
+   commitment rows.
 
 The design goal is proof-size reduction. The current tiered implementation was
 primarily a setup-size / setup-scan optimization for the `B` matrix. It changes
@@ -36,11 +36,12 @@ small scalar image:
 ```text
 raw commitment y = M x
 digits c = Decompose(y)
-compressed commitment z = C c
+compressed commitment z = compression_map * c
 ```
 
 The verifier sees `z`, not `y`. The proof relation must enforce that the hidden
-digits `c` really decompose the raw commitment `y`, and that `z = C c`.
+digits `c` really decompose the raw commitment `y`, and that `z` is the selected
+`F_i` or `H_i` image of those digits.
 
 The local small-instance sweep in
 `LINF-SIS-SMALL-INSTANCE-SWEEP-NEVER-COMMIT.md` supports the basic intuition:
@@ -52,25 +53,25 @@ commitments are module/ring-shaped and role-specific. The production stack
 should call the same SIS sizing API used elsewhere, not bake in the note's
 numbers.
 
-## Current State
+## Historical State Before PR1
 
-The current codebase has a tiered implementation, but it is opt-in and not part
-of the benchmark/CI profile matrix.
+At the start of this stack, the codebase had a tiered implementation, but it was
+opt-in and not part of the benchmark/CI profile matrix.
 
 - `CommitmentConfig::TIERED_COMMITMENT` defaults to `false`.
 - The dedicated `fp128::D64OneHotTiered` config sets it to `true`.
 - The planner carries a `tiered` discriminator and generated tiered schedule.
 - The prover computes `u_final = F * decompose(u_concat)`, where `u_concat`
   comes from repeated smaller `B'` slices.
-- The relation has extra tiered rows for the public `F` image and hidden
+- The relation had extra tiered rows for the public `F` image and hidden
   `B_inner` consistency rows.
-- The terminal segment path explicitly rejects tiered `u_concat` today.
+- The terminal segment path explicitly rejected tiered `u_concat`.
 - The profile mode exists, but profile CI excludes it.
 
-The important mismatch is that tiered still uses `RingCommitment<F, D>` as the
-public commitment shape. It can shrink the number of public rows, but it cannot
-break the `D = 64` row-size floor. Commitment compression needs a public payload
-with an arbitrary number of field coordinates.
+The important mismatch was that tiered still used `RingCommitment<F, D>` as the
+public commitment shape. It could shrink the number of public rows, but it could
+not break the `D = 64` row-size floor. Commitment compression needs a public
+payload with an arbitrary number of field coordinates.
 
 There is parallel runtime ring-dimension work in flight:
 
@@ -103,7 +104,18 @@ backend and the direct L-infinity estimator as a later backend change.
 
 ## Commitment Objects
 
-There are two commitments to discuss at each fold level.
+There are two commitments to discuss at each fold level, plus the root user
+commitment.
+
+Use this notation throughout the stack:
+
+- `H_i` is the compression map for `v`, the D-side opening commitment.
+- `F_i` is the compression map for `u`, the B-side next-witness commitment.
+- `G` is the fixed gadget recomposition map from decomposition digits back to
+  field elements.
+
+Do not use `C` for these matrices. It collides with common challenge and
+commitment notation and makes later protocol text harder to read.
 
 ### Opening commitment `v`
 
@@ -112,10 +124,10 @@ is conceptually straightforward:
 
 ```text
 raw_v = D * e_hat
-v_digits = Decompose(raw_v)
-v_comp_1 = C_v_1 * v_digits
-v_comp_2 = C_v_2 * Decompose(v_comp_1)   // optional second layer
-public v = final v_comp
+h0 = Decompose(raw_v)
+h1 = Decompose(H0 * h0)       // present only when a second layer is selected
+public v = H0 * h0            // one-layer plan
+public v = H1 * h1            // two-layer plan
 ```
 
 The hidden decomposition/intermediate data belongs to the current fold's
@@ -143,22 +155,50 @@ The intended model should be:
 w_next = base_next_witness || compression_suffix || padding
 
 raw_u = B * base_next_witness
-compression_suffix encodes Decompose(raw_u) and optional intermediate images
-public u = C_u(...compression_suffix...)
+f0 = Decompose(raw_u)
+f1 = Decompose(F0 * f0)       // present only when a second layer is selected
+public u = F0 * f0            // one-layer plan
+public u = F1 * f1            // two-layer plan
 ```
 
 In other words, the public compressed `u` binds the suffix through the
 compression matrix, while the relation binds the suffix back to the raw `B`
-image of the base prefix. Sumcheck can enforce these consistency relations as
-ordinary batched relation claims. They may be implemented as a new unstructured
-sumcheck instance or folded into the existing ring-relation machinery, but the
-schedule/layout must preserve the base-prefix/suffix distinction.
+image of the base prefix. PR2 enforces these consistency relations inside the
+existing fused stage-2 relation sumcheck. The schedule/layout must preserve the
+base-prefix/suffix distinction.
 
 The implementation therefore needs a two-part next-witness layout:
 
 - a semantic/base prefix that participates in the raw `B` commitment;
 - a compression suffix that is checked by compression rows;
 - schedule-visible padding to align the physical flat witness to ring elements.
+
+### Root user commitment
+
+The root user commitment is also a B-side `u`. It should be compressed in PR2.
+This is not a later optional optimization.
+
+The root equations are the same as the recursive `u` equations, with the root
+committed witness as the base prefix:
+
+```text
+raw_root_u = B_root * committed_root_witness
+f_root_0 = Decompose(raw_root_u)
+f_root_1 = Decompose(F_root_0 * f_root_0)       // present only for two layers
+public root u = F_root_0 * f_root_0             // one-layer plan
+public root u = F_root_1 * f_root_1             // two-layer plan
+```
+
+The public commitment object should contain the compressed root `u`, not the
+raw ring-shaped `u`. During opening, the prover supplies the hidden root
+compression digits and intermediate values as proof auxiliaries. These
+auxiliaries are not part of the user's committed message, and the raw root `B`
+matrix must apply only to the committed root witness.
+
+The same `F_i` naming applies to root and recursive B-side compression. The
+schedule may allocate separate root views, such as `FRoot0` and `FRoot1`, if the
+root shape differs from recursive shapes. It may also reuse a shared prefix view
+when the descriptor records that reuse explicitly.
 
 ## Stop Rule
 
@@ -209,7 +249,7 @@ if successor_is_direct {
     u_plan = None
 
     // PR2: keep pricing/proving the existing raw final u.
-    // PR3: remove final u and use the no-D/no-COMMIT terminal layout.
+    // PR3: remove final u and use the terminal layout with no B or D rows.
 } else {
     // Ordinary recursive fold.
     v_plan = compress_v(...)
@@ -235,8 +275,8 @@ optimization:
 - the relevant terminal state should be the `t` segment of the terminal witness;
 - verifier checks should bind that terminal `t` state directly instead of
   replaying a final `B` commitment.
-- the terminal M-row layout should drop both the D/opening block and the
-  COMMIT/B block.
+- the terminal M-row layout should drop both the D/opening block and the B
+  commitment block.
 
 This is separate from compression but depends on the same stopping rule. The
 penultimate fold still compresses its own `v`; it simply does not produce a
@@ -249,16 +289,20 @@ terminal layouts must reject or route through the same `t` path. Removing
 tiered first makes the terminal optimization cleaner.
 
 Today's enum name `MRowLayout::WithoutDBlock` is not precise enough after PR3.
-It currently means "drop D but keep COMMIT/B." The terminal-tail cutover should
-replace it with a layout whose name and row offsets say what happens after the
-full cutover, for example:
+It currently means "drop D but keep B." The terminal-tail cutover should replace
+it with a layout whose name and row offsets say what happens after the full
+cutover. The locked target names are:
 
 ```rust
 enum MRowLayout {
-    WithDAndCommitBlocks,
-    WithoutDAndCommitBlocks,
+    WithCommitmentBlocks,
+    WithoutCommitmentBlocks,
 }
 ```
+
+`WithCommitmentBlocks` means both B and D rows are present. It is the recursive
+fold layout. `WithoutCommitmentBlocks` means both B and D rows are absent. It is
+the terminal layout after PR3.
 
 If PR2 needs the old shape temporarily, keep it only until PR3. Do not leave a
 long-term ambiguous variant where "without D" secretly still includes B.
@@ -389,7 +433,8 @@ Minimal planner additions:
    - verifier work for compression relation rows.
 4. When the DP branch suffix is terminal direct, price `u_plan = None`.
    In PR2, still price the existing raw final `u` bytes and rows. In PR3,
-   drop those bytes and switch terminal sizing to the no-D/no-COMMIT layout.
+   drop those bytes and switch terminal sizing to the layout with no B or D
+   rows.
    This must be keyed off the DP successor-is-`Direct` branch, not a later
    post-processing scan.
 
@@ -406,8 +451,8 @@ without changing compression call sites.
 
 The API should be role-aware. Compression introduces new SIS roles:
 
-- `CompressVLayer(i)`
-- `CompressULayer(i)`
+- `CompressHLayer(i)` for the `v` path;
+- `CompressFLayer(i)` for the `u` path.
 
 Each role needs:
 
@@ -431,19 +476,85 @@ pricing and security certification use different bounds.
 The compression matrices are verifier-known setup matrices, but they are not
 the current `A/B/D` ring matrices.
 
-Implementation needs a new setup contribution path or an extension of the
-existing setup contribution machinery for scalar/unstructured rows. This is
-another reason to delete tiered first: the current setup contribution code has
-special tiered `B'/F` handling that would otherwise compose poorly with scalar
-compression rows.
+Use a shared scalar compression setup prefix with typed logical views. The
+logical views are:
 
-Relation row layout should stop thinking of the public commitment block as
-"ring rows only." It needs role-specific public outputs:
+- `H0`, the first compression map for `v`;
+- `H1`, the optional second compression map for `v`;
+- `F0`, the first compression map for `u`;
+- `F1`, the optional second compression map for `u`.
 
-- compressed or raw `v`;
-- compressed or raw `u`;
-- hidden decomposed raw images;
-- compression consistency rows.
+Root B-side compression uses the same `F_i` role family. If the root dimensions
+differ from recursive dimensions, the schedule should expose root-specific
+logical views such as `FRoot0` and `FRoot1`.
+
+The physical setup does not need independent blobs for every logical view. If
+two maps have the same shape and security role, the schedule may let them reuse
+the same prefix view, just as the existing setup code reuses shared prefix
+slices for `A`, `B`, and `D`. The relation names should still remain distinct
+because `H_i`, recursive `F_i`, and root `F_i` bind different public payloads
+and different suffix regions.
+
+If we reuse the exact same prefix view for `F_i` and `H_i`, the descriptor must
+make that reuse explicit. If a later security review wants domain-separated
+views, the schedule can allocate separate windows without changing the relation
+equations.
+
+The locked PR2 sumcheck placement is to fuse compression into the existing
+stage-2 relation sumcheck. Do not add a separate compression sumcheck in PR2.
+Do not model scalar compression rows as ordinary dense ring rows in setup
+storage. Instead, use scalar setup views and embed their residuals as constant
+ring values inside the existing stage-2 relation check.
+
+The row/column shape is:
+
+```text
+rows:
+  consistency | A | B | D | compression
+
+columns:
+  base recursive witness | compression suffix | padding
+```
+
+The compressed B and D rows change their right hand sides. They no longer bind
+directly to public raw `u` and `v` on compressed levels. They bind raw images to
+hidden decomposition digits in the suffix:
+
+```text
+D * e_hat - G * h0 = 0
+B * base_next_witness - G * f0 = 0
+```
+
+The compression rows bind the suffix to the public compressed payloads:
+
+```text
+H0 * h0 = public_v                         // one layer
+H0 * h0 - G * h1 = 0
+H1 * h1 = public_v                         // two layers
+
+F0 * f0 = public_u                         // one layer
+F0 * f0 - G * f1 = 0
+F1 * f1 = public_u                         // two layers
+```
+
+For PR2, the penultimate fold still uses raw `u`, so it does not have `f0`,
+`f1`, or `F_i` rows. PR3 removes that raw final `u` instead of compressing it.
+
+The verifier should evaluate all active `F_i` and `H_i` setup views through one
+streaming scalar setup evaluator. It should not allocate the full outer product
+of row weights and suffix weights. The intended verifier computation is:
+
+```text
+for each active view in [H0, H1, F0, F1]:
+    for each output row:
+        row_dot = inner_product(view_row, suffix_eq_weights)
+        total += row_eq_weight * row_dot
+```
+
+The prover should compute the same maps as dense matrix-vector products over
+the suffix digits. These inputs are small signed digits, so the implementation
+should use signed small-integer accumulation where the field backend supports
+it.
 
 The relation should keep one canonical offset/layout computation. Avoid adding
 helper wrappers that reconstruct offsets differently for compression.
@@ -457,7 +568,7 @@ clear semantic effect and leaves the code in a coherent state.
 | -- | ------ | -------- | --------------- |
 | 1 | `quang/remove-tiered-commitment` | `../akita-remove-tiered-commitment` | Delete tiered commitment; reorder M layout to `consistency \| A \| B \| D`; remove dead M public-block scaffolding; rename witness `num_public_rows` → `num_z_segments`. |
 | 2 | `quang/commitment-compression` | `../akita-commitment-compression` | Add compressed commitments: compressed `v` on every fold, compressed `u` on every non-penultimate fold, raw final `u` preserved temporarily. |
-| 3 | `quang/terminal-t-no-final-u` | `../akita-terminal-t-no-final-u` | Remove the final recursive `u`; bind terminal `t`; rename/update terminal M-row layout to drop both D and COMMIT/B. |
+| 3 | `quang/terminal-t-no-final-u` | `../akita-terminal-t-no-final-u` | Remove the final recursive `u`; bind terminal `t`; rename/update terminal M-row layout to drop both B and D. |
 
 PR2 is the largest PR. It should still be one PR if possible because splitting
 payload, planner, `v`, and `u` into separate PRs creates intermediate protocol
@@ -479,6 +590,37 @@ Suggested internal milestones for PR2:
 These milestones are review checkpoints, not merge points. PR2 should not merge
 with only payload plumbing or only `v` compression unless we deliberately decide
 to split the stack.
+
+### Later Stage-2 Weight Provider Cleanup
+
+Stage 2 already has one mathematical sumcheck for the virtual range claim, the
+ring relation claim, and the trace opening claim. The trace term is batched as
+the `gamma^2` term. The remaining separation is mostly an implementation
+detail: the prover maintains `m_tau1(x)` for the relation and a separate
+`TraceWeight(x, y)` table/provider for the trace term.
+
+Compression should follow the same pattern in PR2. It should feed the fused
+stage-2 relation path, but it should not force a broad trace refactor in the
+same PR.
+
+The desired cleanup after PR2 is a common prover-side weight-provider interface
+for the stage-2 scan:
+
+```text
+combined_weight(x, y)
+  = alpha(y) * m_tau1(x)
+  + gamma^2 * TraceWeight(x, y)
+  + compression_weight(x, y)
+```
+
+The verifier should keep trace weights, relation setup weights, and compression
+setup weights as separate logical objects because they have different closed
+forms and different setup sources. The cleanup is mainly for prover-side
+maintenance and hot-loop efficiency.
+
+This cleanup is explicitly out of scope for PR2 unless it becomes the smallest
+way to avoid duplicating compression weight logic. If it is small, it may fit at
+the end of PR3. Otherwise it should be a PR4 after the terminal `t` cutover.
 
 ### PR1: Remove tiered commitment + M layout / naming cutover
 
@@ -568,9 +710,9 @@ Acceptance tests:
 ### PR2: Add commitment compression
 
 Purpose: introduce the new proof-size mechanism while preserving the existing
-terminal raw `u` behavior. After this PR, the steady-state recursive folds use
-compressed public commitments, but the penultimate fold still sends the final
-raw `u`.
+terminal raw `u` behavior. After this PR, the root commitment and steady-state
+recursive folds use compressed public commitments, but the penultimate fold
+still sends the final raw `u`.
 
 Commitment policy:
 
@@ -579,6 +721,12 @@ Commitment policy:
 | Non-penultimate fold | compressed | compressed |
 | Penultimate fold | compressed | raw, uncompressed |
 | Terminal `Direct` | none | none |
+
+Root commitment policy:
+
+| Commitment | Public payload |
+| ---------- | -------------- |
+| Root user commitment | compressed B-side `u` |
 
 Expected implementation surface:
 
@@ -593,16 +741,24 @@ Expected implementation surface:
   - add `CompressionPolicy` with `max_layers = 2`;
   - add per-fold `CompressionPlan { v_plan, u_plan, suffix_len, padded_len,
     public_len, sizing_certificate }`;
+  - add a root compression plan for the public root `u`;
   - compute plans for `v` on every fold;
   - compute plans for `u` only when the successor is another fold;
   - keep penultimate raw `u` pricing in PR2;
   - account for compression suffix growth and padding in `next_w_len`;
   - include compression plans in generated schedule descriptors/digests.
 - Security sizing:
-  - add compression SIS roles, for example `CompressVLayer(i)` and
-    `CompressULayer(i)`;
+  - add compression SIS roles, for example `CompressHLayer(i)` and
+    `CompressFLayer(i)`, or names that explicitly map to `H_i` and `F_i`;
   - size scalar/unstructured matrices through the existing security API;
   - keep the call site compatible with the direct L-infinity table cutover.
+- Compression setup:
+  - add a shared scalar compression setup prefix;
+  - expose typed logical views for `H0`, `H1`, `F0`, and `F1`;
+  - allow equal-shape views to reuse the same physical prefix window when the
+    descriptor records that reuse explicitly;
+  - keep the API able to allocate separate windows later if domain-separated
+    setup views are required.
 - Witness layout:
   - append compression witness data after the ring-switch quotient segment:
     `z_hat || e_hat || t_hat || r_hat || compression_suffix || padding`;
@@ -611,6 +767,8 @@ Expected implementation surface:
     images;
   - padding is schedule-visible and constrained/checked as zero.
 - Prover:
+  - compute raw root `u = B_root * committed_root_witness`, decompose it, and
+    emit compressed public root `u`;
   - compute raw `v = D * e_hat`, decompose it, and emit compressed public `v`;
   - compute raw non-penultimate `u = B * base_next_witness`, decompose it, and
     emit compressed public `u`;
@@ -620,16 +778,23 @@ Expected implementation surface:
     labels.
 - Verifier:
   - reconstruct expected payload lengths from the schedule;
-  - verify compressed `v`/`u` relation claims through the chosen sumcheck
-    placement;
+  - verify compressed root `u` relation claims through the fused stage-2
+    relation path used for B-side compression;
+  - verify compressed `v`/`u` relation claims through the fused stage-2
+    relation sumcheck;
+  - stream `H_i` and `F_i` scalar setup views through one setup evaluator;
+  - precompute suffix equality weights once and reuse them across active
+    compression views;
   - preserve raw final `u` verification at the penultimate fold for PR2.
 - Relation/sumcheck placement:
-  - preferred implementation may use a new unstructured sumcheck instance for
-    compression rows;
-  - acceptable alternative is extending the ring-relation machinery, provided
-    it keeps one canonical layout and does not treat scalar compression rows as
-    fake ring rows.
+  - fuse compression into the existing stage-2 relation sumcheck;
+  - append compression rows after `consistency | A | B | D`;
+  - change compressed B/D rows so their right hand sides are hidden gadget
+    decompositions in the suffix, not public raw commitments;
+  - embed scalar compression residuals as constant ring values in the relation;
+  - do not add a separate compression sumcheck in PR2.
 - Proof-size accounting:
+  - replace root commitment bytes with compressed root `u` bytes;
   - replace `v_bytes = n_d * D * field_bytes` with compressed `v` bytes when
     `v_plan` is present;
   - replace next-commit bytes with compressed `u` bytes for non-penultimate
@@ -637,7 +802,9 @@ Expected implementation surface:
   - keep raw final `u` bytes for the penultimate fold in PR2;
   - charge compression suffix and extra sumcheck bytes.
 - Tests/benches/docs:
+  - add root commitment compression e2e coverage;
   - add planner tests for penultimate behavior;
+  - add tamper tests for compressed root `u`;
   - add tamper tests for compressed `v` and non-penultimate compressed `u`;
   - add malformed-length tests for flat commitment payloads;
   - add padding tests where compression suffix length is not divisible by the
@@ -663,30 +830,31 @@ shrinking the terminal relation rows accordingly.
 Expected implementation surface:
 
 - M-row layout:
-  - replace the terminal meaning of `MRowLayout::WithoutDBlock` with an explicit
-    no-D/no-COMMIT layout, for example
-    `MRowLayout::WithoutDAndCommitBlocks`;
-  - if keeping a two-variant enum, rename `WithDBlock` to
-    `WithDAndCommitBlocks`;
-  - update `n_d_active_for`, `f_start`/commit-block start helpers,
-    `a_start`, and `m_row_count_for` so the terminal layout is:
+  - replace `MRowLayout::WithoutDBlock` with
+    `MRowLayout::WithoutCommitmentBlocks`;
+  - replace `MRowLayout::WithDBlock` with
+    `MRowLayout::WithCommitmentBlocks`;
+  - `WithCommitmentBlocks` means `consistency | A | B | D`;
+  - `WithoutCommitmentBlocks` means `consistency | A`;
+  - update `n_d_active_for`, `b_start`, `d_start`, `a_start`, and
+    `m_row_count_for` so the terminal layout is:
     `consistency | A`;
-  - do not leave call sites locally subtracting B/COMMIT rows.
+  - do not leave call sites locally subtracting B rows.
 - Planner/schedules:
-  - change `next_witness_len_terminal` to use the no-D/no-COMMIT layout;
+  - change `next_witness_len_terminal` to use
+    `MRowLayout::WithoutCommitmentBlocks`;
   - update DP proof-size scoring to remove raw final `u` bytes;
   - regenerate schedules and descriptor digest pins.
 - Tail witness:
   - terminal direct witness includes the terminal `t` state needed by the
     verifier;
-  - `tail_segment_layout` computes `r_field_elems` from the no-D/no-COMMIT
-    row count;
+  - `tail_segment_layout` computes `r_field_elems` from the terminal row count;
   - terminal witness shape and byte estimates include `t`, not final `u`.
 - Prover:
   - penultimate fold no longer computes/absorbs/sends next-witness `u`;
   - terminal witness assembly exposes `t` in the terminal segment;
-  - ring-switch finalize paths use the no-D/no-COMMIT layout for terminal
-    quotient rows.
+  - ring-switch finalize paths use `MRowLayout::WithoutCommitmentBlocks` for
+    terminal quotient rows.
 - Verifier:
   - penultimate replay does not expect `next_w_commitment`;
   - terminal verifier checks revealed witness maps to the terminal `t` state;
@@ -694,12 +862,12 @@ Expected implementation surface:
     cleanly.
 - Proof-size accounting:
   - remove raw final `u` bytes from penultimate fold pricing;
-  - shrink terminal `r` tail by removing COMMIT/B rows;
+  - shrink terminal `r` tail by removing B rows;
   - update profile output labels so the win is attributable to terminal-tail
     cutover, not compression.
 - Tests/benches/docs:
   - terminal-tail e2e proving no final `u` is serialized;
-  - planner test that terminal row count excludes both D and COMMIT/B;
+  - planner test that terminal row count excludes both B and D;
   - proof-size regression showing tail shrink;
   - update `specs/tail-wire-encoding.md`, the book, and profile docs.
 
@@ -710,7 +878,7 @@ Acceptance tests:
 - `cargo test`
 - `./scripts/check-doc-guardrails.sh`
 - targeted grep: no terminal path relies on `WithoutDBlock` semantics that keep
-  a COMMIT/B block.
+  a B block.
 
 ## Enablement Policy
 
@@ -735,7 +903,7 @@ requires a new public commitment shape and relation checks.
 
 ## CI and Bench Coverage
 
-Current tiered status:
+Historical tiered status before PR1:
 
 - tiered is not on by default;
 - tiered has a profile mode;
@@ -768,56 +936,74 @@ cargo test
 ./scripts/check-doc-guardrails.sh   # when docs/specs/book are changed
 ```
 
-## Open Implementation Choices
+## Locked Choices And Remaining Risks
 
-These are the points that still need an explicit implementation choice. The
-`u` semantics above are not open: `B` applies only to the folded witness/base
-prefix, and compression rows bind the appended suffix.
+The following choices are now locked for PR2 and PR3.
 
-1. `u` compression relation placement.
-   The protocol semantics are now clear: `B` is applied only to the folded
-   witness/base prefix, and the appended compression suffix is bound by
-   consistency relations. The remaining implementation choice is where those
-   relations live: a new unstructured sumcheck instance, the existing
-   ring-relation machinery, or a shared descriptor once the sumcheck engine
-   stack is ready.
+1. Compression matrices are named by role. Use `H_i` for `v` and `F_i` for
+   `u`. Do not use `C_i`.
+2. PR2 fuses compression checks into the existing stage-2 relation sumcheck. It
+   does not add a separate compression sumcheck.
+3. PR2 uses a shared scalar compression setup prefix with typed logical views
+   for `H0`, `H1`, `F0`, and `F1`.
+4. PR2 compresses `v` at every fold and compresses `u` only when the successor
+   is another fold. The penultimate fold keeps raw `u` temporarily.
+5. PR2 compresses the root user commitment as a B-side `u`.
+6. PR3 fully removes the final recursive `u`. It does not compress that `u`.
+7. PR3 renames the M-row layout variants to `WithCommitmentBlocks` and
+   `WithoutCommitmentBlocks`.
+8. `WithCommitmentBlocks` means `consistency | A | B | D`.
+   `WithoutCommitmentBlocks` means `consistency | A`.
+9. The initial compression depth cap is `max_compression_layers = 2`, and the
+   planner evaluates `0..=2`.
+10. PR2 uses scalar/unstructured compression maps. Small ring dimensions such as
+   `D = 2`, `D = 4`, or `D = 8` are future work.
+11. Stage-2 trace/provider unification is out of scope for PR2. It can be done
+   at the end of PR3 if it is small, or as PR4 otherwise.
 
-2. Public payload type.
-   To get 192 to 512 byte commitments, compressed outputs must be serialized as
-   field elements, not ring rows. The likely concrete type is the untyped
-   `FlatRingVec<F>` / `RingVec<F>` commitment payload from the runtime ring
-   cutover, with schedule-owned shape and no public `RingCommitment<F, D>` API
-   at orchestration boundaries.
+The following points still need care during implementation.
 
-3. Root commitment scope.
-   This spec focuses on recursive fold commitments. We need to decide whether
-   the root user commitment is also compressed in the same stack, or whether
-   root compression is a later PR after recursive compression lands.
+1. Public payload type.
+   Compressed outputs must be serialized as field elements, not ring rows. The
+   likely concrete type is the untyped `FlatRingVec<F>` / `RingVec<F>`
+   commitment payload from the runtime ring cutover, with schedule-owned shape
+   and no public `RingCommitment<F, D>` API at orchestration boundaries.
 
-4. Compression matrix setup.
-   The compression matrices are scalar/unstructured. We need to decide whether
-   to extend the current setup contribution machinery or add a separate scalar
-   setup contribution path.
+2. Root compression auxiliaries.
+   Root compression auxiliaries are proof auxiliaries. They must not become part
+   of the user's committed message. The root `B` matrix applies only to the
+   committed root witness.
 
-5. Default profile.
-   I recommend eventual always-on compression for the verifier-optimized fp128
-   profile, but staged opt-in during the PR stack. The exact config names and
-   rollout point need a decision.
+3. Setup contribution integration.
+   The scalar `F_i` and `H_i` setup views need a verifier-known setup
+   contribution path. Prefer extending the existing setup contribution
+   machinery with scalar views over adding a second transcript protocol.
 
-6. Compression depth cap.
-   I recommend `max_compression_layers = 2` initially, with planner evaluation
-   of `0..=2`. More than two should require measured proof-size wins and
-   explicit schedule support.
+4. Shared prefix reuse.
+   Reusing the same physical prefix view for `F_i` and `H_i` is allowed only if
+   the descriptor records it explicitly. This prevents accidental mismatch
+   between prover and verifier setup views.
 
-7. ZK interaction.
+5. Suffix equality weights.
+   The verifier should compute equality weights for the compression suffix once
+   using the schedule-owned suffix offset and logical length. Padding must not
+   contribute to a live compression relation unless it is explicitly constrained
+   to zero.
+
+6. ZK interaction.
    Current tiered tests are non-ZK-gated. Compression should either be made
    compatible with ZK blinding from the first behavior PR or explicitly rejected
    under `zk` until the hiding analysis is done.
 
-8. Multi-group scope.
+7. Multi-group scope.
    Existing tiered multi-group support is out of scope. Compression should
    start with the same-point/single recursive commitment path unless we decide
    to pay the complexity cost for multi-group root batches immediately.
+
+8. Default profile name.
+   The end state should be the verifier-optimized fp128 profile, not a hidden
+   sibling like the old tiered mode. The exact config name can be chosen during
+   PR2.
 
 ## Problematic Assumptions to Avoid
 
@@ -827,8 +1013,17 @@ prefix, and compression rows bind the appended suffix.
 - Do not apply the raw `B` commitment to the appended compression suffix. `B`
   remains a commitment to the folded witness/base prefix; compression rows bind
   the suffix.
+- Do not leave the root user commitment as a raw ring-shaped `u` while
+  compressing only recursive `u`. The root commitment is also a B-side `u` and
+  should use the same compression design.
+- Do not put root compression auxiliaries into the user committed message. They
+  are proof auxiliaries used to open the compressed root commitment.
+- Do not keep public raw `u` or `v` as the B/D row right hand side on compressed
+  levels. The compressed B/D rows bind to hidden gadget decompositions.
 - Do not let planner proof-size estimates and security certification use
   different bounds.
+- Do not add small-ring compression maps in PR2. They require mixed-dimension
+  setup, security, and quotient handling.
 - Do not compress the final recursive `u`. PR2 keeps it raw temporarily; PR3
   removes it rather than compressing it.
 - Do not keep tiered and compression live together unless there is a strong,
