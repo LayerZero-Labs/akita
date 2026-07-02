@@ -345,7 +345,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness, _) =
+        let (instance, witness, _, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -359,6 +359,7 @@ mod tests {
                 MRowLayout::WithDBlock,
                 None,
                 false,
+                None,
             )
             .expect("ring relation");
 
@@ -487,7 +488,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness, _) =
+        let (instance, witness, _, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -501,6 +502,7 @@ mod tests {
                 MRowLayout::WithDBlock,
                 None,
                 false,
+                None,
             )
             .expect("ring relation");
 
@@ -663,7 +665,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness, _) =
+        let (instance, witness, _, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -677,6 +679,7 @@ mod tests {
                 MRowLayout::WithDBlock,
                 None,
                 false,
+                None,
             )
             .expect("ring relation");
 
@@ -817,7 +820,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness, _) =
+        let (instance, witness, _, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -831,6 +834,7 @@ mod tests {
                 MRowLayout::WithoutDBlock,
                 None,
                 false,
+                None,
             )
             .expect("ring relation");
 
