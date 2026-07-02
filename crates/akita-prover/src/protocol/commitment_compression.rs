@@ -2,8 +2,8 @@
 #![allow(dead_code)]
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{CommitmentCompressionPlan, FlatRingVec};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
+use akita_types::{gadget_row_scalars, CommitmentCompressionPlan, FlatRingVec, TraceTable};
 
 /// Materialized prover data for one compressed commitment payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +17,15 @@ pub(crate) struct CompressionEvaluation<F: FieldCore> {
     pub suffix_digits: Vec<i8>,
     /// Field outputs after each compression layer.
     pub layer_outputs: Vec<Vec<F>>,
+}
+
+/// Fused stage-2 linearization for one compression chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompressionLinearization<E: FieldCore> {
+    /// Dense stage-2 weights over the flat next-witness table.
+    pub table: TraceTable<E>,
+    /// Public side of the same row-linear combination.
+    pub claim: E,
 }
 
 fn decompose_scalars_i8<F>(
@@ -39,6 +48,22 @@ where
         out.extend(planes.into_iter().map(|plane| plane[0]));
     }
     Ok(out)
+}
+
+fn add_table_weight<E: FieldCore>(
+    table: &mut [E],
+    witness_len: usize,
+    flat_idx: usize,
+    weight: E,
+) -> Result<(), AkitaError> {
+    if flat_idx >= witness_len {
+        return Err(AkitaError::InvalidSize {
+            expected: witness_len,
+            actual: flat_idx + 1,
+        });
+    }
+    table[flat_idx] += weight;
+    Ok(())
 }
 
 fn dense_layer_apply<F>(
@@ -176,6 +201,160 @@ where
     })
 }
 
+/// Build the fused linear stage-2 table for a scheduled compression chain.
+///
+/// The generated rows enforce:
+///
+/// - for each non-final layer, `F_i * digits_i = G * digits_{i+1}`;
+/// - for the final layer, `F_i * digits_i = public_payload`.
+///
+/// `suffix_offset` is the flat witness offset where this commitment's hidden
+/// suffix begins. The first layer's input digits start there, and each
+/// non-final layer's output decomposition digits immediately follow.
+pub(crate) fn linearize_compression_chain<F, E>(
+    setup_fields: &[F],
+    plan: &CommitmentCompressionPlan,
+    public_payload: &FlatRingVec<F>,
+    suffix_offset: usize,
+    live_x_cols: usize,
+    y_len: usize,
+    row_challenge: E,
+    log_basis: u32,
+) -> Result<CompressionLinearization<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + LiftBase<F>,
+{
+    if public_payload.coeff_len() != plan.public_len {
+        return Err(AkitaError::InvalidSize {
+            expected: plan.public_len,
+            actual: public_payload.coeff_len(),
+        });
+    }
+    let witness_len = live_x_cols
+        .checked_mul(y_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("compression table length overflow".to_string()))?;
+    let suffix_end = suffix_offset
+        .checked_add(plan.padded_suffix_len)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("compression suffix offset overflow".to_string())
+        })?;
+    if suffix_end > witness_len {
+        return Err(AkitaError::InvalidSize {
+            expected: witness_len,
+            actual: suffix_end,
+        });
+    }
+    if plan.layers.is_empty() {
+        return Ok(CompressionLinearization {
+            table: TraceTable::ring_dense(vec![E::zero(); witness_len]),
+            claim: E::zero(),
+        });
+    }
+
+    let mut table = vec![E::zero(); witness_len];
+    let mut claim = E::zero();
+    let gadget: Vec<E> = gadget_row_scalars::<F>(decomposition_digits_per_scalar(plan)?, log_basis)
+        .into_iter()
+        .map(E::lift_base)
+        .collect();
+    let mut input_offset = 0usize;
+    let mut row_weight = E::one();
+
+    for (layer_idx, layer) in plan.layers.iter().enumerate() {
+        if layer.layer != layer_idx {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression layer index mismatch: expected {layer_idx}, got {}",
+                layer.layer
+            )));
+        }
+        let setup_entries = layer
+            .output_len
+            .checked_mul(layer.input_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression map size overflow".to_string()))?;
+        let setup_end = layer
+            .setup_offset
+            .checked_add(setup_entries)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression setup offset overflow".to_string())
+            })?;
+        let matrix = setup_fields
+            .get(layer.setup_offset..setup_end)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression setup map exceeds shared setup".to_string())
+            })?;
+        let input_start = suffix_offset.checked_add(input_offset).ok_or_else(|| {
+            AkitaError::InvalidSetup("compression input offset overflow".to_string())
+        })?;
+        let next_input_offset = input_offset.checked_add(layer.input_len).ok_or_else(|| {
+            AkitaError::InvalidSetup("compression suffix cursor overflow".to_string())
+        })?;
+        let is_final = layer_idx + 1 == plan.layers.len();
+        let next_digit_start = suffix_offset
+            .checked_add(next_input_offset)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression next-digit offset overflow".to_string())
+            })?;
+
+        for row_idx in 0..layer.output_len {
+            let row = &matrix[row_idx * layer.input_len..(row_idx + 1) * layer.input_len];
+            for (col_idx, &entry) in row.iter().enumerate() {
+                if !entry.is_zero() {
+                    add_table_weight(
+                        &mut table,
+                        witness_len,
+                        input_start + col_idx,
+                        row_weight * E::lift_base(entry),
+                    )?;
+                }
+            }
+            if is_final {
+                let public_value = public_payload
+                    .coeffs()
+                    .get(row_idx)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)?;
+                claim += row_weight * E::lift_base(public_value);
+            } else {
+                for (digit_idx, &g) in gadget.iter().enumerate() {
+                    add_table_weight(
+                        &mut table,
+                        witness_len,
+                        next_digit_start + row_idx * gadget.len() + digit_idx,
+                        -row_weight * g,
+                    )?;
+                }
+            }
+            row_weight *= row_challenge;
+        }
+        input_offset = next_input_offset;
+    }
+    if input_offset != plan.suffix_len {
+        return Err(AkitaError::InvalidSize {
+            expected: plan.suffix_len,
+            actual: input_offset,
+        });
+    }
+
+    Ok(CompressionLinearization {
+        table: TraceTable::ring_dense(table),
+        claim,
+    })
+}
+
+fn decomposition_digits_per_scalar(plan: &CommitmentCompressionPlan) -> Result<usize, AkitaError> {
+    let first = plan
+        .layers
+        .first()
+        .ok_or_else(|| AkitaError::InvalidSetup("compression plan has no layers".to_string()))?;
+    if plan.raw_len == 0 || !first.input_len.is_multiple_of(plan.raw_len) {
+        return Err(AkitaError::InvalidSetup(
+            "compression first layer does not match raw payload length".to_string(),
+        ));
+    }
+    Ok(first.input_len / plan.raw_len)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +438,132 @@ mod tests {
         assert_eq!(got.layer_outputs[0].len(), first_output_len);
         assert_eq!(got.public_payload.coeff_len(), 1);
         assert_eq!(got.suffix_digits.len(), plan.suffix_len);
+    }
+
+    fn table_dot_suffix(
+        table: &TraceTable<F>,
+        prefix_len: usize,
+        suffix: &[i8],
+        live_x_cols: usize,
+        y_len: usize,
+    ) -> F {
+        let dense = table.materialize_dense(live_x_cols, y_len);
+        suffix
+            .iter()
+            .enumerate()
+            .fold(F::zero(), |acc, (idx, &digit)| {
+                acc + dense[prefix_len + idx] * F::from_i64(digit as i64)
+            })
+    }
+
+    #[test]
+    fn linearizes_one_layer_chain_into_stage2_table() {
+        let raw = vec![F::from_u64(7), F::from_u64(9)];
+        let num_digits = 4;
+        let input_len = raw.len() * num_digits;
+        let setup = vec![F::one(); input_len];
+        let plan = CommitmentCompressionPlan {
+            raw_len: raw.len(),
+            public_len: 1,
+            suffix_len: input_len,
+            padded_suffix_len: input_len,
+            layers: vec![CompressionLayerPlan {
+                role: CompressionMapRole::H,
+                layer: 0,
+                input_len,
+                output_len: 1,
+                setup_offset: 0,
+            }],
+        };
+        let eval =
+            evaluate_commitment_compression(&setup, &plan, &raw, num_digits, 2).expect("compress");
+        let prefix_len = 4;
+        let live_x_cols = 4;
+        let y_len = 4;
+
+        let linear = linearize_compression_chain(
+            &setup,
+            &plan,
+            &eval.public_payload,
+            prefix_len,
+            live_x_cols,
+            y_len,
+            F::from_u64(11),
+            2,
+        )
+        .expect("linearize");
+
+        assert_eq!(
+            table_dot_suffix(
+                &linear.table,
+                prefix_len,
+                &eval.suffix_digits,
+                live_x_cols,
+                y_len
+            ),
+            linear.claim
+        );
+    }
+
+    #[test]
+    fn linearizes_two_layer_chain_with_intermediate_recomposition() {
+        let raw = vec![F::from_u64(5)];
+        let num_digits = 4;
+        let first_input_len = raw.len() * num_digits;
+        let first_output_len = 2;
+        let second_input_len = first_output_len * num_digits;
+        let first_entries = first_output_len * first_input_len;
+        let mut setup = vec![F::one(); first_entries];
+        setup.extend(vec![F::from_u64(2); second_input_len]);
+        let plan = CommitmentCompressionPlan {
+            raw_len: raw.len(),
+            public_len: 1,
+            suffix_len: first_input_len + second_input_len,
+            padded_suffix_len: first_input_len + second_input_len,
+            layers: vec![
+                CompressionLayerPlan {
+                    role: CompressionMapRole::F,
+                    layer: 0,
+                    input_len: first_input_len,
+                    output_len: first_output_len,
+                    setup_offset: 0,
+                },
+                CompressionLayerPlan {
+                    role: CompressionMapRole::F,
+                    layer: 1,
+                    input_len: second_input_len,
+                    output_len: 1,
+                    setup_offset: first_entries,
+                },
+            ],
+        };
+        let eval =
+            evaluate_commitment_compression(&setup, &plan, &raw, num_digits, 2).expect("compress");
+        let prefix_len = 8;
+        let live_x_cols = 6;
+        let y_len = 4;
+
+        let linear = linearize_compression_chain(
+            &setup,
+            &plan,
+            &eval.public_payload,
+            prefix_len,
+            live_x_cols,
+            y_len,
+            F::from_u64(13),
+            2,
+        )
+        .expect("linearize");
+
+        assert_eq!(
+            table_dot_suffix(
+                &linear.table,
+                prefix_len,
+                &eval.suffix_digits,
+                live_x_cols,
+                y_len
+            ),
+            linear.claim
+        );
     }
 }
