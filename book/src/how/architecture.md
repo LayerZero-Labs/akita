@@ -48,6 +48,42 @@ Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/pro
 
 Further reading: [Configuration and planning](./configuration.md), [Proving](./proving/proving.md), [Verification](./verification.md).
 
+## Ring-dimension ownership
+
+The cyclotomic ring dimension is **schedule-derived shape metadata, not a
+type parameter of the protocol**. Protocol data — commitments, hints, proofs,
+claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`,
+`SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`); each
+fold level's `LevelParams::ring_dimension` says how those vectors are
+interpreted at that level, and levels may differ. `RingDimPlan` (inside
+`ValidatedScheduleContext`) validates every level dimension against the
+setup's generation dimension and is the single runtime authority.
+
+Every function on the prove/verify path has one of two roles:
+
+- **Orchestration** reads schedule types, drives the transcript, and moves
+  D-free storage. It never carries `const D`.
+- **Kernels** (NTT, digit decomposition, commit/opening/tensor folds,
+  ring-switch arithmetic) are const-generic over `D` and receive extracted
+  numbers, never schedule types.
+
+The bridge is the *operation adapter*: a D-free function that extracts the
+ring dimension of the specific data one operation touches and enters the
+kernel through `akita_types::dispatch_ring_dim_result!` exactly once,
+returning D-free storage. Dispatch is per operation — never per level or per
+proof — so that per-role ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
+see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different
+dimensions to different adapters. `CommitmentRingDims` carries the per-role
+dimensions; fused paths obtain their single dimension through its
+`uniform_dim()` accessor, which fails loudly once roles diverge.
+
+The normative contract (discriminator rule, forbidden facade/level-
+monomorphization patterns, acceptance greps) lives in
+`specs/runtime-ring-cutover.md`; `scripts/ring-cutover-progress.sh
+--merge-gate` enforces it mechanically. Mixed-dimension execution is
+exercised end-to-end by `crates/akita-pcs/tests/mixed_d_per_level_e2e.rs`
+through the normal public API.
+
 ## Core types
 
 | Type | Role |
