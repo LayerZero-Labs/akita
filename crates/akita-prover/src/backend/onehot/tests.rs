@@ -38,7 +38,7 @@ fn aggregate_witnesses<F: FieldCore, const D: usize>(
     DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
 }
 
-fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, D, I>) -> DensePoly<F, D>
+fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, D, I>) -> DensePoly<F>
 where
     F: FieldCore + CanonicalField,
     I: OneHotIndex,
@@ -53,7 +53,7 @@ where
         let coeff_idx = field_pos % D;
         coeffs[ring_idx].coeffs[coeff_idx] += F::one();
     }
-    DensePoly::<F, D>::from_ring_coeffs(coeffs)
+    DensePoly::from_ring_coeffs(coeffs)
 }
 
 fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>
@@ -239,7 +239,9 @@ fn tensor_column_partials_match_dense_reference() {
         .collect::<Vec<_>>();
 
     let sparse_partials = poly.tensor_extension_column_partials::<E>(&point).unwrap();
-    let dense_partials = dense.tensor_extension_column_partials::<E>(&point).unwrap();
+    let dense_partials = dense
+        .tensor_extension_column_partials::<E, D>(&point)
+        .unwrap();
     assert_eq!(sparse_partials, dense_partials);
 }
 
@@ -350,7 +352,7 @@ fn batched_tensor_column_partials_multi_block_match_dense() {
         .iter()
         .map(|poly| {
             materialize_onehot_as_dense(poly)
-                .tensor_extension_column_partials::<E>(&point)
+                .tensor_extension_column_partials::<E, D>(&point)
                 .unwrap()
         })
         .collect::<Vec<_>>();
@@ -410,7 +412,7 @@ fn batched_tensor_column_partials_match_dense_for_fp_ext4() {
         .iter()
         .map(|poly| {
             materialize_onehot_as_dense(poly)
-                .tensor_extension_column_partials::<E>(&point)
+                .tensor_extension_column_partials::<E, D>(&point)
                 .unwrap()
         })
         .collect::<Vec<_>>();

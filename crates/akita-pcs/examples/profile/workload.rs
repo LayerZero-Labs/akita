@@ -553,10 +553,10 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
             .collect()
     };
-    let poly = DensePoly::<FF, D>::from_field_evals(nv, &evals).unwrap();
+    let poly = DensePoly::<FF>::from_field_evals(nv, D, &evals).unwrap();
     let opening =
         if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&original_pt) {
-            Cfg::ExtField::lift_base(opening_from_poly(
+            Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
                 &poly,
                 &base_pt,
                 layout,
@@ -568,11 +568,12 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::num_vars(&poly), 1)
+            AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
         }
-        SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(RootPolyShape::num_vars(&poly), 1)
-        }
+        SetupContributionMode::Recursive => AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(
+            RootPolyShape::<FF, D>::num_vars(&poly),
+            1,
+        ),
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -598,7 +599,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             .expect("prepared setup CRT profile"),
     );
 
-    run_prove::<FF, D, Cfg, DensePoly<FF, D>>(
+    run_prove::<FF, D, Cfg, DensePoly<FF>>(
         label,
         &setup,
         &stack,

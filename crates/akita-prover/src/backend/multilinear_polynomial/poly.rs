@@ -24,14 +24,14 @@ use crate::{DensePoly, OneHotIndex, OneHotPoly};
 #[derive(Debug, Clone)]
 pub enum MultilinearPolynomial<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     /// Dense multilinear polynomial.
-    Dense(DensePoly<F, D>),
+    Dense(DensePoly<F>),
     /// One-hot multilinear polynomial.
     OneHot(OneHotPoly<F, D, I>),
 }
 
 impl<F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<F, D, I> {
     /// Wrap a dense polynomial.
-    pub fn dense(poly: DensePoly<F, D>) -> Self {
+    pub fn dense(poly: DensePoly<F>) -> Self {
         Self::Dense(poly)
     }
 
@@ -61,7 +61,7 @@ where
 {
     pub(super) fn dispatch<T>(
         self,
-        dense: impl FnOnce(&DensePoly<F, D>) -> Result<T, AkitaError>,
+        dense: impl FnOnce(&DensePoly<F>) -> Result<T, AkitaError>,
         onehot: impl FnOnce(&OneHotPoly<F, D, I>) -> Result<T, AkitaError>,
     ) -> Result<T, AkitaError> {
         match self.poly {
@@ -80,7 +80,7 @@ where
         self.polys
     }
 
-    pub(super) fn homogeneous_dense_polys(self) -> Option<Vec<&'a DensePoly<F, D>>> {
+    pub(super) fn homogeneous_dense_polys(self) -> Option<Vec<&'a DensePoly<F>>> {
         let mut dense = Vec::with_capacity(self.polys.len());
         for poly in self.polys {
             match poly {
@@ -160,14 +160,14 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::num_ring_elems(poly),
+            Self::Dense(poly) => RootPolyShape::<F, D>::num_ring_elems(poly),
             Self::OneHot(poly) => RootPolyShape::num_ring_elems(poly),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::num_vars(poly),
+            Self::Dense(poly) => RootPolyShape::<F, D>::num_vars(poly),
             Self::OneHot(poly) => RootPolyShape::num_vars(poly),
         }
     }
@@ -254,7 +254,7 @@ where
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => poly.direct_root_witness(),
+            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
             Self::OneHot(poly) => poly.direct_root_witness(),
         }
     }

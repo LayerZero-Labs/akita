@@ -27,14 +27,14 @@ use crate::{
 /// ring coefficients so the transformed commitment path preserves sparsity.
 #[derive(Debug, Clone)]
 pub enum RootTensorProjectionPoly<F: FieldCore, const D: usize> {
-    /// Dense transformed root polynomial.
-    Dense(DensePoly<F, D>),
+    /// Dense transformed root polynomial (D-free flat storage).
+    Dense(DensePoly<F>),
     /// Sparse signed-ring transformed root polynomial.
     Sparse(Arc<SparseRingPoly<F>>),
 }
 
-impl<F: FieldCore, const D: usize> From<DensePoly<F, D>> for RootTensorProjectionPoly<F, D> {
-    fn from(poly: DensePoly<F, D>) -> Self {
+impl<F: FieldCore, const D: usize> From<DensePoly<F>> for RootTensorProjectionPoly<F, D> {
+    fn from(poly: DensePoly<F>) -> Self {
         Self::Dense(poly)
     }
 }
@@ -88,14 +88,14 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::num_ring_elems(poly),
+            Self::Dense(poly) => RootPolyShape::<F, D>::num_ring_elems(poly),
             Self::Sparse(poly) => RootPolyShape::<F, D>::num_ring_elems(poly.as_ref()),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::num_vars(poly),
+            Self::Dense(poly) => RootPolyShape::<F, D>::num_vars(poly),
             Self::Sparse(poly) => RootPolyShape::<F, D>::num_vars(poly.as_ref()),
         }
     }
@@ -167,7 +167,7 @@ where
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => DirectRootWitnessSource::direct_root_witness(poly),
+            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
             Self::Sparse(poly) => {
                 DirectRootWitnessSource::<F, D>::direct_root_witness(poly.as_ref())
             }
@@ -176,7 +176,7 @@ where
 
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => DirectRootWitnessSource::base_evals(poly),
+            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::base_evals(poly),
             Self::Sparse(poly) => DirectRootWitnessSource::<F, D>::base_evals(poly.as_ref()),
         }
     }
@@ -308,7 +308,8 @@ where
                         }
                     }
                 }
-                let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
+                let dense_view =
+                    <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_polys)?;
                 OpeningBatchKernel::<DenseBatchView<'_, F, D>, F, D>::decompose_fold_batch(
                     self, prepared, dense_view, plan,
                 )

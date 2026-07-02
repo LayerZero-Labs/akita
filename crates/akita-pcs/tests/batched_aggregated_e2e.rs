@@ -145,7 +145,7 @@ mod non_zk_aggregated_cases {
             let layout =
                 DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-            let polys: Vec<DensePoly<F, DENSE_D>> = (0..batch_size)
+            let polys: Vec<DensePoly<F>> = (0..batch_size)
                 .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))
                 .collect();
 
@@ -166,7 +166,7 @@ mod non_zk_aggregated_cases {
             let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
 
             let (commitments, hints) =
-                AkitaCommitmentScheme::<DenseCfg>::commit(&setup, &polys, &stack)
+                AkitaCommitmentScheme::<DenseCfg>::commit::<_, _, DENSE_D>(&setup, &polys, &stack)
                     .map(|(commitment, hint)| (vec![commitment], vec![hint]))
                     .expect("grouped commit");
 
@@ -177,7 +177,7 @@ mod non_zk_aggregated_cases {
             );
 
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/dense");
-            let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove(
+            let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _, DENSE_D>(
                 &setup,
                 prove_input(
                     &pt[..],
@@ -289,14 +289,15 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
 
-        let (commitment, hint) = AkitaCommitmentScheme::<DenseCfg>::commit(&setup, &polys, &stack)
-            .expect("mixed aggregated commit");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _, DENSE_D>(&setup, &polys, &stack)
+                .expect("mixed aggregated commit");
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _, DENSE_D>(
             &setup,
             prove_input(
                 &pt[..],

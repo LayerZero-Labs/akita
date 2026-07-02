@@ -29,7 +29,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let layout =
         DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("batched commit layout");
 
-    let polys: Vec<DensePoly<F, DENSE_D>> = (0..total_claims)
+    let polys: Vec<DensePoly<F>> = (0..total_claims)
         .map(|poly_idx| make_dense_poly(num_vars, seed.wrapping_add(poly_idx as u64)))
         .collect();
     let opening_point = random_point(num_vars, seed.wrapping_add(0x9e37_0000));

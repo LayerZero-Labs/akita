@@ -25,7 +25,7 @@ where
         source: DenseView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        source.poly.commit_inner(self, prepared, plan)
+        source.poly.commit_inner::<_, D>(self, prepared, plan)
     }
 }
 
@@ -46,7 +46,7 @@ where
                 block_len,
             } => source
                 .poly
-                .evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
+                .evaluate_and_fold::<D>(eval_outer_scalars, fold_scalars, block_len),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars,
                 fold_scalars,
@@ -64,7 +64,7 @@ where
         source: DenseView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
-        Ok(source.poly.decompose_fold(
+        Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.block_len,
             plan.num_digits,
@@ -90,7 +90,7 @@ where
                 block_len,
                 num_digits,
                 log_basis,
-            } => match DensePoly::decompose_fold_tensor_batched(
+            } => match DensePoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
                 block_len,
@@ -118,7 +118,9 @@ where
     where
         E: MulBaseUnreduced<F>,
     {
-        source.poly.tensor_extension_column_partials(logical_point)
+        source
+            .poly
+            .tensor_extension_column_partials::<E, D>(logical_point)
     }
 
     fn packed_witness(
@@ -127,7 +129,7 @@ where
         source: DenseView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
-            source.poly.tensor_packed_extension_evals()?,
+            source.poly.tensor_packed_extension_evals::<E, D>()?,
         ))
     }
 
@@ -139,7 +141,7 @@ where
     where
         E: FpExtEncoding<F>,
     {
-        source.poly.tensor_packed_extension_root_poly::<E>()
+        source.poly.tensor_packed_extension_root_poly::<E, D>()
     }
 }
 
@@ -158,7 +160,7 @@ where
     where
         E: MulBaseUnreduced<F>,
     {
-        DensePoly::tensor_extension_column_partials_batch(source.polys, logical_point)
+        DensePoly::tensor_extension_column_partials_batch::<E, D>(source.polys, logical_point)
     }
 
     fn sparse_linear_combination(

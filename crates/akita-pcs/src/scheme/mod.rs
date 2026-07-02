@@ -148,6 +148,7 @@ where
     /// # Errors
     ///
     /// Returns an error if the group is empty, dense, exceeds setup capacity, or cannot be planned.
+    #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_group")]
     pub fn commit_group<P, B, const D: usize>(
         setup: &AkitaProverSetup<Cfg::Field>,

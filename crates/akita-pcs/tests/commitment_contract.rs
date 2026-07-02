@@ -39,7 +39,9 @@ impl ContractRootPoly {
     fn from_field_evals(num_vars: usize, evals: &[F]) -> Result<Self, AkitaError> {
         Ok(Self {
             num_vars,
-            coeffs: DensePoly::<F, D>::from_field_evals(num_vars, evals)?.coeffs,
+            coeffs: DensePoly::<F>::from_field_evals(num_vars, D, evals)?
+                .ring_coeffs::<D>()?
+                .to_vec(),
         })
     }
 }
@@ -154,7 +156,7 @@ where
         source: ContractCommitView<'_>,
         plan: CommitInnerPlan,
     ) -> Result<akita_prover::CommitInnerWitness<F>, AkitaError> {
-        let dense = DensePoly::<F, D>::from_ring_coeffs(source.poly.coeffs.clone());
+        let dense = DensePoly::<F>::from_ring_coeffs(source.poly.coeffs.clone());
         RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
             &CpuBackend,
             prepared,
@@ -178,7 +180,7 @@ fn custom_commit_source_runs_commit_with_params() {
     let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
     assert_commit_source_only(&contract);
 
-    let dense = DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).expect("dense oracle");
+    let dense = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense oracle");
     let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
@@ -202,7 +204,7 @@ fn custom_commit_source_runs_commit_with_params() {
 
     let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
     let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
-    let (dense_commitment, dense_hint) = commit_with_params::<F, D, DensePoly<F, D>, CpuBackend>(
+    let (dense_commitment, dense_hint) = commit_with_params::<F, D, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),
         expanded,
         &cpu_ctx,
@@ -226,7 +228,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
     let len = 1usize << NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
-    let dense = DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).expect("dense oracle");
+    let dense = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense oracle");
     let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
@@ -252,7 +254,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
     let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
     let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
     let (dense_commitment, dense_hint) =
-        batched_commit_with_params::<F, D, DensePoly<F, D>, CpuBackend>(
+        batched_commit_with_params::<F, D, DensePoly<F>, CpuBackend>(
             std::slice::from_ref(&dense),
             expanded,
             &cpu_ctx,

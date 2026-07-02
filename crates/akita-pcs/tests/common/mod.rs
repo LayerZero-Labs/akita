@@ -167,9 +167,9 @@ pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F,
     OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly")
 }
 
-pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F, DENSE_D> {
+pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
     let evals = dense_field_evals(nv, seed);
-    DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly")
+    DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly")
 }
 
 fn splitmix64_next(state: &mut u64) -> u64 {

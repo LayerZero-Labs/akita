@@ -15,7 +15,8 @@ fn verify_passes_for_consistent_opening() {
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
 
-    let (commitment, hint) = Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let (commitment, hint) =
+        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -24,12 +25,12 @@ fn verify_passes_for_consistent_opening() {
         .zip(lw.iter())
         .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [opening];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _, D>(
         &setup,
         prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -67,7 +68,8 @@ fn verify_rejects_wrong_opening() {
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
 
-    let (commitment, hint) = Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let (commitment, hint) =
+        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -76,11 +78,11 @@ fn verify_rejects_wrong_opening() {
         .zip(lw.iter())
         .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _, D>(
         &setup,
         prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -239,7 +241,7 @@ fn monomial_basis_prove_verify_round_trip() {
     let len = 1usize << num_vars;
 
     let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F, D>::from_field_evals(num_vars, &coeffs).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &coeffs).unwrap();
 
     let setup = Scheme::setup_prover(num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -248,7 +250,8 @@ fn monomial_basis_prove_verify_round_trip() {
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
 
-    let (commitment, hint) = Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let (commitment, hint) =
+        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 
@@ -258,12 +261,12 @@ fn monomial_basis_prove_verify_round_trip() {
         .zip(mw.iter())
         .fold(F::zero(), |acc, (&c, &w)| acc + c * w);
 
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [opening];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/monomial");
-    let proof = Scheme::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _, D>(
         &setup,
         prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -300,7 +303,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let evals: Vec<DirectF> = (0..(1usize << num_vars))
         .map(|i| DirectF::from_u64((i + 1) as u64))
         .collect();
-    let poly = DensePoly::<DirectF, DIRECT_D>::from_field_evals(num_vars, &evals).unwrap();
+    let poly = DensePoly::<DirectF>::from_field_evals(num_vars, DIRECT_D, &evals).unwrap();
     let opening_point = vec![DirectF::zero(); num_vars];
     let opening = evals[0];
 
@@ -311,14 +314,15 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
             .expect("stack");
     let verifier_setup = DirectScheme::setup_verifier(&setup);
     let (commitment, hint) =
-        DirectScheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+        DirectScheme::commit::<_, _, DIRECT_D>(&setup, std::slice::from_ref(&poly), &stack)
+            .unwrap();
 
-    let poly_refs: [&DensePoly<DirectF, DIRECT_D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<DirectF>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [opening];
 
     let mut prover_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
-    let proof = DirectScheme::batched_prove(
+    let proof = DirectScheme::batched_prove::<_, _, _, DIRECT_D>(
         &setup,
         prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
         &stack,

@@ -8,12 +8,12 @@ use crate::compute::{
 use crate::{DensePoly, OneHotPoly};
 use akita_field::{CanonicalField, ExtField, FpExt4, Prime24Offset3};
 
-fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3, D> {
+fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
     let num_vars = 5;
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
-    DensePoly::from_field_evals(num_vars, &evals).unwrap()
+    DensePoly::from_field_evals(num_vars, D, &evals).unwrap()
 }
 
 fn sample_onehot<const D: usize>() -> OneHotPoly<Prime24Offset3, D> {
@@ -71,7 +71,7 @@ fn multilinear_kernel_homogeneous_dense_tensor_batch_matches_inner() {
 
     let dense0 = sample_dense::<D>();
     let dense1 = sample_dense::<D>();
-    let num_vars = RootPolyShape::num_vars(&dense0);
+    let num_vars = RootPolyShape::<F, D>::num_vars(&dense0);
     let wrapped = [
         MultilinearPolynomial::dense(dense0),
         MultilinearPolynomial::dense(dense1),
@@ -80,14 +80,14 @@ fn multilinear_kernel_homogeneous_dense_tensor_batch_matches_inner() {
     let point = sample_point::<E>(num_vars);
     let backend = CpuBackend;
 
-    let inner_refs: Vec<&DensePoly<F, D>> = wrapped
+    let inner_refs: Vec<&DensePoly<F>> = wrapped
         .iter()
         .map(|poly| match poly {
             MultilinearPolynomial::Dense(dense) => dense,
             MultilinearPolynomial::OneHot(_) => unreachable!(),
         })
         .collect();
-    let dense_view = DensePoly::<F, D>::tensor_batch(&inner_refs).unwrap();
+    let dense_view = <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&inner_refs).unwrap();
     let expected =
         TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::column_partials_batch(
             &backend, None, dense_view, &point,
@@ -159,7 +159,7 @@ fn multilinear_kernel_mixed_batch_column_partials_falls_back_per_poly() {
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
-    let dense = DensePoly::from_field_evals(num_vars, &evals).unwrap();
+    let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
     let wrapped = [
         MultilinearPolynomial::dense(dense),
         MultilinearPolynomial::onehot(onehot),
@@ -200,7 +200,7 @@ fn multilinear_kernel_mixed_batch_sparse_linear_combination_returns_none() {
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
-    let dense = DensePoly::from_field_evals(num_vars, &evals).unwrap();
+    let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
     let wrapped = [
         MultilinearPolynomial::dense(dense),
         MultilinearPolynomial::onehot(onehot),
@@ -230,7 +230,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
-    let dense = DensePoly::from_field_evals(num_vars, &evals).unwrap();
+    let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
     let wrapped = [
         MultilinearPolynomial::dense(dense),
         MultilinearPolynomial::onehot(onehot),

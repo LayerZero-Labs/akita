@@ -59,7 +59,7 @@ fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
     use akita_types::AjtaiKeyParams;
     let sis_family = akita_types::SisModulusFamily::Q32;
     // Commit ring dimension must equal the static `D` the scheme dispatches
-    // (`DensePoly::<SmallF, D>` / `validate_commit_level_params::<F, D>`); both
+    // (`DensePoly::<SmallF>` / `validate_commit_level_params::<F, D>`); both
     // fixtures pin `D = 32`. `ring_subfield = 2` below is `FpExt4`'s
     // embedding norm bound (a claim-field property), not `D / d`, so the
     // collision buckets are independent of this dimension.
@@ -330,7 +330,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     let evals = (0..len)
         .map(|idx| SmallF::from_u64((3 * idx as u64) + 9))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals).unwrap();
+    let poly = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals).unwrap();
     let point = (0..NUM_VARS)
         .map(|idx| {
             SmallE::new([
@@ -356,13 +356,13 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             .expect("stack");
     let verifier_setup = SmallScheme::setup_verifier(&setup);
     let (commitment, hint) =
-        SmallScheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+        SmallScheme::commit::<_, _, SMALL_D>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let poly_refs = [&poly];
     let commitments = [commitment];
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
-    let proof = SmallScheme::batched_prove(
+    let proof = SmallScheme::batched_prove::<_, _, _, SMALL_D>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -477,8 +477,8 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     let evals_b = (0..len)
         .map(|idx| SmallF::from_u64((2 * idx as u64) + 7))
         .collect::<Vec<_>>();
-    let poly_a = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_a).unwrap();
-    let poly_b = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_b).unwrap();
+    let poly_a = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_a).unwrap();
+    let poly_b = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_b).unwrap();
     let point = (0..NUM_VARS)
         .map(|idx| {
             SmallE::new([
@@ -511,13 +511,14 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     let verifier_setup = SmallScheme::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) =
-        SmallScheme::commit(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
+        SmallScheme::commit::<_, _, SMALL_D>(&setup, &[poly_a.clone(), poly_b.clone()], &stack)
+            .unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_b];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
-    let proof = SmallScheme::batched_prove(
+    let proof = SmallScheme::batched_prove::<_, _, _, SMALL_D>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -585,8 +586,8 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     let evals_b = (0..len)
         .map(|idx| SmallF::from_u64((2 * idx as u64) + 7))
         .collect::<Vec<_>>();
-    let poly_a = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_a).unwrap();
-    let poly_b = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_b).unwrap();
+    let poly_a = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_a).unwrap();
+    let poly_b = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_b).unwrap();
     let point = (0..NUM_VARS)
         .map(|idx| {
             SmallE::new([
@@ -619,13 +620,14 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     let verifier_setup = SmallScheme::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) =
-        SmallScheme::commit(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
+        SmallScheme::commit::<_, _, SMALL_D>(&setup, &[poly_a.clone(), poly_b.clone()], &stack)
+            .unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_b];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
-    let proof = SmallScheme::batched_prove(
+    let proof = SmallScheme::batched_prove::<_, _, _, SMALL_D>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -680,7 +682,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let evals = (0..len)
         .map(|idx| SmallF::from_u64((3 * idx as u64) + 5))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals).unwrap();
+    let poly = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals).unwrap();
     let point_a = (0..NUM_VARS)
         .map(|idx| {
             SmallE::new([
@@ -710,13 +712,13 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let verifier_setup = SmallScheme::setup_verifier(&setup);
     let polys = [poly.clone(), poly];
     let poly_refs = [&polys[0], &polys[1]];
-    let (commitment, hint) = SmallScheme::commit(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = SmallScheme::commit::<_, _, SMALL_D>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_a];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
-    let proof = SmallScheme::batched_prove(
+    let proof = SmallScheme::batched_prove::<_, _, _, SMALL_D>(
         &setup,
         prover_claims(&point_a[..], &poly_refs[..], &commitments[0], hint),
         &stack,

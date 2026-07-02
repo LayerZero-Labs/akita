@@ -125,10 +125,10 @@ fn run_single_dense(nv: usize) {
         .expect("layout");
 
         let evals = dense_field_evals(nv, 0xface_feed_0000 + nv as u64);
-        let poly = DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly");
+        let poly = DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly");
 
         let pt = random_point(nv, 0xbabe_0000 + nv as u64);
-        let expected_opening = opening_from_poly(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -140,18 +140,21 @@ fn run_single_dense(nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit(&setup, commit_input, &stack)
-                .expect("commit");
+        let (commitment, hint) = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _, DENSE_D>(
+            &setup,
+            commit_input,
+            &stack,
+        )
+        .expect("commit");
 
-        let poly_refs: [&DensePoly<F, DENSE_D>; 1] = [&poly];
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _, DENSE_D>(
             &setup,
             prove_input(
                 &pt[..],

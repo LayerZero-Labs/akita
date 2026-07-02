@@ -148,7 +148,8 @@ where
                         }
                     });
                 };
-                let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
+                let dense_view =
+                    <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_polys)?;
                 OpeningBatchKernel::<DenseBatchView<'_, F, D>, F, D>::decompose_fold_batch(
                     self, prepared, dense_view, plan,
                 )
@@ -286,7 +287,8 @@ where
                 let Some(dense_polys) = source.homogeneous_dense_polys() else {
                     return source.column_partials_per_poly(self, prepared, logical_point);
                 };
-                let dense_view = DensePoly::<F, D>::tensor_batch(&dense_polys)?;
+                let dense_view =
+                    <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_polys)?;
                 TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::column_partials_batch(
                     self,
                     prepared,
@@ -323,7 +325,8 @@ where
                 let Some(dense_polys) = source.homogeneous_dense_polys() else {
                     return Ok(None);
                 };
-                let dense_view = DensePoly::<F, D>::tensor_batch(&dense_polys)?;
+                let dense_view =
+                    <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_polys)?;
                 TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::sparse_linear_combination(
                     self,
                     prepared,

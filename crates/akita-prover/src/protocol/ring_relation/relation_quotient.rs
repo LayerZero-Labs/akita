@@ -272,6 +272,7 @@ impl RelationQuotientShape {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_relation_quotient")]
 pub fn compute_relation_quotient<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,

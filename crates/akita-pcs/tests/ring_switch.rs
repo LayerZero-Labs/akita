@@ -105,7 +105,7 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::{
         ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, Commitment,
-        MRowLayout, PointVariableSelection, RingCommitment, RingMultiplierOpeningPoint,
+        MRowLayout, PointVariableSelection, RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -285,7 +285,7 @@ mod tests {
         let evals: Vec<F> = (0..(1usize << NV))
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
         let point = vec![F::zero(); NV];
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
@@ -296,9 +296,12 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commitment");
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -341,10 +344,10 @@ mod tests {
         let op_ctx =
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
-        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
-            RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
+            RingRelationProver::new::<F, F, D, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
@@ -429,7 +432,7 @@ mod tests {
         let evals: Vec<F> = (0..(1usize << NV))
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
         let point: Vec<F> = (0..NV)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
@@ -442,9 +445,12 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commitment");
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -480,10 +486,10 @@ mod tests {
         let op_ctx =
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
-        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
-            RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
+            RingRelationProver::new::<F, F, D, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
@@ -602,7 +608,7 @@ mod tests {
         let evals: Vec<F> = (0..(1usize << NV))
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
         let point: Vec<F> = (0..NV)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
@@ -615,9 +621,12 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commitment");
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -653,10 +662,10 @@ mod tests {
         let op_ctx =
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
-        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
-            RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
+            RingRelationProver::new::<F, F, D, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point.clone(),
@@ -753,7 +762,7 @@ mod tests {
         let evals: Vec<F> = (0..(1usize << NV))
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
         let point: Vec<F> = (0..NV)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
@@ -766,9 +775,12 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commitment");
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -804,10 +816,10 @@ mod tests {
         let op_ctx =
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
-        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
-            RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
+            RingRelationProver::new::<F, F, D, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,

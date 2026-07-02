@@ -46,7 +46,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
 
     let len = 1usize << full_num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F, D>::from_field_evals(full_num_vars, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(full_num_vars, D, &evals).unwrap();
 
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
@@ -75,7 +75,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let verifier_setup = Scheme::setup_verifier(&setup);
     let commit_stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
         .expect("commit stack");
-    let (commitment, hint) = akita_prover::commit::<Cfg, D, DensePoly<F, D>, CpuBackend>(
+    let (commitment, hint) = akita_prover::commit::<Cfg, D, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&poly),
         setup.expanded.as_ref(),
         &commit_stack,
@@ -91,11 +91,11 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         .zip(lw.iter())
         .fold(F::zero(), |acc, (&coeff, &weight)| acc + coeff * weight);
 
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
-    let proof = batched_prove::<Cfg, _, DensePoly<F, D>, _, _, _, _, D>(
+    let proof = batched_prove::<Cfg, _, DensePoly<F>, _, _, _, _, D>(
         &setup.expanded,
         &setup.prefix_slots,
         &stack,

@@ -8,8 +8,8 @@ fn batched_commit_matches_individual_commits() {
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 1) as u64)).collect();
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
-    let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
-    let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
+    let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
+    let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
@@ -19,15 +19,15 @@ fn batched_commit_matches_individual_commits() {
 
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
-        .map(|group| Scheme::commit(&setup, group, &stack))
+        .map(|group| Scheme::commit::<_, _, D>(&setup, group, &stack))
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
         .unzip();
     let (commitment_a, hint_a) =
-        Scheme::commit(&setup, std::slice::from_ref(&poly_a), &stack).unwrap();
+        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly_a), &stack).unwrap();
     let (commitment_b, hint_b) =
-        Scheme::commit(&setup, std::slice::from_ref(&poly_b), &stack).unwrap();
+        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly_b), &stack).unwrap();
 
     assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
     assert_eq!(batched_hints, vec![hint_a, hint_b]);
@@ -47,12 +47,12 @@ fn batched_root_direct_fast_path_round_trip() {
     const NUM_POLYS: usize = 4;
 
     let len = 1usize << NUM_VARS;
-    let polys: Vec<DensePoly<F, D>> = (0..NUM_POLYS)
+    let polys: Vec<DensePoly<F>> = (0..NUM_POLYS)
         .map(|poly_idx| {
             let evals: Vec<F> = (0..len)
                 .map(|i| F::from_u64((i * (poly_idx + 1) + 17) as u64))
                 .collect();
-            DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).unwrap()
+            DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).unwrap()
         })
         .collect();
     let setup = Scheme::setup_prover(NUM_VARS, NUM_POLYS).unwrap();
@@ -61,7 +61,7 @@ fn batched_root_direct_fast_path_round_trip() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) = Scheme::commit(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = Scheme::commit::<_, _, D>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -70,14 +70,9 @@ fn batched_root_direct_fast_path_round_trip() {
         .iter()
         .map(|poly| {
             let mut evals = vec![F::zero(); len];
-            for (i, ring) in poly.coeffs.iter().enumerate() {
-                let base = i * D;
-                let take = (len.saturating_sub(base)).min(D);
-                if take == 0 {
-                    break;
-                }
-                evals[base..base + take].copy_from_slice(&ring.coefficients()[..take]);
-            }
+            let flat = poly.field_coeffs();
+            let take = len.min(flat.len());
+            evals[..take].copy_from_slice(&flat[..take]);
             let lw = lagrange_weights(&opening_point).unwrap();
             evals
                 .iter()
@@ -89,7 +84,7 @@ fn batched_root_direct_fast_path_round_trip() {
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
-    let proof = Scheme::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _, D>(
         &setup,
         prover_claims(
             &opening_point[..],
@@ -144,12 +139,12 @@ fn batched_root_direct_rejects_wrong_opening() {
     const NUM_VARS: usize = 8;
     const NUM_POLYS: usize = 4;
     let len = 1usize << NUM_VARS;
-    let polys: Vec<DensePoly<F, D>> = (0..NUM_POLYS)
+    let polys: Vec<DensePoly<F>> = (0..NUM_POLYS)
         .map(|poly_idx| {
             let evals: Vec<F> = (0..len)
                 .map(|i| F::from_u64((i + poly_idx + 11) as u64))
                 .collect();
-            DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).unwrap()
+            DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).unwrap()
         })
         .collect();
     let setup = Scheme::setup_prover(NUM_VARS, NUM_POLYS).unwrap();
@@ -158,7 +153,7 @@ fn batched_root_direct_rejects_wrong_opening() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) = Scheme::commit(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = Scheme::commit::<_, _, D>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -168,7 +163,7 @@ fn batched_root_direct_rejects_wrong_opening() {
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
-    let proof = Scheme::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _, D>(
         &setup,
         prover_claims(
             &opening_point[..],
@@ -205,8 +200,8 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
-    let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
-    let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
+    let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
+    let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
@@ -215,7 +210,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let verifier_setup = Scheme::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
     let (commitment, hint) =
-        Scheme::commit(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
+        Scheme::commit::<_, _, D>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -228,7 +223,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     const TRANSCRIPT_LABEL: &[u8] = b"test/batched-prove";
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-    let proof = Scheme::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _, D>(
         &setup,
         prover_claims(
             &opening_point[..],

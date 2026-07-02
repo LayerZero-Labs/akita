@@ -5,11 +5,11 @@ use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRows
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
-impl<F, const D: usize> DensePoly<F, D>
+impl<F> DensePoly<F>
 where
     F: FieldCore + CanonicalField,
 {
-    pub(super) fn commit_rows<B>(
+    pub(super) fn commit_rows<B, const D: usize>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup,
@@ -21,10 +21,11 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let n = self.coeffs.len();
+        let coeffs = self.ring_coeffs::<D>()?;
+        let n = coeffs.len();
         let num_blocks = n.div_ceil(block_len);
 
-        if let Some(digit_planes) = self.digit_planes_for(num_digits_commit, log_basis) {
+        if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits_commit, log_basis) {
             let digit_block_slices =
                 digit_block_slices(digit_planes, n, block_len, num_digits_commit);
             return backend.dense_commit_rows(
@@ -45,7 +46,7 @@ where
                 if start >= n {
                     &[] as &[CyclotomicRing<F, D>]
                 } else {
-                    &self.coeffs[start..(start + block_len).min(n)]
+                    &coeffs[start..(start + block_len).min(n)]
                 }
             })
             .collect();

@@ -255,10 +255,10 @@ fn verifier_claims<'a, E: FieldCore, C>(
     .expect("valid verifier claims")
 }
 
-fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
+fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
     let len = 1usize << num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
     (poly, evals)
 }
 
@@ -288,7 +288,8 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) = Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let (commitment, hint) =
+        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
@@ -299,11 +300,11 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         .zip(lw.iter())
         .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _, D>(
         &setup,
         prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
         &stack,

@@ -583,7 +583,7 @@ where
 
     pub(crate) fn tensor_packed_extension_poly<E, const D: usize>(
         &self,
-    ) -> Result<crate::backend::dense::DensePoly<F, D>, AkitaError>
+    ) -> Result<crate::backend::dense::DensePoly<F>, AkitaError>
     where
         F: CanonicalField + FromPrimitiveInt,
         E: akita_types::FpExtEncoding<F>,
@@ -607,7 +607,7 @@ where
                 ),
             )?);
         }
-        Ok(crate::backend::dense::DensePoly::<F, D>::from_ring_coeffs(
+        Ok(crate::backend::dense::DensePoly::from_ring_coeffs::<D>(
             rings,
         ))
     }
@@ -912,7 +912,7 @@ mod tests {
         dense_coeffs[0].coeffs[1] += F::one();
         dense_coeffs[1].coeffs[3] -= F::one();
         dense_coeffs[3].coeffs[2] += F::one();
-        let dense = DensePoly::<F, D>::from_ring_coeffs(dense_coeffs);
+        let dense = DensePoly::from_ring_coeffs(dense_coeffs);
         let scalars = (0..2)
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
@@ -921,8 +921,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(
-            sparse.fold_blocks_ring(&scalars, 2),
-            dense.fold_blocks_ring(&scalars, 2)
+            sparse.fold_blocks_ring::<D>(&scalars, 2),
+            dense.fold_blocks_ring::<D>(&scalars, 2)
         );
     }
 

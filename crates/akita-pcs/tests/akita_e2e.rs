@@ -12,7 +12,6 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::AkitaProverSetup;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{ProverCommitmentGroup, ProverOpeningBatch};
@@ -225,22 +224,21 @@ fn batched_total_fold_levels<FF: CanonicalField, E: FieldCore>(
     root_fold + suffix_fold
 }
 
-fn make_dense_fixture<
+fn make_dense_fixture<FField, const D: usize, Cfg: CommitmentConfig<Field = FField>>(
+    nv: usize,
+    transcript_label: &'static [u8],
+) -> DenseFixture<FField, Cfg::ExtField, D>
+where
     FField: CanonicalField
         + CanonicalBytes
         + TranscriptChallenge
         + HasWide
         + RandomSampling
         + FromPrimitiveInt
-        + 'static,
-    const D: usize,
-    Cfg: CommitmentConfig<Field = FField>,
->(
-    nv: usize,
-    transcript_label: &'static [u8],
-) -> DenseFixture<FField, Cfg::ExtField, D>
-where
-    FField: HalvingField + PseudoMersenneField + Valid,
+        + 'static
+        + HalvingField
+        + PseudoMersenneField
+        + Valid,
     Cfg::ExtField: FrobeniusExtField<FField> + HasUnreducedOps + HasOptimizedFold,
     <FField as HasWide>::Wide: From<FField> + ReduceTo<FField>,
     Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
@@ -252,7 +250,7 @@ where
         .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
 
-    let poly = DensePoly::<FField, D>::from_field_evals(nv, &evals).unwrap();
+    let poly = DensePoly::<FField>::from_field_evals(nv, D, &evals).unwrap();
     let pt = random_claim_point::<FField, Cfg::ExtField>(nv);
     let expected_opening = dense_lagrange_opening_from_evals::<FField, Cfg::ExtField>(&evals, &pt);
 
@@ -265,15 +263,19 @@ where
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+    )
+    .unwrap();
 
-    let poly_refs: [&DensePoly<FField, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<FField>; 1] = [&poly];
     let commitments = [commitment];
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
         &setup,
         prove_input(
             &pt[..],
@@ -404,9 +406,9 @@ fn full_d64_prove_verify() {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let poly = DensePoly::<F, D>::from_field_evals(FULL_TEST_NV, &evals).unwrap();
+        let poly = DensePoly::<F>::from_field_evals(FULL_TEST_NV, D, &evals).unwrap();
         let pt = random_point::<F>(FULL_TEST_NV);
-        let expected_opening = opening_from_poly(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(FULL_TEST_NV);
@@ -419,11 +421,14 @@ fn full_d64_prove_verify() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
-                .unwrap();
+        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .unwrap();
 
-        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
@@ -431,7 +436,7 @@ fn full_d64_prove_verify() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let prove_start = Instant::now();
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
             &setup,
             prove_input(
                 &pt[..],
@@ -564,11 +569,11 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
         let (commitment, hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).unwrap();
+            AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack).unwrap();
         let commitments = [commitment];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
             &setup,
             prove_input(&point[..], &poly_refs[..], &commitments[0], hint),
             &stack,
@@ -767,9 +772,9 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let evals: Vec<F> = (0..1usize << nv)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
+        let poly = DensePoly::<F>::from_field_evals(nv, D, &evals).unwrap();
         let opening_point = random_point::<F>(nv);
-        let opening = opening_from_poly(&poly, &opening_point, &layout);
+        let opening = opening_from_poly::<D, _>(&poly, &opening_point, &layout);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -780,17 +785,20 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         )
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
-                .unwrap();
-        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .unwrap();
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
             &setup,
             prove_input(
                 &opening_point[..],
@@ -817,15 +825,15 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             .as_field_elements()
             .expect("root-direct witness should keep raw field elements");
         assert_eq!(direct_field.coeff_len(), 1usize << nv);
-        let reconstructed = DensePoly::<F, D>::from_field_evals(nv, direct_field.coeffs())
+        let reconstructed = DensePoly::<F>::from_field_evals(nv, D, direct_field.coeffs())
             .expect("reconstruct direct witness as dense poly");
         assert_eq!(
-            opening_from_poly(&reconstructed, &opening_point, &layout),
+            opening_from_poly::<D, _>(&reconstructed, &opening_point, &layout),
             opening,
             "direct witness should preserve the public opening"
         );
 
-        let (recomputed_commitment, _) = AkitaCommitmentScheme::<Cfg>::commit(
+        let (recomputed_commitment, _) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
             &setup,
             std::slice::from_ref(&reconstructed),
             &stack,
@@ -957,7 +965,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         )
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
+        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
             &setup,
             std::slice::from_ref(&onehot_poly),
             &stack,
@@ -971,7 +979,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
             &setup,
             prove_input(
                 &pt[..],
@@ -1113,8 +1121,8 @@ fn batched_onehot_same_point_round_trip() {
         let poly_group = [&poly_a, &poly_b];
         let pt = random_point(nv);
         let openings = [
-            opening_from_poly(&poly_a, &pt, &layout),
-            opening_from_poly(&poly_b, &pt, &layout),
+            opening_from_poly::<D, _>(&poly_a, &pt, &layout),
+            opening_from_poly::<D, _>(&poly_b, &pt, &layout),
         ];
 
         #[cfg(feature = "disk-persistence")]
@@ -1131,12 +1139,12 @@ fn batched_onehot_same_point_round_trip() {
         let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
         let commit_group = [poly_a.clone(), poly_b.clone()];
         let (commitment, hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, &commit_group, &stack).unwrap();
+            AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &commit_group, &stack).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
             &setup,
             prove_input(
                 &pt[..],
@@ -1245,13 +1253,13 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
         let (commitment, hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).unwrap();
+            AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
             &setup,
             prove_input(
                 &pt[..],

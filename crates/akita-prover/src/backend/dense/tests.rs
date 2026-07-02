@@ -17,7 +17,7 @@ fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
 fn ring_fold_matches_dense_multiplication_reference() {
     const D: usize = 8;
     let coeffs = (0..4).map(|idx| ring::<D>(10 * idx)).collect::<Vec<_>>();
-    let poly = DensePoly::<F, D>::from_ring_coeffs(coeffs.clone());
+    let poly = DensePoly::<F>::from_ring_coeffs(coeffs.clone());
     let scalars = vec![ring::<D>(100), ring::<D>(200)];
     let got = poly.fold_blocks_ring(&scalars, 2);
     let expected = coeffs
@@ -42,9 +42,9 @@ fn dense_direct_witness_is_field_elements() {
     let evals = (0..(1usize << num_vars))
         .map(|idx| F::from_u64(idx as u64 + 1))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
     let witness =
-        <DensePoly<F, D> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap();
+        <DensePoly<F> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap();
     assert!(matches!(witness, CleartextWitnessProof::FieldElements(_)));
 }
 
@@ -67,14 +67,16 @@ fn dense_tensor_opening_methods_match_flat_reference() {
             ])
         })
         .collect::<Vec<_>>();
-    let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
 
     let expected_partials =
         tensor_column_partials_from_base_evals::<F, E>(num_vars, &evals, &point).unwrap();
-    let got_partials = poly.tensor_extension_column_partials::<E>(&point).unwrap();
+    let got_partials = poly
+        .tensor_extension_column_partials::<E, D>(&point)
+        .unwrap();
     assert_eq!(got_partials, expected_partials);
 
     let expected_packed = tensor_packed_witness_evals::<F, E>(num_vars, &evals).unwrap();
-    let got_packed = poly.tensor_packed_extension_evals::<E>().unwrap();
+    let got_packed = poly.tensor_packed_extension_evals::<E, D>().unwrap();
     assert_eq!(got_packed, expected_packed);
 }

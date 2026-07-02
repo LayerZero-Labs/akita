@@ -117,10 +117,10 @@ where
     .expect("layout");
 
     let evals = dense_field_evals(poly_nv, 0xdead_beef_0000 + poly_nv as u64);
-    let poly = DensePoly::<F, D>::from_field_evals(poly_nv, &evals).expect("dense poly");
+    let poly = DensePoly::<F>::from_field_evals(poly_nv, D, &evals).expect("dense poly");
 
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-    let expected_opening = opening_from_poly(&poly, &pt, &layout);
+    let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -129,18 +129,21 @@ where
             .expect("stack");
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("commit");
+    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+    )
+    .expect("commit");
 
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
         &setup,
         prove_input(
             &pt[..],
@@ -213,9 +216,12 @@ where
             .expect("stack");
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("commit");
+    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+    )
+    .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, D, usize>; 1] = [&poly];
     let commitments = [commitment];
@@ -224,7 +230,7 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
         &setup,
         prove_input(
             &pt[..],
@@ -271,13 +277,13 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
-    let polys: Vec<DensePoly<F, D>> = (0..commit_batch)
+    let polys: Vec<DensePoly<F>> = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe_0000 + idx as u64);
             let evals: Vec<F> = (0..1usize << poly_nv)
                 .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
                 .collect();
-            DensePoly::<F, D>::from_field_evals(poly_nv, &evals).expect("dense poly")
+            DensePoly::<F>::from_field_evals(poly_nv, D, &evals).expect("dense poly")
         })
         .collect();
 
@@ -294,15 +300,16 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
             .expect("stack");
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
-    let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
+    let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
     let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).expect("batched commit");
+        AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack)
+            .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
         &setup,
         prove_input(
             &pt[..],
@@ -388,14 +395,15 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
     let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack)
-        .expect("batched onehot commit");
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack)
+            .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
         &setup,
         prove_input(
             &pt[..],
