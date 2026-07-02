@@ -77,7 +77,8 @@ mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{
-    prepare_fold_inner, prove_fold, scheduled_m_row_layout, PreparedFold,
+    prepare_fold_inner, prove_fold, reject_active_b_side_compression, scheduled_m_row_layout,
+    PreparedFold,
 };
 pub use prove::{batched_prove, prove, prove_root_direct};
 pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};

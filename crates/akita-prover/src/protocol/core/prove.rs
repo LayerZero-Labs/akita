@@ -178,6 +178,12 @@ where
     )?;
 
     if schedule_is_root_direct(&schedule) {
+        if schedule.root_compression.is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "B-side root commitment compression is not enabled for root-direct proofs"
+                    .to_string(),
+            ));
+        }
         let commitment_hints = claims
             .groups()
             .iter()
@@ -282,6 +288,7 @@ where
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
+    reject_active_b_side_compression(&root_scheduled)?;
     {
         let commitments = claims.commitments();
         let expected_root_commitment_len = root_scheduled

@@ -130,6 +130,7 @@ where
     };
     let terminal_result = loop {
         let scheduled = schedule.get_execution_schedule(level)?;
+        reject_active_b_side_compression(&scheduled)?;
         scheduled.validate_current_w_len(current_state.w.len())?;
         let level_params = &scheduled.params;
         let level_d = level_params.ring_dimension;

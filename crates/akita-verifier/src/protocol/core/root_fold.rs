@@ -32,6 +32,7 @@ where
     T: Transcript<F>,
 {
     let root_lp = &scheduled.params;
+    reject_active_b_side_compression(scheduled)?;
     validate_level_dispatch::<D>(root_lp)?;
     if proof.fold_m_row_layout().is_none() {
         return Err(AkitaError::InvalidProof);

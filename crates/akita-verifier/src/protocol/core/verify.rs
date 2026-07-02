@@ -470,6 +470,12 @@ where
 {
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
+            if schedule.root_compression.is_some() {
+                return Err(AkitaError::InvalidSetup(
+                    "B-side root commitment compression is not enabled for root-direct proofs"
+                        .to_string(),
+                ));
+            }
             let Some(Step::Direct(direct)) = schedule.steps.first() else {
                 return Err(AkitaError::InvalidProof);
             };

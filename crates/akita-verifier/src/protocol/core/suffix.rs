@@ -197,6 +197,7 @@ where
     for (offset, step) in steps.iter().enumerate() {
         let level_index = offset + 1;
         let scheduled = schedule.get_execution_schedule(level_index)?;
+        reject_active_b_side_compression(&scheduled)?;
         scheduled.validate_current_w_len(current_state.w_len)?;
         let current_lp = &scheduled.params;
         let next_params = &scheduled.next_params;

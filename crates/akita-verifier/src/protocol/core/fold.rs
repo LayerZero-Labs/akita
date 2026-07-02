@@ -219,6 +219,26 @@ pub(in crate::protocol::core) fn scheduled_m_row_layout(
     }
 }
 
+pub(in crate::protocol::core) fn reject_active_b_side_compression(
+    scheduled: &ExecutionSchedule,
+) -> Result<(), AkitaError> {
+    if scheduled.current_u_compression.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "B-side commitment compression for the current u is not enabled yet; \
+             it needs a base-prefix commitment relation before B rows can be omitted"
+                .to_string(),
+        ));
+    }
+    if scheduled.compression.next_u.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "B-side commitment compression for next u is not enabled yet; \
+             it needs a base-prefix commitment relation before accepting compact u"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 struct Stage1Replay<E: FieldCore> {
     batching_coeff: E,
     s_claim: E,

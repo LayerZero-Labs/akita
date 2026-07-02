@@ -186,6 +186,7 @@ where
     let opening_batch = claims.to_opening_shape::<F>()?;
     let num_claims = opening_batch.num_polynomials();
     let root_params = &scheduled.params;
+    reject_active_b_side_compression(scheduled)?;
 
     if claims.flat_polys().len() != num_claims {
         return Err(AkitaError::InvalidInput(
@@ -293,6 +294,7 @@ where
     let opening_batch = claims.to_opening_shape::<F>()?;
     let num_claims = opening_batch.num_polynomials();
     let root_params = &scheduled.params;
+    reject_active_b_side_compression(scheduled)?;
 
     if claims.flat_polys().len() != num_claims {
         return Err(AkitaError::InvalidInput(
