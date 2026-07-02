@@ -455,7 +455,7 @@ clear semantic effect and leaves the code in a coherent state.
 
 | PR | Branch | Worktree | Semantic change |
 | -- | ------ | -------- | --------------- |
-| 1 | `quang/remove-tiered-commitment` | `../akita-remove-tiered-commitment` | Delete tiered commitment; collapse M layout to `consistency \| D \| B \| A`; remove dead M public-block scaffolding; rename witness `num_public_rows` → `num_z_segments`. |
+| 1 | `quang/remove-tiered-commitment` | `../akita-remove-tiered-commitment` | Delete tiered commitment; reorder M layout to `consistency \| A \| B \| D`; remove dead M public-block scaffolding; rename witness `num_public_rows` → `num_z_segments`. |
 | 2 | `quang/commitment-compression` | `../akita-commitment-compression` | Add compressed commitments: compressed `v` on every fold, compressed `u` on every non-penultimate fold, raw final `u` preserved temporarily. |
 | 3 | `quang/terminal-t-no-final-u` | `../akita-terminal-t-no-final-u` | Remove the final recursive `u`; bind terminal `t`; rename/update terminal M-row layout to drop both D and COMMIT/B. |
 
@@ -483,17 +483,25 @@ to split the stack.
 ### PR1: Remove tiered commitment + M layout / naming cutover
 
 Purpose: remove the old `B' -> F` tiered protocol so compression does not have
-to compose with it, and finish the y-ring trace-internalization cleanup so M-row
-layout and witness naming are unambiguous before compression lands.
+to compose with it, finish the y-ring trace-internalization cleanup so M-row
+layout and witness naming are unambiguous before compression lands, and reorder
+M rows so the `A` block immediately follows the consistency row.
 
 PR1 is intentionally broader than tiered deletion alone. It also removes stale
 M-matrix "public output row" scaffolding (openings already bind through the fused
 trace term in stage-2 sumcheck, not through `M` rows) and renames the witness
 `z_folded` width parameter from `num_public_rows` to `num_z_segments`.
 
-**Locked M-row layout after PR1:** `consistency (1) | D | B | A`. There is no
+**Locked M-row layout after PR1:** `consistency (1) | A | B | D`. There is no
 public block in `M`. Public openings bind via the fused trace term in stage-2
 sumcheck ([`specs/y-ring-trace-internalization.md`](y-ring-trace-internalization.md)).
+
+**Terminal fold (`MRowLayout::WithoutDBlock`):** `consistency | A | B` (the
+trailing `D` block is dropped). This aligns with PR3's direction of shrinking
+terminal rows toward `consistency | A`.
+
+**Descriptor version:** do not bump `AKITA_INSTANCE_DESCRIPTOR_VERSION`; row
+order is an implicit protocol convention, not a per-instance descriptor field.
 
 **Witness naming:** `num_z_segments` counts `z_folded` witness segments (planner
 sets `1` for ordinary folds, `G` for grouped roots). It is not an M-row count.
@@ -515,7 +523,9 @@ Expected implementation surface:
   - delete `effective_commit_rows()`, `b_inner_rows_per_group()`,
     `u_concat_ring_len_per_group()`; use `b_key.row_len()` at call sites;
   - simplify `m_row_count_for` and row-offset helpers to
-    `consistency | D | B | A` (drop `num_public_outputs` parameter);
+    `consistency | A | B | D` (drop `num_public_outputs` parameter);
+  - update `generate_y`, quotient row dispatch, `relation_claim_from_rows*`,
+    setup-contribution `eq_tau1` slicing, and verifier hardcoded offsets to match;
   - rename witness-sizing `num_public_rows` → `num_z_segments` in schedule,
     tail, and terminal witness helpers;
   - delete `SetupContributionPlanInputs.num_public_rows`; `d_start = 1`;
@@ -660,7 +670,7 @@ Expected implementation surface:
     `WithDAndCommitBlocks`;
   - update `n_d_active_for`, `f_start`/commit-block start helpers,
     `a_start`, and `m_row_count_for` so the terminal layout is:
-    `consistency | public | A`;
+    `consistency | A`;
   - do not leave call sites locally subtracting B/COMMIT rows.
 - Planner/schedules:
   - change `next_witness_len_terminal` to use the no-D/no-COMMIT layout;

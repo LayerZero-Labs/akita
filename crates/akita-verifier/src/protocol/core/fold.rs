@@ -469,6 +469,7 @@ where
     let relation_claim = relation_claim_from_rows_extension::<F, E, D>(
         &rs.tau1,
         rs.alpha,
+        prepared.lp.a_key.row_len(),
         &relation_instance.v,
         commitment_rows,
     )?;

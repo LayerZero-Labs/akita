@@ -439,7 +439,7 @@ mod tests {
         let num_claims = 3usize;
         let num_points = 1usize;
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + n_d + n_b * num_points + n_a;
+        let rows = 1 + n_a + n_b * num_points + n_d;
         let inner_width = block_len * depth_commit;
 
         let levels = r_decomp_levels::<F>(log_basis);
@@ -580,17 +580,17 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         let c_alphas = p.c_alphas.as_flat().unwrap();
-        let a_start = 1 + p.n_d_active() + p.n_b;
+        let a_start = 1;
         let t_high = &fx.full_vec_randomness[offset_low_bits..];
         let t_offset_high = fx.offset_t >> offset_low_bits;
-        let t_outer = challenge_block_summaries.len() * fx.g1_open.len() * (p.rows - a_start);
+        let t_outer = challenge_block_summaries.len() * fx.g1_open.len() * p.n_a;
         let eq_hi_t: Vec<F> = (0..=t_outer)
             .map(|k| eq_eval_at_index(t_high, t_offset_high + k))
             .collect();
         let got = TStructuredSlicesEvaluator {
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
-            a_row_weights: &p.eq_tau1[a_start..p.rows],
+            a_row_weights: &p.eq_tau1[a_start..(a_start + p.n_a)],
             high_eq_table: &eq_hi_t,
         }
         .evaluate();

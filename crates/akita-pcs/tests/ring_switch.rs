@@ -400,9 +400,14 @@ mod tests {
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
-            let expected =
-                relation_claim_from_rows::<F, D>(&tau1, alpha, &instance.v, &commitment.u)
-                    .expect("relation claim");
+            let expected = relation_claim_from_rows::<F, D>(
+                &tau1,
+                alpha,
+                lp.a_key.row_len(),
+                &instance.v,
+                &commitment.u,
+            )
+            .expect("relation claim");
             assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
         }
     }
@@ -532,8 +537,14 @@ mod tests {
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
-            let expected =
-                relation_claim_from_rows::<F, D>(&tau1, alpha, &instance.v, &commitment.u).unwrap();
+            let expected = relation_claim_from_rows::<F, D>(
+                &tau1,
+                alpha,
+                lp.a_key.row_len(),
+                &instance.v,
+                &commitment.u,
+            )
+            .unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
         }
     }

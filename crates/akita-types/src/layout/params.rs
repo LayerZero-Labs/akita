@@ -605,7 +605,7 @@ impl LevelParams {
 
     // ---- Canonical M-row layout offsets (single source of truth) ----
     //
-    // Row layout: consistency (1) | D (n_d_active) | B (n_b · nc) | A (n_a).
+    // Row layout: consistency (1) | A (n_a) | B (n_b · nc) | D (n_d_active).
     // Public-output rows bind through the fused trace term, not the M-matrix.
     // Every row-offset site (prover quotient/`generate_y`, setup-contribution
     // `prepare`, the relation claim, the verifier ring-switch row eval) must
@@ -625,37 +625,38 @@ impl LevelParams {
         AkitaError::InvalidSetup("M-row count overflow".to_string())
     }
 
-    /// Absolute start row of the D block (after the consistency row).
+    /// Absolute start row of the A block (immediately after the consistency row).
     #[inline]
-    pub fn d_start(&self) -> usize {
+    pub fn a_start(&self) -> usize {
         1
     }
 
     /// Absolute start row of the B block.
     #[inline]
-    pub fn b_start(&self, layout: MRowLayout) -> Result<usize, AkitaError> {
-        self.d_start()
-            .checked_add(self.n_d_active_for(layout))
+    pub fn b_start(&self, num_commitments: usize) -> Result<usize, AkitaError> {
+        self.a_start()
+            .checked_add(self.a_key.row_len())
             .ok_or_else(Self::m_row_overflow)
     }
 
-    /// Absolute start row of the A block.
+    /// Absolute start row of the D block.
     #[inline]
-    pub fn a_start(&self, num_commitments: usize, layout: MRowLayout) -> Result<usize, AkitaError> {
+    pub fn d_start(&self, num_commitments: usize) -> Result<usize, AkitaError> {
         let b_rows = self
             .b_key
             .row_len()
             .checked_mul(num_commitments)
             .ok_or_else(Self::m_row_overflow)?;
-        self.b_start(layout)?
+        self.b_start(num_commitments)?
             .checked_add(b_rows)
             .ok_or_else(Self::m_row_overflow)
     }
 
     /// Row count for an explicit M-row layout.
     ///
-    /// Row layout: consistency (1) | optional D (n_d) | B (n_b · num_commitments)
-    /// | A (n_a). Public openings bind through the fused trace term, not M rows.
+    /// Row layout: consistency (1) | A (n_a) | B (n_b · num_commitments)
+    /// | optional D (n_d). Public openings bind through the fused trace term,
+    /// not M rows.
     ///
     /// At the terminal fold the cleartext witness is shipped on the wire and
     /// the D-block is dropped from the M-matrix; see [`MRowLayout`].
@@ -666,8 +667,8 @@ impl LevelParams {
         layout: MRowLayout,
     ) -> Result<usize, AkitaError> {
         self.reject_grouped_root("m_row_count_for")?;
-        self.a_start(num_commitments, layout)?
-            .checked_add(self.a_key.row_len())
+        self.d_start(num_commitments)?
+            .checked_add(self.n_d_active_for(layout))
             .ok_or_else(Self::m_row_overflow)
     }
 
@@ -983,14 +984,17 @@ mod tests {
                     MRowLayout::WithDBlock => n_d,
                     MRowLayout::WithoutDBlock => 0,
                 };
-                let d_start = 1;
-                let b_start = d_start + n_d_active;
-                let a_start = b_start + n_b * nc;
+                let a_start = 1;
+                let b_start = a_start + n_a;
+                let d_start = b_start + n_b * nc;
 
-                assert_eq!(lp.d_start(), d_start);
-                assert_eq!(lp.b_start(layout).unwrap(), b_start);
-                assert_eq!(lp.a_start(nc, layout).unwrap(), a_start);
-                assert_eq!(lp.m_row_count_for(nc, layout).unwrap(), a_start + n_a);
+                assert_eq!(lp.a_start(), a_start);
+                assert_eq!(lp.b_start(nc).unwrap(), b_start);
+                assert_eq!(lp.d_start(nc).unwrap(), d_start);
+                assert_eq!(
+                    lp.m_row_count_for(nc, layout).unwrap(),
+                    d_start + n_d_active
+                );
             }
         }
     }

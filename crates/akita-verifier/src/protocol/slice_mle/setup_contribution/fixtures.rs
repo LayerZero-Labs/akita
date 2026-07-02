@@ -128,8 +128,8 @@ impl SetupContributionFixture {
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
-        // Canonical M-row layout: consistency | D | B | A.
-        let rows = 1 + shape.n_d + shape.n_b * num_points + shape.n_a;
+        // Canonical M-row layout: consistency | A | B | D.
+        let rows = 1 + shape.n_a + shape.n_b * num_points + shape.n_d;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;

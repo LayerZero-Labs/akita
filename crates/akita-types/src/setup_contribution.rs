@@ -350,13 +350,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             MRowLayout::WithDBlock => inputs.n_d,
             MRowLayout::WithoutDBlock => 0,
         };
-        // Canonical row layout: consistency (1) | D (n_d_active) | B | A.
-        let d_start = 1usize;
-        let b_start = checked_add(d_start, n_d_active, "B row start")?;
+        // Canonical row layout: consistency (1) | A | B | D.
+        let a_start = 1usize;
+        let b_start = checked_add(a_start, inputs.n_a, "B row start")?;
         let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
-        let a_start = checked_add(b_start, b_rows_total, "A row start")?;
-        let a_end = checked_add(a_start, inputs.n_a, "A row end")?;
-        if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
+        let d_start = checked_add(b_start, b_rows_total, "D row start")?;
+        let d_end = checked_add(d_start, n_d_active, "D row end")?;
+        if d_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
             return Err(AkitaError::InvalidSetup(
                 "M-row weights are inconsistent with setup evaluator layout".into(),
             ));
@@ -626,9 +626,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             e_eq_slice,
             t_eq_slice_per_group,
             z_eq_slice,
-            d_weights: inputs.eq_tau1[d_start..(d_start + n_d_active)].to_vec(),
+            d_weights: inputs.eq_tau1[d_start..d_end].to_vec(),
             b_weights_by_row,
-            a_weights: inputs.eq_tau1[a_start..a_end].to_vec(),
+            a_weights: inputs.eq_tau1[a_start..(a_start + inputs.n_a)].to_vec(),
             endpoints,
         })
     }

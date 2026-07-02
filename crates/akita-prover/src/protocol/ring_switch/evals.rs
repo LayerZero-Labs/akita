@@ -200,11 +200,11 @@ where
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
 
-    // Canonical row layout: consistency (1) | D (n_d_active) | B | A.
-    let d_start = lp.d_start();
-    let b_start = lp.b_start(m_row_layout)?;
-    let a_start = lp.a_start(1, m_row_layout)?;
-    let a_weights = &eq_tau1[a_start..rows];
+    // Canonical row layout: consistency (1) | A | B | D.
+    let a_start = lp.a_start();
+    let b_start = lp.b_start(1)?;
+    let d_start = lp.d_start(1)?;
+    let a_weights = &eq_tau1[a_start..(a_start + n_a)];
     let consistency_weight = eq_tau1[0];
     let t_compound_per_block = n_a * depth_open;
 

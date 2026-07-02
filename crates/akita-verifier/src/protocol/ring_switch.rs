@@ -608,23 +608,23 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             .evaluate()
         };
 
-        // Canonical A-block start: consistency | D | B | A.
-        let a_start = 1 + self.n_d_active() + self.n_b;
+        // Canonical A-block start: consistency | A | B | D.
+        let a_start = 1usize;
+        let n_a = self.n_a;
 
         // ----- T -------------------------------------------------------------
         let t_offset_high = layout.offset_t >> offset_low_bits;
-        let a_row_count = self.rows.saturating_sub(a_start);
         let eq_hi_t_table = high_eq_window(
             high_challenges,
             t_offset_high,
-            self.num_claims * self.depth_open * a_row_count,
+            self.num_claims * self.depth_open * n_a,
         );
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
             TStructuredSlicesEvaluator {
                 gadget_vector: &g1_open,
                 challenge_block_summaries: &challenge_block_summaries,
-                a_row_weights: &self.eq_tau1[a_start..self.rows],
+                a_row_weights: &self.eq_tau1[a_start..(a_start + n_a)],
                 high_eq_table: &eq_hi_t_table,
             }
             .evaluate()

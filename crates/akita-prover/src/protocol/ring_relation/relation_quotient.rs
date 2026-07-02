@@ -286,10 +286,10 @@ where
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Canonical row layout: consistency (1) | D (n_d_active) | B | A.
-    let d_start = lp.d_start();
-    let b_start = lp.b_start(m_row_layout)?;
-    let a_start = lp.a_start(1, m_row_layout)?;
+    // Canonical row layout: consistency (1) | A | B | D.
+    let a_start = lp.a_start();
+    let b_start = lp.b_start(1)?;
+    let d_start = lp.d_start(1)?;
 
     if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidProof);
@@ -383,19 +383,6 @@ where
             result.push(quotient);
             other_time += t_row.elapsed().as_secs_f64();
         } else if row_idx < b_start {
-            // D-block: v = D·ê.
-            result.push(quotient_from_cyclic_and_reduced(
-                &d_cyclic[row_idx - d_start],
-                &y[row_idx],
-            ));
-        } else if row_idx < a_start {
-            // B-block: B·t̂; RHS is the sent commitment in `y`.
-            let commit_idx = row_idx - b_start;
-            let cyclic = commitment_cyclic_rows
-                .get(commit_idx)
-                .ok_or(AkitaError::InvalidProof)?;
-            result.push(quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]));
-        } else {
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - a_start;
@@ -417,6 +404,19 @@ where
             }
             result.push(CyclotomicRing::from_slice(&quotient));
             other_time += t_row.elapsed().as_secs_f64();
+        } else if row_idx < d_start {
+            // B-block: B·t̂; RHS is the sent commitment in `y`.
+            let commit_idx = row_idx - b_start;
+            let cyclic = commitment_cyclic_rows
+                .get(commit_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            result.push(quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]));
+        } else {
+            // D-block: v = D·ê.
+            result.push(quotient_from_cyclic_and_reduced(
+                &d_cyclic[row_idx - d_start],
+                &y[row_idx],
+            ));
         }
     }
 

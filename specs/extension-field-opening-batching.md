@@ -523,7 +523,7 @@ Folded witness impact:
 - Quotient `r` rows still have the same layout:
 
   ```text
-  consistency | D rows | B rows | A rows
+  consistency | A rows | B rows | D rows
   ```
 
   The only intended change is that the public-row block is driven by

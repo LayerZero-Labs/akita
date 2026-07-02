@@ -133,7 +133,7 @@ The current single-width path (`PackedDigits`) is retained for the **zk** tail (
 
 ### Terminal `t`-state / u-elision
 
-The current relation row layout is `consistency | D(n_d) | B(n_b) | A(n_a)` (`crates/akita-types/src/layout/params.rs`). Public openings bind through the fused trace term in stage-2 sumcheck, not through M public rows. Tiered commitment (`B_inner`, second-tier `F`) was removed in PR #257.
+The current relation row layout is `consistency | A(n_a) | B(n_b) | D(n_d)` (`crates/akita-types/src/layout/params.rs`). Public openings bind through the fused trace term in stage-2 sumcheck, not through M public rows. Tiered commitment (`B_inner`, second-tier `F`) was removed in PR #257.
 The terminal already sets `n_d_active = 0` (`WithoutDBlock`) by revealing `e_folded` in cleartext: the D-role commitment `v = D * e_hat` and its rows are gone (`specs/terminal-fold-cutover.md`).
 
 The correct S2 cutover is **not** "delete B rows while keeping `u` as the terminal statement."

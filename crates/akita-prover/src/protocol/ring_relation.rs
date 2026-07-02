@@ -462,7 +462,7 @@ impl RingRelationProver {
         // Terminal levels drop the D-block from M entirely, so `y` must
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits
-        // `[consistency | commitment_rows | A-zeros]` (no D-block).
+        // `[consistency | A-zeros | commitment_rows]` (no D-block).
         let (y_v_slice, n_d_active) = match m_row_layout {
             MRowLayout::WithDBlock => (v.as_slice(), lp.d_key.row_len()),
             MRowLayout::WithoutDBlock => (&[][..], 0usize),
