@@ -22,19 +22,23 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 /// Borrowed single-polynomial view over sparse signed ring coefficients.
 ///
 /// One view type backs the commit, opening-fold, and tensor-projection kernels;
-/// the kernel trait it is passed to selects the operation.
+/// the kernel trait it is passed to selects the operation. `D` is the kernel
+/// dispatch dimension: the underlying polynomial stores flat field data, and
+/// the view fixes the ring dimension the kernels operate at.
 #[derive(Debug, Clone, Copy)]
 pub struct SparseRingView<'a, F: FieldCore, const D: usize> {
-    pub(super) poly: &'a SparseRingPoly<F, D>,
+    pub(super) poly: &'a SparseRingPoly<F>,
 }
 
 /// Same-point batch view over several sparse-ring polynomials.
+///
+/// `D` is the kernel dispatch dimension, as in [`SparseRingView`].
 #[derive(Debug, Clone, Copy)]
 pub struct SparseRingBatchView<'a, F: FieldCore, const D: usize> {
-    pub(super) polys: &'a [&'a SparseRingPoly<F, D>],
+    pub(super) polys: &'a [&'a SparseRingPoly<F>],
 }
 
-impl<F, const D: usize> RootPolyMeta<F> for SparseRingPoly<F, D>
+impl<F> RootPolyMeta<F> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
@@ -47,12 +51,12 @@ where
     }
 }
 
-impl<F, const D: usize> RootPolyShape<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> RootPolyShape<F, D> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
     fn num_ring_elems(&self) -> usize {
-        self.total_ring_elems
+        (1usize << self.num_vars) / D
     }
 
     fn num_vars(&self) -> usize {
@@ -60,7 +64,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootCommitSource<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> RootCommitSource<F, D> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
@@ -74,7 +78,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootOpeningSource<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> RootOpeningSource<F, D> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
@@ -97,7 +101,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootTensorSource<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> RootTensorSource<F, D> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
@@ -120,26 +124,13 @@ where
     }
 }
 
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> DirectRootWitnessSource<F, D> for SparseRingPoly<F>
 where
     F: FieldCore + FromPrimitiveInt,
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        let total_coeffs = self.total_ring_elems.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidInput("sparse direct witness length overflow".to_string())
-        })?;
-        let mut coeffs = vec![F::zero(); total_coeffs];
-        for entry in &self.coeffs {
-            let idx = (entry.ring_idx as usize)
-                .checked_mul(D)
-                .and_then(|base| base.checked_add(entry.coeff_idx as usize))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("sparse direct witness index overflow".to_string())
-                })?;
-            coeffs[idx] += F::from_i8(entry.value);
-        }
         Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
-            coeffs,
+            self.direct_field_evals()?,
         )))
     }
 }
@@ -155,7 +146,7 @@ where
         source: SparseRingView<'_, F, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        source.poly.commit_inner(self, prepared, plan)
+        source.poly.commit_inner::<_, D>(self, prepared, plan)
     }
 }
 
@@ -177,14 +168,16 @@ where
                 block_len,
             } => source
                 .poly
-                .evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
+                .evaluate_and_fold::<D>(eval_outer_scalars, fold_scalars, block_len),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars,
                 fold_scalars,
                 block_len,
-            } => source
-                .poly
-                .evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len),
+            } => {
+                source
+                    .poly
+                    .evaluate_and_fold_ring::<D>(eval_outer_scalars, fold_scalars, block_len)
+            }
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -195,7 +188,7 @@ where
         source: SparseRingView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
-        Ok(source.poly.decompose_fold(
+        Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.block_len,
             plan.num_digits,
@@ -222,7 +215,7 @@ where
                 block_len,
                 num_digits,
                 log_basis,
-            } => match SparseRingPoly::decompose_fold_tensor_batched(
+            } => match SparseRingPoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
                 block_len,
@@ -274,7 +267,7 @@ where
         E: FpExtEncoding<F>,
     {
         Ok(RootTensorProjectionPoly::Dense(
-            source.poly.tensor_packed_extension_poly::<E>()?,
+            source.poly.tensor_packed_extension_poly::<E, D>()?,
         ))
     }
 }

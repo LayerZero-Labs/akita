@@ -21,7 +21,7 @@ pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     pub(crate) indices: Vec<Option<I>>,
     pub(crate) total_ring_elems: usize,
     pub(crate) block_cache: OnceLock<(usize, OneHotBlocks)>,
-    pub(crate) tensor_root_cache: OnceLock<(usize, Arc<SparseRingPoly<F, D>>)>,
+    pub(crate) tensor_root_cache: OnceLock<(usize, Arc<SparseRingPoly<F>>)>,
     pub(crate) _marker: PhantomData<(F, I)>,
 }
 
@@ -291,7 +291,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
     pub(super) fn tensor_packed_sparse_ring_poly<E>(
         &self,
-    ) -> Result<Arc<SparseRingPoly<F, D>>, AkitaError>
+    ) -> Result<Arc<SparseRingPoly<F>>, AkitaError>
     where
         F: FromPrimitiveInt,
         E: FpExtEncoding<F>,
@@ -342,32 +342,53 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             if slot_idx < half {
                 let shift = slot_idx;
                 if coord == 0 {
-                    coeffs.push(SparseRingCoeff::new(ring_idx, shift, 1)?);
+                    coeffs.push(SparseRingCoeff::from_ring_coords(ring_idx, shift, D, 1)?);
                 } else {
                     let pos_offset = coord * step;
-                    coeffs.push(SparseRingCoeff::new(ring_idx, shift + pos_offset, 1)?);
-                    coeffs.push(SparseRingCoeff::new(ring_idx, shift + D - pos_offset, -1)?);
+                    coeffs.push(SparseRingCoeff::from_ring_coords(
+                        ring_idx,
+                        shift + pos_offset,
+                        D,
+                        1,
+                    )?);
+                    coeffs.push(SparseRingCoeff::from_ring_coords(
+                        ring_idx,
+                        shift + D - pos_offset,
+                        D,
+                        -1,
+                    )?);
                 }
             } else {
                 let shift = slot_idx - half + D / 2;
                 if coord == 0 {
-                    coeffs.push(SparseRingCoeff::new(ring_idx, shift, 1)?);
+                    coeffs.push(SparseRingCoeff::from_ring_coords(ring_idx, shift, D, 1)?);
                 } else {
                     let pos_offset = coord * step;
-                    coeffs.push(SparseRingCoeff::new(ring_idx, shift - pos_offset, 1)?);
-                    coeffs.push(SparseRingCoeff::new(ring_idx, shift + pos_offset, 1)?);
+                    coeffs.push(SparseRingCoeff::from_ring_coords(
+                        ring_idx,
+                        shift - pos_offset,
+                        D,
+                        1,
+                    )?);
+                    coeffs.push(SparseRingCoeff::from_ring_coords(
+                        ring_idx,
+                        shift + pos_offset,
+                        D,
+                        1,
+                    )?);
                 }
             }
         }
 
         let poly = if self.onehot_k >= D {
-            SparseRingPoly::<F, D>::from_sorted_packed_coeffs(
+            SparseRingPoly::<F>::from_sorted_packed_coeffs(
                 self.num_vars,
+                D,
                 total_ring_elems,
                 coeffs,
             )
         } else {
-            SparseRingPoly::<F, D>::from_packed_coeffs(self.num_vars, total_ring_elems, coeffs)
+            SparseRingPoly::<F>::from_packed_coeffs(self.num_vars, D, total_ring_elems, coeffs)
         }?;
         let poly = Arc::new(poly);
         let _ = self.tensor_root_cache.set((width, Arc::clone(&poly)));

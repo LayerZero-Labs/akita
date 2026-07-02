@@ -15,8 +15,7 @@ use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::compute::{
-    CommitInnerPlan, CommitmentComputeBackend, DirectRootWitnessSource, FlatBlockTable,
-    SparseRingCommitRowsPlan,
+    CommitInnerPlan, CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan,
 };
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -29,32 +28,60 @@ mod tensor_fold;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
-    ring_idx: u32,
-    coeff_idx: u16,
+    /// Flat field-coefficient position: `ring_idx * ring_d + coeff_idx` at the
+    /// ring dimension the coefficient was constructed with. The ring dimension
+    /// is a view selected at kernel entry, not a property of the stored data.
+    flat_idx: u64,
     value: i8,
 }
 
 impl SparseRingCoeff {
-    pub(crate) fn new(ring_idx: usize, coeff_idx: usize, value: i8) -> Result<Self, AkitaError> {
+    pub(crate) fn new(flat_idx: usize, value: i8) -> Result<Self, AkitaError> {
         if !matches!(value, -1 | 1) {
             return Err(AkitaError::InvalidInput(
                 "sparse ring coefficients must be signed units".to_string(),
             ));
         }
         Ok(Self {
-            ring_idx: u32::try_from(ring_idx).map_err(|_| {
-                AkitaError::InvalidInput("sparse ring index exceeds u32".to_string())
-            })?,
-            coeff_idx: u16::try_from(coeff_idx).map_err(|_| {
-                AkitaError::InvalidInput("sparse coefficient index exceeds u16".to_string())
+            flat_idx: u64::try_from(flat_idx).map_err(|_| {
+                AkitaError::InvalidInput("sparse flat coefficient index exceeds u64".to_string())
             })?,
             value,
         })
     }
 
+    /// Pack `(ring_idx, coeff_idx)` at ring dimension `ring_d` into a flat
+    /// field-coefficient position.
+    pub(crate) fn from_ring_coords(
+        ring_idx: usize,
+        coeff_idx: usize,
+        ring_d: usize,
+        value: i8,
+    ) -> Result<Self, AkitaError> {
+        let flat_idx = ring_idx
+            .checked_mul(ring_d)
+            .and_then(|base| base.checked_add(coeff_idx))
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("sparse flat coefficient index overflow".to_string())
+            })?;
+        Self::new(flat_idx, value)
+    }
+
     #[inline]
-    fn sort_key(self) -> (u32, u16, i8) {
-        (self.ring_idx, self.coeff_idx, self.value)
+    fn ring_idx(self, ring_d: usize) -> usize {
+        (self.flat_idx as usize) / ring_d
+    }
+
+    #[inline]
+    fn coeff_idx(self, ring_d: usize) -> usize {
+        (self.flat_idx as usize) % ring_d
+    }
+
+    #[inline]
+    fn sort_key(self) -> (u64, i8) {
+        // `flat_idx = ring_idx * ring_d + coeff_idx` is order-equivalent to
+        // the previous `(ring_idx, coeff_idx, value)` lexicographic key.
+        (self.flat_idx, self.value)
     }
 }
 
@@ -91,9 +118,15 @@ pub(crate) struct SparseRingBlocks {
 impl SparseRingBlocks {
     fn from_coeffs(
         coeffs: &[SparseRingCoeff],
+        ring_d: usize,
         total_ring_elems: usize,
         block_len: usize,
     ) -> Result<Self, AkitaError> {
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidInput(
+                "ring_d must be nonzero".to_string(),
+            ));
+        }
         if block_len == 0 || !block_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
                 "block_len={block_len} must be a nonzero power of two"
@@ -116,12 +149,20 @@ impl SparseRingBlocks {
         offsets.push(0);
         let mut current_block = 0usize;
         for coeff in coeffs {
-            let ring_idx = coeff.ring_idx as usize;
+            let ring_idx = coeff.ring_idx(ring_d);
             if ring_idx >= total_ring_elems {
                 return Err(AkitaError::InvalidInput(
                     "sparse ring coefficient index out of range".to_string(),
                 ));
             }
+            // Block entries pack the in-ring coefficient index as `u16`.
+            // Supported ring dimensions are <= 256 so this always holds; reject
+            // (rather than truncate or panic) if it ever does not.
+            let coeff_idx = u16::try_from(coeff.coeff_idx(ring_d)).map_err(|_| {
+                AkitaError::InvalidInput(
+                    "sparse coefficient index exceeds u16 block-entry capacity".to_string(),
+                )
+            })?;
             let block_idx = ring_idx / block_len;
             while current_block < block_idx {
                 offsets.push(entries.len() as u32);
@@ -129,7 +170,7 @@ impl SparseRingBlocks {
             }
             entries.push(SparseRingBlockEntry {
                 pos_in_block: (ring_idx % block_len) as u32,
-                coeff_idx: coeff.coeff_idx,
+                coeff_idx,
                 value: coeff.value,
             });
         }
@@ -159,34 +200,43 @@ impl SparseRingBlocks {
 }
 
 /// Sparse polynomial whose ring coefficients are signed monomials.
+///
+/// Storage is D-free: coefficients record flat field-coefficient positions,
+/// and the ring dimension is a view selected at kernel entry (each ring-shaped
+/// method takes it as a const generic).
 #[derive(Debug, Clone)]
-pub struct SparseRingPoly<F: FieldCore, const D: usize> {
+pub struct SparseRingPoly<F: FieldCore> {
     num_vars: usize,
+    /// Ring-element count at the CONSTRUCTION dimension; metadata, not
+    /// authority — kernels validate at their own dimension.
     total_ring_elems: usize,
     coeffs: Vec<SparseRingCoeff>,
-    block_cache: OnceLock<(usize, SparseRingBlocks)>,
+    /// Cached per-block layout, keyed by the `(ring_d, block_len)` pair it was
+    /// built for.
+    block_cache: OnceLock<((usize, usize), SparseRingBlocks)>,
     _marker: core::marker::PhantomData<F>,
 }
 
-impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
-    /// Build from `(ring_idx, coeff_idx, value)` triples.
+impl<F: FieldCore> SparseRingPoly<F> {
+    /// Build from `(ring_idx, coeff_idx, value)` triples interpreted at ring
+    /// dimension `ring_d`.
     ///
     /// # Errors
     ///
-    /// Returns an error when `D` cannot be represented by the sparse block
-    /// format, the expected ring-element count does not match `num_vars`, or a
-    /// supplied coefficient triple is out of range or has value other than
-    /// `-1` or `1`.
+    /// Returns an error when `ring_d` is zero, the expected ring-element count
+    /// does not match `num_vars`, or a supplied coefficient triple is out of
+    /// range or has value other than `-1` or `1`.
     pub fn from_signed_coeffs(
         num_vars: usize,
+        ring_d: usize,
         total_ring_elems: usize,
         coeffs: Vec<(usize, usize, i8)>,
     ) -> Result<Self, AkitaError> {
-        Self::from_signed_coeffs_with_order(num_vars, total_ring_elems, coeffs, false)
+        Self::from_signed_coeffs_with_order(num_vars, ring_d, total_ring_elems, coeffs, false)
     }
 
-    /// Build from `(ring_idx, coeff_idx, value)` triples already sorted by
-    /// `(ring_idx, coeff_idx, value)`.
+    /// Build from `(ring_idx, coeff_idx, value)` triples interpreted at ring
+    /// dimension `ring_d`, already sorted by `(ring_idx, coeff_idx, value)`.
     ///
     /// # Errors
     ///
@@ -195,13 +245,15 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
     /// sorted.
     pub fn from_sorted_signed_coeffs(
         num_vars: usize,
+        ring_d: usize,
         total_ring_elems: usize,
         coeffs: Vec<(usize, usize, i8)>,
     ) -> Result<Self, AkitaError> {
-        Self::from_signed_coeffs_with_order(num_vars, total_ring_elems, coeffs, true)
+        Self::from_signed_coeffs_with_order(num_vars, ring_d, total_ring_elems, coeffs, true)
     }
 
-    /// Build from compact sparse coefficient triples.
+    /// Build from compact sparse coefficients whose flat positions were packed
+    /// at ring dimension `ring_d`.
     ///
     /// # Errors
     ///
@@ -209,14 +261,16 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
     /// [`Self::from_signed_coeffs`].
     pub(crate) fn from_packed_coeffs(
         num_vars: usize,
+        ring_d: usize,
         total_ring_elems: usize,
         coeffs: Vec<SparseRingCoeff>,
     ) -> Result<Self, AkitaError> {
-        Self::from_packed_coeffs_with_order(num_vars, total_ring_elems, coeffs, false)
+        Self::from_packed_coeffs_with_order(num_vars, ring_d, total_ring_elems, coeffs, false)
     }
 
-    /// Build from compact sparse coefficient triples already sorted by
-    /// `(ring_idx, coeff_idx, value)`.
+    /// Build from compact sparse coefficients whose flat positions were packed
+    /// at ring dimension `ring_d`, already sorted by `(flat_idx, value)`
+    /// (equivalently, `(ring_idx, coeff_idx, value)` at `ring_d`).
     ///
     /// # Errors
     ///
@@ -224,41 +278,52 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
     /// [`Self::from_sorted_signed_coeffs`].
     pub(crate) fn from_sorted_packed_coeffs(
         num_vars: usize,
+        ring_d: usize,
         total_ring_elems: usize,
         coeffs: Vec<SparseRingCoeff>,
     ) -> Result<Self, AkitaError> {
-        Self::from_packed_coeffs_with_order(num_vars, total_ring_elems, coeffs, true)
+        Self::from_packed_coeffs_with_order(num_vars, ring_d, total_ring_elems, coeffs, true)
     }
 
     fn from_signed_coeffs_with_order(
         num_vars: usize,
+        ring_d: usize,
         total_ring_elems: usize,
         coeffs: Vec<(usize, usize, i8)>,
         already_sorted: bool,
     ) -> Result<Self, AkitaError> {
         let mut packed = Vec::with_capacity(coeffs.len());
         for (ring_idx, coeff_idx, value) in coeffs {
-            packed.push(SparseRingCoeff::new(ring_idx, coeff_idx, value)?);
+            if ring_d != 0 && (coeff_idx >= ring_d || ring_idx >= total_ring_elems) {
+                return Err(AkitaError::InvalidInput(
+                    "invalid sparse ring coefficient".to_string(),
+                ));
+            }
+            packed.push(SparseRingCoeff::from_ring_coords(
+                ring_idx, coeff_idx, ring_d, value,
+            )?);
         }
-        Self::from_packed_coeffs_with_order(num_vars, total_ring_elems, packed, already_sorted)
+        Self::from_packed_coeffs_with_order(
+            num_vars,
+            ring_d,
+            total_ring_elems,
+            packed,
+            already_sorted,
+        )
     }
 
     fn from_packed_coeffs_with_order(
         num_vars: usize,
+        ring_d: usize,
         total_ring_elems: usize,
         mut packed: Vec<SparseRingCoeff>,
         already_sorted: bool,
     ) -> Result<Self, AkitaError> {
-        if D > usize::from(u16::MAX) + 1 {
-            return Err(AkitaError::InvalidInput(format!(
-                "D={D} exceeds sparse coefficient index capacity"
-            )));
-        }
         let expected_ring_elems = 1usize
             .checked_shl(num_vars as u32)
             .ok_or_else(|| AkitaError::InvalidInput("sparse arity overflow".to_string()))?
-            .checked_div(D)
-            .ok_or_else(|| AkitaError::InvalidInput("D must be nonzero".to_string()))?;
+            .checked_div(ring_d)
+            .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
         if expected_ring_elems != total_ring_elems {
             return Err(AkitaError::InvalidSize {
                 expected: expected_ring_elems,
@@ -267,10 +332,7 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
         }
         let mut previous_key = None;
         for entry in &packed {
-            if entry.ring_idx as usize >= total_ring_elems
-                || entry.coeff_idx as usize >= D
-                || !matches!(entry.value, -1 | 1)
-            {
+            if entry.ring_idx(ring_d) >= total_ring_elems || !matches!(entry.value, -1 | 1) {
                 return Err(AkitaError::InvalidInput(
                     "invalid sparse ring coefficient".to_string(),
                 ));
@@ -295,21 +357,26 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
         })
     }
 
-    fn blocks_for(&self, block_len: usize) -> Result<&SparseRingBlocks, AkitaError> {
-        if let Some((cached_len, blocks)) = self.block_cache.get() {
-            if *cached_len == block_len {
+    fn blocks_for(&self, ring_d: usize, block_len: usize) -> Result<&SparseRingBlocks, AkitaError> {
+        if let Some((cached_key, blocks)) = self.block_cache.get() {
+            if *cached_key == (ring_d, block_len) {
                 return Ok(blocks);
             }
+            let (cached_ring_d, cached_len) = *cached_key;
             return Err(AkitaError::InvalidInput(format!(
-                "SparseRingPoly was first used with block_len={cached_len} but is now used with block_len={block_len}"
+                "SparseRingPoly was first used with ring_d={cached_ring_d}, block_len={cached_len} but is now used with ring_d={ring_d}, block_len={block_len}"
             )));
         }
-        let (_, blocks) = self.block_cache.get_or_init(|| {
-            let blocks =
-                SparseRingBlocks::from_coeffs(&self.coeffs, self.total_ring_elems, block_len)
-                    .expect("block_len validation is deterministic");
-            (block_len, blocks)
-        });
+        let ring_elems_at_d = 1usize
+            .checked_shl(self.num_vars as u32)
+            .ok_or_else(|| AkitaError::InvalidInput("sparse arity overflow".to_string()))?
+            .checked_div(ring_d)
+            .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
+        let built =
+            SparseRingBlocks::from_coeffs(&self.coeffs, ring_d, ring_elems_at_d, block_len)?;
+        let (_, blocks) = self
+            .block_cache
+            .get_or_init(|| ((ring_d, block_len), built));
         Ok(blocks)
     }
 
@@ -319,47 +386,80 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
         self.num_vars
     }
 
-    /// Total number of ring elements in the polynomial.
+    /// Total number of ring elements at the construction dimension.
     #[inline]
     pub fn num_ring_elems(&self) -> usize {
         self.total_ring_elems
     }
 }
 
-impl<F, const D: usize> SparseRingPoly<F, D>
+impl<F> SparseRingPoly<F>
+where
+    F: FieldCore + FromPrimitiveInt,
+{
+    /// Materialize the dense field-evaluation table directly from the flat
+    /// coefficient positions.
+    ///
+    /// This is the D-free field-materialization shared by the tensor helpers
+    /// and the [`DirectRootWitnessSource`] impl (which wraps it in a
+    /// [`akita_types::CleartextWitnessProof::FieldElements`] payload).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the evaluation-table length overflows `usize`.
+    pub(crate) fn direct_field_evals(&self) -> Result<Vec<F>, AkitaError> {
+        let total_coeffs = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput("sparse direct witness length overflow".to_string())
+        })?;
+        let mut coeffs = vec![F::zero(); total_coeffs];
+        for entry in &self.coeffs {
+            let idx = usize::try_from(entry.flat_idx).map_err(|_| {
+                AkitaError::InvalidInput("sparse direct witness index overflow".to_string())
+            })?;
+            coeffs[idx] += F::from_i8(entry.value);
+        }
+        Ok(coeffs)
+    }
+}
+
+impl<F> SparseRingPoly<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    pub(crate) fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+    pub(crate) fn fold_blocks<const D: usize>(
+        &self,
+        scalars: &[F],
+        block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
-            .blocks_for(block_len)
+            .blocks_for(D, block_len)
             .expect("SparseRingPoly::fold_blocks: invalid block_len");
         cfg_into_iter!(0..blocks.num_blocks())
             .map(|block_idx| fold_sparse_block(blocks.block(block_idx), scalars, block_len))
             .collect()
     }
 
-    pub(crate) fn fold_blocks_ring(
+    pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
-            .blocks_for(block_len)
+            .blocks_for(D, block_len)
             .expect("SparseRingPoly::fold_blocks_ring: invalid block_len");
         cfg_into_iter!(0..blocks.num_blocks())
             .map(|block_idx| fold_sparse_block_ring(blocks.block(block_idx), scalars, block_len))
             .collect()
     }
 
-    pub(crate) fn evaluate_and_fold(
+    pub(crate) fn evaluate_and_fold<const D: usize>(
         &self,
         eval_outer_scalars: &[F],
         fold_scalars: &[F],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks(fold_scalars, block_len);
+        let folded = self.fold_blocks::<D>(fold_scalars, block_len);
         let eval = folded
             .iter()
             .zip(eval_outer_scalars.iter())
@@ -369,13 +469,13 @@ where
         (eval, folded)
     }
 
-    pub(crate) fn evaluate_and_fold_ring(
+    pub(crate) fn evaluate_and_fold_ring<const D: usize>(
         &self,
         eval_outer_scalars: &[CyclotomicRing<F, D>],
         fold_scalars: &[CyclotomicRing<F, D>],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks_ring(fold_scalars, block_len);
+        let folded = self.fold_blocks_ring::<D>(fold_scalars, block_len);
         let mut eval = CyclotomicRing::<F, D>::zero();
         for (f_i, s_i) in folded.iter().zip(eval_outer_scalars.iter()) {
             f_i.mul_accumulate_sparse_rhs_into(s_i, &mut eval);
@@ -384,7 +484,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold")]
-    pub(crate) fn decompose_fold(
+    pub(crate) fn decompose_fold<const D: usize>(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -392,7 +492,7 @@ where
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
         let blocks = self
-            .blocks_for(block_len)
+            .blocks_for(D, block_len)
             .expect("SparseRingPoly::decompose_fold: invalid block_len");
         let num_blocks = challenges.len().min(blocks.num_blocks());
         let inner_width = block_len * num_digits;
@@ -403,20 +503,21 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold_tensor_batched")]
-    pub(crate) fn decompose_fold_tensor_batched(
+    pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
-        Ok(Some(tensor_fold::decompose_fold_batched_tensor_sparse(
-            polys, tensor, block_len, num_digits,
-        )?))
+        Ok(Some(tensor_fold::decompose_fold_batched_tensor_sparse::<
+            F,
+            D,
+        >(polys, tensor, block_len, num_digits)?))
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
-    pub(crate) fn commit_inner<B>(
+    pub(crate) fn commit_inner<B, const D: usize>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup,
@@ -425,7 +526,7 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let t = self.commit_inner_rows(
+        let t = self.commit_inner_rows::<B, D>(
             backend,
             prepared,
             plan.n_a,
@@ -451,15 +552,10 @@ where
                 actual: logical_point.len(),
             });
         }
-        let witness = DirectRootWitnessSource::direct_root_witness(self)?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "root tensor partials require field-element root witness".to_string(),
-            )
-        })?;
+        let field_elems = self.direct_field_evals()?;
         akita_types::tensor_column_partials_from_base_evals::<F, E>(
             num_vars,
-            field_elems.coeffs(),
+            &field_elems,
             logical_point,
         )
     }
@@ -469,13 +565,8 @@ where
         E: akita_field::ExtField<F>,
     {
         let num_vars = self.num_vars();
-        let witness = DirectRootWitnessSource::direct_root_witness(self)?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "root tensor projection requires field-element root witness".to_string(),
-            )
-        })?;
-        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+        let field_elems = self.direct_field_evals()?;
+        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, &field_elems)
     }
 
     pub(crate) fn tensor_packed_extension_sparse_evals<E>(
@@ -490,7 +581,7 @@ where
         Ok(None)
     }
 
-    pub(crate) fn tensor_packed_extension_poly<E>(
+    pub(crate) fn tensor_packed_extension_poly<E, const D: usize>(
         &self,
     ) -> Result<crate::backend::dense::DensePoly<F, D>, AkitaError>
     where
@@ -521,7 +612,7 @@ where
         ))
     }
 
-    fn commit_inner_rows<B>(
+    fn commit_inner_rows<B, const D: usize>(
         &self,
         backend: &B,
         prepared: &B::PreparedSetup,
@@ -532,7 +623,7 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks = self.blocks_for(block_len)?;
+        let blocks = self.blocks_for(D, block_len)?;
         backend.sparse_ring_commit_rows(
             prepared,
             SparseRingCommitRowsPlan {
@@ -810,8 +901,9 @@ mod tests {
     #[test]
     fn sparse_ring_fold_matches_dense_reference() {
         const D: usize = 8;
-        let sparse = SparseRingPoly::<F, D>::from_signed_coeffs(
+        let sparse = SparseRingPoly::<F>::from_signed_coeffs(
             5,
+            D,
             4,
             vec![(0, 1, 1), (1, 3, -1), (3, 2, 1)],
         )
@@ -838,12 +930,13 @@ mod tests {
     fn sorted_sparse_ring_constructor_rejects_unsorted_coeffs() {
         const D: usize = 8;
         let sorted =
-            SparseRingPoly::<F, D>::from_sorted_signed_coeffs(5, 4, vec![(0, 1, 1), (2, 3, -1)])
+            SparseRingPoly::<F>::from_sorted_signed_coeffs(5, D, 4, vec![(0, 1, 1), (2, 3, -1)])
                 .unwrap();
         assert_eq!(sorted.num_ring_elems(), 4);
 
-        assert!(SparseRingPoly::<F, D>::from_sorted_signed_coeffs(
+        assert!(SparseRingPoly::<F>::from_sorted_signed_coeffs(
             5,
+            D,
             4,
             vec![(2, 3, -1), (0, 1, 1)],
         )
@@ -855,7 +948,7 @@ mod tests {
         const D: usize = 8;
         for value in [-2, 0, 2] {
             assert!(matches!(
-                SparseRingPoly::<F, D>::from_signed_coeffs(5, 4, vec![(0, 1, value)]),
+                SparseRingPoly::<F>::from_signed_coeffs(5, D, 4, vec![(0, 1, value)]),
                 Err(AkitaError::InvalidInput(_))
             ));
         }
@@ -869,11 +962,11 @@ mod tests {
             .iter()
             .copied()
             .map(|(ring_idx, coeff_idx, value)| {
-                SparseRingCoeff::new(ring_idx, coeff_idx, value).unwrap()
+                SparseRingCoeff::from_ring_coords(ring_idx, coeff_idx, D, value).unwrap()
             })
             .collect::<Vec<_>>();
-        let from_tuples = SparseRingPoly::<F, D>::from_signed_coeffs(5, 4, tuples).unwrap();
-        let from_packed = SparseRingPoly::<F, D>::from_packed_coeffs(5, 4, packed).unwrap();
+        let from_tuples = SparseRingPoly::<F>::from_signed_coeffs(5, D, 4, tuples).unwrap();
+        let from_packed = SparseRingPoly::<F>::from_packed_coeffs(5, D, 4, packed).unwrap();
 
         let scalars = (0..2)
             .map(|idx| {
@@ -883,8 +976,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(
-            from_packed.fold_blocks_ring(&scalars, 2),
-            from_tuples.fold_blocks_ring(&scalars, 2)
+            from_packed.fold_blocks_ring::<D>(&scalars, 2),
+            from_tuples.fold_blocks_ring::<D>(&scalars, 2)
         );
     }
 }

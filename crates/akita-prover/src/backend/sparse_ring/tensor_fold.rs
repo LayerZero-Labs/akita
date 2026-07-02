@@ -7,7 +7,7 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 
 pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
-    polys: &[&SparseRingPoly<F, D>],
+    polys: &[&SparseRingPoly<F>],
     tensor: &TensorChallengeSet,
     block_len: usize,
     num_digits: usize,
@@ -17,7 +17,7 @@ where
 {
     let mut flat_blocks = Vec::new();
     for poly in polys {
-        let blocks = poly.blocks_for(block_len)?;
+        let blocks = poly.blocks_for(D, block_len)?;
         flat_blocks.extend((0..blocks.num_blocks()).map(|idx| blocks.block(idx)));
     }
     let expected_blocks = tensor
