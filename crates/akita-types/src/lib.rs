@@ -22,6 +22,7 @@ pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
+pub mod witness;
 
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
@@ -103,24 +104,24 @@ pub use proof::{
     OpeningGroupShape, OpeningPoints, PointVariableSelection, PreparedOpeningPoint,
     ProverCommitmentRows, PublicMatrixSeed, RelationOnlyStage2Inputs, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLayout, RingRelationSegmentLengths, RingSliceSerializer,
-    SegmentTypedWitness, SegmentTypedWitnessShape, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout,
-    TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    RingRelationSegmentLengths, RingSliceSerializer, SegmentTypedWitness, SegmentTypedWitnessShape,
+    SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
+    TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
     schedule_terminal_direct_witness_shape, scheduled_next_level_params,
-    w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
-    DirectStep, ExecutionSchedule, FoldStep, Schedule, Step,
+    w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CommitmentGroupLayout, CommitmentGroupScheduleKey, DirectStep, ExecutionSchedule, FoldStep,
+    Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};
@@ -132,8 +133,12 @@ pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
     eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
-    trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening,
-    TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable,
-    TraceTerm, TraceWeightLayout,
+    trace_terms_root, trace_weight_layout_from_segment, TraceChunkLayout, TraceClaim,
+    TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,
+    TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
+pub use witness::{
+    ChunkedWitnessCfg, MultiChunkProfileId, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
+    MAX_WITNESS_CHUNKS,
+};
