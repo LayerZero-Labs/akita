@@ -61,7 +61,7 @@ fn event_stream_equality_small() {
         )
         .expect("stack");
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -298,7 +298,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         )
         .expect("stack");
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -399,7 +399,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
