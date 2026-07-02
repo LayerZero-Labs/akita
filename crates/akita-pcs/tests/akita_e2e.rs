@@ -419,7 +419,9 @@ fn chunked_multi_chunk_prove_verify() {
         const NV: usize = 16;
 
         // Confirm the schedule actually activates chunking on the leading folds.
-        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(NV))
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(NV),
+        ))
             .expect("multi-chunk schedule");
         let chunked_levels = plan
             .steps

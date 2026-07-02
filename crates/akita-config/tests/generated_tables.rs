@@ -574,7 +574,9 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
         )
     });
 
-    assert_family_group_batch_table_hit(family, &group_batch_keys);
+    if family.emit_group_batch {
+        assert_family_group_batch_table_hit(family, &group_batch_keys);
+    }
 
     #[cfg(feature = "all-schedules")]
     {
@@ -584,7 +586,9 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     #[cfg(not(feature = "all-schedules"))]
     check_scalar_keys(family, &keys, into);
 
-    check_group_batch_keys(family, &group_batch_keys, into);
+    if family.emit_group_batch {
+        check_group_batch_keys(family, &group_batch_keys, into);
+    }
 }
 
 fn regen_hint() -> &'static str {
