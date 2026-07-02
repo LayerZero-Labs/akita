@@ -137,7 +137,7 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {

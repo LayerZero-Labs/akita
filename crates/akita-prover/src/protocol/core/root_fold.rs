@@ -68,7 +68,7 @@ where
     TS: TensorBackendFor<F, P, E, D>,
     O: DigitRowsComputeBackend<F>
         + OpeningProveBackendFor<F, P, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, D>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
@@ -164,12 +164,12 @@ where
     P: RootProvePoly<F, D> + RootPolyMeta<F>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: OpeningProveBackendFor<F, P, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, D>
         + DigitRowsComputeBackend<F>
         + ComputeBackendSetup<F>
         + 'stack,
     TS: TensorBackendFor<F, P, E, D>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, D>
         + ComputeBackendSetup<F>
         + 'stack,
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
@@ -272,12 +272,12 @@ where
     P: RootProvePoly<F, D> + RootPolyMeta<F>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: OpeningProveBackendFor<F, P, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, D>
         + DigitRowsComputeBackend<F>
         + ComputeBackendSetup<F>
         + 'stack,
     TS: TensorBackendFor<F, P, E, D>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, D>
         + ComputeBackendSetup<F>
         + 'stack,
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,

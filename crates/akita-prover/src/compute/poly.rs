@@ -302,11 +302,11 @@ where
 
 /// Opening kernels for [`RootTensorProjectionPoly`] at each ring dimension it models.
 pub trait SuffixRootTensorOpeningProveBackendFor<F, const D: usize>:
-    OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>
+    OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, D>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 32>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 64>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -317,21 +317,21 @@ impl<F, const D: usize, B> SuffixRootTensorOpeningProveBackendFor<F, D> for B
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    B: OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>,
+    B: OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, D>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 32>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 64>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>,
 {
 }
 
 /// Tensor kernels for [`RootTensorProjectionPoly`] at each ring dimension it models.
 pub trait SuffixRootTensorTensorProveBackendFor<F, E, const D: usize>:
-    TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>
+    TensorBackendFor<F, RootTensorProjectionPoly<F>, E, D>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 32>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 64>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -344,11 +344,11 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
-    B: TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>,
+    B: TensorBackendFor<F, RootTensorProjectionPoly<F>, E, D>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 32>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 64>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>,
 {
 }
 
@@ -359,10 +359,10 @@ pub trait SuffixOpeningProveBackend<F>:
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 32>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 64>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -377,10 +377,10 @@ where
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>,
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 32>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 64>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>,
 {
 }
 
@@ -391,10 +391,10 @@ pub trait SuffixTensorProveBackend<F, E>:
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 32>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 64>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -411,10 +411,10 @@ where
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>,
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 32>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 64>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>,
 {
 }
 
@@ -637,7 +637,7 @@ where
     P: RootCommitPoly<F, D>,
     Self: CommitBackendFor<F, P, D>
         + ProjectBackendFor<F, P, E, D>
-        + CommitBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+        + CommitBackendFor<F, RootTensorProjectionPoly<F>, D>,
 {
 }
 
@@ -649,7 +649,7 @@ where
     P: RootCommitPoly<F, D>,
     B: CommitBackendFor<F, P, D>
         + ProjectBackendFor<F, P, E, D>
-        + CommitBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+        + CommitBackendFor<F, RootTensorProjectionPoly<F>, D>,
 {
 }
 
@@ -678,9 +678,9 @@ where
 /// ## Why `F: 'static`?
 ///
 /// The bundle closes over higher-ranked bounds on borrowed polynomial views, e.g.
-/// `for<'a> OpeningFoldKernel<<RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>, …>`.
+/// `for<'a> OpeningFoldKernel<<RootTensorProjectionPoly<F> as RootOpeningSource<F, D>>::OpeningView<'a>, …>`.
 /// Those GATs carry `where Self: 'a` (see [`RootOpeningSource::OpeningView`]). For the
-/// bound to hold for **every** lifetime `'a`, `RootTensorProjectionPoly<F, D>` must be
+/// bound to hold for **every** lifetime `'a`, `RootTensorProjectionPoly<F>` must be
 /// `'static`, which requires `F: 'static`. This is a rustc lifetime solver artifact, not
 /// a protocol requirement that base-field types outlive the process.
 ///
@@ -696,7 +696,7 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
-    Self: ProveBackendFor<F, P, E, D> + ProveBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>,
+    Self: ProveBackendFor<F, P, E, D> + ProveBackendFor<F, RootTensorProjectionPoly<F>, E, D>,
 {
 }
 
@@ -708,7 +708,7 @@ where
     P: RootProvePoly<F, D>,
     B: ComputeBackendSetup<F>
         + ProveBackendFor<F, P, E, D>
-        + ProveBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>,
+        + ProveBackendFor<F, RootTensorProjectionPoly<F>, E, D>,
 {
 }
 

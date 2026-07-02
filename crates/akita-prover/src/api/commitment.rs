@@ -595,12 +595,12 @@ where
                     poly,
                 )
             })
-            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
+            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field>>, _>>()?;
         validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
         return commit_with_validated_params::<
             Cfg::Field,
             D,
-            RootTensorProjectionPoly<Cfg::Field, D>,
+            RootTensorProjectionPoly<Cfg::Field>,
             B,
         >(&transformed, commit_ctx, &params);
     }
@@ -715,8 +715,8 @@ where
                     poly,
                 )
             })
-            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
-        commit_with_validated_params::<Cfg::Field, D, RootTensorProjectionPoly<Cfg::Field, D>, B>(
+            .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field>>, _>>()?;
+        commit_with_validated_params::<Cfg::Field, D, RootTensorProjectionPoly<Cfg::Field>, B>(
             &transformed,
             commit_ctx,
             &params,
@@ -776,7 +776,7 @@ where
         return commit_with_validated_params::<
             Cfg::Field,
             D,
-            RootTensorProjectionPoly<Cfg::Field, D>,
+            RootTensorProjectionPoly<Cfg::Field>,
             B,
         >(&transformed, commit_ctx, &params);
     }

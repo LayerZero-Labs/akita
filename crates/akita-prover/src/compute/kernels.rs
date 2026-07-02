@@ -157,7 +157,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: S,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         F: FromPrimitiveInt,
         E: FpExtEncoding<F>;

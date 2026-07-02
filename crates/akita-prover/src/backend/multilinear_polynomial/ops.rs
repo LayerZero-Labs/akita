@@ -241,7 +241,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {

@@ -11,7 +11,7 @@ pub(crate) fn tensor_root_projection<F, P, E, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     poly: &P,
-) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+) -> Result<RootTensorProjectionPoly<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F>,

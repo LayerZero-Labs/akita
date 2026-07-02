@@ -639,7 +639,7 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {

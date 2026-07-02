@@ -128,13 +128,13 @@ where
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, D>
         + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, Cfg::ExtField, D>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField, D>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
@@ -278,13 +278,13 @@ where
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + OpeningProveBackendFor<Cfg::Field, P, D>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, D>
+        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, D>
         + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field, D>, Cfg::ExtField, D>
+        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField, D>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>

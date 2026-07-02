@@ -230,7 +230,7 @@ where
 
     pub(crate) fn tensor_packed_extension_root_poly<E, const D: usize>(
         &self,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         F: CanonicalField + FromPrimitiveInt,
         E: FpExtEncoding<F>,

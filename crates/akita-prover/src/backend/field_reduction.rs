@@ -26,26 +26,26 @@ use crate::{
 /// Dense roots use the ordinary dense backend. Sparse one-hot roots use signed
 /// ring coefficients so the transformed commitment path preserves sparsity.
 #[derive(Debug, Clone)]
-pub enum RootTensorProjectionPoly<F: FieldCore, const D: usize> {
+pub enum RootTensorProjectionPoly<F: FieldCore> {
     /// Dense transformed root polynomial (D-free flat storage).
     Dense(DensePoly<F>),
     /// Sparse signed-ring transformed root polynomial.
     Sparse(Arc<SparseRingPoly<F>>),
 }
 
-impl<F: FieldCore, const D: usize> From<DensePoly<F>> for RootTensorProjectionPoly<F, D> {
+impl<F: FieldCore> From<DensePoly<F>> for RootTensorProjectionPoly<F> {
     fn from(poly: DensePoly<F>) -> Self {
         Self::Dense(poly)
     }
 }
 
-impl<F: FieldCore, const D: usize> From<SparseRingPoly<F>> for RootTensorProjectionPoly<F, D> {
+impl<F: FieldCore> From<SparseRingPoly<F>> for RootTensorProjectionPoly<F> {
     fn from(poly: SparseRingPoly<F>) -> Self {
         Self::Sparse(Arc::new(poly))
     }
 }
 
-impl<F: FieldCore, const D: usize> From<Arc<SparseRingPoly<F>>> for RootTensorProjectionPoly<F, D> {
+impl<F: FieldCore> From<Arc<SparseRingPoly<F>>> for RootTensorProjectionPoly<F> {
     fn from(poly: Arc<SparseRingPoly<F>>) -> Self {
         Self::Sparse(poly)
     }
@@ -54,16 +54,16 @@ impl<F: FieldCore, const D: usize> From<Arc<SparseRingPoly<F>>> for RootTensorPr
 /// Borrowed view over a committed tensor-projected root polynomial.
 #[derive(Debug, Clone, Copy)]
 pub struct RootTensorProjectionView<'a, F: FieldCore, const D: usize> {
-    poly: &'a RootTensorProjectionPoly<F, D>,
+    poly: &'a RootTensorProjectionPoly<F>,
 }
 
 /// Same-point batch view over several tensor-projected root polynomials.
 #[derive(Debug, Clone, Copy)]
 pub struct RootTensorProjectionBatchView<'a, F: FieldCore, const D: usize> {
-    polys: &'a [&'a RootTensorProjectionPoly<F, D>],
+    polys: &'a [&'a RootTensorProjectionPoly<F>],
 }
 
-impl<F, const D: usize> RootPolyMeta<F> for RootTensorProjectionPoly<F, D>
+impl<F> RootPolyMeta<F> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
@@ -82,7 +82,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootPolyShape<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> RootPolyShape<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
@@ -101,7 +101,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootCommitSource<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> RootCommitSource<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
@@ -115,7 +115,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootOpeningSource<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> RootOpeningSource<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
@@ -138,7 +138,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootTensorSource<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> RootTensorSource<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
@@ -161,7 +161,7 @@ where
     }
 }
 
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> DirectRootWitnessSource<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
@@ -408,7 +408,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {

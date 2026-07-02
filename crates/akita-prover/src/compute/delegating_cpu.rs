@@ -194,7 +194,7 @@ macro_rules! delegate_tensor_kernels {
                 &self,
                 prepared: Option<&Self::PreparedSetup>,
                 source: S,
-            ) -> Result<crate::backend::RootTensorProjectionPoly<F, D>, AkitaError>
+            ) -> Result<crate::backend::RootTensorProjectionPoly<F>, AkitaError>
             where
                 F: FromPrimitiveInt,
                 E: FpExtEncoding<F>,

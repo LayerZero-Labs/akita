@@ -249,7 +249,7 @@ where
     TS: TensorBackendFor<F, RecursiveWitnessFlat, E, D>,
     O: DigitRowsComputeBackend<F>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, D>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {

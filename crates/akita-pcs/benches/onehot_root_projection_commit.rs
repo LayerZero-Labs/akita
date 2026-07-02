@@ -111,7 +111,7 @@ where
     let num_polys = env_usize("AKITA_ROOT_COMMIT_NUM_POLYS", DEFAULT_NUM_POLYS);
     let indices = make_onehot_indices(num_vars, num_polys);
     let onehot_polys = build_onehot_polys::<F, D>(num_vars, &indices);
-    let transformed_polys: Vec<RootTensorProjectionPoly<F, D>> = onehot_polys
+    let transformed_polys: Vec<RootTensorProjectionPoly<F>> = onehot_polys
         .iter()
         .map(|poly| {
             let view = poly.tensor_view()?;
@@ -154,7 +154,7 @@ where
                             view,
                         )
                     })
-                    .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()
+                    .collect::<Result<Vec<RootTensorProjectionPoly<F>>, _>>()
                     .expect("benchmark root projection");
                 total += start.elapsed();
                 black_box(projected);
@@ -169,7 +169,7 @@ where
             for _ in 0..iters {
                 let start = Instant::now();
                 let committed =
-                    commit_with_params::<F, D, RootTensorProjectionPoly<F, D>, CpuBackend>(
+                    commit_with_params::<F, D, RootTensorProjectionPoly<F>, CpuBackend>(
                         &transformed_polys,
                         setup.expanded.as_ref(),
                         stack.commit(),

@@ -297,7 +297,7 @@ where
     C: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>
         + OpeningProveBackendFor<F, P, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, D>,
     R: DigitRowsComputeBackend<F>,
 {
     let opening_batch = fold_claims.to_opening_shape::<F>()?;
@@ -349,7 +349,7 @@ where
                 terminal_tail_t_vectors,
             })
         } else {
-            let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
+            let transformed: Vec<RootTensorProjectionPoly<F>> = {
                 let _span =
                     tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
                         .entered();
@@ -365,7 +365,7 @@ where
             };
             let fold_refs = transformed.iter().collect::<Vec<_>>();
             let transformed_fold_claims = fold_claims.regroup_polynomial_refs(&fold_refs)?;
-            finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F, D>, C, O, TS, R, D>(
+            finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F>, C, O, TS, R, D>(
                 FinishFoldArgs {
                     stack,
                     fold_claims: transformed_fold_claims,
