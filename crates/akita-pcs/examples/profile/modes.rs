@@ -15,7 +15,7 @@ use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup,
-    CommitmentGroupScheduleKey, FpExtEncoding, LevelParams, RingCommitment,
+    CommitmentGroupScheduleKey, FlatRingVec, FpExtEncoding, LevelParams,
 };
 use akita_verifier::CommitmentVerifier;
 
@@ -65,7 +65,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             ProverSetup = AkitaProverSetup<FF, D>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
@@ -73,7 +73,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             D,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
     Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
@@ -113,7 +113,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             ProverSetup = AkitaProverSetup<FF, D>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
@@ -121,7 +121,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             D,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
     Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
@@ -183,7 +183,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F
             ProverSetup = AkitaProverSetup<F, D>,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
+            Commitment = FlatRingVec<F>,
             BatchedProof = AkitaBatchedProof<F, F>,
             CommitHint = AkitaCommitmentHint<F, D>,
         > + CommitmentVerifier<
@@ -191,7 +191,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F
             D,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
+            Commitment = FlatRingVec<F>,
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
