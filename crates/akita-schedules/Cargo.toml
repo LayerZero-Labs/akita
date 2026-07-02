@@ -17,10 +17,7 @@ readme = "../../README.md"
 
 [features]
 default = []
-all-schedules = [
-  "schedules-default",
-  "fp128-d64-onehot-tensor",
-]
+all-schedules = ["schedules-default", "fp128-d64-onehot-tensor"]
 schedules-default = [
   "fp128-d64-onehot",
   "fp128-d64-full",

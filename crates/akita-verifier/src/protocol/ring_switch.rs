@@ -471,14 +471,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         self.num_blocks * self.num_claims
     }
 
-    /// Number of active D rows in the selected M-row layout.
-    pub(crate) fn n_d_active(&self) -> usize {
-        match self.m_row_layout {
-            MRowLayout::WithDBlock => self.n_d,
-            MRowLayout::WithoutDBlock => 0,
-        }
-    }
-
     pub(crate) fn segment_layout(&self) -> Result<RingSwitchSegmentLayout, AkitaError> {
         Ok(self.witness_segment_layout)
     }

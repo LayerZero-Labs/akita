@@ -288,7 +288,7 @@ where
     }
     // Canonical row layout: consistency (1) | A | B | D.
     let a_start = lp.a_start();
-    let b_start = lp.b_start(1)?;
+    let b_start = lp.b_start()?;
     let d_start = lp.d_start(1)?;
 
     if inner_width == 0 || z_folded_centered.len() != inner_width {

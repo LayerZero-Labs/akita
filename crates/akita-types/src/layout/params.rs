@@ -633,7 +633,7 @@ impl LevelParams {
 
     /// Absolute start row of the B block.
     #[inline]
-    pub fn b_start(&self, num_commitments: usize) -> Result<usize, AkitaError> {
+    pub fn b_start(&self) -> Result<usize, AkitaError> {
         self.a_start()
             .checked_add(self.a_key.row_len())
             .ok_or_else(Self::m_row_overflow)
@@ -647,7 +647,7 @@ impl LevelParams {
             .row_len()
             .checked_mul(num_commitments)
             .ok_or_else(Self::m_row_overflow)?;
-        self.b_start(num_commitments)?
+        self.b_start()?
             .checked_add(b_rows)
             .ok_or_else(Self::m_row_overflow)
     }
@@ -989,7 +989,7 @@ mod tests {
                 let d_start = b_start + n_b * nc;
 
                 assert_eq!(lp.a_start(), a_start);
-                assert_eq!(lp.b_start(nc).unwrap(), b_start);
+                assert_eq!(lp.b_start().unwrap(), b_start);
                 assert_eq!(lp.d_start(nc).unwrap(), d_start);
                 assert_eq!(
                     lp.m_row_count_for(nc, layout).unwrap(),

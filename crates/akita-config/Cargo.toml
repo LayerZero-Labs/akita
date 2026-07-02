@@ -29,10 +29,7 @@ schedules-default = [
   "schedules-fp64-d128-onehot",
   "schedules-fp64-d256-onehot",
 ]
-all-schedules = [
-  "schedules-default",
-  "schedules-fp128-d64-onehot-tensor",
-]
+all-schedules = ["schedules-default", "schedules-fp128-d64-onehot-tensor"]
 schedules-fp128-d64-onehot = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot",
