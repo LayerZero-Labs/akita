@@ -422,7 +422,7 @@ fn chunked_multi_chunk_prove_verify() {
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             CommitmentGroupScheduleKey::singleton(NV),
         ))
-            .expect("multi-chunk schedule");
+        .expect("multi-chunk schedule");
         let chunked_levels = plan
             .steps
             .iter()
