@@ -136,8 +136,14 @@ AKITA_MODE=onehot_fp128_d64_tensor AKITA_NUM_VARS=20 cargo run --release -p akit
 The CI profile matrix should add one case:
 
 ```text
-onehot_fp128_d64_tensor:32:1
+onehot_fp128_d64_tensor:26:1
 ```
+
+nv=26 (not nv=32): under the 138-bit L-infinity SIS floors the tensor root split
+is top-heavy, so the public setup matrix grows ~4x per +2 nv (~1 GiB at nv=26,
+~72 GiB at nv=32, which OOM-aborts the runner during setup). nv=26 keeps the
+tensor setup footprint on par with the flat `onehot_fp128_d64` nv=32 cell while
+still exercising the tensor root fold plus recursive flat folds.
 
 This is intentionally one root singleton case. A recursive setup-mode case can
 be added later if the CI budget allows it, but it is not needed to prove that
@@ -614,7 +620,7 @@ it no longer overstates prover-side optimization. The Akita Book should state:
 
 1. Add the CI profile tensor case.
 
-   Add `onehot_fp128_d64_tensor:32:1` to `.github/workflows/profile-bench.yml`.
+   Add `onehot_fp128_d64_tensor:26:1` to `.github/workflows/profile-bench.yml`.
    Add `akita-config/schedules-fp128-d64-onehot-tensor` to the `profile-ci`
    feature set. Update `scripts/check_profile_ci_features.sh`.
 

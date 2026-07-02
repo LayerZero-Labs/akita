@@ -303,10 +303,13 @@ The old `full*` and bare `onehot*` names are removed. `AGENTS.md` now points the
 canonical profiling command at `AKITA_MODE=onehot_fp128_d64`. This is an
 explicit per-field D cutover, not a renamed adaptive selector.
 
-After merging `main`, the profile example also exposes
-`onehot_fp128_d64_tensor` as a direct local comparison mode because the tensor
-verifier preset and generated tables are D64-only. That mode is intentionally
-excluded from the active CI benchmark matrix and from `AKITA_MODE=all`.
+The profile example also exposes `onehot_fp128_d64_tensor` because the tensor
+verifier preset and generated tables are D64-only. It runs in the active CI
+benchmark matrix at nv=26 (group `1-fp128-dense-tensor`), not nv=32: under the
+138-bit L-infinity SIS floors the tensor root split is top-heavy, so the public
+setup matrix grows ~4x per +2 nv (~1 GiB at nv=26, ~72 GiB at nv=32, which
+OOM-aborts the runner). nv=26 keeps its footprint on par with the flat
+`onehot_fp128_d64` nv=32 cell. The mode remains excluded from `AKITA_MODE=all`.
 
 ### Benchmark Runner And Artifacts
 
