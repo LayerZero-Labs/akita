@@ -26,6 +26,8 @@ pub(crate) struct CompressionLinearization<E: FieldCore> {
     pub table: TraceTable<E>,
     /// Public side of the same row-linear combination.
     pub claim: E,
+    /// Row weight to use for the next fused compression row.
+    pub next_row_weight: E,
 }
 
 fn decompose_scalars_i8<F>(
@@ -64,6 +66,20 @@ fn add_table_weight<E: FieldCore>(
     }
     table[flat_idx] += weight;
     Ok(())
+}
+
+#[inline]
+fn negacyclic_coeff_weight<F: FieldCore, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    product_coeff: usize,
+    witness_coeff: usize,
+) -> F {
+    let coeffs = ring.coefficients();
+    if witness_coeff <= product_coeff {
+        coeffs[product_coeff - witness_coeff]
+    } else {
+        -coeffs[product_coeff + D - witness_coeff]
+    }
 }
 
 fn dense_layer_apply<F>(
@@ -219,6 +235,7 @@ pub(crate) fn linearize_compression_chain<F, E>(
     live_x_cols: usize,
     y_len: usize,
     row_challenge: E,
+    initial_row_weight: E,
     log_basis: u32,
 ) -> Result<CompressionLinearization<E>, AkitaError>
 where
@@ -249,6 +266,7 @@ where
         return Ok(CompressionLinearization {
             table: TraceTable::ring_dense(vec![E::zero(); witness_len]),
             claim: E::zero(),
+            next_row_weight: initial_row_weight,
         });
     }
 
@@ -259,7 +277,7 @@ where
         .map(E::lift_base)
         .collect();
     let mut input_offset = 0usize;
-    let mut row_weight = E::one();
+    let mut row_weight = initial_row_weight;
 
     for (layer_idx, layer) in plan.layers.iter().enumerate() {
         if layer.layer != layer_idx {
@@ -339,6 +357,137 @@ where
     Ok(CompressionLinearization {
         table: TraceTable::ring_dense(table),
         claim,
+        next_row_weight: row_weight,
+    })
+}
+
+/// Linearize `ring_matrix * source = G * first_compression_digits`.
+///
+/// This is the bridge from an omitted raw ring commitment row (`D` for `v`, or
+/// `B` for a raw `u`) to the first scalar digit block used by the compression
+/// chain. Rows are scalarized coefficient-by-coefficient under one row RLC.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn linearize_raw_ring_rows_to_first_digits<F, E, const D: usize>(
+    matrix_rows: &[CyclotomicRing<F, D>],
+    row_len: usize,
+    col_len: usize,
+    source_offset_cols: usize,
+    plan: &CommitmentCompressionPlan,
+    suffix_offset: usize,
+    live_x_cols: usize,
+    y_len: usize,
+    row_challenge: E,
+    initial_row_weight: E,
+    log_basis: u32,
+) -> Result<CompressionLinearization<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + LiftBase<F>,
+{
+    if matrix_rows.len()
+        != row_len.checked_mul(col_len).ok_or_else(|| {
+            AkitaError::InvalidSetup("raw compression matrix shape overflow".to_string())
+        })?
+    {
+        return Err(AkitaError::InvalidSize {
+            expected: row_len * col_len,
+            actual: matrix_rows.len(),
+        });
+    }
+    let num_digits = decomposition_digits_per_scalar(plan)?;
+    let raw_len = row_len.checked_mul(D).ok_or_else(|| {
+        AkitaError::InvalidSetup("raw compression payload length overflow".to_string())
+    })?;
+    if plan.raw_len != raw_len {
+        return Err(AkitaError::InvalidSize {
+            expected: raw_len,
+            actual: plan.raw_len,
+        });
+    }
+    if plan
+        .layers
+        .first()
+        .map(|layer| layer.input_len)
+        .unwrap_or(0)
+        != raw_len * num_digits
+    {
+        return Err(AkitaError::InvalidSetup(
+            "first compression input does not match raw digit length".to_string(),
+        ));
+    }
+    let witness_len = live_x_cols
+        .checked_mul(y_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("compression table length overflow".to_string()))?;
+    if y_len != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: y_len,
+        });
+    }
+    let source_end = source_offset_cols
+        .checked_add(col_len)
+        .and_then(|cols| cols.checked_mul(D))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("raw compression source offset overflow".to_string())
+        })?;
+    if source_end > witness_len {
+        return Err(AkitaError::InvalidSize {
+            expected: witness_len,
+            actual: source_end,
+        });
+    }
+    let suffix_end = suffix_offset
+        .checked_add(plan.padded_suffix_len)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("compression suffix offset overflow".to_string())
+        })?;
+    if suffix_end > witness_len {
+        return Err(AkitaError::InvalidSize {
+            expected: witness_len,
+            actual: suffix_end,
+        });
+    }
+
+    let gadget: Vec<E> = gadget_row_scalars::<F>(num_digits, log_basis)
+        .into_iter()
+        .map(E::lift_base)
+        .collect();
+    let mut table = vec![E::zero(); witness_len];
+    let mut row_weight = initial_row_weight;
+
+    for row_idx in 0..row_len {
+        for product_coeff in 0..D {
+            let scalar_idx = row_idx * D + product_coeff;
+            for col_idx in 0..col_len {
+                let setup_ring = &matrix_rows[row_idx * col_len + col_idx];
+                for witness_coeff in 0..D {
+                    let coeff = negacyclic_coeff_weight(setup_ring, product_coeff, witness_coeff);
+                    if !coeff.is_zero() {
+                        add_table_weight(
+                            &mut table,
+                            witness_len,
+                            (source_offset_cols + col_idx) * D + witness_coeff,
+                            row_weight * E::lift_base(coeff),
+                        )?;
+                    }
+                }
+            }
+            for (digit_idx, &gadget_weight) in gadget.iter().enumerate() {
+                add_table_weight(
+                    &mut table,
+                    witness_len,
+                    suffix_offset + scalar_idx * num_digits + digit_idx,
+                    -row_weight * gadget_weight,
+                )?;
+            }
+            row_weight *= row_challenge;
+        }
+    }
+
+    Ok(CompressionLinearization {
+        table: TraceTable::ring_dense(table),
+        claim: E::zero(),
+        next_row_weight: row_weight,
     })
 }
 
@@ -489,6 +638,7 @@ mod tests {
             live_x_cols,
             y_len,
             F::from_u64(11),
+            F::one(),
             2,
         )
         .expect("linearize");
@@ -551,6 +701,7 @@ mod tests {
             live_x_cols,
             y_len,
             F::from_u64(13),
+            F::one(),
             2,
         )
         .expect("linearize");
@@ -565,5 +716,73 @@ mod tests {
             ),
             linear.claim
         );
+    }
+
+    #[test]
+    fn linearizes_raw_ring_row_to_first_digits() {
+        const D: usize = 4;
+        let setup_ring = CyclotomicRing::<F, D>::from_coefficients([
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+        ]);
+        let source_ring = CyclotomicRing::<F, D>::from_coefficients([
+            F::from_u64(11),
+            F::from_u64(13),
+            F::from_u64(17),
+            F::from_u64(19),
+        ]);
+        let raw_ring = setup_ring * source_ring;
+        let raw = raw_ring.coefficients().to_vec();
+        let num_digits = 4;
+        let input_len = raw.len() * num_digits;
+        let compression_setup = vec![F::one(); input_len];
+        let plan = CommitmentCompressionPlan {
+            raw_len: raw.len(),
+            public_len: 1,
+            suffix_len: input_len,
+            padded_suffix_len: input_len,
+            layers: vec![CompressionLayerPlan {
+                role: CompressionMapRole::H,
+                layer: 0,
+                input_len,
+                output_len: 1,
+                setup_offset: 0,
+            }],
+        };
+        let eval = evaluate_commitment_compression(&compression_setup, &plan, &raw, num_digits, 2)
+            .expect("compress");
+        let mut witness = source_ring.coefficients().to_vec();
+        witness.extend(
+            eval.suffix_digits
+                .iter()
+                .map(|&digit| F::from_i64(digit as i64)),
+        );
+        let live_x_cols = 5;
+        let y_len = D;
+
+        let linear = linearize_raw_ring_rows_to_first_digits(
+            &[setup_ring],
+            1,
+            1,
+            0,
+            &plan,
+            D,
+            live_x_cols,
+            y_len,
+            F::from_u64(23),
+            F::one(),
+            2,
+        )
+        .expect("linearize raw");
+        let dense = linear.table.materialize_dense(live_x_cols, y_len);
+        let dot = witness
+            .iter()
+            .enumerate()
+            .fold(F::zero(), |acc, (idx, &value)| acc + dense[idx] * value);
+
+        assert_eq!(dot, F::zero());
+        assert_eq!(linear.claim, F::zero());
     }
 }
