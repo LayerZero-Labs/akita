@@ -683,7 +683,6 @@ descriptor shape land, scalar lookup must not collapse grouped inputs through
 | `fp128-d32-onehot` | (new/emitted) | `fp128::D32OneHot` |
 | `fp32-d128-onehot` | `fp32_d128_onehot.rs` | `fp32::D128OneHot` |
 | … | … | … |
-| `fp128-d64-onehot-tiered` | `fp128_d64_onehot_tiered.rs` | `fp128::D64OneHotTiered` |
 | `fp128-d64-onehot-tensor` | `fp128_d64_onehot_tensor.rs` | `D64OneHotTensor` |
 
 Meta-features:

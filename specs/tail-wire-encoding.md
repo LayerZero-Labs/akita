@@ -133,7 +133,7 @@ The current single-width path (`PackedDigits`) is retained for the **zk** tail (
 
 ### Terminal `t`-state / u-elision
 
-The current relation row layout is `consistency | public | D(n_d) | COMMIT | B_inner | A(n_a)` (`crates/akita-types/src/layout/params.rs:340-354`), where the `COMMIT` block is the sent outer commitment rows (`B` in single-tier, `F` in tiered mode).
+The current relation row layout is `consistency | D(n_d) | B(n_b) | A(n_a)` (`crates/akita-types/src/layout/params.rs`). Public openings bind through the fused trace term in stage-2 sumcheck, not through M public rows. Tiered commitment (`B_inner`, second-tier `F`) was removed in PR #257.
 The terminal already sets `n_d_active = 0` (`WithoutDBlock`) by revealing `e_folded` in cleartext: the D-role commitment `v = D * e_hat` and its rows are gone (`specs/terminal-fold-cutover.md`).
 
 The correct S2 cutover is **not** "delete B rows while keeping `u` as the terminal statement."
@@ -191,7 +191,7 @@ Let `D = ring_dimension`.
 The legacy `RingRelationInstance::segment_layout` plane counts (`crates/akita-types/src/proof/ring_relation.rs:226-237`) count digit **planes** for the packed-digit layout. The segment-typed wire uses different units per segment:
 
 ```text
-z_coords       = num_public_rows * block_len * num_digits_commit * D   (Golomb integers; one per base-field slot in folded z)
+z_coords       = num_z_segments * block_len * num_digits_commit * D   (Golomb integers; one per base-field slot in folded z)
 e_field_elems  = num_blocks * num_w_vectors * D                       (RawField; one ring element per block → D coeffs)
 t_field_elems  = n_a * num_blocks * num_t_vectors * D                   (RawField)
 r_field_elems  = m_row_count_for(WithoutDBlock) * D                   (RawField; until PR #141 r-drop)
@@ -200,7 +200,7 @@ r_field_elems  = m_row_count_for(WithoutDBlock) * D                   (RawField;
 `z_coords` is the Golomb element count. `e_field_elems`, `t_field_elems`, and `r_field_elems` are base-field coefficient counts for `RawField` serialization.
 The legacy `PackedDigits` layout in `build_w_coeffs` (`coeffs.rs`) is the source for S3's byte-neutral framing, but S2 removes the legacy `t_hat`, `û_concat`, and `r_hat` planes from the final terminal policy.
 Segments appear in wire order `z ‖ e ‖ t ‖ r`; `r_hat` planes are absent under PR #141 direct mode.
-Multipoint layouts scale `z_coords` with `num_public_rows`; tiered layouts must either use the same `t`-state terminal policy or reject.
+Multipoint layouts scale `z_coords` with `num_z_segments`.
 
 This mirrors the existing headerless, shape-driven decode (the shape supplies counts and the `z` payload upper bound). `CleartextWitnessShape::SegmentTyped` and `CleartextWitnessProof::SegmentTyped` ship in #190.
 

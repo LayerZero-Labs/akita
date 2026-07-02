@@ -11,7 +11,7 @@ use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
     GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
+    GROUPED_ROOT_UNSUPPORTED,
 };
 
 fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
@@ -26,11 +26,6 @@ where
 {
     if opening_batch.num_commitment_groups() <= 1 {
         return Ok(());
-    }
-    if Cfg::TIERED_COMMITMENT {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
-        ));
     }
     if setup_contribution_mode == SetupContributionMode::Recursive {
         return Err(AkitaError::InvalidSetup(
@@ -292,7 +287,7 @@ where
         let commitments = claims.commitments();
         if commitments
             .iter()
-            .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
+            .any(|commitment| commitment.u.len() != root_scheduled.params.b_key.row_len())
         {
             return Err(AkitaError::InvalidInput(
                 "root commitment row count does not match scheduled root params".to_string(),

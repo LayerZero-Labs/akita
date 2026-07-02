@@ -62,7 +62,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             layout.offset_e,
             layout.offset_t,
             layout.offset_z,
-            layout.offset_u,
             None,
             None,
         );

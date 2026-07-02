@@ -24,8 +24,7 @@ use crate::PlannerPolicy;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, SisModulusFamily,
+    rounded_up_collision_norm_t, rounded_up_collision_norm_w, SisModulusFamily,
 };
 use akita_types::{AjtaiKeyParams, DecompositionParams, GroupRootParams, LevelParams};
 
@@ -192,60 +191,13 @@ impl GeneratedFoldStep {
             0
         };
 
-        // Tiered second tier (`B'`/`F`): the compact entry stores the committed
-        // layout directly — `n_b` is the shrunk `B'` rank, `tier_split` is the
-        // split factor, and `n_f` is the second-tier `F` rank. The `B'` width is
-        // the full outer width divided by the split, and `F` commits
-        // `tier_split · n_b · num_digits_open` digit columns at the same
-        // digit-range bucket as `B`/`D`. A single-tier step stores `None`/`None`
-        // and keeps the full `B` width. (No `apply_tiering` re-search: the table
-        // is the frozen snapshot; the DP path owns `apply_tiering` for misses.)
-        let (b_width, tier_split, f_key) = match (self.tier_split, self.n_f) {
-            (None, None) => (outer_width, 1usize, None),
-            (Some(f), Some(n_f)) => {
-                let f = f as usize;
-                if f <= 1 {
-                    return Err(AkitaError::InvalidSetup(
-                        "generated tiered step has tier_split <= 1".to_string(),
-                    ));
-                }
-                if !policy.tiered {
-                    return Err(AkitaError::InvalidSetup(
-                        "generated tiered step is not allowed by the planner policy".to_string(),
-                    ));
-                }
-                if outer_width == 0 || !outer_width.is_multiple_of(f) {
-                    return Err(AkitaError::InvalidSetup(
-                        "generated tiered B' width does not divide the full outer width"
-                            .to_string(),
-                    ));
-                }
-                let b_small_width = outer_width / f;
-                let f_width = f
-                    .checked_mul(self.n_b as usize)
-                    .and_then(|w| w.checked_mul(num_digits_open_val))
-                    .ok_or_else(|| no_layout("F"))?;
-                let f_bucket =
-                    rounded_up_collision_norm_tiered_commitment(sis_family, ring_d, log_basis)
-                        .ok_or_else(|| no_layout("F"))?;
-                require_exact_rank("f", sis_family, ring_d, f_bucket, f_width, n_f as usize)?;
-                let f_key =
-                    AjtaiKeyParams::try_new(sis_family, n_f as usize, f_width, f_bucket, ring_d)?;
-                (b_small_width, f, Some(f_key))
-            }
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "generated tiered step must set both tier_split and n_f, or neither"
-                        .to_string(),
-                ));
-            }
-        };
+        // Size the committed B matrix at the full outer width.
         require_exact_rank(
             "b",
             sis_family,
             ring_d,
             b_bucket,
-            b_width,
+            outer_width,
             self.n_b as usize,
         )?;
         require_exact_rank(
@@ -273,7 +225,7 @@ impl GeneratedFoldStep {
             b_key: AjtaiKeyParams::try_new(
                 sis_family,
                 self.n_b as usize,
-                b_width,
+                outer_width,
                 b_bucket,
                 ring_d,
             )?,
@@ -293,8 +245,6 @@ impl GeneratedFoldStep {
             num_digits_commit,
             num_digits_open,
             onehot_chunk_size,
-            tier_split,
-            f_key,
             fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
             ),
             num_digits_fold_one: 1,
@@ -327,11 +277,6 @@ impl GeneratedFoldStep {
                 "generated grouped root ring dimension {ring_d} does not match policy D={}",
                 policy.ring_dimension
             )));
-        }
-        if self.tier_split.is_some() || self.n_f.is_some() {
-            return Err(AkitaError::InvalidSetup(
-                "generated grouped roots do not support tiered steps".to_string(),
-            ));
         }
         if precommitted_groups.is_empty() {
             return Err(AkitaError::InvalidSetup(
@@ -444,8 +389,6 @@ impl GeneratedFoldStep {
             num_digits_commit,
             num_digits_open: num_digits_open_val,
             onehot_chunk_size,
-            tier_split: 1,
-            f_key: None,
             fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
             ),
             num_digits_fold_one: 1,

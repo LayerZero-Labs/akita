@@ -46,12 +46,7 @@ pub(crate) struct SetupContributionShape {
     pub n_d: usize,
     pub n_b: usize,
     pub num_polys_per_segment: Vec<usize>,
-    pub num_public_rows: usize,
     pub m_row_layout: MRowLayout,
-    /// Tiered split factor `f` (`1` = single-tier).
-    pub tier_split: usize,
-    /// Second-tier `F` rank (`0` = single-tier).
-    pub n_f: usize,
 }
 
 impl SetupContributionShape {
@@ -68,23 +63,8 @@ impl SetupContributionShape {
             n_d: 1,
             n_b: 2,
             num_polys_per_segment: vec![1],
-            num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
-            tier_split: 1,
-            n_f: 0,
         }
-    }
-
-    /// Tiered single-point root: first-tier `B'` reused across `tier_split`
-    /// column-slices plus the second-tier `F` (COMMIT) block, exercising the
-    /// tiered `bar_omega` / direct-scan equivalence. Tiering requires a single
-    /// commitment bundle (`num_points == 1`) and `n_f > 0`; `tier_split` divides
-    /// the per-group `n_cols_t = n_a · depth_open · num_blocks` (here 64).
-    pub fn tiered_root_single_point() -> Self {
-        let mut shape = Self::root_single_point();
-        shape.tier_split = 4;
-        shape.n_f = 1;
-        shape
     }
 
     pub fn recursive_multigroup() -> Self {
@@ -100,10 +80,7 @@ impl SetupContributionShape {
             n_d: 2,
             n_b: 2,
             num_polys_per_segment: vec![3],
-            num_public_rows: 1,
             m_row_layout: MRowLayout::WithDBlock,
-            tier_split: 1,
-            n_f: 0,
         }
     }
 
@@ -151,54 +128,27 @@ impl SetupContributionFixture {
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
-        let tiered = shape.tier_split > 1;
-        // Canonical M-row layout: consistency | public | D | COMMIT | B_inner | A.
-        // COMMIT is the `F` block when tiered (`n_f` rows/point), else the full
-        // `B` block (`n_b` rows/point); B_inner (`tier_split·n_b` rows/point) is
-        // tiered-only.
-        let commit_rows = if tiered { shape.n_f } else { shape.n_b } * num_points;
-        let b_inner_rows = if tiered {
-            shape.tier_split * shape.n_b * num_points
-        } else {
-            0
-        };
-        let rows = 1 + shape.num_public_rows + shape.n_d + commit_rows + b_inner_rows + shape.n_a;
+        // Canonical M-row layout: consistency | D | B | A.
+        let rows = 1 + shape.n_d + shape.n_b * num_points + shape.n_a;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
         let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
         let n_cols_t = shape.num_polys_per_segment.iter().copied().max().unwrap() * cols_per_poly_t;
-        // Tiered footprints: stored `B'` is `n_cols_t / tier_split` wide, `F`
-        // commits `tier_split·n_b·depth_open` decomposed digits.
-        let f_stride = shape.tier_split * shape.n_b * shape.depth_open;
-        let b_inner_stride = if tiered {
-            n_cols_t / shape.tier_split
-        } else {
-            0
-        };
-        let b_inner_required = shape.n_b * b_inner_stride;
-        let f_required = shape.n_f * f_stride;
 
         let e_len = shape.depth_open * total_blocks;
         let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
         let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
-        // û_concat witness segment (tiered only): `num_points · f_stride` planes after `t`.
-        let u_len = if tiered { num_points * f_stride } else { 0 };
         let offset_z = 0usize;
         let offset_e = z_len;
         let offset_t = z_len + e_len;
-        let offset_u = z_len + e_len + t_len;
-        let total_len = z_len + e_len + t_len + u_len;
+        let total_len = z_len + e_len + t_len;
         let offset_r: usize = total_len;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let max_setup_len = (shape.n_d * n_cols_e)
             .max(shape.n_a * inner_width)
-            .max(if tiered {
-                b_inner_required.max(f_required)
-            } else {
-                shape.n_b * n_cols_t
-            });
+            .max(shape.n_b * n_cols_t);
 
         let matrix_entries: Vec<CyclotomicRing<TestField, TEST_RING_DIM>> = (0..max_setup_len)
             .map(|idx| {
@@ -241,14 +191,11 @@ impl SetupContributionFixture {
             n_d: shape.n_d,
             m_row_layout: shape.m_row_layout,
             n_b: shape.n_b,
-            tier_split: shape.tier_split,
-            n_f: shape.n_f,
             rows,
             num_polys: shape.num_polys_per_segment.iter().sum(),
             witness_segment_layout: RingRelationSegmentLayout {
                 offset_e,
                 offset_t,
-                offset_u,
                 offset_z,
                 offset_r,
             },
@@ -295,7 +242,6 @@ impl SetupContributionFixture {
             self.offset_e,
             self.offset_t,
             self.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
             None,
             None,
         );
@@ -322,7 +268,6 @@ impl SetupContributionFixture {
             self.offset_e,
             self.offset_t,
             self.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
             None,
             None,
         );
@@ -348,8 +293,7 @@ impl SetupContributionFixture {
 
     /// `evaluate_bar_omega_with_eq` (the const-generic `bar_omega_segment_eval`
     /// kernel) must equal the eq-weighted materialized `bar_omega` (the generic
-    /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree,
-    /// including the tiered `B'`/`F` blocks.
+    /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree.
     pub fn assert_eq_eval_matches_materialized(&self) {
         let setup_contribution = self.prepared.create_setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
@@ -362,7 +306,6 @@ impl SetupContributionFixture {
             self.offset_e,
             self.offset_t,
             self.offset_z,
-            self.prepared.witness_segment_layout.offset_u,
             None,
             None,
         );

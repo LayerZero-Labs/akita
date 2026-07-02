@@ -51,7 +51,7 @@ pub use opening_batch::{
     batched_eval_target_from_opening_batch, sample_public_row_coefficients, CommitmentGroup,
     OpeningBatchLimits, OpeningBatchShape, OpeningGroupShape, PointVariableSelection,
     VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
+    GROUPED_ROOT_UNSUPPORTED,
 };
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{

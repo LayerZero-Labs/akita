@@ -374,7 +374,7 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
             }
         }
         let mut envelope = SetupMatrixEnvelope { max_setup_len };
-        if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+        if Cfg::decomposition().log_commit_bound == 1 {
             crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<
                 Cfg,
             >(max_num_vars, max_num_batched_polys, &mut envelope)
@@ -447,14 +447,14 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(
         };
         // Root-level batched witnesses fan out over the key's polynomial
         // count; recursive levels collapse back to singleton-by-construction.
-        let (num_polynomials, num_public_rows) = if idx == 0 {
+        let (num_polynomials, num_z_segments) = if idx == 0 {
             (key.num_polynomials, 1)
         } else {
             (1, 1)
         };
         let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
             Cfg::Field,
-        >(&fold.params, num_polynomials, num_public_rows, layout)
+        >(&fold.params, num_polynomials, num_z_segments, layout)
         .expect("valid planned witness")
             * fold.params.ring_dimension;
         assert_eq!(

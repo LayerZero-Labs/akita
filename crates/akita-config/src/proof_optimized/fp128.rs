@@ -18,10 +18,6 @@ pub struct D64Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
 
-/// Binary onehot `D=64` preset with the tiered commitment matrix `F`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHotTiered;
-
 /// Full-field adaptive `D=32` preset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D32Full;
@@ -89,22 +85,6 @@ impl_proof_optimized_preset!(
         "schedules-fp128-d64-onehot",
         "fp128_d64_onehot",
         fp128_d64_onehot_table
-    )
-);
-impl_proof_optimized_preset!(
-    D64OneHotTiered,
-    Field,
-    Field,
-    akita_types::SisModulusFamily::Q128,
-    64,
-    128,
-    1,
-    256,
-    true,
-    schedules = (
-        "schedules-fp128-d64-onehot-tiered",
-        "fp128_d64_onehot_tiered",
-        fp128_d64_onehot_tiered_table
     )
 );
 impl_proof_optimized_preset!(

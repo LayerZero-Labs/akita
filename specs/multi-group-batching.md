@@ -292,7 +292,7 @@ num_commitment_groups = G
 num_t_vectors_total   = sum_g K_g
 num_w_vectors_root    = G
 num_z_vectors_root    = G
-num_public_rows       = G
+num_z_segments       = G
 ```
 
 `num_w_vectors_root = G` means each group contributes its own `w_hat_g` segment.
@@ -385,7 +385,7 @@ G                   = 1 + precommitteds.len()
 num_t_vectors_total = new.num_t_vectors + sum(precommitted.key.num_t_vectors)
 num_w_vectors_root  = G
 num_z_vectors_root  = G
-num_public_rows     = G
+num_z_segments     = G
 ```
 
 ## Generated Schedule Keys
@@ -1002,7 +1002,7 @@ still work, and unsupported grouped proof paths fail explicitly.
   - `num_t_vectors_total = sum_g K_g`;
   - `num_w_vectors_root = G`;
   - `num_z_vectors_root = G`;
-  - `num_public_rows = G`.
+  - `num_z_segments = G`.
 - Add `CommitmentGroupLayout`.
 - Add `CommittedGroupScheduleMeta` and `CommittedGroupHandle`.
 - Add standalone `commit_group`.

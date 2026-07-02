@@ -199,7 +199,6 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
-            tiered: false,
         }
     }
 
@@ -223,12 +222,6 @@ mod tests {
             n_a: lp.a_key.row_len() as u32,
             n_b: lp.b_key.row_len() as u32,
             n_d: lp.d_key.row_len() as u32,
-            tier_split: if lp.tier_split > 1 {
-                Some(lp.tier_split as u32)
-            } else {
-                None
-            },
-            n_f: lp.f_key.as_ref().map(|f| f.row_len() as u32),
         }
     }
 

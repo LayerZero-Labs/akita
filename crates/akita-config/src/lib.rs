@@ -52,7 +52,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
-        tiered: Cfg::TIERED_COMMITMENT,
     }
 }
 
@@ -104,17 +103,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
-
-    /// Enable the second commitment tier (matrix `F`).
-    ///
-    /// When `true`, the planner is allowed
-    /// to reuse a smaller first-tier matrix `B` across `f` witness slices and
-    /// commit the partial images with a second-tier matrix `F`
-    /// (`u_final = F · decompose(u_1 ‖ … ‖ u_f)`), shrinking the shared
-    /// preprocessing matrix and the verifier setup-contribution scan. See
-    /// `specs/tiered-commitment.md`. Threaded into the planner via
-    /// [`PlannerPolicy::tiered`] (see [`policy_of`]).
-    const TIERED_COMMITMENT: bool = false;
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -258,15 +246,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
+    /// Returns `InvalidSetup` for dense configs, malformed group keys,
     /// or unsupported SIS buckets.
     fn group_commit_schedule(key: &CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
-        if Self::TIERED_COMMITMENT {
-            return Err(AkitaError::InvalidSetup(
-                "tiered standalone commitment groups are not supported; see specs/multi-group-batching.md"
-                    .to_string(),
-            ));
-        }
         if Self::decomposition().log_commit_bound != 1 {
             return Err(AkitaError::InvalidSetup(
                 "standalone commitment groups require a one-hot config".to_string(),
@@ -313,7 +295,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
+    /// Returns `InvalidSetup` for dense configs, malformed group keys,
     /// unsupported SIS buckets, or schedules without root commit params.
     fn get_params_for_group_commit(
         key: &CommitmentGroupScheduleKey,

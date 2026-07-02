@@ -52,7 +52,7 @@ where
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    if commitment.u.len() != root_lp.effective_commit_rows() {
+    if commitment.u.len() != root_lp.b_key.row_len() {
         return Err(AkitaError::InvalidProof);
     }
 

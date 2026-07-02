@@ -157,7 +157,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     }
 
     let mut envelope = SetupMatrixEnvelope { max_setup_len };
-    if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+    if Cfg::decomposition().log_commit_bound == 1 {
         crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
             max_num_vars,
             max_num_batched_polys,
@@ -280,14 +280,7 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
         .row_len()
         .checked_mul(lp.d_matrix_width())
         .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
-    let f_len = match lp.f_key.as_ref() {
-        Some(fk) => fk
-            .row_len()
-            .checked_mul(fk.col_len())
-            .ok_or_else(|| AkitaError::InvalidSetup("F setup envelope overflow".to_string()))?,
-        None => 0,
-    };
-    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len).max(f_len);
+    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len);
     Ok(())
 }
 
@@ -333,15 +326,9 @@ fn root_runtime_matrix_len_for_opening_batch(
     let b_len = lp
         .b_key
         .row_len()
-        .checked_mul(full_b_width.div_ceil(lp.tier_split.max(1)))
+        .checked_mul(full_b_width)
         .ok_or_else(|| AkitaError::InvalidSetup("batched B setup envelope overflow".to_string()))?;
-    let f_len = match lp.f_key.as_ref() {
-        Some(fk) => fk.row_len().checked_mul(fk.col_len()).ok_or_else(|| {
-            AkitaError::InvalidSetup("batched F setup envelope overflow".to_string())
-        })?,
-        None => 0,
-    };
-    Ok(b_len.max(d_len).max(f_len))
+    Ok(b_len.max(d_len))
 }
 
 fn root_commit_params_from_schedule(
@@ -376,12 +363,6 @@ macro_rules! impl_proof_optimized_preset {
     (@onehot_chunk_size) => {
         1
     };
-    (@tiered $tiered:expr) => {
-        $tiered
-    };
-    (@tiered) => {
-        false
-    };
     (@schedule_catalog none) => {};
     (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -395,97 +376,23 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    (@schedule_catalog tiered ($feat:literal, $family:literal, $table:ident)) => {
-        fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
-            #[cfg(feature = $feat)]
-            {
-                Some(akita_schedules::$table())
-            }
-            #[cfg(not(feature = $feat))]
-            {
-                None
-            }
-        }
-    };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, false, none);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, none);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, false, table, $feat, $family_name, $table);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, table, $feat, $family_name, $table);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, none);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, none);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, false, table, $feat, $family_name, $table);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, table, $feat, $family_name, $table);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, none);
-    };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, true, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, true, tiered_sched $feat, $family_name, $table);
-    };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, tiered_sched $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, none) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
-
-            const TIERED_COMMITMENT: bool = $tiered;
-
-            fn decomposition() -> akita_types::DecompositionParams {
-                akita_types::DecompositionParams {
-                    log_basis: 3,
-                    log_commit_bound: $log_commit_bound,
-                    log_open_bound: if $log_commit_bound < $field_bits {
-                        Some($field_bits)
-                    } else {
-                        None
-                    },
-                }
-            }
-
-            fn ring_challenge_config(
-                d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
-            }
-
-            fn sis_modulus_family() -> akita_types::SisModulusFamily {
-                $family
-            }
-
-            fn max_setup_matrix_size(
-                max_num_vars: usize,
-                max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
-                    max_num_vars,
-                    max_num_batched_polys,
-                )
-            }
-
-            fn basis_range() -> (u32, u32) {
-                (
-                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
-                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
-                )
-            }
-
-            fn onehot_chunk_size() -> usize {
-                $onehot_chunk
-            }
-
-            impl_proof_optimized_preset!(@schedule_catalog tiered ($feat, $family_name, $table));
-        }
-    };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, none) => {
-        impl $crate::CommitmentConfig for $cfg {
-            type Field = $field;
-            type ExtField = $ext_field;
-            const D: usize = $d;
-
-            const TIERED_COMMITMENT: bool = $tiered;
 
             fn decomposition() -> akita_types::DecompositionParams {
                 akita_types::DecompositionParams {
@@ -533,13 +440,11 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, $tiered:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
-
-            const TIERED_COMMITMENT: bool = $tiered;
 
             fn decomposition() -> akita_types::DecompositionParams {
                 akita_types::DecompositionParams {

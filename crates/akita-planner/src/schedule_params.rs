@@ -15,8 +15,8 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    rounded_up_collision_norm_t, rounded_up_collision_norm_w, AjtaiKeyParams,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
@@ -38,106 +38,6 @@ type FoldShapeFn<'a> = &'a dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape;
 // more than this many recursive fold levels; deeper search only blows up
 // memo state without changing emitted tables.
 const MAX_RECURSION_DEPTH: usize = 12;
-
-/// Largest tiered split factor `f` the planner will consider. `B'` matrix size
-/// is monotone non-increasing in `f`, so scanning `f = 2..=MAX` ascending and
-/// taking the first divisor of the `B` width whose size fits under `A` yields the
-/// smallest feasible split. Kept small to bound the added relation rows / witness
-/// / `F` size (and the verifier-reachable DP work).
-const MAX_TIERED_SPLIT_FACTOR: usize = 16;
-
-/// Tiered second matrix `F`. When the first-tier `B` matrix size exceeds the
-/// inner `A` matrix size, shrink `B` to a `B'` reused across `f` equal flat
-/// column-slices of `t̂`, and size the second-tier `F` that commits the decomposed
-/// concatenation `u_1 ‖ … ‖ u_f`.
-///
-/// The split is a plain contiguous partition of the `B` width into `f` equal
-/// slices (`f | width`). No column structure is preserved and `f` need not be a
-/// power of two — the relation only enforces `B'·t_i = u_i` and
-/// `F(u_1 ‖ … ‖ u_f) = u_final`, and every prover/verifier path slices `t̂` flatly.
-/// `F` is sized at its own collision bucket ([`rounded_up_collision_norm_tiered_commitment`]).
-///
-/// `B'` matrix size is monotonically non-increasing in `f`, so the **smallest**
-/// divisor `f` in `2..=MAX_TIERED_SPLIT_FACTOR` whose size drops to
-/// `<= a_matrix_size` is optimal (smallest `F`, fewest relation rows, least
-/// witness).
-///
-/// Returns `(tier_split, b_key, f_key)`: `(1, b_key.clone(), None)` when no split
-/// is needed (`B` already fits under `A`) or none is feasible; `(f, B', Some(F))`
-/// otherwise.
-///
-/// Verifier-reachable through the runtime DP fallback: never panics — every
-/// product is checked and every emitted key passes [`AjtaiKeyParams::try_new`].
-/// This is the DP's source of truth for the `B'`/`F` split; the shipped tiered
-/// table stores the resulting layout directly, so expansion never re-runs it.
-fn multi_tiered_keys(
-    a_matrix_size: usize,
-    b_key: &AjtaiKeyParams,
-    delta_open: usize,
-    log_basis: u32,
-    ring_d: usize,
-) -> Result<(usize, AjtaiKeyParams, Option<AjtaiKeyParams>), AkitaError> {
-    let Some(b_matrix_size) = b_key.row_len().checked_mul(b_key.col_len()) else {
-        return Ok((1, b_key.clone(), None));
-    };
-    if b_matrix_size <= a_matrix_size {
-        // First-tier `B` already fits under `A`; no tiering needed.
-        return Ok((1, b_key.clone(), None));
-    }
-
-    // `F` commits balanced base-`2^log_basis` digits of `u_concat`.
-    let Some(norm_f) =
-        rounded_up_collision_norm_tiered_commitment(b_key.sis_family(), ring_d, log_basis)
-    else {
-        return Ok((1, b_key.clone(), None));
-    };
-
-    // Smallest f in 2..=MAX dividing the B width whose shrunk B' matrix size fits
-    // under A. Size is monotone non-increasing in f, so the first hit is optimal.
-    for f in 2..=MAX_TIERED_SPLIT_FACTOR {
-        if !b_key.col_len().is_multiple_of(f) {
-            continue;
-        }
-        let shrunk_width = b_key.col_len() / f; // exact: f divides the B width
-        let Some(n_b_small) = min_secure_rank(
-            b_key.sis_family(),
-            ring_d as u32,
-            b_key.collision_l2_sq(),
-            shrunk_width as u64,
-        ) else {
-            continue;
-        };
-        let Some(b_small_size) = n_b_small.checked_mul(shrunk_width) else {
-            continue;
-        };
-        if b_small_size > a_matrix_size {
-            continue;
-        }
-        // `F` commits `decompose(u_1 ‖ … ‖ u_f)`: `f · n_b' · δ_open` digit columns.
-        let Some(width_f) = f
-            .checked_mul(n_b_small)
-            .and_then(|w| w.checked_mul(delta_open))
-        else {
-            continue;
-        };
-        let Some(n_f) = min_secure_rank(b_key.sis_family(), ring_d as u32, norm_f, width_f as u64)
-        else {
-            continue;
-        };
-        let f_key = AjtaiKeyParams::try_new(b_key.sis_family(), n_f, width_f, norm_f, ring_d)?;
-        let tiered_b_key = AjtaiKeyParams::try_new(
-            b_key.sis_family(),
-            n_b_small,
-            shrunk_width,
-            b_key.collision_l2_sq(),
-            ring_d,
-        )?;
-        return Ok((f, tiered_b_key, Some(f_key)));
-    }
-
-    // No split in 2..=MAX brings B' under A; stay single-tier.
-    Ok((1, b_key.clone(), None))
-}
 
 /// Compute parameters that generate the smallest witness for the next
 /// fold level. Note that this is not the optimum case: in the optimum
@@ -224,15 +124,6 @@ fn derive_candidate_level_params(
         };
         let d_key = AjtaiKeyParams::try_new(family, n_d, width_w, norm_w, d)?;
 
-        let (tier_split, b_key, f_key) = if policy.tiered {
-            let Some(a_matrix_size) = a_key.row_len().checked_mul(a_key.col_len()) else {
-                continue;
-            };
-            multi_tiered_keys(a_matrix_size, &b_key, delta_open, log_basis, d)?
-        } else {
-            (1, b_key, None)
-        };
-
         let Ok(candidate_params) = LevelParams {
             ring_dimension: policy.ring_dimension,
             log_basis,
@@ -249,8 +140,6 @@ fn derive_candidate_level_params(
             num_digits_open: delta_open,
             // Recursive levels commit dense balanced-digit witnesses.
             onehot_chunk_size: 0,
-            tier_split,
-            f_key,
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
             num_digits_fold_one: 1,
             field_bits_hint: 0,
@@ -723,15 +612,6 @@ fn compute_root_direct_level_params(
         0
     };
 
-    let (tier_split, b_key, f_key) = if policy.tiered {
-        let Some(a_matrix_size) = a_key.row_len().checked_mul(a_key.col_len()) else {
-            return Ok(None);
-        };
-        multi_tiered_keys(a_matrix_size, &b_key, depth_open, log_basis, d)?
-    } else {
-        (1, b_key, None)
-    };
-
     let root_direct_params = LevelParams {
         ring_dimension: d,
         log_basis,
@@ -747,8 +627,6 @@ fn compute_root_direct_level_params(
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
         onehot_chunk_size,
-        tier_split,
-        f_key,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
         num_digits_fold_one: 1,
         field_bits_hint: 0,
@@ -924,20 +802,6 @@ fn find_schedule_inner(
             } else {
                 0
             };
-            let (tier_split, b_key, f_key) = if policy.tiered {
-                let Some(a_matrix_size) = a_key.row_len().checked_mul(a_key.col_len()) else {
-                    continue;
-                };
-                multi_tiered_keys(
-                    a_matrix_size,
-                    &b_key,
-                    num_digits_open,
-                    candidate_log_basis,
-                    d,
-                )?
-            } else {
-                (1, b_key, None)
-            };
             let Ok(candidate_params) = LevelParams {
                 ring_dimension: policy.ring_dimension,
                 log_basis: candidate_log_basis,
@@ -953,8 +817,6 @@ fn find_schedule_inner(
                 num_digits_commit,
                 num_digits_open,
                 onehot_chunk_size,
-                tier_split,
-                f_key,
                 fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
                 num_digits_fold_one: 1,
                 field_bits_hint: 0,
@@ -1081,67 +943,4 @@ fn find_schedule_inner(
         steps: best_steps,
         total_bytes: best_cost,
     })
-}
-
-#[cfg(test)]
-mod tiering_tests {
-    use super::*;
-    use akita_types::sis::{min_secure_rank, AjtaiKeyParams, SisModulusFamily};
-
-    const D: usize = 64;
-    const FAMILY: SisModulusFamily = SisModulusFamily::Q128;
-    const LOG_BASIS: u32 = 3;
-    const DELTA_OPEN: usize = 43;
-
-    fn tiered_collision() -> u128 {
-        rounded_up_collision_norm_tiered_commitment(FAMILY, D, LOG_BASIS).unwrap()
-    }
-
-    fn b_key(n_b: usize, width: usize) -> AjtaiKeyParams {
-        AjtaiKeyParams::new_unchecked(FAMILY, n_b, width, tiered_collision(), D)
-    }
-
-    #[test]
-    fn tiering_skipped_when_b_fits_under_a() {
-        // B size (1·86) already <= A size, so no split.
-        let bk = b_key(1, 86);
-        let (f, out_b, fk) = multi_tiered_keys(1_000_000, &bk, DELTA_OPEN, LOG_BASIS, D).unwrap();
-        assert_eq!(f, 1);
-        assert!(fk.is_none());
-        assert_eq!(out_b.col_len(), bk.col_len());
-    }
-
-    #[test]
-    fn tiering_fires_with_smallest_feasible_split() {
-        // B size = 1·5504 = 5504 > A size = 2·1024 = 2048.
-        let width_t = 5504;
-        let a_matrix_size = 2 * 1024;
-        let bk = b_key(1, width_t);
-
-        let (f, out_b, fk) =
-            multi_tiered_keys(a_matrix_size, &bk, DELTA_OPEN, LOG_BASIS, D).unwrap();
-        let fk = fk.expect("expected tiering to fire");
-
-        assert!(f > 1);
-        // B' fits under A; width shrank by exactly the split factor.
-        assert!(out_b.row_len() * out_b.col_len() <= a_matrix_size);
-        assert_eq!(out_b.col_len(), width_t / f);
-        // F width = f · n_b' · δ_open, same collision bucket as B.
-        assert_eq!(fk.col_len(), f * out_b.row_len() * DELTA_OPEN);
-        let norm = tiered_collision();
-        assert_eq!(out_b.collision_l2_sq(), norm);
-        assert_eq!(fk.collision_l2_sq(), norm);
-        // Minimality: no smaller divisor of width_t (in 2..f) makes B' fit under A.
-        for smaller in 2..f {
-            if !width_t.is_multiple_of(smaller) {
-                continue;
-            }
-            let w = width_t / smaller;
-            let n = min_secure_rank(FAMILY, D as u32, norm, w as u64).unwrap();
-            assert!(
-                n * w > a_matrix_size,
-                "split f={smaller} should not fit under A"
-            );
-        }
-    }
 }

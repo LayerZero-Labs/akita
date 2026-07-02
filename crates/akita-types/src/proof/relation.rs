@@ -4,17 +4,14 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, MulBase};
-use std::iter::repeat_n;
 
 /// Build the RHS vector `y` matching the M row layout:
-/// consistency (zero) | D (`v`) | COMMIT (`commitment_rows`) | B_inner (zeros) | A (zeros).
+/// consistency (zero) | D (`v`) | B (`commitment_rows`) | A (zeros).
 ///
 /// Public-output rows bind through the fused trace term, not `y`.
 ///
-/// `commit_rows_per_group` is the sent-commitment row count per group
-/// (`effective_commit_rows`: the `F` rows when tiered, the `B` rows otherwise);
-/// `b_inner_rows_per_group` is the inner-consistency block size per group
-/// (`0` for single-tier). The number of commitment bundles is inferred from
+/// `commit_rows_per_group` is the B row count per commitment bundle
+/// (`b_key.row_len()`). The number of commitment bundles is inferred from
 /// `commitment_rows.len() / commit_rows_per_group`.
 ///
 /// # Errors
@@ -26,7 +23,6 @@ pub fn generate_y<F, const D: usize>(
     commitment_rows: &[CyclotomicRing<F, D>],
     n_d: usize,
     commit_rows_per_group: usize,
-    b_inner_rows_per_group: usize,
     n_a: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -47,16 +43,11 @@ where
             actual: commitment_rows.len(),
         });
     }
-    let num_commitments = commitment_rows.len() / commit_rows_per_group;
-    let b_inner_total = b_inner_rows_per_group
-        .checked_mul(num_commitments)
-        .ok_or_else(|| AkitaError::InvalidSetup("generate_y B_inner overflow".to_string()))?;
-    let mut out = Vec::with_capacity(1 + n_d + commitment_rows.len() + b_inner_total + n_a);
+    let mut out = Vec::with_capacity(1 + n_d + commitment_rows.len() + n_a);
     out.push(CyclotomicRing::<F, D>::zero());
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), b_inner_total));
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
+    out.extend(std::iter::repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
     Ok(out)
 }
 

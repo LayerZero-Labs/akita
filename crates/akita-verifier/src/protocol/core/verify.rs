@@ -18,7 +18,6 @@ use akita_types::{
     AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
     FpExtEncoding, LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, Schedule,
     SetupContributionMode, Step, VerifierOpeningBatch, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -104,11 +103,6 @@ where
 {
     if opening_batch.num_commitment_groups() <= 1 {
         return Ok(());
-    }
-    if Cfg::TIERED_COMMITMENT {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
-        ));
     }
     if setup_contribution_mode == SetupContributionMode::Recursive {
         return Err(AkitaError::InvalidSetup(
@@ -291,17 +285,7 @@ fn recommit_direct_witness_group<F, const D: usize>(
 where
     F: FieldCore + CanonicalField,
 {
-    // Root-direct commitments are single-tier only: the sent commitment is the
-    // plain `B·t̂`. Tiering is never planned on the root-direct (small-instance)
-    // path.
-    if params.f_key.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "root-direct recommitment does not support tiered commitment \
-             (f_key must be absent on the root-direct path)"
-                .to_string(),
-        ));
-    }
-
+    // Root-direct commitments are the plain `B·t̂` sent commitment.
     let mut outer_input = Vec::new();
     for witness in group_witnesses {
         let field_witness = witness

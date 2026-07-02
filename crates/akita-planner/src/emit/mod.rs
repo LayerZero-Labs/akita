@@ -47,10 +47,6 @@ const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 
 fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
-    let (tier_split, n_f) = match p.f_key.as_ref() {
-        Some(fk) => (Some(p.tier_split as u32), Some(fk.row_len() as u32)),
-        None => (None, None),
-    };
     GeneratedFoldStep {
         ring_d: p.ring_dimension as u32,
         log_basis: p.log_basis,
@@ -59,8 +55,6 @@ fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
         n_a: p.a_key.row_len() as u32,
         n_b: p.b_key.row_len() as u32,
         n_d: p.d_key.row_len() as u32,
-        tier_split,
-        n_f,
     }
 }
 
@@ -138,23 +132,8 @@ fn emit_fold_struct(p: &LevelParams) -> String {
     let fold = fold_step_from_params(p);
     format!(
         "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {}, \
-         tier_split: {}, n_f: {} }}",
-        fold.ring_d,
-        fold.log_basis,
-        fold.m_vars,
-        fold.r_vars,
-        fold.n_a,
-        fold.n_b,
-        fold.n_d,
-        match fold.tier_split {
-            Some(v) => format!("Some({v})"),
-            None => "None".to_string(),
-        },
-        match fold.n_f {
-            Some(v) => format!("Some({v})"),
-            None => "None".to_string(),
-        },
+         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}",
+        fold.ring_d, fold.log_basis, fold.m_vars, fold.r_vars, fold.n_a, fold.n_b, fold.n_d,
     )
 }
 
@@ -272,7 +251,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    chal_ext_degree: {chal_ext_degree},\n",
             "    basis_range: ({basis_min}, {basis_max}),\n",
             "    onehot_chunk_size: {onehot_chunk_size},\n",
-            "    tiered: {tiered},\n",
             "    root_fold_shape: {root_fold_shape},\n",
             "    ring_dimensions: CATALOG_RING_DIMENSIONS,\n",
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
@@ -291,7 +269,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         basis_min = identity.basis_range.0,
         basis_max = identity.basis_range.1,
         onehot_chunk_size = identity.onehot_chunk_size,
-        tiered = identity.tiered,
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
         key_count = identity.key_count,
@@ -449,53 +426,15 @@ pub fn emit_group_batch_family_module(spec: &EmitSpec) -> Result<String, String>
     Ok(out)
 }
 
-fn is_tiered_only_family(module_name: &str) -> bool {
-    module_name == "fp128_d64_onehot_tiered"
-}
-
-fn table_fn_name(module_name: &str) -> String {
-    format!("{module_name}_table")
-}
-
-fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
-    writeln!(out, "#[cfg(feature = \"fp128-d64-onehot-tiered\")]").map_err(|e| e.to_string())?;
-    writeln!(out, "pub mod fp128_d64_onehot_tiered;").map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-fn emit_tiered_table_accessor() -> String {
-    concat!(
-        "/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries\n",
-        "/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with\n",
-        "/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored\n",
-        "/// fields.\n",
-        "#[cfg(feature = \"fp128-d64-onehot-tiered\")]\n",
-        "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
-        "    GeneratedScheduleTable {\n",
-        "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
-        "        group_batch_entries: &[],\n",
-        "        identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,\n",
-        "    }\n",
-        "}\n",
-    )
-    .to_string()
-}
-
 fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
     let mut out = String::new();
     let mut seen = std::collections::BTreeSet::new();
-    let mut tiered_wired = false;
     for spec in specs {
         if !seen.insert(spec.module_name) {
             continue;
         }
         let module_name = spec.module_name;
         let feat = spec.schedule_feature;
-        if is_tiered_only_family(module_name) {
-            emit_tiered_module_declaration(&mut out)?;
-            tiered_wired = true;
-            continue;
-        }
         writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
         if spec.emit_group_batch {
@@ -504,17 +443,15 @@ fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
                 .map_err(|e| e.to_string())?;
         }
     }
-    if !tiered_wired {
-        emit_tiered_module_declaration(&mut out)?;
-    }
     writeln!(out).map_err(|e| e.to_string())?;
     Ok(out)
 }
 
+fn table_fn_name(module_name: &str) -> String {
+    format!("{module_name}_table")
+}
+
 fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
-    if is_tiered_only_family(spec.module_name) {
-        return Ok(emit_tiered_table_accessor());
-    }
     let fn_name = table_fn_name(spec.module_name);
     let feat = spec.schedule_feature;
     let module_name = spec.module_name;
@@ -535,19 +472,11 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
 fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
     let mut out = emit_module_declarations(specs)?;
     let mut seen = std::collections::BTreeSet::new();
-    let mut tiered_wired = false;
     for spec in specs {
         if !seen.insert(spec.module_name) {
             continue;
         }
-        if is_tiered_only_family(spec.module_name) {
-            tiered_wired = true;
-        }
         out.push_str(&emit_table_accessor(spec)?);
-        out.push('\n');
-    }
-    if !tiered_wired {
-        out.push_str(&emit_tiered_table_accessor());
         out.push('\n');
     }
     Ok(out)

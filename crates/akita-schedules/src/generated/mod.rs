@@ -25,8 +25,6 @@ pub mod fp128_d64_onehot_group_batch;
 pub mod fp128_d64_onehot_tensor;
 #[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor_group_batch;
-#[cfg(feature = "fp128-d64-onehot-tiered")]
-pub mod fp128_d64_onehot_tiered;
 #[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot;
 #[cfg(feature = "fp32-d256-onehot")]
@@ -81,19 +79,6 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
         group_batch_entries:
             fp128_d64_onehot_tensor_group_batch::FP128_D64_ONEHOT_TENSOR_GROUP_BATCH_SCHEDULES,
         identity: fp128_d64_onehot_tensor::CATALOG_IDENTITY,
-    }
-}
-
-/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries
-/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with
-/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored
-/// fields.
-#[cfg(feature = "fp128-d64-onehot-tiered")]
-pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,
-        group_batch_entries: &[],
-        identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,
     }
 }
 

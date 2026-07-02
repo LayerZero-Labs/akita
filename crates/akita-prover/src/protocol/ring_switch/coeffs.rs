@@ -9,7 +9,6 @@ pub struct RingSwitchTerminalArtifacts<F: FieldCore, const D: usize> {
     pub recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>>,
     pub z_folded_centered: Vec<[i32; D]>,
     pub r: Vec<akita_algebra::CyclotomicRing<F, D>>,
-    pub u_concat_planes: usize,
 }
 
 /// Output of [`ring_switch_build_w`].
@@ -62,7 +61,7 @@ where
     })?;
     let opening_batch = instance.opening_batch();
 
-    let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
+    let r = compute_relation_quotient::<F, B, D>(
         ring_switch_ctx,
         lp,
         &instance.challenges,
@@ -86,7 +85,6 @@ where
         build_w_coeffs::<F, D>(
             &e_hat,
             &decomposed_inner_rows,
-            &u_concat_digits,
             &z_folded_rings.centered_coeffs,
             &r,
             lp,
@@ -99,7 +97,6 @@ where
             recomposed_inner_rows,
             z_folded_centered: z_centered,
             r,
-            u_concat_planes: u_concat_digits.len(),
         })
     } else {
         None
@@ -137,14 +134,6 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
             c = (c - balanced) >> log_basis;
             plane[coeff_idx] = balanced as i8;
         }
-    }
-}
-
-/// Emit flat digit planes contiguously (no block transpose). Used for the
-/// tiered `û_concat` segment; a no-op for the single-tier path (empty slice).
-fn emit_flat_planes<const D: usize>(out: &mut Vec<i8>, planes: &[[i8; D]]) {
-    for plane in planes {
-        out.extend_from_slice(plane);
     }
 }
 
@@ -186,7 +175,7 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// Build the committed witness polynomial from ring-domain digit planes.
 ///
 /// Emits field-domain coefficients in digit-major order (block index innermost):
-/// z-hat, e-hat + t-hat, û_concat, r-hat.
+/// z-hat, e-hat + t-hat, r-hat.
 ///
 /// Within each segment, the power-of-2 block index is the fastest-varying
 /// (innermost) dimension.
@@ -204,7 +193,6 @@ fn emit_z_folded_block_inner<const D: usize>(
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     e_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
-    u_concat_digits: &[[i8; D]],
     z_folded_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
@@ -221,11 +209,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let e_hat_planes = e_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
-    // Tiered: the hidden decomposed concatenated slice images `û_concat` are a
-    // flat contiguous segment emitted immediately after `t̂` (at `offset_u`).
-    let u_concat_planes = u_concat_digits.len();
-    let z_count =
-        e_hat_planes + t_hat_planes + u_concat_planes + z_folded_centered.len() * num_digits_fold;
+    let z_count = e_hat_planes + t_hat_planes + z_folded_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     tracing::debug!(
         e_hat_planes,
@@ -281,7 +265,6 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         t_block_count,
         t_planes_per_block,
     );
-    emit_flat_planes(&mut out, u_concat_digits);
 
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;

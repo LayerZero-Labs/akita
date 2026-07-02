@@ -20,10 +20,6 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use std::collections::BTreeSet;
 use std::ops::Deref;
 
-/// Tiered presets cannot open multi-group root batches yet.
-pub const GROUPED_ROOT_TIERED_UNSUPPORTED: &str =
-    "tiered multi-group root batching is not supported; see specs/multi-group-batching.md";
-
 /// Recursive setup contribution cannot open multi-group root batches yet.
 pub const GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED: &str =
     "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md";

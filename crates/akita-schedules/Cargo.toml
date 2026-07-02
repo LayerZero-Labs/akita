@@ -20,7 +20,6 @@ default = []
 all-schedules = [
   "schedules-default",
   "fp128-d64-onehot-tensor",
-  "fp128-d64-onehot-tiered",
 ]
 schedules-default = [
   "fp128-d64-onehot",
@@ -38,7 +37,6 @@ fp128-d64-full = []
 fp128-d128-onehot = []
 fp128-d128-full = []
 fp128-d64-onehot-tensor = []
-fp128-d64-onehot-tiered = []
 fp32-d128-onehot = []
 fp32-d256-onehot = []
 fp64-d128 = []

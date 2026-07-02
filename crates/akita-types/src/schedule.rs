@@ -307,7 +307,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     lp: &LevelParams,
     num_polynomials: usize,
-    num_public_rows: usize,
+    num_z_segments: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
     let modulus = detect_field_modulus::<F>();
@@ -316,7 +316,7 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
         field_bits,
         lp,
         num_polynomials,
-        num_public_rows,
+        num_z_segments,
         layout,
     )
 }
@@ -328,7 +328,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     field_bits: u32,
     lp: &LevelParams,
     num_polynomials: usize,
-    num_public_rows: usize,
+    num_z_segments: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
     lp.reject_grouped_root("w_ring_element_count_with_counts_for_layout_bits")?;
@@ -341,14 +341,12 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let u_concat_count = lp.u_concat_ring_len_per_group();
     let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
-    let z_pre_count = num_public_rows
+    let z_pre_count = num_z_segments
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    // Public-output M rows bind via the fused trace term; omit from r width.
-    let r_rows = lp.m_row_count_for(1, 0, layout)?;
+    let r_rows = lp.m_row_count_for(1, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -358,7 +356,6 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
 
     e_hat_count
         .checked_add(t_hat_count)
-        .and_then(|n| n.checked_add(u_concat_count))
         .and_then(|n| n.checked_add(z_pre_count))
         .and_then(|n| n.checked_add(r_count))
         .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))

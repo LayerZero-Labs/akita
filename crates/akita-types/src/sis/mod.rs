@@ -42,8 +42,7 @@ pub use norm_bound::{
     fold_level_witness_scoring_cost, fold_witness_beta, fold_witness_honest_prover_linf_cap,
     fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,
     isqrt_ceil, l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_t,
-    rounded_up_collision_norm_tiered_commitment, rounded_up_collision_norm_w, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
-    MAX_FOLD_GRIND_ATTEMPTS,
+    rounded_up_collision_norm_w, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    FoldWitnessLinfCapPolicy, FoldWitnessNorms, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
 };

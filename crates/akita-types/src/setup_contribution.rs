@@ -35,41 +35,6 @@ pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub num_segments: usize,
     pub rows: usize,
     pub num_polys_per_segment: Vec<usize>,
-    pub num_public_rows: usize,
-    /// Tiered split factor `f` (`1` = single-tier). When `> 1`, `n_b` is the
-    /// stored first-tier `B'` rank, the stored `B'` width is `n_cols_t /
-    /// tier_split` reused across `f` slices, and `n_f` is the second-tier `F`
-    /// rank (the sent-commitment length).
-    pub tier_split: usize,
-    /// Second-tier `F` rank (`0` = single-tier).
-    pub n_f: usize,
-}
-
-/// All tiered-commitment state for one setup-contribution level.
-///
-/// Present (`Some`) on a [`SetupContributionPlan`] only when `tier_split > 1`.
-/// Bundling the first-tier `B'` and second-tier `F` dims + precomputed weight
-/// tables keeps the single-tier call sites and the packed-scan kernel signature
-/// free of tiered-specific parameters — a non-tiered reader just sees `None`.
-struct TieredCommitmentData<E> {
-    /// Split factor `f`.
-    tier_split: usize,
-    /// Stored B' rank (`n_b'`).
-    n_b_small: usize,
-    /// Stored B' width per stored row (`n_cols_t / tier_split`).
-    b_inner_stride: usize,
-    /// `n_b' · b_inner_stride` (stored B' prefix footprint).
-    b_inner_required: usize,
-    /// `[group][slice·n_b' + row] = eq_tau1[b_inner_start + g·(f·n_b') + slice·n_b' + row]`.
-    b_inner_weights_by_group: Vec<Vec<E>>,
-    /// Stored F width (`tier_split · n_b' · depth_open`).
-    f_stride: usize,
-    /// `n_f · f_stride` (F prefix footprint).
-    f_required: usize,
-    /// `[f_row][group] = eq_tau1[f_start + g·n_f + f_row]`.
-    f_weights_by_row: Vec<Vec<E>>,
-    /// `[group][col] = û_concat column MLE` over F's columns.
-    u_eq_slice_per_group: Vec<Vec<E>>,
 }
 
 /// Prepared setup-contribution weights.
@@ -88,8 +53,6 @@ pub struct SetupContributionPlan<E> {
     b_weights_by_row: Vec<Vec<E>>,
     a_weights: Vec<E>,
     endpoints: Vec<usize>,
-    /// Tiered-commitment tables/dims, or `None` for a single-tier plan.
-    tiered: Option<TieredCommitmentData<E>>,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -128,20 +91,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
 
-        // `Σ_λ eq_lambda[λ] · weight(λ)`, mirroring `evaluate_direct`'s
-        // const-generic dispatch (the eq-weighted twin) so the tiered `B'`/`F`
-        // bindings are included identically while the non-tiered hot loop stays
-        // branch-free.
         let segments = self.segments();
-        let tiered = self.tiered.as_ref();
         let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
             .map(|idx| {
                 let segment = &segments[idx];
-                let (has_b_active, b_start) = if tiered.is_some() {
-                    (segment.has_b_inner, segment.b_inner_start_abs)
-                } else {
-                    (segment.has_b, segment.b_start_abs)
-                };
                 macro_rules! segment_sum {
                     ($has_d:literal, $has_b:literal, $has_a:literal) => {
                         bar_omega_segment_eval::<E, $has_d, $has_b, $has_a>(
@@ -150,21 +103,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             segment.d_start_abs,
                             segment.d_weight,
                             &self.e_eq_slice,
-                            b_start,
+                            segment.b_start_abs,
                             segment.b_weights,
                             &self.t_eq_slice_per_group,
                             segment.a_start_abs,
                             segment.a_weight,
                             &self.z_eq_slice,
-                            tiered,
-                            segment.b_inner_row,
-                            segment.has_f,
-                            segment.f_row,
                         )
                     };
                 }
 
-                match (segment.has_d, has_b_active, segment.has_a) {
+                match (segment.has_d, segment.has_b, segment.has_a) {
                     (true, true, true) => segment_sum!(true, true, true),
                     (true, true, false) => segment_sum!(true, true, false),
                     (true, false, true) => segment_sum!(true, false, true),
@@ -172,7 +121,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     (true, false, false) => segment_sum!(true, false, false),
                     (false, true, false) => segment_sum!(false, true, false),
                     (false, false, true) => segment_sum!(false, false, true),
-                    // A segment with no A/D/B may still carry the tiered F block.
                     (false, false, false) => segment_sum!(false, false, false),
                 }
             })
@@ -199,23 +147,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let setup_flat = setup_view.as_slice();
 
         let segments = self.segments();
-        let tiered = self.tiered.as_ref();
         let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
             .map(|idx| -> Result<E, AkitaError> {
                 let segment = &segments[idx];
-                // The B-block is the full single-tier B (`has_b`) or, when
-                // tiered, the first-tier B' (`has_b_inner`). Both flow through
-                // the same `packed_slice_inner_sum` `HAS_B` arm — passing the
-                // tiered data (`Some`) switches the B-weight (slice fold vs
-                // linear) while A/D stay identical. The tiered second-tier `F`
-                // (COMMIT) block is also folded into the same pass (gated by
-                // `segment.has_f`), so every shared-vector entry — A, D, B'/B and
-                // F alike — is evaluated by `eval_ring_at_pows` exactly once.
-                let (has_b_active, b_start) = if tiered.is_some() {
-                    (segment.has_b_inner, segment.b_inner_start_abs)
-                } else {
-                    (segment.has_b, segment.b_start_abs)
-                };
                 macro_rules! segment_sum {
                     ($has_d:literal, $has_b:literal, $has_a:literal) => {
                         packed_slice_inner_sum::<F, E, D, $has_d, $has_b, $has_a>(
@@ -225,21 +159,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             segment.d_start_abs,
                             segment.d_weight,
                             &self.e_eq_slice,
-                            b_start,
+                            segment.b_start_abs,
                             segment.b_weights,
                             &self.t_eq_slice_per_group,
                             segment.a_start_abs,
                             segment.a_weight,
                             &self.z_eq_slice,
-                            tiered,
-                            segment.b_inner_row,
-                            segment.has_f,
-                            segment.f_row,
                         )
                     };
                 }
 
-                Ok(match (segment.has_d, has_b_active, segment.has_a) {
+                Ok(match (segment.has_d, segment.has_b, segment.has_a) {
                     (true, true, true) => segment_sum!(true, true, true),
                     (true, true, false) => segment_sum!(true, true, false),
                     (true, false, true) => segment_sum!(true, false, true),
@@ -247,8 +177,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     (true, false, false) => segment_sum!(true, false, false),
                     (false, true, false) => segment_sum!(false, true, false),
                     (false, false, true) => segment_sum!(false, false, true),
-                    // A segment with no A/D/B may still carry the tiered F block,
-                    // so it is not necessarily empty.
                     (false, false, false) => segment_sum!(false, false, false),
                 })
             })
@@ -261,12 +189,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     /// within `segment` — the multiplier the verifier applies to
     /// `eval_ring_at_pows(setup_flat[lambda])` (see `packed_slice_inner_sum`,
     /// which carries an identical const-generic copy for the hot direct scan).
-    ///
-    /// Single source of truth for the `bar_omega` paths
-    /// (`materialize_bar_omega`, `evaluate_bar_omega_with_eq`), so they include
-    /// the tiered first-tier `B'` (B_inner) and second-tier `F` bindings rather
-    /// than omitting them. For single-tier plans the tiered blocks are inert
-    /// (`self.tiered == None`), reproducing the former D/B/A weight exactly.
     fn weight_at(&self, lambda: usize, segment: &SetupSegment<'_, E>) -> E {
         let mut weight = E::zero();
         if segment.has_d {
@@ -279,36 +201,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         if segment.has_a {
             weight += segment.a_weight * self.z_eq_slice[lambda - segment.a_start_abs];
-        }
-        // Tiered first-tier `B'` (B_inner) and second-tier `F` (COMMIT) blocks,
-        // matching `packed_slice_inner_sum`. `has_b` (full single-tier B) and
-        // `has_b_inner` (tiered B') are mutually exclusive — `has_b` is always
-        // false under a tiered plan (`b_required == 0`) — so the two B branches
-        // never both fire. Inert when `self.tiered == None`.
-        if let Some(td) = self.tiered.as_ref() {
-            if segment.has_b_inner {
-                let col = lambda - segment.b_inner_start_abs;
-                for (g, t_eq_slice) in self.t_eq_slice_per_group.iter().enumerate() {
-                    weight += fold_reused_b_weight(
-                        segment.b_inner_row,
-                        col,
-                        td.tier_split,
-                        td.n_b_small,
-                        td.b_inner_stride,
-                        &td.b_inner_weights_by_group[g],
-                        t_eq_slice,
-                    );
-                }
-            }
-            if segment.has_f {
-                let col = lambda - segment.f_row * td.f_stride;
-                for (g, u_eq) in td.u_eq_slice_per_group.iter().enumerate() {
-                    let rw = td.f_weights_by_row[segment.f_row][g];
-                    if !rw.is_zero() {
-                        weight += rw * u_eq[col];
-                    }
-                }
-            }
         }
         weight
     }
@@ -349,28 +241,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     E::zero()
                 };
 
-                // Tiered first-tier `B'` (B_inner) and second-tier `F` blocks.
-                // `endpoints` carries both their row boundaries (pushed in
-                // `prepare` for tiered plans), so each block's row index is
-                // constant across `[lo, hi)`.
-                let has_b_inner = match self.tiered.as_ref() {
-                    Some(td) => td.b_inner_stride != 0 && lo < td.b_inner_required,
-                    None => false,
-                };
-                let b_inner_stride = self.tiered.as_ref().map_or(0, |td| td.b_inner_stride);
-                let b_inner_row = if has_b_inner { lo / b_inner_stride } else { 0 };
-                let b_inner_start_abs = if has_b_inner {
-                    b_inner_row * b_inner_stride
-                } else {
-                    0
-                };
-                let has_f = match self.tiered.as_ref() {
-                    Some(td) => td.f_stride != 0 && lo < td.f_required,
-                    None => false,
-                };
-                let f_stride = self.tiered.as_ref().map_or(0, |td| td.f_stride);
-                let f_row = if has_f { lo / f_stride } else { 0 };
-
                 Some(SetupSegment {
                     lo,
                     hi,
@@ -383,11 +253,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     has_a,
                     a_start_abs,
                     a_weight,
-                    has_b_inner,
-                    b_inner_start_abs,
-                    b_inner_row,
-                    has_f,
-                    f_row,
                 })
             })
             .collect()
@@ -403,7 +268,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         offset_e: usize,
         offset_t: usize,
         offset_z: usize,
-        offset_u: usize,
         eq_hi_e: Option<&[E]>,
         eq_hi_t: Option<&[E]>,
     ) -> Result<Self, AkitaError>
@@ -482,35 +346,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         let z_dims_pow2 = inputs.block_len.is_power_of_two();
 
-        let tiered = inputs.tier_split > 1;
-        if tiered && (inputs.n_f == 0 || inputs.num_segments != 1) {
-            return Err(AkitaError::InvalidSetup(
-                "tiered setup contribution requires n_f > 0 and a single commitment bundle".into(),
-            ));
-        }
         let n_d_active = match inputs.m_row_layout {
             MRowLayout::WithDBlock => inputs.n_d,
             MRowLayout::WithoutDBlock => 0,
         };
-        // Canonical row layout: consistency (1) | public | D (n_d_active) |
-        // COMMIT (F when tiered, else B) | B_inner (tiered) | A.
-        let d_start = checked_add(1, inputs.num_public_rows, "D row start")?;
-        // COMMIT block start (the F block when tiered, the B block otherwise).
-        let f_start = checked_add(d_start, n_d_active, "COMMIT row start")?;
-        let commit_rows_pg = if tiered { inputs.n_f } else { inputs.n_b };
-        let b_inner_rows_pg = if tiered {
-            checked_mul(inputs.tier_split, inputs.n_b, "B_inner rows")?
-        } else {
-            0
-        };
-        let commit_rows = checked_mul(commit_rows_pg, inputs.num_segments, "COMMIT row count")?;
-        let b_inner_start = checked_add(f_start, commit_rows, "B_inner row start")?;
-        let b_inner_rows_total =
-            checked_mul(b_inner_rows_pg, inputs.num_segments, "B_inner row count")?;
-        let a_start = checked_add(b_inner_start, b_inner_rows_total, "A row start")?;
+        // Canonical row layout: consistency (1) | D (n_d_active) | B | A.
+        let d_start = 1usize;
+        let b_start = checked_add(d_start, n_d_active, "B row start")?;
+        let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
+        let a_start = checked_add(b_start, b_rows_total, "A row start")?;
         let a_end = checked_add(a_start, inputs.n_a, "A row end")?;
-        // Non-tiered alias used by the packed B scan.
-        let b_start = f_start;
         if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
             return Err(AkitaError::InvalidSetup(
                 "M-row weights are inconsistent with setup evaluator layout".into(),
@@ -531,39 +376,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
         let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
         let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
-        // Packed B is disabled when tiered (the COMMIT block is F + B_inner,
-        // scanned separately so the stored B' is read once per entry).
-        let b_required = if tiered {
-            0
-        } else {
-            checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?
-        };
-        // Tiered stored-prefix footprints. `n_cols_t` is the full per-group B
-        // width; the stored B' is `n_cols_t / tier_split` reused across slices.
-        let (b_inner_stride, b_inner_required, f_stride, f_required) = if tiered {
-            if n_cols_t == 0 || !n_cols_t.is_multiple_of(inputs.tier_split) {
-                return Err(AkitaError::InvalidSetup(
-                    "tiered B' width does not divide the per-group T width".into(),
-                ));
-            }
-            let b_inner_stride = n_cols_t / inputs.tier_split;
-            let b_inner_required =
-                checked_mul(inputs.n_b, b_inner_stride, "B_inner setup footprint")?;
-            let f_stride = checked_mul(
-                checked_mul(inputs.tier_split, inputs.n_b, "F width")?,
-                inputs.depth_open,
-                "F width",
-            )?;
-            let f_required = checked_mul(inputs.n_f, f_stride, "F setup footprint")?;
-            (b_inner_stride, b_inner_required, f_stride, f_required)
-        } else {
-            (0, 0, 0, 0)
-        };
-        let required = d_required
-            .max(b_required)
-            .max(a_required)
-            .max(b_inner_required)
-            .max(f_required);
+        let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
+        let required = d_required.max(b_required).max(a_required);
         if required == 0 {
             return Err(AkitaError::InvalidSetup(
                 "setup evaluator requires a non-empty packed footprint".into(),
@@ -774,8 +588,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                 + inputs.block_len * inputs.num_segments * inputs.depth_fold * dc;
                             let sum = offset_z_dense_low + x;
                             let low_idx = sum & mask;
-                            // `eq_high_z_dense` starts at `offset_z_dense_high`,
-                            // so the low-bit carry is the relative high-table index.
                             let high_carry = sum >> k;
                             let eq_val = eq_low_z_dense[low_idx] * eq_high_z_dense[high_carry];
                             acc += eq_val.mul_base(fg);
@@ -786,82 +598,19 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .collect()
         };
 
-        // Packed B weights (single-tier only). For tiered levels the packed B
-        // scan is disabled (`b_required == 0`) and the COMMIT/B_inner weights
-        // are built below.
-        let b_weights_by_row: Vec<Vec<E>> = if tiered {
-            Vec::new()
-        } else {
-            (0..inputs.n_b)
-                .map(|row| {
-                    (0..inputs.num_segments)
-                        .map(|g| inputs.eq_tau1[b_start + g * inputs.n_b + row])
-                        .collect()
-                })
-                .collect()
-        };
-
-        // Tiered second-tier weight tables, bundled into `TieredCommitmentData`
-        // (`None` for single-tier plans).
-        let tiered_data: Option<TieredCommitmentData<E>> = if tiered {
-            let f_weights_by_row: Vec<Vec<E>> = (0..inputs.n_f)
-                .map(|row| {
-                    (0..inputs.num_segments)
-                        .map(|g| inputs.eq_tau1[f_start + g * inputs.n_f + row])
-                        .collect()
-                })
-                .collect();
-            // û_concat column MLE over F's columns: a flat contiguous witness
-            // segment at `offset_u`, `f_stride` columns per bundle bundle.
-            let u_eq_slice_per_group: Vec<Vec<E>> = (0..inputs.num_segments)
-                .map(|g| {
-                    (0..f_stride)
-                        .map(|c| eq_eval_at_index(full_vec_randomness, offset_u + g * f_stride + c))
-                        .collect()
-                })
-                .collect();
-            let inner_rows_pg = inputs.tier_split * inputs.n_b;
-            // `[group][slice_row]` so each group's slice-row weights compose
-            // directly with `fold_reused_b_weight`.
-            let b_inner_weights_by_group: Vec<Vec<E>> = (0..inputs.num_segments)
-                .map(|g| {
-                    (0..inner_rows_pg)
-                        .map(|slice_row| {
-                            inputs.eq_tau1[b_inner_start + g * inner_rows_pg + slice_row]
-                        })
-                        .collect()
-                })
-                .collect();
-            Some(TieredCommitmentData {
-                tier_split: inputs.tier_split,
-                n_b_small: inputs.n_b,
-                b_inner_stride,
-                b_inner_required,
-                b_inner_weights_by_group,
-                f_stride,
-                f_required,
-                f_weights_by_row,
-                u_eq_slice_per_group,
+        let b_weights_by_row: Vec<Vec<E>> = (0..inputs.n_b)
+            .map(|row| {
+                (0..inputs.num_segments)
+                    .map(|g| inputs.eq_tau1[b_start + g * inputs.n_b + row])
+                    .collect()
             })
-        } else {
-            None
-        };
+            .collect();
 
-        let mut endpoints =
-            Vec::with_capacity(n_d_active + inputs.n_b + inputs.n_a + inputs.n_f + 2);
+        let mut endpoints = Vec::with_capacity(n_d_active + inputs.n_b + inputs.n_a + 2);
         endpoints.push(0);
         endpoints.push(required);
         push_role_boundaries(&mut endpoints, n_d_active, n_cols_e, "D")?;
-        if tiered {
-            // First-tier `B'` (B_inner) and second-tier `F` row boundaries so the
-            // fused A/D/B'/F pass sees a constant B'/F row across each segment.
-            // These only sub-split the existing D/A segments, so the prover
-            // `bar_omega` weights (which ignore B_inner/F) are unchanged.
-            push_role_boundaries(&mut endpoints, inputs.n_b, b_inner_stride, "B_inner")?;
-            push_role_boundaries(&mut endpoints, inputs.n_f, f_stride, "F")?;
-        } else {
-            push_role_boundaries(&mut endpoints, inputs.n_b, n_cols_t, "B")?;
-        }
+        push_role_boundaries(&mut endpoints, inputs.n_b, n_cols_t, "B")?;
         push_role_boundaries(&mut endpoints, inputs.n_a, z_range, "A")?;
         endpoints.sort_unstable();
         endpoints.dedup();
@@ -881,7 +630,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             b_weights_by_row,
             a_weights: inputs.eq_tau1[a_start..a_end].to_vec(),
             endpoints,
-            tiered: tiered_data,
         })
     }
 }
@@ -898,17 +646,6 @@ struct SetupSegment<'a, E> {
     has_a: bool,
     a_start_abs: usize,
     a_weight: E,
-    // Tiered first-tier `B'` (B_inner) and second-tier `F` (COMMIT) blocks, both
-    // fused into the same pass as A/D. Always inactive (`false`/`0`) for
-    // single-tier plans (the full single-tier `B` uses `has_b` above instead).
-    // `segments()` populates these only when `tier_split > 1`; the prover
-    // `bar_omega` path (`weight_at`) ignores them, so the extra B_inner/F segment
-    // boundaries leave `bar_omega` unchanged.
-    has_b_inner: bool,
-    b_inner_start_abs: usize,
-    b_inner_row: usize,
-    has_f: bool,
-    f_row: usize,
 }
 
 #[inline(always)]
@@ -933,21 +670,6 @@ fn packed_slice_inner_sum<
     a_start: usize,
     a_weight: E,
     z_eq: &[E],
-    // Tiered-commitment data (A/D are identical in both modes):
-    // - `tiered = None`: the B-block is the full single-tier B; its weight is
-    //   the linear `b_weights[g] · t_eq[λ - b_start]`.
-    // - `tiered = Some(td)`: the B-block (when `HAS_B`) is the first-tier B'
-    //   reused across `td.tier_split` column-slices; its weight is the slice fold
-    //   (`fold_reused_b_weight`), `b_start` is the B' row start, `b_inner_row` is
-    //   the (segment-constant) B' row, and `b_weights` is unused. The second-tier
-    //   `F` (COMMIT) block is added when `has_f` (`f_row` is the segment-constant
-    //   F row): `f_weights_by_row[f_row][g] · u_eq[g][λ - f_row·f_stride]`. Both
-    //   tiered blocks share this single pass with A/D so each entry is evaluated
-    //   by `eval_ring_at_pows` exactly once.
-    tiered: Option<&TieredCommitmentData<E>>,
-    b_inner_row: usize,
-    has_f: bool,
-    f_row: usize,
 ) -> E
 where
     F: FieldCore,
@@ -962,41 +684,12 @@ where
                 weight += d_weight * e_eq[lambda - d_start];
             }
             if HAS_B {
-                if let Some(td) = tiered {
-                    let col = lambda - b_start;
-                    for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
-                        weight += fold_reused_b_weight(
-                            b_inner_row,
-                            col,
-                            td.tier_split,
-                            td.n_b_small,
-                            td.b_inner_stride,
-                            &td.b_inner_weights_by_group[g],
-                            t_eq_slice,
-                        );
-                    }
-                } else {
-                    for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
-                        weight += b_weights[g] * t_eq_slice[lambda - b_start];
-                    }
+                for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
+                    weight += b_weights[g] * t_eq_slice[lambda - b_start];
                 }
             }
             if HAS_A {
                 weight += a_weight * z_eq[lambda - a_start];
-            }
-            // Tiered second-tier `F` (COMMIT) block, fused into the same pass.
-            // `has_f` / `f_row` are segment-constant, so this is a predictable
-            // branch; it is inert (`None` / `has_f == false`) for single-tier.
-            if has_f {
-                if let Some(td) = tiered {
-                    let col = lambda - f_row * td.f_stride;
-                    for (g, u_eq) in td.u_eq_slice_per_group.iter().enumerate() {
-                        let rw = td.f_weights_by_row[f_row][g];
-                        if !rw.is_zero() {
-                            weight += rw * u_eq[col];
-                        }
-                    }
-                }
             }
             if !weight.is_zero() {
                 acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
@@ -1007,11 +700,6 @@ where
     )
 }
 
-/// Eq-weighted twin of [`packed_slice_inner_sum`]: `Σ_λ eq_lambda[λ] · weight(λ)`
-/// over one segment, where `weight` is the identical A/D/B (or tiered B'/F)
-/// combination. Used by `evaluate_bar_omega_with_eq` (verifier stage-3); kept
-/// const-generic on `HAS_D`/`HAS_B`/`HAS_A` for a branch-free hot loop, with the
-/// tiered `B'`/`F` blocks added under the same runtime gates as the direct scan.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
@@ -1026,12 +714,6 @@ fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: 
     a_start: usize,
     a_weight: E,
     z_eq: &[E],
-    // Tiered blocks, identical to `packed_slice_inner_sum`: `None` / `has_f ==
-    // false` for single-tier plans (inert, predictable branch).
-    tiered: Option<&TieredCommitmentData<E>>,
-    b_inner_row: usize,
-    has_f: bool,
-    f_row: usize,
 ) -> E
 where
     E: FieldCore,
@@ -1045,38 +727,12 @@ where
                 weight += d_weight * e_eq[lambda - d_start];
             }
             if HAS_B {
-                if let Some(td) = tiered {
-                    let col = lambda - b_start;
-                    for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
-                        weight += fold_reused_b_weight(
-                            b_inner_row,
-                            col,
-                            td.tier_split,
-                            td.n_b_small,
-                            td.b_inner_stride,
-                            &td.b_inner_weights_by_group[g],
-                            t_eq_slice,
-                        );
-                    }
-                } else {
-                    for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
-                        weight += b_weights[g] * t_eq_slice[lambda - b_start];
-                    }
+                for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
+                    weight += b_weights[g] * t_eq_slice[lambda - b_start];
                 }
             }
             if HAS_A {
                 weight += a_weight * z_eq[lambda - a_start];
-            }
-            if has_f {
-                if let Some(td) = tiered {
-                    let col = lambda - f_row * td.f_stride;
-                    for (g, u_eq) in td.u_eq_slice_per_group.iter().enumerate() {
-                        let rw = td.f_weights_by_row[f_row][g];
-                        if !rw.is_zero() {
-                            weight += rw * u_eq[col];
-                        }
-                    }
-                }
             }
             if !weight.is_zero() {
                 acc += eq_lambda[lambda] * weight;
@@ -1085,41 +741,6 @@ where
         },
         |lhs, rhs| lhs + rhs
     )
-}
-
-/// Folded weight of a stored `B'` entry `(row, col)` when the first-tier matrix
-/// `B'` (dimensions `n_b_small × width_small`) is reused across `tier_split`
-/// equal column-slices of `t̂` (the tiered-commitment design).
-///
-/// The logical relation matrix is the block-diagonal `blockdiag(B', …, B')`
-/// (`tier_split` copies); slice `j` occupies logical rows
-/// `[j·n_b_small, (j+1)·n_b_small)` and logical columns
-/// `[j·width_small, (j+1)·width_small)`. Scanning the *stored* `B'` once and
-/// weighting entry `(row, col)` by this fold — the sum over slices of the
-/// `B_inner` row weight times the `t̂` slice-column eq-MLE — yields exactly the
-/// same setup contribution as scanning the full `blockdiag(B', …, B')` once per
-/// logical entry, but with `tier_split×` fewer `eval_ring_at_pows` calls. This
-/// is the verifier-speedup hinge proved by the `reused_b_fold_matches_blockdiag`
-/// unit test in this module.
-#[inline]
-pub fn fold_reused_b_weight<E: FieldCore>(
-    row: usize,
-    col: usize,
-    tier_split: usize,
-    n_b_small: usize,
-    width_small: usize,
-    b_inner_row_weight: &[E],
-    t_col_eq: &[E],
-) -> E {
-    let mut acc = E::zero();
-    for j in 0..tier_split {
-        let rw = b_inner_row_weight[j * n_b_small + row];
-        let cw = t_col_eq[j * width_small + col];
-        if !rw.is_zero() && !cw.is_zero() {
-            acc += rw * cw;
-        }
-    }
-    acc
 }
 
 #[inline(always)]
@@ -1260,9 +881,6 @@ mod tests {
             num_segments: num_points,
             rows: 2,
             num_polys_per_segment: vec![0],
-            num_public_rows: 0,
-            tier_split: 1,
-            n_f: 0,
         };
 
         let plan = SetupContributionPlan::prepare::<F>(
@@ -1274,7 +892,6 @@ mod tests {
             0,
             64,
             offset_z,
-            0,
             None,
             None,
         )
@@ -1299,85 +916,5 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(plan.z_eq_slice, expected);
-    }
-
-    #[test]
-    #[allow(clippy::needless_range_loop)]
-    fn reused_b_fold_matches_blockdiag() {
-        // The tiered setup contribution scans the stored B' once with folded
-        // slice weights; this must equal scanning the full blockdiag(B',…,B')
-        // once per logical entry. Verify the algebraic identity directly.
-        let tier_split = 4usize;
-        let n_b_small = 2usize;
-        let width_small = 3usize;
-        let alpha = test_scalar(7);
-
-        // Stored B': n_b_small × width_small ring elements (D-coefficient rings).
-        const TD: usize = 4;
-        let alpha_pows: Vec<F> = {
-            let mut acc = F::one();
-            (0..TD)
-                .map(|_| {
-                    let v = acc;
-                    acc *= alpha;
-                    v
-                })
-                .collect()
-        };
-        let b_prime: Vec<CyclotomicRing<F, TD>> = (0..n_b_small * width_small)
-            .map(|idx| {
-                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-                    test_scalar((idx as u128 + 1) * 31 + k as u128 * 7)
-                }))
-            })
-            .collect();
-
-        // Per-(slice,row) and per-(slice,col) weights for one commitment bundle.
-        let row_weight: Vec<F> = (0..tier_split * n_b_small)
-            .map(|i| test_scalar(13 + i as u128 * 5))
-            .collect();
-        let col_eq: Vec<F> = (0..tier_split * width_small)
-            .map(|c| test_scalar(101 + c as u128 * 3))
-            .collect();
-
-        // Folded scan: stored B' once, folded weight per entry.
-        let mut folded = F::zero();
-        for row in 0..n_b_small {
-            for col in 0..width_small {
-                let w = fold_reused_b_weight::<F>(
-                    row,
-                    col,
-                    tier_split,
-                    n_b_small,
-                    width_small,
-                    &row_weight,
-                    &col_eq,
-                );
-                folded += eval_ring_at_pows(&b_prime[row * width_small + col], &alpha_pows) * w;
-            }
-        }
-
-        // Naive scan over the materialized blockdiag(B',…,B').
-        let logical_rows = tier_split * n_b_small;
-        let logical_cols = tier_split * width_small;
-        let mut naive = F::zero();
-        for lrow in 0..logical_rows {
-            for lcol in 0..logical_cols {
-                let slice_r = lrow / n_b_small;
-                let slice_c = lcol / width_small;
-                if slice_r != slice_c {
-                    continue; // off-diagonal block is zero
-                }
-                let row = lrow % n_b_small;
-                let col = lcol % width_small;
-                let entry = eval_ring_at_pows(&b_prime[row * width_small + col], &alpha_pows);
-                naive += entry * row_weight[lrow] * col_eq[lcol];
-            }
-        }
-
-        assert_eq!(
-            folded, naive,
-            "folded B' scan must equal full blockdiag scan"
-        );
     }
 }

@@ -438,9 +438,8 @@ mod tests {
         let n_d = 2usize;
         let num_claims = 3usize;
         let num_points = 1usize;
-        let num_public_rows = 0usize;
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
+        let rows = 1 + n_d + n_b * num_points + n_a;
         let inner_width = block_len * depth_commit;
 
         let levels = r_decomp_levels::<F>(log_basis);
@@ -481,8 +480,6 @@ mod tests {
             n_d,
             m_row_layout: MRowLayout::WithDBlock,
             n_b,
-            tier_split: 1,
-            n_f: 0,
             rows,
             num_polys: num_claims,
             witness_segment_layout,

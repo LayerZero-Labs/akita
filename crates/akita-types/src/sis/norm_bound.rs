@@ -371,17 +371,6 @@ pub fn rounded_up_collision_norm_w(
     rounded_up_collision_norm_t(sis_family, d, log_basis)
 }
 
-/// Tiered-commitment second-tier (`F`) rounded-up SIS collision bucket. The
-/// matrix `F` commits the balanced base-`2^log_basis` digits of `u_1 ‖ … ‖ u_f`,
-/// so its collision is the same digit-range difference as the B/D roles.
-pub fn rounded_up_collision_norm_tiered_commitment(
-    sis_family: SisModulusFamily,
-    d: usize,
-    log_basis: u32,
-) -> Option<u128> {
-    rounded_up_collision_norm_t(sis_family, d, log_basis)
-}
-
 /// Deterministic coefficient-`L∞` envelope on the folded witness sum
 /// `z = Σ c_i·s_i` (written `β_inf` in specs):
 ///

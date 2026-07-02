@@ -18,10 +18,6 @@ use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 pub struct RingRelationSegmentLayout {
     pub offset_e: usize,
     pub offset_t: usize,
-    /// Witness column offset of the tiered `û_concat` segment (flat, contiguous,
-    /// immediately after `t̂`). Equals `offset_t + t_len`; for single-tier
-    /// levels the segment is empty (`u_len == 0`) but the offset is still valid.
-    pub offset_u: usize,
     pub offset_z: usize,
     pub offset_r: usize,
 }
@@ -32,7 +28,6 @@ pub struct RingRelationSegmentLengths {
     pub z_len: usize,
     pub e_len: usize,
     pub t_len: usize,
-    pub u_len: usize,
 }
 
 /// Opening-batch counts that determine witness segment widths.
@@ -85,13 +80,10 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usi
         .and_then(|len| len.checked_mul(lp.block_len))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
-    let u_len = lp.u_concat_ring_len_per_group();
-
     Ok(RingRelationSegmentLengths {
         z_len,
         e_len,
         t_len,
-        u_len,
     })
 }
 
@@ -229,7 +221,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             z_len,
             e_len,
             t_len,
-            u_len,
         } = lens;
 
         let offset_z = 0;
@@ -237,17 +228,13 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         let offset_t = z_len
             .checked_add(e_len)
             .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?;
-        let offset_u = offset_t
+        let offset_r = offset_t
             .checked_add(t_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("U offset overflow".to_string()))?;
-        let offset_r = offset_u
-            .checked_add(u_len)
             .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
 
         Ok(RingRelationSegmentLayout {
             offset_e,
             offset_t,
-            offset_u,
             offset_z,
             offset_r,
         })
@@ -356,10 +343,7 @@ mod tests {
         assert_eq!(layout.offset_z, 0);
         assert_eq!(layout.offset_e, lens.z_len);
         assert_eq!(layout.offset_t, lens.z_len + lens.e_len);
-        assert_eq!(
-            layout.offset_r,
-            lens.z_len + lens.e_len + lens.t_len + lens.u_len
-        );
+        assert_eq!(layout.offset_r, lens.z_len + lens.e_len + lens.t_len);
         instance
             .check_v_shape_for_level(&lp)
             .expect("v rows match layout");

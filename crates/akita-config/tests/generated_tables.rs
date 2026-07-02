@@ -57,8 +57,7 @@ fn group_batch_emission_matches_supported_policy_shape() {
     for family in ALL_GENERATED_FAMILIES {
         let policy = (family.policy)();
         assert!(
-            !family.emit_group_batch
-                || (policy.decomposition.log_commit_bound == 1 && !policy.tiered),
+            !family.emit_group_batch || policy.decomposition.log_commit_bound == 1,
             "family {} must not emit grouped companions for unsupported grouped-root policies",
             family.module_name
         );
@@ -74,7 +73,6 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
         "fp128_d64_onehot_tensor" => {
             tensor_verifier::fp128::D64OneHotTensor::schedule_catalog().is_some()
         }
-        "fp128_d64_onehot_tiered" => fp128::D64OneHotTiered::schedule_catalog().is_some(),
         "fp64_d128" => fp64::D128Full::schedule_catalog().is_some(),
         "fp64_d128_onehot" => fp64::D128OneHot::schedule_catalog().is_some(),
         "fp64_d256_onehot" => fp64::D256OneHot::schedule_catalog().is_some(),
@@ -139,9 +137,6 @@ fn family_catalog(
         "fp128_d64_onehot_tensor" => prepare_family_catalog::<
             tensor_verifier::fp128::D64OneHotTensor,
         >(family.module_name, keys),
-        "fp128_d64_onehot_tiered" => {
-            prepare_family_catalog::<fp128::D64OneHotTiered>(family.module_name, keys)
-        }
         "fp64_d128" => prepare_family_catalog::<fp64::D128Full>(family.module_name, keys),
         "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family.module_name, keys),
         "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family.module_name, keys),
@@ -190,9 +185,6 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
         "fp128_d64_onehot_tensor" => assert_group_batch_table_hits::<
             tensor_verifier::fp128::D64OneHotTensor,
         >(family.module_name, keys),
-        "fp128_d64_onehot_tiered" => {
-            assert_group_batch_table_hits::<fp128::D64OneHotTiered>(family.module_name, keys)
-        }
         "fp64_d128" => assert_group_batch_table_hits::<fp64::D128Full>(family.module_name, keys),
         "fp64_d128_onehot" => {
             assert_group_batch_table_hits::<fp64::D128OneHot>(family.module_name, keys)
@@ -227,9 +219,6 @@ fn resolve_family_group_batch_schedule(
         "fp128_d64_full" => table_backed_group_batch_schedule::<fp128::D64Full>(key),
         "fp128_d64_onehot_tensor" => {
             table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(key)
-        }
-        "fp128_d64_onehot_tiered" => {
-            table_backed_group_batch_schedule::<fp128::D64OneHotTiered>(key)
         }
         "fp64_d128" => table_backed_group_batch_schedule::<fp64::D128Full>(key),
         "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(key),

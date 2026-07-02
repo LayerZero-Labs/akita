@@ -29,7 +29,6 @@ use super::ring_relation_witness::RingRelationWitness;
 use std::time::Instant;
 
 mod relation_quotient;
-mod repeated_b;
 
 pub use akita_types::generate_y;
 pub use relation_quotient::compute_relation_quotient;
@@ -376,7 +375,7 @@ impl RingRelationProver {
         let mut commitment_rows = Vec::new();
         for group in fold_claims.groups {
             let (group_commitment, group_hint) = group.commitment;
-            if group_commitment.u.len() != lp.effective_commit_rows() {
+            if group_commitment.u.len() != lp.b_key.row_len() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
@@ -472,8 +471,7 @@ impl RingRelationProver {
             y_v_slice,
             &commitment_rows,
             n_d_active,
-            lp.effective_commit_rows(),
-            lp.b_inner_rows_per_group(),
+            lp.b_key.row_len(),
             lp.a_key.row_len(),
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();

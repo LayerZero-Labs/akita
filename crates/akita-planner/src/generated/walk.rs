@@ -84,7 +84,7 @@ pub(crate) fn walk_generated_schedule_entry(
                     current_w_len,
                     num_claims,
                 )?;
-                let (num_polynomials, num_public_rows) = if fold_level == 0 {
+                let (num_polynomials, num_z_segments) = if fold_level == 0 {
                     (key.num_polynomials, 1)
                 } else {
                     (1, 1)
@@ -94,7 +94,7 @@ pub(crate) fn walk_generated_schedule_entry(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        num_public_rows,
+                        num_z_segments,
                         MRowLayout::WithoutDBlock,
                     )?;
                     let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
@@ -105,7 +105,7 @@ pub(crate) fn walk_generated_schedule_entry(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        num_public_rows,
+                        num_z_segments,
                         MRowLayout::WithDBlock,
                     )?;
                     let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
@@ -686,16 +686,6 @@ fn validate_expanded_level_params(
     {
         return Err(AkitaError::InvalidSetup(
             "generated one-hot root has mismatched chunk size".to_string(),
-        ));
-    }
-    if step.tier_split.is_some() != step.n_f.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "generated tiered step must set both tier_split and n_f, or neither".to_string(),
-        ));
-    }
-    if !policy.tiered && (step.tier_split.is_some() || step.n_f.is_some()) {
-        return Err(AkitaError::InvalidSetup(
-            "generated tiered step is not allowed by the planner policy".to_string(),
         ));
     }
     lp.num_digits_fold(num_claims, policy.decomposition.field_bits())?;

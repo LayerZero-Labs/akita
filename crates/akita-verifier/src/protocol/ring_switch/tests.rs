@@ -10,7 +10,6 @@ fn reject_test_segment_layout() -> RingRelationSegmentLayout {
     RingRelationSegmentLayout {
         offset_e: 0,
         offset_t: 0,
-        offset_u: 0,
         offset_z: 0,
         offset_r: 0,
     }
