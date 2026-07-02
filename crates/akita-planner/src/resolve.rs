@@ -85,6 +85,7 @@ pub fn resolve_group_batch_schedule(
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
+    validate_policy_witness_chunk(policy)?;
     if key.precommitteds.is_empty() {
         return resolve_schedule(
             key.final_group,

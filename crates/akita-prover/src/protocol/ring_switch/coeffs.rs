@@ -1,5 +1,6 @@
 use super::*;
 use crate::compute::{OperationCtx, RingSwitchProveBackend};
+use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_serialization::AkitaSerialize;
 
@@ -245,9 +246,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     num_claims: usize,
 ) -> Result<RecursiveWitnessFlat, AkitaError> {
     let log_basis = lp.log_basis;
-    let num_digits_fold = lp
-        .num_digits_fold(num_claims, F::modulus_bits())
-        .expect("build_w_coeffs: degenerate fold bound in validated level params");
+    let num_digits_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
     let depth_open = lp.num_digits_open;
     let depth_commit = lp.num_digits_commit;
     let block_len = lp.block_len;
@@ -255,9 +254,9 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let levels = r_decomp_levels::<F>(log_basis);
 
     // Chunk geometry: `num_chunks = 1` is the single-chunk (historical) layout.
-    lp.witness_chunk.validate()?;
+    validate_chunked_witness_cfg(lp)?;
     let num_chunks = lp.witness_chunk.num_chunks;
-    let blocks_per_chunk = num_blocks.checked_div(num_chunks).unwrap_or(num_blocks);
+    let blocks_per_chunk = num_blocks / num_chunks;
 
     let e_hat_planes = e_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();

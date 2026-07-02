@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
@@ -142,7 +143,7 @@ where
     // Chunked layout replicates the `z` segment once per window; `e`/`t` are
     // partitioned (their totals are unchanged). `num_chunks = 1` is the
     // single-chunk case.
-    lp.witness_chunk.validate()?;
+    validate_chunked_witness_cfg(lp)?;
     let num_chunks = lp.witness_chunk.num_chunks;
     let z_cols_total = z_len
         .checked_mul(num_chunks)

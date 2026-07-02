@@ -321,7 +321,7 @@ where
 /// Validate the chunked-witness configuration at the prover boundary (no-panic
 /// contract), before any witness math. Mirrors the planner entry guard and the
 /// verifier layout resolution.
-fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
+pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
     lp.witness_chunk.validate()?;
     let w = lp.witness_chunk.num_chunks;
     if w > 1 {
