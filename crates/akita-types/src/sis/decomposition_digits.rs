@@ -33,10 +33,11 @@
 
 use akita_field::AkitaError;
 
-use super::fold_linf_cap::FoldWitnessLinfCapConfig;
-use super::norm_bound::{
-    fold_witness_honest_prover_linf_cap, FoldChallengeNorms, FoldWitnessNorms,
+use super::fold_linf_cap::{
+    FoldWitnessLinfCapConfig, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
 };
+use super::norm_bound::{fold_witness_linf_digit_plan, FoldChallengeNorms, FoldWitnessNorms};
 use crate::DecompositionParams;
 
 /// Maximum coefficient `L∞` envelope accepted for folded witness `z` when each
@@ -220,17 +221,23 @@ pub fn num_digits_fold(
     witness: FoldWitnessNorms,
     cap_config: FoldWitnessLinfCapConfig,
 ) -> Result<usize, AkitaError> {
-    let cap =
-        fold_witness_honest_prover_linf_cap(challenge, witness, r_vars, num_claims, &cap_config)?;
-    if cap == 0 {
+    let plan = fold_witness_linf_digit_plan(
+        r_vars,
+        num_claims,
+        field_bits,
+        log_basis,
+        challenge,
+        witness,
+        &cap_config,
+        u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM),
+        u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN),
+    )?;
+    if plan.grind_cap == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_digits_fold: fold witness L∞ cap is zero".to_string(),
         ));
     }
-    // `cap` bounds `|v|`, so `+cap` itself must be representable: add one bit
-    // so the signed range's positive end covers `+cap`.
-    let log_cap = (128 - cap.leading_zeros()).saturating_add(1);
-    Ok(num_digits_for_bound(log_cap, field_bits, log_basis))
+    Ok(plan.delta_fold)
 }
 
 /// A-matrix committed width (ring columns): `block_len · δ_commit`.

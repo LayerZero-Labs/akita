@@ -430,6 +430,8 @@ impl LevelParams {
             witness,
             self.r_vars,
             num_claims,
+            self.field_bits_for_cache(),
+            self.log_basis,
             &self.fold_linf_cap_config,
         )
     }
