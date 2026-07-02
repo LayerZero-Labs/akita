@@ -21,8 +21,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
-    OpeningBatchShape, Schedule, Step,
+    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, DecompositionParams, DirectStep, FoldStep,
+    LevelParams, MRowLayout, OpeningBatchShape, Schedule, Step,
 };
 
 use crate::{policy_of, CommitmentConfig};
@@ -53,8 +53,8 @@ pub fn akita_batched_root_layout<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_polynomials);
-    let schedule = Cfg::runtime_schedule(lookup_key)?;
+    let lookup_key = CommitmentGroupScheduleKey::new(num_vars, num_polynomials);
+    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(lookup_key))?;
     if let Some(root) = akita_types::schedule_root_fold_step(&schedule) {
         let layout = root.params.clone();
         tracing::info!(
@@ -93,7 +93,7 @@ struct MixedSuffixFoldPlan {
 }
 
 fn generated_fold_step<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     level: usize,
 ) -> Result<GeneratedFoldStep, AkitaError> {
     let catalog = Cfg::schedule_catalog().ok_or_else(|| {
@@ -142,6 +142,8 @@ fn expand_envelope_witness_at_ring_d(
     fold_shape: TensorChallengeShape,
     num_claims: usize,
     extra_block_vars: usize,
+    block_m_vars: Option<usize>,
+    block_r_vars: Option<usize>,
 ) -> Result<LevelParams, AkitaError> {
     if target_ring_d == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -151,12 +153,11 @@ fn expand_envelope_witness_at_ring_d(
     let is_root = fold_level == 0;
     let log_basis = step.log_basis;
     let sis_family = policy.sis_family;
-    let m_vars = step.m_vars as usize;
-    let r_vars = step
-        .r_vars
-        .checked_add(extra_block_vars as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("mixed-D block variable count overflow".into()))?
-        as usize;
+    let m_vars = block_m_vars.unwrap_or(step.m_vars as usize);
+    let r_vars = block_r_vars
+        .unwrap_or(step.r_vars as usize)
+        .checked_add(extra_block_vars)
+        .ok_or_else(|| AkitaError::InvalidSetup("mixed-D block variable count overflow".into()))?;
     let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
         AkitaError::InvalidSetup("generated schedule 2^r_vars overflows usize".to_string())
     })?;
@@ -255,37 +256,42 @@ fn expand_envelope_witness_at_ring_d(
     params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
 }
 
-fn suffix_level_params<SuffixCfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
+fn mixed_continue_suffix_level<EnvelopeCfg, SuffixCfg>(
+    key: CommitmentGroupScheduleKey,
     level: usize,
     current_w_len: usize,
-) -> Result<LevelParams, AkitaError> {
-    let suffix_gen = generated_fold_step::<SuffixCfg>(key, level)?;
-    let policy = policy_of::<SuffixCfg>();
+    suffix_ring_d: usize,
+    block_m_vars: usize,
+    block_r_vars: usize,
+) -> Result<LevelParams, AkitaError>
+where
+    EnvelopeCfg: CommitmentConfig,
+    SuffixCfg: CommitmentConfig,
+{
+    let envelope_gen = generated_fold_step::<EnvelopeCfg>(key, level)?;
+    let suffix_policy = policy_of::<SuffixCfg>();
     let fold_shape = SuffixCfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.num_vars,
         level,
         current_w_len,
     });
-    // Ranks are recomputed for the mixed witness chain instead of replaying
-    // the suffix table's stored tuple: the mixed `current_w_len` at this level
-    // differs from the suffix preset's own chain, so the stored-rank audit in
-    // `expand_to_level_params` would reject a perfectly valid layout.
     expand_envelope_witness_at_ring_d(
-        &suffix_gen,
-        &policy,
+        &envelope_gen,
+        &suffix_policy,
         SuffixCfg::ring_challenge_config,
         level,
         current_w_len,
-        suffix_gen.ring_d as usize,
+        suffix_ring_d,
         fold_shape,
         1,
         0,
+        Some(block_m_vars),
+        Some(block_r_vars),
     )
 }
 
 fn mixed_level_params<EnvelopeCfg, SuffixCfg>(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     level: usize,
     envelope_current_w_len: usize,
     envelope_params: &LevelParams,
@@ -318,6 +324,8 @@ where
         fold_shape,
         num_claims,
         extra_block_vars,
+        None,
+        None,
     )
 }
 
@@ -364,9 +372,10 @@ where
             "mixed-D fixture supports singleton batches only (got {num_polynomials})"
         )));
     }
-    let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_polynomials);
-    let envelope = EnvelopeCfg::runtime_schedule(lookup_key)?;
-    let suffix = SuffixCfg::runtime_schedule(lookup_key)?;
+    let lookup_key =
+        AkitaScheduleLookupKey::single(CommitmentGroupScheduleKey::new(num_vars, num_polynomials));
+    let envelope = EnvelopeCfg::runtime_schedule(lookup_key.clone())?;
+    let suffix = SuffixCfg::runtime_schedule(lookup_key.clone())?;
 
     let envelope_folds: Vec<FoldStep> = envelope.fold_steps().cloned().collect();
     let suffix_folds: Vec<FoldStep> = suffix.fold_steps().cloned().collect();
@@ -413,7 +422,7 @@ where
         for (level, envelope_step) in envelope_folds.iter().enumerate().skip(switch_at_fold) {
             let params = if level == switch_at_fold {
                 mixed_level_params::<EnvelopeCfg, SuffixCfg>(
-                    lookup_key,
+                    lookup_key.final_group,
                     level,
                     w_len,
                     &envelope_step.params,
@@ -421,7 +430,17 @@ where
                     prev_ring_d,
                 )?
             } else {
-                suffix_level_params::<SuffixCfg>(lookup_key, level, w_len)?
+                let prev = mixed_folds
+                    .last()
+                    .expect("mixed suffix fold chain must be nonempty");
+                mixed_continue_suffix_level::<EnvelopeCfg, SuffixCfg>(
+                    lookup_key.final_group,
+                    level,
+                    w_len,
+                    suffix_ring_d,
+                    prev.params.m_vars,
+                    prev.params.r_vars,
+                )?
             };
             let is_terminal_fold = level + 1 == num_fold_levels;
             let layout = if is_terminal_fold {
@@ -502,7 +521,7 @@ where
         let terminal_fold_level = mixed_folds.len() - 1;
         let field_bits = SuffixCfg::decomposition().field_bits();
         let terminal_num_polynomials = if terminal_fold_level == 0 {
-            lookup_key.num_polynomials
+            lookup_key.final_group.num_polynomials
         } else {
             1
         };

@@ -8,7 +8,9 @@ use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatchShape;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, Schedule, SetupMatrixEnvelope,
+};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -154,7 +156,15 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         )));
     }
 
-    Ok(SetupMatrixEnvelope { max_setup_len })
+    let mut envelope = SetupMatrixEnvelope { max_setup_len };
+    if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+        crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            &mut envelope,
+        )?;
+    }
+    Ok(envelope)
 }
 
 /// Batched polynomial counts scanned by [`proof_optimized_max_setup_matrix_size`].
@@ -184,7 +194,7 @@ pub fn worst_case_grouped_opening_batch_for_shape(
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     opening_batch: &OpeningBatchShape,
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
-    let cached_key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
+    let cached_key = CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
 
     // Setup-matrix sizing scans many candidate sub-shapes. `runtime_schedule`
     // serves the shipped table on a hit and regenerates via the planner DP on
@@ -194,26 +204,14 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     // caller's `saw_supported_shape` guard error only if *no* shape is
     // feasible. Genuine bugs in opening_batch-key or envelope construction still
     // propagate via `?`.
-    let Ok(schedule) = Cfg::runtime_schedule(cached_key) else {
+    let Ok(schedule) = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(cached_key)) else {
         return Ok(None);
     };
 
-    let mut envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, opening_batch)?;
-    if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
-        // Standalone conservative `commit_group` layouts are included here.
-        // Final grouped-root schedules from `get_group_batch_schedule` are not
-        // scanned yet; Phase 2 must extend this envelope before grouped opening
-        // prove paths rely on setup capacity.
-        let group_key =
-            AkitaScheduleLookupKey::new(opening_batch.num_vars(), opening_batch.num_polynomials());
-        if let Ok(group_params) = Cfg::get_params_for_group_commit(&group_key) {
-            accumulate_matrix_envelope_for_level::<Cfg>(
-                &group_params,
-                &mut envelope.max_setup_len,
-            )?;
-        }
-    }
-    Ok(Some(envelope))
+    Ok(Some(matrix_envelope_for_schedule::<Cfg>(
+        &schedule,
+        opening_batch,
+    )?))
 }
 
 /// Extract setup-level params from a runtime `Schedule`.

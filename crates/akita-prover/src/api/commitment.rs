@@ -14,8 +14,8 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     dispatch_ring_dim_result, root_tensor_projection_enabled, schedule_root_fold_step,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment,
-    CommitmentGroupLayout, CommitmentRingDims, DigitBlocks, FpExtEncoding, LevelParams,
+    AkitaCommitmentHint, AkitaExpandedSetup, Commitment, CommitmentGroupLayout,
+    CommitmentGroupScheduleKey, CommitmentRingDims, DigitBlocks, FpExtEncoding, LevelParams,
     OpeningBatchShape, GROUPED_ROOT_DENSE_UNSUPPORTED,
 };
 
@@ -582,7 +582,7 @@ where
 
 /// `ring_d` is the group-commit layout's schedule-derived ring dimension.
 fn should_transform_group_commitment<Cfg>(
-    key: &AkitaScheduleLookupKey,
+    key: &CommitmentGroupScheduleKey,
     ring_d: usize,
 ) -> Result<bool, AkitaError>
 where
@@ -700,7 +700,7 @@ where
 fn validate_group_commit_inputs<F, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<F>,
-) -> Result<AkitaScheduleLookupKey, AkitaError>
+) -> Result<CommitmentGroupScheduleKey, AkitaError>
 where
     F: FieldCore,
     P: RootPolyMeta<F>,
@@ -711,7 +711,7 @@ where
             GROUPED_ROOT_DENSE_UNSUPPORTED.to_string(),
         ));
     }
-    Ok(AkitaScheduleLookupKey::new(
+    Ok(CommitmentGroupScheduleKey::new(
         opening_batch.num_vars(),
         opening_batch.num_polynomials(),
     ))

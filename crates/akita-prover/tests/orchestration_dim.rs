@@ -11,8 +11,10 @@ use akita_types::{
 };
 
 fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
-    Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars))
-        .expect("valid schedule for num_vars")
+    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        akita_types::CommitmentGroupScheduleKey::singleton(num_vars),
+    ))
+    .expect("valid schedule for num_vars")
 }
 
 fn make_fold_step(ring_dimension: usize) -> FoldStep {

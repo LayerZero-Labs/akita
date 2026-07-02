@@ -85,7 +85,7 @@ impl akita_config::CommitmentConfig for MixedD128To64 {
     }
 
     fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = akita_types::AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
+        let key = akita_types::CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
         mixed_d_per_level_schedule::<Envelope, Suffix>(
             key.num_vars,
             key.num_polynomials,
@@ -132,7 +132,7 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
     }
 
     fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = akita_types::AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
+        let key = akita_types::CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
         let mut schedule = mixed_d_per_level_schedule::<Envelope, Suffix>(
             key.num_vars,
             key.num_polynomials,

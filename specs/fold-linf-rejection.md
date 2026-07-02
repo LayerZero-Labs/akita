@@ -155,7 +155,8 @@ The feature introduces or modifies:
   table test; tensor and `BoundedL1Norm` cases are pinned to `K_worstcase`.
 - [x] Shipped schedule tables regenerated; `generated_schedule_tables_match_find_schedule`
   passes (plain + zk), and `generated_families_stay_within_audited_sis_widths`
-  still passes (the A-role rank is unaffected).
+  still passes. Tail-bound-with-grind can shrink `δ_fold`, so A-role rank is
+  indirectly affected via the verifier digit envelope (not raw `β_inf`).
 - [x] Prover reroll loop terminates with mean probe count `<= 8` over production
   tail-bound-with-grind modes; `FoldGrindObserver` records true probe counts in
   the profile harness (not inferred from nonce + 1).

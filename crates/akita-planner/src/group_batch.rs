@@ -3,21 +3,24 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, min_secure_rank, num_digits_fold, num_digits_open,
-    num_digits_s_commit, rounded_up_collision_norm_t, rounded_up_collision_norm_w, AjtaiKeyParams,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    committed_fold_a_role_rank, compute_num_digits_full_field, decomposed_s_block_ring_count,
+    decomposed_t_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_fold,
+    num_digits_open, num_digits_s_commit, rounded_up_collision_norm_t, rounded_up_collision_norm_w,
+    AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
-    direct_witness_bytes, AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupLayout,
-    DecompositionParams, DirectStep, GroupBatchAkitaScheduleLookupKey, GroupRootParams,
-    LevelParams, Schedule, Step,
+    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentGroupLayout,
+    CommitmentGroupScheduleKey, DecompositionParams, DirectStep, FoldStep, GroupRootParams,
+    LevelParams, MRowLayout, Schedule, Step,
 };
 
-use crate::schedule_params::RingChallengeConfigFn;
+use crate::schedule_params::{
+    derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
+};
 use crate::PlannerPolicy;
 
-fn group_root_params_from_layout(
+pub(crate) fn group_root_params_from_layout(
     layout: &CommitmentGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
@@ -151,7 +154,7 @@ fn group_root_params_from_layout(
     })
 }
 
-struct GroupedRootDirectCandidateCtx<'a> {
+struct GroupedRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
@@ -223,8 +226,8 @@ fn grouped_root_direct_cost_score(
     Ok(total)
 }
 
-fn grouped_root_direct_witness_len(
-    key: &GroupBatchAkitaScheduleLookupKey,
+pub(crate) fn grouped_root_direct_witness_len(
+    key: &AkitaScheduleLookupKey,
 ) -> Result<usize, AkitaError> {
     let group_len = |num_polys: usize, num_vars: usize| -> Result<usize, AkitaError> {
         let per_poly_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
@@ -235,7 +238,7 @@ fn grouped_root_direct_witness_len(
         })
     };
 
-    let mut total = group_len(key.main.num_polynomials, key.main.num_vars)?;
+    let mut total = group_len(key.final_group.num_polynomials, key.final_group.num_vars)?;
     for layout in &key.precommitteds {
         let precommitted_len = group_len(layout.key.num_polynomials, layout.key.num_vars)?;
         total = total.checked_add(precommitted_len).ok_or_else(|| {
@@ -245,8 +248,151 @@ fn grouped_root_direct_witness_len(
     Ok(total)
 }
 
-fn grouped_root_direct_main_candidate(
-    ctx: &GroupedRootDirectCandidateCtx<'_>,
+pub(crate) fn grouped_root_precommitted_groups(
+    key: &AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
+    fold_challenge_shape: TensorChallengeShape,
+) -> Result<(Vec<GroupRootParams>, usize), AkitaError> {
+    if key.precommitteds.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "grouped root params require at least one precommitted group".to_string(),
+        ));
+    }
+
+    let precommitted_groups = key
+        .precommitteds
+        .iter()
+        .map(|layout| {
+            group_root_params_from_layout(
+                layout,
+                policy,
+                ring_challenge_config,
+                fold_challenge_shape,
+                true,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut precommitted_d_width = 0usize;
+    for group in &precommitted_groups {
+        precommitted_d_width = precommitted_d_width
+            .checked_add(group.d_segment_width()?)
+            .ok_or_else(|| AkitaError::InvalidSetup("grouped D width overflow".to_string()))?;
+    }
+
+    Ok((precommitted_groups, precommitted_d_width))
+}
+
+fn grouped_root_segment_rings(
+    num_polys: usize,
+    num_blocks: usize,
+    block_len: usize,
+    n_a: usize,
+    num_digits_commit: usize,
+    num_digits_open: usize,
+    num_digits_fold: usize,
+) -> Result<usize, AkitaError> {
+    let e_hat = num_blocks.checked_mul(num_digits_open).ok_or_else(|| {
+        AkitaError::InvalidSetup("grouped root e-hat witness overflow".to_string())
+    })?;
+    let t_hat = num_polys
+        .checked_mul(num_blocks)
+        .and_then(|n| n.checked_mul(n_a))
+        .and_then(|n| n.checked_mul(num_digits_open))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("grouped root t-hat witness overflow".to_string())
+        })?;
+    let z_hat = block_len
+        .checked_mul(num_digits_commit)
+        .and_then(|n| n.checked_mul(num_digits_fold))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("grouped root z-hat witness overflow".to_string())
+        })?;
+
+    e_hat
+        .checked_add(t_hat)
+        .and_then(|n| n.checked_add(z_hat))
+        .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness overflow".to_string()))
+}
+
+fn grouped_root_m_row_count(params: &LevelParams, layout: MRowLayout) -> Result<usize, AkitaError> {
+    let mut rows = 1usize;
+    if matches!(layout, MRowLayout::WithDBlock) {
+        rows = rows
+            .checked_add(params.d_key.row_len())
+            .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
+    }
+
+    // The grouped root has one public output row and one commitment/A block per group.
+    rows = rows
+        .checked_add(params.precommitted_groups.len() + 1)
+        .and_then(|n| n.checked_add(params.effective_commit_rows()))
+        .and_then(|n| n.checked_add(params.a_key.row_len()))
+        .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
+    for group in &params.precommitted_groups {
+        rows = rows
+            .checked_add(group.b_key.row_len())
+            .and_then(|n| n.checked_add(group.a_key.row_len()))
+            .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
+    }
+
+    Ok(rows)
+}
+
+pub(crate) fn grouped_root_next_w_len(
+    field_bits: u32,
+    params: &LevelParams,
+    main_num_polys: usize,
+    layout: MRowLayout,
+) -> Result<usize, AkitaError> {
+    if params.precommitted_groups.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "grouped root witness sizing requires precommitted groups".to_string(),
+        ));
+    }
+
+    let mut total = grouped_root_segment_rings(
+        main_num_polys,
+        params.num_blocks,
+        params.block_len,
+        params.a_key.row_len(),
+        params.num_digits_commit,
+        params.num_digits_open,
+        params.num_digits_fold(main_num_polys, field_bits)?,
+    )?;
+    for group in &params.precommitted_groups {
+        let group_rings = grouped_root_segment_rings(
+            group.layout.key.num_polynomials,
+            group.num_blocks,
+            group.block_len,
+            group.a_key.row_len(),
+            group.num_digits_commit,
+            group.num_digits_open,
+            group.num_digits_fold_one,
+        )?;
+        total = total
+            .checked_add(group_rings)
+            .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness overflow".to_string()))?;
+    }
+
+    let r_rows = grouped_root_m_row_count(params, layout)?;
+    let r_count = r_rows
+        .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("grouped root r-tail witness overflow".to_string())
+        })?;
+
+    let rings = total
+        .checked_add(r_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness overflow".to_string()))?;
+
+    rings.checked_mul(params.ring_dimension).ok_or_else(|| {
+        AkitaError::InvalidSetup("grouped root next witness length overflow".to_string())
+    })
+}
+
+fn grouped_root_main_level_params_candidate(
+    ctx: &GroupedRootCandidateCtx<'_>,
     main_num_polys: usize,
     log_basis: u32,
     m_vars: usize,
@@ -351,42 +497,19 @@ fn grouped_root_direct_main_candidate(
 }
 
 fn compute_grouped_root_direct_level_params(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
-) -> Result<LevelParams, AkitaError> {
+) -> Result<Option<LevelParams>, AkitaError> {
     key.validate()?;
-    if key.precommitteds.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "grouped root params require at least one precommitted group".to_string(),
-        ));
-    }
-
-    let precommitted_groups = key
-        .precommitteds
-        .iter()
-        .map(|layout| {
-            group_root_params_from_layout(
-                layout,
-                policy,
-                ring_challenge_config,
-                fold_challenge_shape,
-                true,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut precommitted_d_width = 0usize;
-    for group in &precommitted_groups {
-        precommitted_d_width = precommitted_d_width
-            .checked_add(group.d_segment_width()?)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped D width overflow".to_string()))?;
-    }
+    let (precommitted_groups, precommitted_d_width) =
+        grouped_root_precommitted_groups(key, policy, ring_challenge_config, fold_challenge_shape)?;
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let main_num_polys = key.main.num_polynomials;
-    let main_num_vars = key.main.num_vars;
-    let candidate_ctx = GroupedRootDirectCandidateCtx {
+    let main_num_polys = key.final_group.num_polynomials;
+    let main_num_vars = key.final_group.num_vars;
+    let candidate_ctx = GroupedRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
         fold_challenge_shape,
@@ -413,7 +536,7 @@ fn compute_grouped_root_direct_level_params(
     let (min_log_basis, max_log_basis) = policy.basis_range;
     for candidate_log_basis in min_log_basis..=max_log_basis {
         for &(m_vars, r_vars) in &candidates {
-            let Some(candidate) = grouped_root_direct_main_candidate(
+            let Some(candidate) = grouped_root_main_level_params_candidate(
                 &candidate_ctx,
                 main_num_polys,
                 candidate_log_basis,
@@ -437,26 +560,24 @@ fn compute_grouped_root_direct_level_params(
         }
     }
 
-    best.map(|(_, params)| params)
-        .ok_or_else(|| AkitaError::InvalidSetup("main grouped root is not committable".to_string()))
+    Ok(best.map(|(_, params)| params))
 }
 
 /// Build the phase-1 grouped-root schedule from the full grouped key.
-///
-/// This intentionally emits only a root-direct schedule for `G > 1`: the params
-/// carry true per-precommitted-group metadata and a shared D key, while folded
-/// grouped proving remains guarded in scalar-only consumers.
 pub fn find_group_batch_schedule(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
-    if key.num_commitment_groups() == 1 {
-        return Err(AkitaError::InvalidSetup(
-            "single-group grouped root schedules are not supported yet".to_string(),
-        ));
+    if key.precommitteds.is_empty() {
+        return find_schedule(
+            key.final_group,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
     }
     if policy.tiered {
         return Err(AkitaError::InvalidSetup(
@@ -470,31 +591,196 @@ pub fn find_group_batch_schedule(
                 .to_string(),
         ));
     }
-    let current_w_len = grouped_root_direct_witness_len(key)?;
-    let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.main.num_vars,
+
+    let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
+    let field_bits = policy.decomposition.field_bits();
+    let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
+    let direct_current_w_len = grouped_root_direct_witness_len(key)?;
+    let direct_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.final_group.num_vars,
         level: 0,
-        current_w_len,
+        current_w_len: direct_current_w_len,
     });
-    let params =
-        compute_grouped_root_direct_level_params(key, policy, &ring_challenge_config, fold_shape)?;
-    let witness_shape = CleartextWitnessShape::FieldElements(current_w_len);
-    let direct_bytes = direct_witness_bytes(policy.decomposition.field_bits(), &witness_shape);
-    Ok(Schedule {
-        steps: vec![Step::Direct(DirectStep {
-            current_w_len,
-            witness_shape,
+    let mut best: Option<(usize, Vec<Step>)> = if let Some(params) =
+        compute_grouped_root_direct_level_params(
+            key,
+            policy,
+            ring_challenge_config,
+            direct_fold_shape,
+        )? {
+        let witness_shape = CleartextWitnessShape::FieldElements(direct_current_w_len);
+        let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+        Some((
             direct_bytes,
-            params: Some(params),
-        })],
-        total_bytes: direct_bytes,
-    })
+            vec![Step::Direct(DirectStep {
+                current_w_len: direct_current_w_len,
+                witness_shape,
+                direct_bytes,
+                params: Some(params),
+            })],
+        ))
+    } else {
+        None
+    };
+
+    let root_current_w_len = 1usize
+        .checked_shl(key.final_group.num_vars as u32)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("grouped root-fold witness length overflow".to_string())
+        })?;
+    let fold_challenge_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.final_group.num_vars,
+        level: 0,
+        current_w_len: root_current_w_len,
+    });
+    let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
+    let reduced_vars = key.final_group.num_vars.saturating_sub(alpha);
+    if reduced_vars == 0 {
+        let Some((total_bytes, steps)) = best else {
+            return Err(AkitaError::InvalidSetup(
+                "main grouped root is not committable".to_string(),
+            ));
+        };
+        return Ok(Schedule { steps, total_bytes });
+    }
+
+    let (precommitted_groups, precommitted_d_width) =
+        grouped_root_precommitted_groups(key, policy, ring_challenge_config, fold_challenge_shape)?;
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let candidate_ctx = GroupedRootCandidateCtx {
+        policy,
+        ring_challenge_cfg: &ring_challenge_cfg,
+        fold_challenge_shape,
+        precommitted_d_width,
+        precommitted_groups: &precommitted_groups,
+    };
+    let suffix_ctx = SuffixCtx {
+        policy,
+        ring_challenge_config,
+        num_vars: key.final_group.num_vars,
+        key: CommitmentGroupScheduleKey::singleton(key.final_group.num_vars),
+    };
+    let mut memo = ScheduleMemo::new();
+    let total_polys = key.num_polynomials()?;
+    let root_eor_key = CommitmentGroupScheduleKey::new(key.final_group.num_vars, total_polys);
+    let initial_witness_len_bits = root_current_w_len
+        .checked_mul(field_bits as usize)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("grouped root witness bit length overflow".into())
+        })?;
+    let min_r_vars: usize = if reduced_vars >= 3 { 1 } else { 0 };
+    let max_r_vars: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
+    let (min_log_basis, max_log_basis) = policy.basis_range;
+
+    for candidate_log_basis in min_log_basis..=max_log_basis {
+        for r_vars in (min_r_vars..=max_r_vars).rev() {
+            let m_vars = reduced_vars - r_vars;
+            let Some(candidate_params) = grouped_root_main_level_params_candidate(
+                &candidate_ctx,
+                key.final_group.num_polynomials,
+                candidate_log_basis,
+                m_vars,
+                r_vars,
+            )?
+            else {
+                continue;
+            };
+            let next_w_len = grouped_root_next_w_len(
+                field_bits,
+                &candidate_params,
+                key.final_group.num_polynomials,
+                MRowLayout::WithDBlock,
+            )?;
+            let next_w_len_terminal = grouped_root_next_w_len(
+                field_bits,
+                &candidate_params,
+                key.final_group.num_polynomials,
+                MRowLayout::WithoutDBlock,
+            )?;
+            if next_w_len
+                .checked_mul(candidate_log_basis as usize)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("grouped root next witness bit length overflow".into())
+                })?
+                >= initial_witness_len_bits
+            {
+                continue;
+            }
+
+            let suffix = derive_optimal_suffix_schedule(
+                &suffix_ctx,
+                &mut memo,
+                1,
+                next_w_len,
+                next_w_len_terminal,
+                candidate_log_basis,
+                0,
+            )?;
+            if suffix.is_empty() {
+                continue;
+            }
+            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
+                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                policy.claim_ext_degree,
+                0,
+                root_eor_key,
+                root_current_w_len,
+            ) else {
+                continue;
+            };
+
+            // A grouped root that is immediately terminal needs a grouped
+            // segment-typed witness layout; keep phase-1 schedules on the
+            // singleton recursive suffix path.
+            if suffix.best_direct.is_some() && suffix.best_fold_per_lb.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "grouped terminal root folds are not supported yet; grouped folded schedules require a singleton recursive suffix".to_string(),
+                ));
+            }
+            for suffix_fold in suffix.best_fold_per_lb.values() {
+                let root_proof_size = level_proof_bytes(
+                    field_bits,
+                    challenge_field_bits,
+                    &candidate_params,
+                    Some(&suffix_fold.first_fold_params),
+                    next_w_len,
+                    1,
+                    MRowLayout::WithDBlock,
+                ) + eor_bytes;
+                let total = root_proof_size + suffix_fold.total_bytes;
+                if best
+                    .as_ref()
+                    .is_none_or(|(best_total, _)| total < *best_total)
+                {
+                    let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
+                    steps.push(Step::Fold(FoldStep {
+                        params: candidate_params.clone(),
+                        current_w_len: root_current_w_len,
+                        next_w_len,
+                        level_bytes: root_proof_size,
+                    }));
+                    steps.extend(suffix_fold.steps.iter().cloned());
+                    best = Some((total, steps));
+                }
+            }
+        }
+    }
+
+    let Some((total_bytes, steps)) = best else {
+        return Err(AkitaError::InvalidSetup(
+            "main grouped root is not committable".to_string(),
+        ));
+    };
+    Ok(Schedule { steps, total_bytes })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{AkitaScheduleLookupKey, DecompositionParams, SisModulusFamily};
+    use crate::find_schedule;
+    use akita_types::{
+        AkitaScheduleLookupKey, CommitmentGroupScheduleKey, DecompositionParams, SisModulusFamily,
+    };
 
     fn flat_policy() -> PlannerPolicy {
         PlannerPolicy {
@@ -531,7 +817,7 @@ mod tests {
         let r_vars = outer / 2;
         let m_vars = outer - r_vars;
         CommitmentGroupLayout {
-            key: AkitaScheduleLookupKey::new(num_vars, num_polys),
+            key: CommitmentGroupScheduleKey::new(num_vars, num_polys),
             m_vars,
             r_vars,
             log_basis: 3,
@@ -541,7 +827,7 @@ mod tests {
     }
 
     fn precommitted_from_policy(
-        key: AkitaScheduleLookupKey,
+        key: CommitmentGroupScheduleKey,
         policy: &PlannerPolicy,
     ) -> CommitmentGroupLayout {
         let schedule =
@@ -555,8 +841,8 @@ mod tests {
 
     #[test]
     fn grouped_root_direct_witness_len_sums_mixed_polynomial_counts() {
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 3),
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 3),
             precommitteds: vec![precommitted(1, 20), precommitted(2, 20)],
         };
 
@@ -580,26 +866,29 @@ mod tests {
     }
 
     #[test]
-    fn find_group_batch_schedule_rejects_single_group() {
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(12, 1),
-            precommitteds: Vec::new(),
-        };
+    fn find_group_batch_schedule_delegates_single_group_to_scalar() {
+        let final_group = CommitmentGroupScheduleKey::new(12, 1);
+        let key = AkitaScheduleLookupKey::single(final_group);
+        let policy = flat_policy();
 
-        let err =
-            find_group_batch_schedule(&key, &flat_policy(), ring_challenge_config, fold_shape)
-                .expect_err("single-group grouped schedule is disabled");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        let via_grouped =
+            find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+                .expect("single-group grouped key should delegate to scalar DP");
+        let via_scalar =
+            find_schedule(final_group, &policy, ring_challenge_config, fold_shape).expect("scalar");
+
+        assert_eq!(via_grouped.total_bytes, via_scalar.total_bytes);
+        assert_eq!(via_grouped.steps.len(), via_scalar.steps.len());
     }
 
     #[test]
-    fn grouped_root_direct_searches_policy_basis_range() {
+    fn grouped_root_schedule_searches_policy_basis_range() {
         let mut policy = flat_policy();
         policy.decomposition.log_basis = 3;
         policy.basis_range = (4, 4);
-        let pre_key = AkitaScheduleLookupKey::new(20, 1);
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 2),
+        let pre_key = CommitmentGroupScheduleKey::new(20, 1);
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 2),
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
@@ -607,18 +896,42 @@ mod tests {
             .expect("grouped schedule");
         let params = match schedule.steps.first().expect("grouped step") {
             Step::Direct(direct) => direct.params.as_ref().expect("grouped root params"),
-            Step::Fold(_) => panic!("phase-1 grouped schedule should be root-direct"),
+            Step::Fold(fold) => &fold.params,
         };
 
         assert_eq!(params.log_basis, 4);
     }
 
     #[test]
+    fn grouped_schedule_can_start_with_fold() {
+        let mut policy = flat_policy();
+        policy.basis_range = (4, 4);
+        let pre_key = CommitmentGroupScheduleKey::new(20, 1);
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 2),
+            precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
+        };
+
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("grouped schedule");
+        let Step::Fold(root) = schedule.steps.first().expect("grouped root step") else {
+            panic!("expected grouped root fold");
+        };
+
+        assert_eq!(root.current_w_len, 1usize << key.final_group.num_vars);
+        assert_eq!(
+            root.params.precommitted_groups.len(),
+            key.precommitteds.len()
+        );
+        assert!(root.next_w_len > 0);
+    }
+
+    #[test]
     fn find_group_batch_schedule_rejects_dense_policy() {
         let mut policy = flat_policy();
         policy.decomposition.log_commit_bound = 8;
-        let key = GroupBatchAkitaScheduleLookupKey {
-            main: AkitaScheduleLookupKey::new(20, 2),
+        let key = AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 2),
             precommitteds: vec![precommitted(1, 20)],
         };
 
