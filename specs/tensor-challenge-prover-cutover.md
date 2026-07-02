@@ -101,7 +101,7 @@ The affected surfaces are:
       one logical challenge per `(claim, block)`.
 - [x] The one-hot tensor folded-witness path does not recompute the same rotated
       tensor product for every worker chunk.
-- [ ] The relation quotient tensor path avoids allocating the full logical
+- [x] The relation quotient tensor path avoids allocating the full logical
       challenge vector and has a reference test against the current expanded
       product path.
 - [ ] Previewed tensor challenges and live sampled tensor challenges match for
