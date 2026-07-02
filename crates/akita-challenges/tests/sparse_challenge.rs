@@ -556,7 +556,7 @@ fn tensor_lazy_evals_match_expanded_products() {
     .unwrap();
 
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
-    let lazy = challenges.evals_at_pows::<F, F, TD>(&alpha_pows).unwrap();
+    let lazy = challenges.evals_at_pows::<F, F>(&alpha_pows).unwrap();
     let Challenges::Tensor { factored } = &challenges else {
         panic!("expected tensor challenges");
     };
@@ -564,7 +564,7 @@ fn tensor_lazy_evals_match_expanded_products() {
         .expand_integer::<TD>()
         .unwrap()
         .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows))
+        .map(|challenge| challenge.eval_at_pows::<F, F>(&alpha_pows))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
@@ -647,7 +647,7 @@ fn tensor_factored_aggregate_matches_expanded_products() {
     for (p, &u) in u_weights.iter().enumerate() {
         for (q, &v) in v_weights.iter().enumerate() {
             let idx = start + p * tensor.right_len + q;
-            expected += u * v * expanded[idx].eval_at_pows::<F, F, TD>(&alpha_pows).unwrap();
+            expected += u * v * expanded[idx].eval_at_pows::<F, F>(&alpha_pows).unwrap();
         }
     }
 
@@ -684,12 +684,12 @@ fn tensor_evals_at_pows_match_expanded_integer_reference() {
     };
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(13));
 
-    let got = tensor.evals_at_pows::<F, F, TD>(&alpha_pows).unwrap();
+    let got = tensor.evals_at_pows::<F, F>(&alpha_pows).unwrap();
     let expected = tensor
         .expand_integer::<TD>()
         .unwrap()
         .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows).unwrap())
+        .map(|challenge| challenge.eval_at_pows::<F, F>(&alpha_pows).unwrap())
         .collect::<Vec<_>>();
 
     assert_eq!(got, expected);
@@ -721,12 +721,8 @@ fn tensor_product_only_formula_is_not_exact_for_generic_alpha() {
     let exact = tensor
         .eval_factored_aggregate_at_pows::<F, F, TD>(0, &weights, &weights, &alpha_pows)
         .unwrap();
-    let product_only = tensor.left[0]
-        .eval_at_pows::<F, F, TD>(&alpha_pows)
-        .unwrap()
-        * tensor.right[0]
-            .eval_at_pows::<F, F, TD>(&alpha_pows)
-            .unwrap();
+    let product_only = tensor.left[0].eval_at_pows::<F, F>(&alpha_pows).unwrap()
+        * tensor.right[0].eval_at_pows::<F, F>(&alpha_pows).unwrap();
 
     assert_eq!(exact, -F::one());
     assert_ne!(exact, product_only);
@@ -759,12 +755,8 @@ fn tensor_exact_aggregate_collapses_to_product_at_negacyclic_root() {
     let exact = tensor
         .eval_factored_aggregate_at_pows::<F, F, TD>(0, &weights, &weights, &alpha_pows)
         .unwrap();
-    let product_only = tensor.left[0]
-        .eval_at_pows::<F, F, TD>(&alpha_pows)
-        .unwrap()
-        * tensor.right[0]
-            .eval_at_pows::<F, F, TD>(&alpha_pows)
-            .unwrap();
+    let product_only = tensor.left[0].eval_at_pows::<F, F>(&alpha_pows).unwrap()
+        * tensor.right[0].eval_at_pows::<F, F>(&alpha_pows).unwrap();
 
     assert_eq!(exact, product_only);
 }

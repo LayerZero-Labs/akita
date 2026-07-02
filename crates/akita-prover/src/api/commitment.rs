@@ -356,7 +356,7 @@ impl TieredCommitShape {
     /// # Errors
     ///
     /// Returns an error when the level has no second-tier `F` key.
-    pub fn from_level(params: &LevelParams) -> Result<Self, AkitaError> {
+    pub(crate) fn from_level(params: &LevelParams) -> Result<Self, AkitaError> {
         let f_key = params.f_key.as_ref().ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "tiered_commit_u_final requires a second-tier F key".to_string(),

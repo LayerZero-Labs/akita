@@ -424,7 +424,7 @@ where
         } => PreparedChallengeEvals::Flat(
             sparse
                 .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
+                .map(|challenge| challenge.eval_at_pows::<F, E>(&alpha_pows))
                 .collect::<Result<_, _>>()?,
         ),
         Challenges::Tensor { factored } => {

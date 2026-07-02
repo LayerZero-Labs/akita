@@ -40,7 +40,27 @@ where
     E: FieldCore + MulBase<F>,
 {
     debug_assert_eq!(alpha_pows.len(), D);
-    r.coefficients()
+    eval_flat_ring_at_pows(r.coefficients(), alpha_pows)
+}
+
+/// Evaluate a flat ring element (raw coefficients at a runtime ring
+/// dimension) against precomputed powers of `alpha`.
+///
+/// This is the runtime-dimension form of [`eval_ring_at_pows`]: the ring
+/// dimension is `alpha_pows.len()` and `coeffs` must hold exactly one ring
+/// element of that dimension.
+///
+/// # Panics
+///
+/// Panics in debug builds if `coeffs.len() != alpha_pows.len()`.
+#[inline]
+pub fn eval_flat_ring_at_pows<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
+where
+    F: FieldCore,
+    E: FieldCore + MulBase<F>,
+{
+    debug_assert_eq!(alpha_pows.len(), coeffs.len());
+    coeffs
         .iter()
         .zip(alpha_pows.iter())
         .fold(E::zero(), |acc, (coeff, alpha_pow)| {

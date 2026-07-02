@@ -41,9 +41,9 @@ pub use extension_opening_reduction::{
 };
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
-    embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
-    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role, FpExtEncoding,
-    SubfieldParams,
+    embed_ring_subfield_scalar_flat, embed_ring_subfield_vector, embed_subfield,
+    pack_tensor_base_lift_i8_digits, psi_embed, recover_ring_subfield_inner_product, trace_h,
+    validate_ring_subfield_role, FpExtEncoding, SubfieldParams,
 };
 pub use golomb_rice::{
     golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,

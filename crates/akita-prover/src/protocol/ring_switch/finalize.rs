@@ -88,7 +88,7 @@ where
         #[cfg(feature = "parallel")]
         let (m_evals_x_result, w_result) = rayon::join(
             || {
-                compute_m_evals_x::<F, E, D>(
+                compute_m_evals_x::<F, E>(
                     setup,
                     instance.opening_point(),
                     instance.ring_multiplier_point(),
@@ -107,7 +107,7 @@ where
         );
         #[cfg(not(feature = "parallel"))]
         let (m_evals_x_result, w_result) = {
-            let m_evals_x = compute_m_evals_x::<F, E, D>(
+            let m_evals_x = compute_m_evals_x::<F, E>(
                 setup,
                 instance.opening_point(),
                 instance.ring_multiplier_point(),

@@ -5,7 +5,10 @@ use crate::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
     BasisMode, BlockOrder, Commitment, FpExtEncoding, LevelParams, RingOpeningPoint, RingVec,
 };
-use akita_algebra::{ring::eval_ring_at_pows, CyclotomicRing};
+use akita_algebra::{
+    ring::{eval_flat_ring_at_pows, eval_ring_at_pows},
+    CyclotomicRing,
+};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
@@ -287,6 +290,99 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                     .get(idx)
                     .ok_or(AkitaError::InvalidProof)?;
                 Ok(eval_ring_at_pows(&(*coefficient_ring * *value), alpha_pows))
+            }
+        }
+    }
+
+    /// Runtime-dimension form of [`Self::eval_a_at`]: the ring dimension is
+    /// `alpha_pows.len()` and ring multipliers are read as flat coefficient
+    /// chunks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid proof error if `idx` is out of range or the stored
+    /// multiplier data does not chunk at the supplied dimension.
+    pub fn eval_a_at_dyn<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        match self {
+            Self::Base(point) => point
+                .a
+                .get(idx)
+                .copied()
+                .map(E::lift_base)
+                .ok_or(AkitaError::InvalidProof),
+            Self::Ring { a, .. } => {
+                let ring_d = alpha_pows.len();
+                if ring_d == 0 || !a.coeffs().len().is_multiple_of(ring_d) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                a.coeffs()
+                    .chunks_exact(ring_d)
+                    .nth(idx)
+                    .map(|chunk| eval_flat_ring_at_pows(chunk, alpha_pows))
+                    .ok_or(AkitaError::InvalidProof)
+            }
+        }
+    }
+
+    /// Runtime-dimension form of [`Self::eval_b_with_coefficient`].
+    ///
+    /// The ring dimension is `alpha_pows.len()`. Ring multipliers require the
+    /// caller to provide `coefficient` embedded as flat ring-subfield
+    /// coefficients of the same dimension; the negacyclic product is computed
+    /// through a data-derived dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid proof error if `idx` is out of range, a ring
+    /// multiplier is evaluated without an embedded coefficient, or shapes do
+    /// not match the supplied dimension.
+    pub fn eval_b_with_coefficient_dyn<E>(
+        &self,
+        idx: usize,
+        coefficient: E,
+        coefficient_ring: Option<&[F]>,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        match self {
+            Self::Base(point) => point
+                .b
+                .get(idx)
+                .copied()
+                .map(|value| coefficient.mul_base(value))
+                .ok_or(AkitaError::InvalidProof),
+            Self::Ring { b, .. } => {
+                let ring_d = alpha_pows.len();
+                let coefficient_ring = coefficient_ring.ok_or(AkitaError::InvalidProof)?;
+                if coefficient_ring.len() != ring_d {
+                    return Err(AkitaError::InvalidProof);
+                }
+                if ring_d == 0 || !b.coeffs().len().is_multiple_of(ring_d) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let value = b
+                    .coeffs()
+                    .chunks_exact(ring_d)
+                    .nth(idx)
+                    .ok_or(AkitaError::InvalidProof)?;
+                // The negacyclic product does not factor through evaluation at
+                // an arbitrary sumcheck challenge (alpha^D != -1), so multiply
+                // in the ring before evaluating.
+                crate::dispatch_ring_dim_result!(ring_d, |D| {
+                    let coeff_arr: [F; D] = coefficient_ring
+                        .try_into()
+                        .map_err(|_| AkitaError::InvalidProof)?;
+                    let value_arr: [F; D] =
+                        value.try_into().map_err(|_| AkitaError::InvalidProof)?;
+                    let product = CyclotomicRing::<F, D>::from_coefficients(coeff_arr)
+                        * CyclotomicRing::<F, D>::from_coefficients(value_arr);
+                    Ok(eval_ring_at_pows(&product, alpha_pows))
+                })
             }
         }
     }

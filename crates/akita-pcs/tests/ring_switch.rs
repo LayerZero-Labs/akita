@@ -383,7 +383,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_m_evals_x::<F, F, D>(
+            let m_evals_x = compute_m_evals_x::<F, F>(
                 &setup.expanded,
                 instance.opening_point(),
                 &ring_multiplier_point,
@@ -520,7 +520,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_m_evals_x::<F, F, D>(
+            let m_evals_x = compute_m_evals_x::<F, F>(
                 &setup.expanded,
                 instance.opening_point(),
                 &ring_multiplier_point,
@@ -684,7 +684,7 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let m_evals_x = compute_m_evals_x::<F, F, D>(
+        let m_evals_x = compute_m_evals_x::<F, F>(
             &setup.expanded,
             &ring_opening_point,
             &ring_multiplier_point,

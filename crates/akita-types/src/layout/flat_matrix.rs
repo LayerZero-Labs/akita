@@ -140,6 +140,103 @@ impl<F: FieldCore> FlatMatrix<F> {
         }
         .check_layout()
     }
+
+    /// Runtime-dimension counterpart of [`Self::ring_view`].
+    ///
+    /// Views the matrix prefix as `num_rows x num_cols` ring elements of
+    /// `ring_d` field coefficients each, without a compile-time ring
+    /// dimension. Element `(row, col)` is the coefficient slice
+    /// `data[(row * num_cols + col) * ring_d ..][.. ring_d]` — identical
+    /// layout to the typed view.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ring_d` does not evenly view the matrix or the
+    /// requested shape exceeds the stored prefix.
+    pub fn ring_view_dyn(
+        &self,
+        num_rows: usize,
+        num_cols: usize,
+        ring_d: usize,
+    ) -> Result<FlatRingMatrixView<'_, F>, AkitaError> {
+        let total_at_d = self.total_ring_elements_at_dyn(ring_d)?;
+        let needed = num_rows
+            .checked_mul(num_cols)
+            .ok_or_else(|| AkitaError::InvalidSetup("matrix view shape overflow".to_string()))?;
+        if needed > total_at_d {
+            return Err(AkitaError::InvalidSetup(format!(
+                "requested {needed} ring elements at D={ring_d}, but setup only has {total_at_d}"
+            )));
+        }
+        let field_len = needed.checked_mul(ring_d).ok_or_else(|| {
+            AkitaError::InvalidSetup("matrix view field length overflow".to_string())
+        })?;
+        Ok(FlatRingMatrixView {
+            data: &self.data[..field_len],
+            num_cols,
+            ring_d,
+        })
+    }
+}
+
+/// Borrowed runtime-dimension ring-matrix view over flat field coefficients.
+///
+/// The runtime counterpart of [`RingMatrixView`]: rows of `num_cols` ring
+/// elements, each element `ring_d` consecutive field coefficients.
+#[derive(Clone, Copy, Debug)]
+pub struct FlatRingMatrixView<'a, F> {
+    data: &'a [F],
+    num_cols: usize,
+    ring_d: usize,
+}
+
+impl<'a, F: FieldCore> FlatRingMatrixView<'a, F> {
+    /// Ring dimension of every element in this view.
+    #[must_use]
+    pub fn ring_d(&self) -> usize {
+        self.ring_d
+    }
+
+    /// Flat coefficients of one whole row (`num_cols * ring_d` field
+    /// elements); element `col` of the row is the sub-slice
+    /// `row_flat(row)[col * ring_d ..][.. ring_d]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `row` lies outside the view.
+    pub fn row_flat(&self, row: usize) -> Result<&'a [F], AkitaError> {
+        let row_len = self.num_cols * self.ring_d;
+        let start = row
+            .checked_mul(row_len)
+            .ok_or_else(|| AkitaError::InvalidInput("ring matrix row overflow".to_string()))?;
+        self.data
+            .get(start..start + row_len)
+            .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
+    }
+
+    /// Coefficients of the ring element at `(row, col)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the position lies outside the view.
+    pub fn elem(&self, row: usize, col: usize) -> Result<&'a [F], AkitaError> {
+        if col >= self.num_cols {
+            return Err(AkitaError::InvalidInput(format!(
+                "ring matrix column {col} out of range (num_cols {})",
+                self.num_cols
+            )));
+        }
+        let idx = row
+            .checked_mul(self.num_cols)
+            .and_then(|base| base.checked_add(col))
+            .and_then(|elem| elem.checked_mul(self.ring_d))
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("ring matrix element index overflow".to_string())
+            })?;
+        self.data
+            .get(idx..idx + self.ring_d)
+            .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
+    }
 }
 
 impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {

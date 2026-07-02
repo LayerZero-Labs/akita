@@ -247,10 +247,7 @@ impl Challenges {
     ///
     /// Returns an error if `alpha_pows` has the wrong length or if any
     /// per-challenge evaluation rejects its input.
-    pub fn evals_at_pows<F, E, const D: usize>(
-        &self,
-        alpha_pows: &[E],
-    ) -> Result<Vec<E>, AkitaError>
+    pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + FromPrimitiveInt,
         E: FieldCore + MulBase<F>,
@@ -258,9 +255,9 @@ impl Challenges {
         match self {
             Self::Sparse { challenges, .. } => challenges
                 .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
+                .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
                 .collect(),
-            Self::Tensor { factored, .. } => factored.evals_at_pows::<F, E, D>(alpha_pows),
+            Self::Tensor { factored, .. } => factored.evals_at_pows::<F, E>(alpha_pows),
         }
     }
 
@@ -456,21 +453,13 @@ impl TensorChallenges {
     /// # Errors
     ///
     /// Returns an error if challenge shape validation or evaluation fails.
-    pub fn evals_at_pows<F, E, const D: usize>(
-        &self,
-        alpha_pows: &[E],
-    ) -> Result<Vec<E>, AkitaError>
+    pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + FromPrimitiveInt,
         E: FieldCore + MulBase<F>,
     {
-        if alpha_pows.len() != D {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: alpha_pows.len(),
-            });
-        }
-        if D < 2 {
+        let ring_d = alpha_pows.len();
+        if ring_d < 2 {
             return Err(AkitaError::InvalidInput(
                 "tensor evaluation requires D >= 2".to_string(),
             ));
@@ -480,7 +469,7 @@ impl TensorChallenges {
         // For `α ∈ E`, `α^D + 1 ∈ E` is the negacyclic-reduction scalar.
         // Tensor products commute with this reduction up to subtraction of a
         // quotient contribution; we precompute the scalar once and reuse it.
-        let alpha_pow_d_plus_one = alpha_pows[D - 1] * alpha_pows[1] + E::one();
+        let alpha_pow_d_plus_one = alpha_pows[ring_d - 1] * alpha_pows[1] + E::one();
         let mut out = Vec::with_capacity(self.num_claims * self.left_len * self.right_len);
         for claim_idx in 0..self.num_claims {
             let left_start = claim_idx * self.left_len;
@@ -489,16 +478,16 @@ impl TensorChallenges {
             let right = &self.right[right_start..right_start + self.right_len];
             let left_evals = left
                 .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
+                .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
                 .collect::<Result<Vec<_>, _>>()?;
             let right_evals = right
                 .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
+                .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
                 .collect::<Result<Vec<_>, _>>()?;
 
             for (p, left_challenge) in left.iter().enumerate() {
                 for (q, right_challenge) in right.iter().enumerate() {
-                    let quotient_eval = tensor_product_quotient_eval::<F, E, D>(
+                    let quotient_eval = tensor_product_quotient_eval::<F, E>(
                         left_challenge,
                         right_challenge,
                         alpha_pows,
@@ -541,13 +530,8 @@ impl TensorChallenges {
         F: FieldCore + FromPrimitiveInt,
         E: FieldCore + MulBase<F>,
     {
-        if alpha_pows.len() != D {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: alpha_pows.len(),
-            });
-        }
-        if D < 2 {
+        let ring_d = alpha_pows.len();
+        if ring_d < 2 {
             return Err(AkitaError::InvalidInput(
                 "tensor evaluation requires D >= 2".to_string(),
             ));
@@ -572,7 +556,7 @@ impl TensorChallenges {
         }
         self.validate_lengths()?;
 
-        let alpha_pow_d_plus_one = alpha_pows[D - 1] * alpha_pows[1] + E::one();
+        let alpha_pow_d_plus_one = alpha_pows[ring_d - 1] * alpha_pows[1] + E::one();
         let left_start = claim_idx * self.left_len;
         let right_start = claim_idx * self.right_len;
 
@@ -648,7 +632,7 @@ impl TensorChallenges {
 // Helper for `TensorChallenges::evals_at_pows`. This computes only the
 // negacyclic wrap correction for one left/right pair; the caller combines it
 // with `eval(left) * eval(right)` to produce one logical block evaluation.
-fn tensor_product_quotient_eval<F, E, const D: usize>(
+fn tensor_product_quotient_eval<F, E>(
     left: &SparseChallenge,
     right: &SparseChallenge,
     alpha_pows: &[E],
@@ -657,17 +641,18 @@ where
     F: FieldCore + FromPrimitiveInt,
     E: FieldCore + MulBase<F>,
 {
-    left.validate::<D>()?;
-    right.validate::<D>()?;
+    let ring_d = alpha_pows.len();
+    left.validate_dyn(ring_d)?;
+    right.validate_dyn(ring_d)?;
     let mut quotient_eval = E::zero();
     for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
         let left_idx = left_pos as usize;
         for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
             let right_idx = right_pos as usize;
             let degree = left_idx + right_idx;
-            if degree >= D {
+            if degree >= ring_d {
                 let term = i64::from(left_coeff) * i64::from(right_coeff);
-                quotient_eval += alpha_pows[degree - D].mul_base(F::from_i64(term));
+                quotient_eval += alpha_pows[degree - ring_d].mul_base(F::from_i64(term));
             }
         }
     }

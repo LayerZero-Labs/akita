@@ -17,10 +17,9 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    dispatch_ring_dim_result, gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup,
-    FpExtEncoding, LevelParams, RingRelationInstance, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -88,47 +87,46 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         T: Transcript<F>,
     {
         let ring_d = lp.ring_dimension;
-        dispatch_ring_dim_result!(ring_d, |D| {
-            let setup_term = build_setup_product_term::<F, E, T, D>(
-                expanded,
-                prefix_slots,
-                lp,
-                next_fold_level_params,
-                relation,
-                tau1,
-                alpha,
-                &stage2_challenges[ring_bits..],
-                transcript,
-            )?;
-            let setup_product_claim = setup_term.input_claim();
-            let witness_digits = Arc::<[i8]>::from(logical_w);
-            let witness_term = build_witness_carry_term::<E>(
-                Arc::clone(&witness_digits),
-                live_x_cols,
-                col_bits,
-                ring_bits,
-                stage2_challenges,
-                stage2_next_w_eval,
-            )?;
-            let setup_rounds = setup_term.num_rounds();
-            let witness_rounds = witness_term.num_rounds();
-            let total_rounds = setup_rounds.max(witness_rounds);
-            Ok(Self {
-                setup: BatchedStage3Term {
-                    current_claim: setup_term.input_claim(),
-                    native_rounds: setup_rounds,
-                    term: setup_term,
-                },
-                witness: BatchedStage3Term {
-                    current_claim: witness_term.input_claim(),
-                    native_rounds: witness_rounds,
-                    term: witness_term,
-                },
-                eta,
-                total_rounds,
-                setup_product_claim,
-                pending_round: None,
-            })
+        let setup_term = build_setup_product_term::<F, E, T>(
+            ring_d,
+            expanded,
+            prefix_slots,
+            lp,
+            next_fold_level_params,
+            relation,
+            tau1,
+            alpha,
+            &stage2_challenges[ring_bits..],
+            transcript,
+        )?;
+        let setup_product_claim = setup_term.input_claim();
+        let witness_digits = Arc::<[i8]>::from(logical_w);
+        let witness_term = build_witness_carry_term::<E>(
+            Arc::clone(&witness_digits),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            stage2_challenges,
+            stage2_next_w_eval,
+        )?;
+        let setup_rounds = setup_term.num_rounds();
+        let witness_rounds = witness_term.num_rounds();
+        let total_rounds = setup_rounds.max(witness_rounds);
+        Ok(Self {
+            setup: BatchedStage3Term {
+                current_claim: setup_term.input_claim(),
+                native_rounds: setup_rounds,
+                term: setup_term,
+            },
+            witness: BatchedStage3Term {
+                current_claim: witness_term.input_claim(),
+                native_rounds: witness_rounds,
+                term: witness_term,
+            },
+            eta,
+            total_rounds,
+            setup_product_claim,
+            pending_round: None,
         })
     }
 
@@ -238,7 +236,8 @@ fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_setup_product_term<F, E, T, const D: usize>(
+fn build_setup_product_term<F, E, T>(
+    ring_d: usize,
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &LevelParams,
@@ -255,18 +254,20 @@ where
     T: Transcript<F>,
 {
     let (required, mut bar_omega, alpha_pows) =
-        prepare_setup_sumcheck_terms::<F, E, D>(lp, relation, tau1, alpha, x_challenges)?;
+        prepare_setup_sumcheck_terms::<F, E>(ring_d, lp, relation, tau1, alpha, x_challenges)?;
 
-    let natural_field_len = required.checked_mul(D).ok_or_else(|| {
+    let natural_field_len = required.checked_mul(ring_d).ok_or_else(|| {
         AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
     })?;
-    let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+    let setup_len = expanded
+        .shared_matrix()
+        .total_ring_elements_at_dyn(ring_d)?;
     if required > setup_len {
         return Err(AkitaError::InvalidSetup(
             "shared matrix is too small for selected setup product".to_string(),
         ));
     }
-    let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
+    let setup_eval_len = if ring_d == SETUP_OFFLOAD_D_SETUP {
         let setup_prefix_selection = select_setup_prefix_slot(
             expanded.seed(),
             setup_len,
@@ -277,7 +278,7 @@ where
             },
             next_fold_level_params,
             natural_field_len,
-            D,
+            ring_d,
             "selected setup-prefix slot does not cover setup product",
         )?;
         if let Some((slot, setup_eval_len)) = setup_prefix_selection {
@@ -289,8 +290,20 @@ where
     } else {
         setup_len
     };
-    let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
-    let setup_entries = setup_view.as_slice();
+    // Ring elements at `ring_d` are `ring_d` consecutive field coefficients of
+    // the flat shared matrix; read them directly instead of building a typed
+    // ring view that would immediately be flattened back into the table. The
+    // former view carried the bounds the table fill relies on; assert them
+    // explicitly here.
+    let setup_field = expanded.shared_matrix().as_field_slice();
+    let setup_eval_field_len = setup_eval_len.checked_mul(ring_d).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup product view field length overflow".to_string())
+    })?;
+    if setup_eval_field_len > setup_field.len() || required > setup_eval_len {
+        return Err(AkitaError::InvalidSetup(
+            "setup product exceeds selected setup view".to_string(),
+        ));
+    }
 
     let lambda_len = required
         .checked_next_power_of_two()
@@ -298,14 +311,15 @@ where
     bar_omega.resize(lambda_len, E::zero());
 
     let table_len = lambda_len
-        .checked_mul(D)
+        .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("setup product table length overflow".into()))?;
     let mut setup_table = vec![E::zero(); table_len];
-    cfg_chunks_mut!(&mut setup_table, D)
+    cfg_chunks_mut!(&mut setup_table, ring_d)
         .enumerate()
         .for_each(|(lambda, row)| {
             if lambda < required {
-                for (slot, &coeff) in row.iter_mut().zip(setup_entries[lambda].coefficients()) {
+                let src = &setup_field[lambda * ring_d..(lambda + 1) * ring_d];
+                for (slot, &coeff) in row.iter_mut().zip(src) {
                     *slot = E::lift_base(coeff);
                 }
             }
@@ -370,7 +384,8 @@ where
 /// Derive the factored product-sumcheck terms `(required, bar_omega, alpha_pows)`
 /// from the level parameters and ring relation via the ring-switch row
 /// evaluation.
-fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
+fn prepare_setup_sumcheck_terms<F, E>(
+    ring_d: usize,
     lp: &LevelParams,
     relation: &RingRelationInstance<F>,
     tau1: &[E],
@@ -381,7 +396,7 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
-    let alpha_pows = scalar_powers(alpha, D);
+    let alpha_pows = scalar_powers(alpha, ring_d);
     let inputs = create_setup_contribution_inputs::<F, E>(relation, lp, tau1)?;
     let num_t_vectors = relation.opening_batch().num_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(

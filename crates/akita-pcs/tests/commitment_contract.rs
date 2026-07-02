@@ -60,6 +60,20 @@ impl RootPolyShape<F, D> for ContractRootPoly {
     }
 }
 
+impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
+    fn num_ring_elems(&self) -> usize {
+        self.coeffs.len()
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        None
+    }
+}
+
 impl RootCommitSource<F, D> for ContractRootPoly {
     type CommitView<'a>
         = ContractCommitView<'a>

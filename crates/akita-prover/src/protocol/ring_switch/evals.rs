@@ -1,4 +1,6 @@
 use super::*;
+use akita_algebra::ring::eval_flat_ring_at_pows;
+use akita_types::embed_ring_subfield_scalar_flat;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
@@ -51,7 +53,7 @@ pub fn build_w_evals_compact(
 /// or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
-pub fn compute_m_evals_x<F, E, const D: usize>(
+pub fn compute_m_evals_x<F, E>(
     setup: &AkitaExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
@@ -69,10 +71,11 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    if alpha_pows.len() != D {
+    let ring_d = alpha_pows.len();
+    if ring_d != lp.ring_dimension {
         return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: alpha_pows.len(),
+            expected: lp.ring_dimension,
+            actual: ring_d,
         });
     }
     let num_claims = gamma.len();
@@ -178,9 +181,9 @@ where
             challenges: sparse, ..
         } => sparse
             .iter()
-            .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
+            .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
             .collect::<Result<_, _>>()?,
-        Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
+        Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E>(alpha_pows)?,
     };
 
     let d_message_width = total_blocks
@@ -219,18 +222,23 @@ where
         0
     };
     let a_width = inner_width;
-    let d_view = setup.shared_matrix.ring_view::<D>(n_d, d_width)?;
-    let b_view = setup.shared_matrix.ring_view::<D>(n_b, b_width)?;
-    let a_view = setup.shared_matrix.ring_view::<D>(n_a, a_width)?;
-    let d_rows: Vec<_> = d_view.rows().collect();
-    let b_rows: Vec<_> = b_view.rows().collect();
-    let a_rows: Vec<_> = a_view.rows().collect();
-    let f_rows: Vec<_> = if tiered {
-        setup
-            .shared_matrix
-            .ring_view::<D>(n_f, width_f)?
-            .rows()
-            .collect()
+    let d_view = setup.shared_matrix.ring_view_dyn(n_d, d_width, ring_d)?;
+    let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, ring_d)?;
+    let a_view = setup.shared_matrix.ring_view_dyn(n_a, a_width, ring_d)?;
+    let d_rows: Vec<&[F]> = (0..n_d)
+        .map(|r| d_view.row_flat(r))
+        .collect::<Result<_, _>>()?;
+    let b_rows: Vec<&[F]> = (0..n_b)
+        .map(|r| b_view.row_flat(r))
+        .collect::<Result<_, _>>()?;
+    let a_rows: Vec<&[F]> = (0..n_a)
+        .map(|r| a_view.row_flat(r))
+        .collect::<Result<_, _>>()?;
+    let f_rows: Vec<&[F]> = if tiered {
+        let f_view = setup.shared_matrix.ring_view_dyn(n_f, width_f, ring_d)?;
+        (0..n_f)
+            .map(|r| f_view.row_flat(r))
+            .collect::<Result<_, _>>()?
     } else {
         Vec::new()
     };
@@ -257,7 +265,8 @@ where
                 .iter()
                 .copied()
                 .map(|coefficient| {
-                    embed_ring_subfield_scalar::<F, E, D>(
+                    embed_ring_subfield_scalar_flat::<F, E>(
+                        ring_d,
                         coefficient,
                         AkitaError::InvalidInput(
                             "public-row coefficient does not encode in the ring-subfield basis"
@@ -277,10 +286,10 @@ where
                 .map(|rings| &rings[claim_idx]);
             (0..num_blocks)
                 .map(|block_idx| {
-                    ring_multiplier_point.eval_b_with_coefficient::<D, E>(
+                    ring_multiplier_point.eval_b_with_coefficient_dyn::<E>(
                         block_idx,
                         gamma[claim_idx],
-                        coefficient_ring,
+                        coefficient_ring.map(Vec::as_slice),
                         alpha_pows,
                     )
                 })
@@ -306,7 +315,11 @@ where
             // the D-block contribution is omitted.
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&d_rows[di][d_phys_col], alpha_pows);
+                    acc += *eq_i
+                        * eval_flat_ring_at_pows(
+                            &d_rows[di][d_phys_col * ring_d..(d_phys_col + 1) * ring_d],
+                            alpha_pows,
+                        );
                 }
             }
             acc
@@ -343,14 +356,22 @@ where
                 for row_idx in 0..n_b {
                     let eq_i = eq_tau1[base + row_idx];
                     if !eq_i.is_zero() {
-                        acc += eq_i * eval_ring_at_pows(&b_rows[row_idx][within], alpha_pows);
+                        acc += eq_i
+                            * eval_flat_ring_at_pows(
+                                &b_rows[row_idx][within * ring_d..(within + 1) * ring_d],
+                                alpha_pows,
+                            );
                     }
                 }
             } else {
                 let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
+                        acc += *eq_i
+                            * eval_flat_ring_at_pows(
+                                &b_rows[row_idx][local_col * ring_d..(local_col + 1) * ring_d],
+                                alpha_pows,
+                            );
                     }
                 }
             }
@@ -372,7 +393,11 @@ where
                 for f_row in 0..n_f {
                     let eq_i = eq_tau1[f_start + f_row];
                     if !eq_i.is_zero() {
-                        acc += eq_i * eval_ring_at_pows(&f_rows[f_row][c], alpha_pows);
+                        acc += eq_i
+                            * eval_flat_ring_at_pows(
+                                &f_rows[f_row][c * ring_d..(c + 1) * ring_d],
+                                alpha_pows,
+                            );
                     }
                 }
                 // B_inner RHS: -recompose(û) = -Σ_digit base^digit · û[digit].
@@ -390,11 +415,15 @@ where
             let local_k = k;
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
-            let a_eval = ring_multiplier_point.eval_a_at::<D, E>(block_idx, alpha_pows)?;
+            let a_eval = ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows)?;
             let mut acc = consistency_weight * a_eval * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&a_rows[a_idx][local_k], alpha_pows);
+                    acc += *eq_i
+                        * eval_flat_ring_at_pows(
+                            &a_rows[a_idx][local_k * ring_d..(local_k + 1) * ring_d],
+                            alpha_pows,
+                        );
                 }
             }
             Ok(acc)
@@ -414,7 +443,7 @@ where
         })
         .collect();
 
-    let alpha_pow_d = alpha_pows[D - 1] * alpha;
+    let alpha_pow_d = alpha_pows[ring_d - 1] * alpha;
     let denom = alpha_pow_d + E::one();
     let r_tail_len = rows * levels;
     let r_tail: Vec<E> = cfg_into_iter!(0..r_tail_len)

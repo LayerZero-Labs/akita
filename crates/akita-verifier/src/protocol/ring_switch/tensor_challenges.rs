@@ -213,7 +213,7 @@ mod tests {
         let alpha = F::from_u64(11);
         let alpha_pows = scalar_powers(alpha, D);
         let flat_evals = tensor_challenges
-            .evals_at_pows::<F, F, D>(&alpha_pows)
+            .evals_at_pows::<F, F>(&alpha_pows)
             .unwrap();
         assert_eq!(flat_evals.len(), num_claims * num_blocks);
 

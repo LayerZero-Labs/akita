@@ -11,7 +11,6 @@ use crate::{
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
@@ -26,9 +25,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths,
-    AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams, MRowLayout,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationOpeningCounts, RingVec,
+    gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths, AkitaCommitmentHint,
+    AkitaExpandedSetup, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationOpeningCounts, RingVec,
 };
 
 mod coeffs;
