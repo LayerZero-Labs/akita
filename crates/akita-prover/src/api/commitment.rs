@@ -210,11 +210,18 @@ where
         return Ok(());
     }
     for (poly_idx, poly) in polys.iter().enumerate() {
-        if let Some(actual) = poly.onehot_chunk_size() {
-            if actual != expected {
+        match poly.onehot_chunk_size() {
+            Some(actual) if actual == expected => {}
+            Some(actual) => {
                 return Err(AkitaError::InvalidInput(format!(
                     "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
                      config/layout requires onehot_k={expected}"
+                )));
+            }
+            None => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "polynomial {poly_idx} is dense, but this config/layout requires \
+                     one-hot polynomials with onehot_k={expected}"
                 )));
             }
         }
