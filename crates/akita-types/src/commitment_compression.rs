@@ -1,13 +1,13 @@
 //! Prover-side commitment-compression arithmetic.
 #![allow(dead_code)]
 
+use crate::{gadget_row_scalars, CommitmentCompressionPlan, FlatRingVec, TraceTable};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
-use akita_types::{gadget_row_scalars, CommitmentCompressionPlan, FlatRingVec, TraceTable};
 
 /// Materialized prover data for one compressed commitment payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CompressionEvaluation<F: FieldCore> {
+pub struct CompressionEvaluation<F: FieldCore> {
     /// Final public payload sent on the wire.
     pub public_payload: FlatRingVec<F>,
     /// Hidden compression suffix digits, padded as scheduled for appending to
@@ -21,7 +21,7 @@ pub(crate) struct CompressionEvaluation<F: FieldCore> {
 
 /// Fused stage-2 linearization for one compression chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CompressionLinearization<E: FieldCore> {
+pub struct CompressionLinearization<E: FieldCore> {
     /// Dense stage-2 weights over the flat next-witness table.
     pub table: TraceTable<E>,
     /// Public side of the same row-linear combination.
@@ -123,7 +123,7 @@ where
 /// Returns an error if the plan shape does not match the raw payload, if a
 /// layer extends past the shared setup slice, or if the produced suffix/public
 /// lengths do not match the schedule.
-pub(crate) fn evaluate_commitment_compression<F>(
+pub fn evaluate_commitment_compression<F>(
     setup_fields: &[F],
     plan: &CommitmentCompressionPlan,
     raw_payload: &[F],
@@ -227,7 +227,7 @@ where
 /// `suffix_offset` is the flat witness offset where this commitment's hidden
 /// suffix begins. The first layer's input digits start there, and each
 /// non-final layer's output decomposition digits immediately follow.
-pub(crate) fn linearize_compression_chain<F, E>(
+pub fn linearize_compression_chain<F, E>(
     setup_fields: &[F],
     plan: &CommitmentCompressionPlan,
     public_payload: &FlatRingVec<F>,
@@ -367,7 +367,7 @@ where
 /// `B` for a raw `u`) to the first scalar digit block used by the compression
 /// chain. Rows are scalarized coefficient-by-coefficient under one row RLC.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn linearize_raw_ring_rows_to_first_digits<F, E, const D: usize>(
+pub fn linearize_raw_ring_rows_to_first_digits<F, E, const D: usize>(
     matrix_rows: &[CyclotomicRing<F, D>],
     row_len: usize,
     col_len: usize,
@@ -491,7 +491,9 @@ where
     })
 }
 
-fn decomposition_digits_per_scalar(plan: &CommitmentCompressionPlan) -> Result<usize, AkitaError> {
+pub fn decomposition_digits_per_scalar(
+    plan: &CommitmentCompressionPlan,
+) -> Result<usize, AkitaError> {
     let first = plan
         .layers
         .first()
@@ -507,8 +509,8 @@ fn decomposition_digits_per_scalar(plan: &CommitmentCompressionPlan) -> Result<u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CompressionLayerPlan, CompressionMapRole};
     use akita_field::Fp32;
-    use akita_types::{CompressionLayerPlan, CompressionMapRole};
 
     type F = Fp32<251>;
 

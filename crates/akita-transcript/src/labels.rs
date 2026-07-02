@@ -47,6 +47,8 @@ pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"ak/c/scb";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.
 pub const CHALLENGE_SUMCHECK_INTERSTAGE_BATCH: &[u8] = b"ak/c/scib";
+/// Challenge for row-combining commitment-compression equations.
+pub const CHALLENGE_COMMITMENT_COMPRESSION_ROW: &[u8] = b"ak/c/ccr";
 /// Absorb recursion/stop-condition message payloads (paper §4.5).
 pub const ABSORB_STOP_CONDITION: &[u8] = b"ak/a/st";
 /// Challenge sampled for recursion stop-condition checks (paper §4.5).
@@ -113,6 +115,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+    CHALLENGE_COMMITMENT_COMPRESSION_ROW,
     ABSORB_STOP_CONDITION,
     CHALLENGE_STOP_CONDITION,
     ABSORB_PROVER_V,

@@ -1,6 +1,5 @@
 //! Prover-side protocol orchestration helpers.
 
-pub(crate) mod commitment_compression;
 pub mod core;
 pub mod extension_opening_reduction;
 pub mod fold_grind;

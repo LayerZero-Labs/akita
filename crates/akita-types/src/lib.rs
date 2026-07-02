@@ -4,6 +4,7 @@
 //! point reductions, per-level parameter shapes, commitment API contracts, and
 //! generated schedule/SIS data shared by prover, verifier, and planner code.
 
+mod commitment_compression;
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
@@ -22,6 +23,10 @@ pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
 
+pub use commitment_compression::{
+    decomposition_digits_per_scalar, evaluate_commitment_compression, linearize_compression_chain,
+    linearize_raw_ring_rows_to_first_digits, CompressionEvaluation, CompressionLinearization,
+};
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
     check_extension_opening_reduction_output, checked_table_len,

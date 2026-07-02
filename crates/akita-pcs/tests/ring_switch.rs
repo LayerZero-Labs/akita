@@ -345,7 +345,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness) =
+        let (instance, witness, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -358,6 +358,7 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
                 None,
+                false,
             )
             .expect("ring relation");
 
@@ -486,7 +487,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness) =
+        let (instance, witness, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -499,6 +500,7 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
                 None,
+                false,
             )
             .expect("ring relation");
 
@@ -661,7 +663,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness) =
+        let (instance, witness, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -674,6 +676,7 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithDBlock,
                 None,
+                false,
             )
             .expect("ring relation");
 
@@ -814,7 +817,7 @@ mod tests {
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
-        let (instance, witness) =
+        let (instance, witness, _) =
             RingRelationProver::new::<F, F, D, _, DensePoly<F, D>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
@@ -827,6 +830,7 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::one()],
                 MRowLayout::WithoutDBlock,
                 None,
+                false,
             )
             .expect("ring relation");
 

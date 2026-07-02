@@ -45,7 +45,20 @@ where
     let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let m_row_layout = scheduled_m_row_layout(scheduled);
-    let v_typed = proof.v_as_ring_slice::<D>()?;
+    let (v_typed, compressed_v_payload) = match (m_row_layout, scheduled.compression.v.as_ref()) {
+        (MRowLayout::WithDBlock, None) => (proof.v_as_ring_slice::<D>()?.to_vec(), None),
+        (MRowLayout::WithoutDBlock, Some(plan)) => {
+            let AkitaLevelProof::Intermediate { v, .. } = proof else {
+                return Err(AkitaError::InvalidProof);
+            };
+            if v.coeff_len() != plan.public_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            (Vec::new(), Some(v))
+        }
+        (MRowLayout::WithoutDBlock, None) => (Vec::new(), None),
+        (MRowLayout::WithDBlock, Some(_)) => return Err(AkitaError::InvalidProof),
+    };
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
@@ -88,14 +101,7 @@ where
 
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
-        None => w_ring_element_count_with_counts_for_layout::<F>(
-            lp,
-            num_claims,
-            num_claims,
-            MRowLayout::WithDBlock,
-        )?
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        None => scheduled.next_w_len,
     };
     let terminal_replay = if proof.final_w_len().is_some() {
         let layout =
@@ -138,7 +144,9 @@ where
         lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed.to_vec(),
+        v: v_typed,
+        v_compression: scheduled.compression.v.as_ref(),
+        compressed_v_payload,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
@@ -199,8 +207,16 @@ where
                 if scheduled.is_terminal {
                     return Err(AkitaError::InvalidProof);
                 }
+                let m_row_layout = scheduled_m_row_layout(&scheduled);
                 if !current_state.commitment.can_decode_vec(level_d)
-                    || !level_proof.v().can_decode_vec(level_d)
+                    || match (m_row_layout, scheduled.compression.v.as_ref()) {
+                        (MRowLayout::WithDBlock, None) => !level_proof.v().can_decode_vec(level_d),
+                        (MRowLayout::WithoutDBlock, Some(plan)) => {
+                            level_proof.v().coeff_len() != plan.public_len
+                        }
+                        (MRowLayout::WithoutDBlock, None) => false,
+                        (MRowLayout::WithDBlock, Some(_)) => true,
+                    }
                 {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -223,17 +239,7 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let computed_next_w_len = w_ring_element_count_with_counts_for_layout::<F>(
-                    current_lp,
-                    1,
-                    1,
-                    MRowLayout::WithDBlock,
-                )?
-                .checked_mul(level_d)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("next witness length overflow".to_string())
-                })?;
-                scheduled.validate_next_w_len(computed_next_w_len)?;
+                scheduled.validate_next_w_len(next_w_len)?;
                 current_state = SuffixVerifierState {
                     opening_point: challenges,
                     opening: level_proof

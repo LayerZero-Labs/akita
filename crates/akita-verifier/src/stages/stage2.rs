@@ -8,7 +8,7 @@ use akita_field::{
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
-    RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
+    RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim, TraceTable,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -115,6 +115,12 @@ pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     },
 }
 
+/// Extra linear stage-2 weight table fused with relation/trace checks.
+pub(crate) struct ExtraLinearClaim<E: FieldCore> {
+    pub(crate) table: TraceTable<E>,
+    pub(crate) claim: E,
+}
+
 /// Decode a terminal cleartext witness into the stage-2 digit oracle.
 ///
 /// Segment-typed wire payloads expand to logical `i8` digits once here; stage-2
@@ -168,6 +174,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     ring_bits: usize,
     relation_claim: E,
     trace: Option<TraceClaim<F, E, D>>,
+    extra_linear: Option<ExtraLinearClaim<E>>,
+    physical_w_len: usize,
     _marker: PhantomData<([F; D], E)>,
 }
 
@@ -196,6 +204,8 @@ where
         col_bits: usize,
         ring_bits: usize,
         trace: Option<TraceClaim<F, E, D>>,
+        extra_linear: Option<ExtraLinearClaim<E>>,
+        physical_w_len: usize,
     ) -> Result<Self, AkitaError> {
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
@@ -236,6 +246,8 @@ where
             ring_bits,
             relation_claim,
             trace,
+            extra_linear,
+            physical_w_len,
             _marker: PhantomData,
         })
     }
@@ -266,6 +278,25 @@ where
             self.setup_claim,
         )
     }
+
+    fn extra_linear_eval(&self, table: &TraceTable<E>, challenges: &[E]) -> Result<E, AkitaError> {
+        let y_len = 1usize
+            .checked_shl(
+                u32::try_from(self.ring_bits).map_err(|_| AkitaError::InvalidSize {
+                    expected: usize::BITS as usize,
+                    actual: self.ring_bits,
+                })?,
+            )
+            .ok_or(AkitaError::InvalidProof)?;
+        if !self.physical_w_len.is_multiple_of(y_len) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let live_x_cols = self.physical_w_len / y_len;
+        let dense = table.materialize_dense(live_x_cols, y_len);
+        witness_eval_by_index(dense.len(), challenges, self.ring_bits, y_len, |idx| {
+            Ok(dense[idx])
+        })
+    }
 }
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
@@ -285,6 +316,9 @@ where
         let mut claim = self.batching_coeff * self.s_claim + self.relation_claim;
         if let Some(trace) = &self.trace {
             claim += trace.trace_opening_claim;
+        }
+        if let Some(extra) = &self.extra_linear {
+            claim += extra.claim;
         }
         claim
     }
@@ -314,16 +348,24 @@ where
         } else {
             E::zero()
         };
+        let extra_linear_oracle = if let Some(extra) = &self.extra_linear {
+            w_eval * self.extra_linear_eval(&extra.table, challenges)?
+        } else {
+            E::zero()
+        };
 
         // Terminal levels run with `batching_coeff = 0`, which zeros the
         // virtual half regardless of `stage1_point` / `w_eval`. Skip the
         // EqPolynomial eval and the `w * (w + 1)` round in that case.
         if self.batching_coeff.is_zero() {
-            return Ok(relation_oracle + trace_oracle);
+            return Ok(relation_oracle + trace_oracle + extra_linear_oracle);
         }
         let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
+        Ok(self.batching_coeff * virtual_oracle
+            + relation_oracle
+            + trace_oracle
+            + extra_linear_oracle)
     }
 }
 

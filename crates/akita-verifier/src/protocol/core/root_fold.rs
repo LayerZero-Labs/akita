@@ -38,7 +38,20 @@ where
     }
     let m_row_layout = scheduled_m_row_layout(scheduled);
     let extension_opening_reduction = proof.fold_extension_opening_reduction();
-    let v_typed = proof.fold_v::<D>()?;
+    let (v_typed, compressed_v_payload) = match (m_row_layout, scheduled.compression.v.as_ref()) {
+        (MRowLayout::WithDBlock, None) => (proof.fold_v::<D>()?.to_vec(), None),
+        (MRowLayout::WithoutDBlock, Some(plan)) => {
+            let AkitaBatchedRootProof::Fold(fold) = proof else {
+                return Err(AkitaError::InvalidProof);
+            };
+            if fold.v.coeff_len() != plan.public_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            (Vec::new(), Some(&fold.v))
+        }
+        (MRowLayout::WithoutDBlock, None) => (Vec::new(), None),
+        (MRowLayout::WithDBlock, Some(_)) => return Err(AkitaError::InvalidProof),
+    };
     let next_fold_level_params = match proof {
         AkitaBatchedRootProof::Fold(_) => next_fold_level_params.ok_or(AkitaError::InvalidProof)?,
         AkitaBatchedRootProof::Terminal(_) => root_lp,
@@ -131,14 +144,7 @@ where
 
     let w_len = match proof {
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
-        AkitaBatchedRootProof::Fold(_) => w_ring_element_count_with_counts_for_layout::<F>(
-            root_lp,
-            opening_batch.num_polynomials(),
-            1,
-            MRowLayout::WithDBlock,
-        )?
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        AkitaBatchedRootProof::Fold(_) => scheduled.next_w_len,
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     let terminal_replay = match proof {
@@ -176,7 +182,9 @@ where
         lp: root_lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed.to_vec(),
+        v: v_typed,
+        v_compression: scheduled.compression.v.as_ref(),
+        compressed_v_payload,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

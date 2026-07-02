@@ -292,6 +292,7 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     lp: &LevelParams,
     e_hat: &FlatDigitBlocks<D>,
     m_row_layout: MRowLayout,
+    compute_hidden_v: bool,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -300,8 +301,8 @@ where
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    match m_row_layout {
-        MRowLayout::WithDBlock => {
+    match (m_row_layout, compute_hidden_v) {
+        (MRowLayout::WithDBlock, _) => {
             let _span = tracing::info_span!(
                 "compute_relation_v",
                 e_hat_planes = e_hat.flat_digits().len()
@@ -311,7 +312,15 @@ where
             transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
             Ok(v)
         }
-        MRowLayout::WithoutDBlock => Ok(Vec::new()),
+        (MRowLayout::WithoutDBlock, true) => {
+            let _span = tracing::info_span!(
+                "compute_hidden_compression_v",
+                e_hat_planes = e_hat.flat_digits().len()
+            )
+            .entered();
+            compute_v_rows(backend, prepared, lp.d_key.row_len(), e_hat, lp.log_basis)
+        }
+        (MRowLayout::WithoutDBlock, false) => Ok(Vec::new()),
     }
 }
 
@@ -354,7 +363,15 @@ impl RingRelationProver {
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
-    ) -> Result<(RingRelationInstance<F, D>, RingRelationWitness<F, D>), AkitaError>
+        compute_hidden_v: bool,
+    ) -> Result<
+        (
+            RingRelationInstance<F, D>,
+            RingRelationWitness<F, D>,
+            Option<Vec<CyclotomicRing<F, D>>>,
+        ),
+        AkitaError,
+    >
     where
         F: FieldCore + CanonicalField,
         PointF: Clone,
@@ -442,9 +459,19 @@ impl RingRelationProver {
             &lp,
             &e_hat,
             m_row_layout,
+            compute_hidden_v,
         )?;
+        let hidden_v = if matches!(m_row_layout, MRowLayout::WithoutDBlock) && compute_hidden_v {
+            Some(v.clone())
+        } else {
+            None
+        };
+        let relation_v = match m_row_layout {
+            MRowLayout::WithDBlock => v,
+            MRowLayout::WithoutDBlock => Vec::new(),
+        };
 
-        if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
+        if terminal_tail_t_vectors.is_some() {
             let e_folded_flat: Vec<CyclotomicRing<F, D>> = pre_folded_e_by_poly
                 .iter()
                 .flat_map(|block| block.iter().cloned())
@@ -467,7 +494,7 @@ impl RingRelationProver {
         // `v` slice with `n_d_active = 0` so `generate_y` emits
         // `[consistency | A-zeros | commitment_rows]` (no D-block).
         let (y_v_slice, n_d_active) = match m_row_layout {
-            MRowLayout::WithDBlock => (v.as_slice(), lp.d_key.row_len()),
+            MRowLayout::WithDBlock => (relation_v.as_slice(), lp.d_key.row_len()),
             MRowLayout::WithoutDBlock => (&[][..], 0usize),
         };
         let y = generate_y::<F, D>(
@@ -488,7 +515,7 @@ impl RingRelationProver {
             gamma,
             row_coefficient_rings,
             y,
-            v,
+            relation_v,
         )?;
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
@@ -498,6 +525,6 @@ impl RingRelationProver {
             e_folded,
             hint: flattened_hint,
         };
-        Ok((instance, witness))
+        Ok((instance, witness, hidden_v))
     }
 }

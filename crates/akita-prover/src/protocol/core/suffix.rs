@@ -135,6 +135,7 @@ where
         let level_d = level_params.ring_dimension;
         let is_terminal_level = scheduled.is_terminal;
         let m_row_layout = scheduled_m_row_layout(&scheduled);
+        let compute_hidden_v = scheduled.compression.v.is_some();
         let tail_t_vectors = if is_terminal_level {
             terminal_tail_t_vectors
         } else {
@@ -150,6 +151,7 @@ where
                 level_params,
                 m_row_layout,
                 tail_t_vectors,
+                compute_hidden_v,
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
@@ -205,6 +207,7 @@ where
                         level_params,
                         m_row_layout,
                         tail_t_vectors,
+                        compute_hidden_v,
                     )
                     .map_err(|err| {
                         AkitaError::InvalidInput(format!(
@@ -282,6 +285,7 @@ fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
+    compute_hidden_v: bool,
 ) -> Result<PreparedFold<F, L, D>, AkitaError>
 where
     F: FieldCore
@@ -353,6 +357,7 @@ where
         BlockOrder::ColumnMajor,
         m_row_layout,
         terminal_tail_t_vectors,
+        compute_hidden_v,
     )
 }
 

@@ -45,6 +45,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
+    compute_hidden_v: bool,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
@@ -110,6 +111,7 @@ where
         BlockOrder::RowMajor,
         m_row_layout,
         terminal_tail_t_vectors,
+        compute_hidden_v,
     )
 }
 
@@ -200,6 +202,7 @@ where
         root_params,
         scheduled_m_row_layout(scheduled),
         None,
+        scheduled.compression.v.is_some(),
         basis,
     )?;
 
@@ -311,6 +314,7 @@ where
         root_params,
         MRowLayout::WithoutDBlock,
         terminal_tail_t_vectors,
+        scheduled.compression.v.is_some(),
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();

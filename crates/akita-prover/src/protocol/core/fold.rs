@@ -79,6 +79,114 @@ where
     build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
 }
 
+struct VCompressionProverData<F: FieldCore> {
+    evaluation: CompressionEvaluation<F>,
+    suffix_offset: usize,
+}
+
+fn flatten_ring_rows<F: FieldCore, const D: usize>(rows: &[CyclotomicRing<F, D>]) -> Vec<F> {
+    let mut out = Vec::with_capacity(rows.len() * D);
+    for row in rows {
+        out.extend_from_slice(row.coefficients());
+    }
+    out
+}
+
+fn append_i8_suffix(
+    base: crate::backend::RecursiveWitnessFlat,
+    suffix: &[i8],
+) -> crate::backend::RecursiveWitnessFlat {
+    if suffix.is_empty() {
+        return base;
+    }
+    let mut digits = base.as_i8_digits().to_vec();
+    digits.extend_from_slice(suffix);
+    crate::backend::RecursiveWitnessFlat::from_i8_digits(digits)
+}
+
+fn evaluate_v_compression<F, const D: usize>(
+    setup_fields: &[F],
+    plan: &CommitmentCompressionPlan,
+    hidden_v: Option<&[CyclotomicRing<F, D>]>,
+    suffix_offset: usize,
+    log_basis: u32,
+) -> Result<VCompressionProverData<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    let hidden_v = hidden_v.ok_or_else(|| {
+        AkitaError::InvalidSetup("scheduled v compression did not compute hidden raw v".to_string())
+    })?;
+    let raw_payload = flatten_ring_rows(hidden_v);
+    let num_digits = decomposition_digits_per_scalar(plan)?;
+    let evaluation =
+        evaluate_commitment_compression(setup_fields, plan, &raw_payload, num_digits, log_basis)?;
+    Ok(VCompressionProverData {
+        evaluation,
+        suffix_offset,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_v_compression_stage2_table<F, E, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    lp: &LevelParams,
+    instance: &RingRelationInstance<F, D>,
+    plan: &CommitmentCompressionPlan,
+    public_payload: &FlatRingVec<F>,
+    suffix_offset: usize,
+    live_x_cols: usize,
+    y_len: usize,
+    row_challenge: E,
+    log_basis: u32,
+) -> Result<CompressionLinearization<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + LiftBase<F>,
+{
+    let segment = instance.segment_layout(lp)?;
+    let col_len = instance
+        .opening_batch()
+        .num_polynomials()
+        .checked_mul(lp.num_blocks)
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("D compression width overflow".to_string()))?;
+    let d_view = expanded
+        .shared_matrix()
+        .ring_view::<D>(lp.d_key.row_len(), col_len)?;
+    let raw = linearize_raw_ring_rows_to_first_digits::<F, E, D>(
+        d_view.as_slice(),
+        lp.d_key.row_len(),
+        col_len,
+        segment.offset_e,
+        plan,
+        suffix_offset,
+        live_x_cols,
+        y_len,
+        row_challenge,
+        E::one(),
+        log_basis,
+    )?;
+    let chain = linearize_compression_chain(
+        expanded.shared_matrix().as_field_slice(),
+        plan,
+        public_payload,
+        suffix_offset,
+        live_x_cols,
+        y_len,
+        row_challenge,
+        raw.next_row_weight,
+        log_basis,
+    )?;
+    let mut table = raw.table;
+    table.add_assign_table(&chain.table, live_x_cols, y_len)?;
+    Ok(CompressionLinearization {
+        table,
+        claim: raw.claim + chain.claim,
+        next_row_weight: chain.next_row_weight,
+    })
+}
+
 pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
     pub(in crate::protocol::core) trace_eval_target: L,
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
@@ -89,6 +197,7 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::core) commitment: FlatRingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
+    pub(in crate::protocol::core) hidden_v: Option<Vec<CyclotomicRing<F, D>>>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
     pub(in crate::protocol::core) trace_eval_target: L,
@@ -279,6 +388,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     block_order: BlockOrder,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
+    compute_hidden_v: bool,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -348,6 +458,7 @@ where
                 transcript,
                 m_row_layout,
                 terminal_tail_t_vectors,
+                compute_hidden_v,
             })
         } else {
             let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
@@ -383,6 +494,7 @@ where
                     transcript,
                     m_row_layout,
                     terminal_tail_t_vectors,
+                    compute_hidden_v,
                 },
             )
         }
@@ -404,6 +516,7 @@ where
             transcript,
             m_row_layout,
             terminal_tail_t_vectors,
+            compute_hidden_v,
         })
     }
 }
@@ -433,6 +546,7 @@ where
     transcript: &'p mut T,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
+    compute_hidden_v: bool,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
@@ -474,6 +588,7 @@ where
         transcript,
         m_row_layout,
         terminal_tail_t_vectors,
+        compute_hidden_v,
     } = args;
     let opening = stack.opening();
     let prepared_point = prepare_opening_point::<F, E, D>(
@@ -506,7 +621,7 @@ where
     )?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let commitment = fold_claims.single_fold_commitment()?;
-    let (instance, witness) = RingRelationProver::new(
+    let (instance, witness, hidden_v) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
         prepared_point.ring_opening_point.clone(),
@@ -518,6 +633,7 @@ where
         row_coefficient_rings,
         m_row_layout,
         terminal_tail_t_vectors,
+        compute_hidden_v,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let row_coefficients = if pad_base_evals {
@@ -534,6 +650,7 @@ where
         commitment,
         instance,
         witness,
+        hidden_v,
         extension_opening_reduction,
         trace_eval_target: trace_target.trace_eval_target,
         trace_scale: trace_target.trace_scale,
@@ -610,6 +727,7 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField
+        + FromPrimitiveInt
         + AkitaSerialize,
     L: ExtField<F>
         + FpExtEncoding<F>
@@ -636,7 +754,28 @@ where
         lp,
         is_terminal_fold,
     )?;
-    let logical_w = build_output.w;
+    if is_terminal_fold && scheduled.compression.v.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "terminal fold proof cannot carry compressed v payload".to_string(),
+        ));
+    }
+    let base_w_len = build_output.w.len();
+    let v_compression = if let Some(plan) = scheduled.compression.v.as_ref() {
+        Some(evaluate_v_compression::<F, D>(
+            expanded.shared_matrix().as_field_slice(),
+            plan,
+            prepared_fold.hidden_v.as_deref(),
+            base_w_len,
+            lp.log_basis,
+        )?)
+    } else {
+        None
+    };
+    let logical_w = if let Some(compression) = v_compression.as_ref() {
+        append_i8_suffix(build_output.w, &compression.evaluation.padded_suffix_digits)
+    } else {
+        build_output.w
+    };
     scheduled.validate_next_w_len(logical_w.len())?;
     let next_commitment = if is_terminal_fold {
         None
@@ -705,9 +844,10 @@ where
         };
         stage2_trace_coeff(batching_coeff, trace_gamma, is_terminal_fold)
     };
-    let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
+    let mut trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(L::EXT_DEGREE)?;
-    let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
+    let mut trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref()
+    {
         Some(build_root_stage2_trace_table::<F, L, D>(
             lp,
             &prepared_fold.instance,
@@ -736,6 +876,34 @@ where
     } else {
         None
     };
+    if let (Some(plan), Some(compression)) =
+        (scheduled.compression.v.as_ref(), v_compression.as_ref())
+    {
+        let row_challenge =
+            sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_COMMITMENT_COMPRESSION_ROW);
+        let compression_linearization = build_v_compression_stage2_table::<F, L, D>(
+            expanded.as_ref(),
+            lp,
+            &prepared_fold.instance,
+            plan,
+            &compression.evaluation.public_payload,
+            compression.suffix_offset,
+            rs.live_x_cols,
+            1usize << rs.ring_bits,
+            row_challenge,
+            lp.log_basis,
+        )?;
+        trace_opening_claim += compression_linearization.claim;
+        if let Some(trace_table) = trace_compact.as_mut() {
+            trace_table.add_assign_table(
+                &compression_linearization.table,
+                rs.live_x_cols,
+                1usize << rs.ring_bits,
+            )?;
+        } else {
+            trace_compact = Some(compression_linearization.table);
+        }
+    }
     let ring_bits = rs.ring_bits;
     let col_bits = rs.col_bits;
     let live_x_cols = rs.live_x_cols;
@@ -805,7 +973,12 @@ where
         let w_commitment_proof = committed_commitment.clone();
         let level_proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: prepared_fold.extension_opening_reduction,
-            v: FlatRingVec::from_ring_elems(&prepared_fold.instance.v).into_compact(),
+            v: v_compression
+                .as_ref()
+                .map(|compression| compression.evaluation.public_payload.clone().into_compact())
+                .unwrap_or_else(|| {
+                    FlatRingVec::from_ring_elems(&prepared_fold.instance.v).into_compact()
+                }),
             fold_grind_nonce,
             stage1: stage1_proof,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
