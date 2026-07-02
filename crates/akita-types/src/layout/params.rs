@@ -167,6 +167,13 @@ pub struct LevelParams {
     /// Optional cached [`crate::sis::num_digits_fold`] for a batched root `num_claims > 1`.
     pub cached_num_digits_fold_claims: usize,
     pub cached_num_digits_fold_value: usize,
+    /// Multi-chunk witness layout for this level (default: single-chunk).
+    ///
+    /// The planner populates this from `policy.witness_chunk` and the level's
+    /// position in the fold recursion; the verifier consumes it as the source of
+    /// truth for the per-level witness column layout. `ChunkedWitnessCfg::default()`
+    /// (single chunk) is byte-identical to the historical layout.
+    pub witness_chunk: crate::witness::ChunkedWitnessCfg,
     /// Precommitted group-local params for a grouped root. Empty for scalar
     /// levels; when non-empty, the top-level fields describe the final/new
     /// group and `d_key` describes the shared D matrix over all group `w_hat`
@@ -212,6 +219,7 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
         }
     }
@@ -273,6 +281,7 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
         }
     }
@@ -599,6 +608,13 @@ impl LevelParams {
                 None => bytes.push(0),
             }
         }
+        // Chunk binding is appended only when the level is chunked, so
+        // single-chunk descriptors stay byte-for-byte identical to the historical
+        // layout (the flag-off no-op invariant). When chunked, bind the chunk
+        // count and activated-level count into the Fiat-Shamir digest.
+        if self.witness_chunk.num_chunks != 1 {
+            self.witness_chunk.append_descriptor_bytes(bytes);
+        }
         if !self.precommitted_groups.is_empty() {
             push_usize(bytes, self.precommitted_groups.len());
             for group in &self.precommitted_groups {
@@ -878,6 +894,9 @@ impl LevelParams {
             field_bits_hint: self.field_bits_hint,
             cached_num_digits_fold_claims: self.cached_num_digits_fold_claims,
             cached_num_digits_fold_value: self.cached_num_digits_fold_value,
+            // `with_decomp` recomputes only the A/B/D widths; the chunk layout is
+            // a property of the witness this level commits, so preserve it.
+            witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
         };
         let field_bits = self.field_bits_for_cache();
@@ -945,6 +964,9 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            // The chunk layout is a property of the committed witness, sized with
+            // the ranks, so it stays with `self` like the SIS buckets.
+            witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
         }
         .with_fold_linf_cap_config(field_bits, 0)

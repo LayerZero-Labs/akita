@@ -20,6 +20,7 @@ use crate::generated::{
     group_batch_table_entry, table_entry, GeneratedCommitmentGroupScheduleKey,
     GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleTable, GeneratedScheduleTableEntry,
 };
+use crate::schedule_params::validate_policy_witness_chunk;
 use crate::PlannerPolicy;
 use crate::{find_group_batch_schedule, find_schedule};
 
@@ -43,6 +44,7 @@ pub fn resolve_schedule(
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
+    validate_policy_witness_chunk(policy)?;
     let Some(table) = catalog else {
         return find_schedule(
             key,
@@ -83,6 +85,7 @@ pub fn resolve_group_batch_schedule(
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
+    validate_policy_witness_chunk(policy)?;
     if key.precommitteds.is_empty() {
         return resolve_schedule(
             key.final_group,
@@ -181,7 +184,8 @@ mod tests {
     };
     use crate::{find_group_batch_schedule, find_schedule};
     use akita_types::{
-        AkitaScheduleLookupKey, CommitmentGroupLayout, DecompositionParams, LevelParams,
+        AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentGroupLayout,
+        CommitmentGroupScheduleKey, DecompositionParams, LevelParams, MultiChunkProfileId,
         SisModulusFamily, Step, DEFAULT_SIS_SECURITY_BITS,
     };
 
@@ -201,6 +205,7 @@ mod tests {
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             tiered: false,
+            witness_chunk: ChunkedWitnessCfg::default(),
         }
     }
 
@@ -265,6 +270,93 @@ mod tests {
         let via_find =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find");
         assert_eq!(via_resolve.total_bytes, via_find.total_bytes);
+    }
+
+    #[test]
+    fn multi_chunk_schedule_ends_with_single_chunk_terminal_fold() {
+        // Chunked leading levels are allowed when the planner can route through a
+        // single-chunk fold before the terminal-direct tail.
+        let mut policy = flat_policy();
+        policy.witness_chunk = ChunkedWitnessCfg {
+            num_chunks: 8,
+            num_activated_levels: 2,
+        };
+        let key = CommitmentGroupScheduleKey::new(24, 1);
+        let schedule =
+            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("schedule");
+        let last_fold = schedule
+            .steps
+            .iter()
+            .rev()
+            .find_map(|step| match step {
+                Step::Fold(fold) => Some(fold),
+                _ => None,
+            })
+            .expect("fold-then-direct schedule");
+        assert_eq!(last_fold.params.witness_chunk.num_chunks, 1);
+    }
+
+    #[test]
+    fn multi_chunk_does_not_perturb_single_chunk_schedule() {
+        // A policy with default (single-chunk) witness_chunk must reproduce the
+        // exact schedule of today's planner for the same key.
+        let key = CommitmentGroupScheduleKey::new(22, 1);
+        let base = flat_policy();
+        let mut explicit_default = flat_policy();
+        explicit_default.witness_chunk = ChunkedWitnessCfg::default();
+        let a = find_schedule(key, &base, ring_challenge_config, fold_shape).expect("a");
+        let b =
+            find_schedule(key, &explicit_default, ring_challenge_config, fold_shape).expect("b");
+        assert_eq!(a.total_bytes, b.total_bytes);
+        assert_eq!(a.steps.len(), b.steps.len());
+    }
+
+    #[test]
+    fn all_multi_chunk_profiles_find_schedule_with_single_chunk_terminal() {
+        let key = CommitmentGroupScheduleKey::new(24, 1);
+        for profile in MultiChunkProfileId::ALL {
+            let mut policy = flat_policy();
+            policy.witness_chunk = profile.cfg();
+            let schedule = find_schedule(key, &policy, ring_challenge_config, fold_shape)
+                .unwrap_or_else(|err| panic!("profile {profile:?} must plan at nv=24: {err:?}"));
+            let last_fold = schedule
+                .steps
+                .iter()
+                .rev()
+                .find_map(|step| match step {
+                    Step::Fold(fold) => Some(fold),
+                    _ => None,
+                })
+                .expect("fold-then-direct schedule");
+            assert_eq!(
+                last_fold.params.witness_chunk.num_chunks, 1,
+                "profile {profile:?} must end with a single-chunk terminal fold"
+            );
+        }
+    }
+
+    #[test]
+    fn find_schedule_rejects_non_power_of_two_chunks() {
+        let mut policy = flat_policy();
+        policy.witness_chunk = ChunkedWitnessCfg {
+            num_chunks: 6,
+            num_activated_levels: 2,
+        };
+        let key = CommitmentGroupScheduleKey::new(20, 1);
+        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
+            .expect_err("non-power-of-two chunk count must be rejected");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn find_schedule_rejects_tiered_multi_chunk() {
+        let mut policy = flat_policy();
+        policy.tiered = true;
+        policy.witness_chunk = ChunkedWitnessCfg::d64_production();
+        let key = CommitmentGroupScheduleKey::new(20, 1);
+        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
+            .expect_err("tiered + multi-chunk must be rejected");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]

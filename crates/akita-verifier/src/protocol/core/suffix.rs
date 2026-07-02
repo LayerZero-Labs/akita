@@ -88,14 +88,28 @@ where
 
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
-        None => w_ring_element_count_with_counts_for_layout::<F>(
-            lp,
-            num_claims,
-            num_claims,
-            MRowLayout::WithDBlock,
-        )?
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        None => {
+            let nc = lp.witness_chunk.num_chunks;
+            let ring = if nc > 1 {
+                akita_types::w_ring_element_count_for_chunks(
+                    F::modulus_bits(),
+                    lp,
+                    num_claims,
+                    MRowLayout::WithDBlock,
+                    nc,
+                )?
+            } else {
+                w_ring_element_count_with_counts_for_layout::<F>(
+                    lp,
+                    num_claims,
+                    num_claims,
+                    MRowLayout::WithDBlock,
+                )?
+            };
+            ring.checked_mul(D).ok_or_else(|| {
+                AkitaError::InvalidSetup("next witness length overflow".to_string())
+            })?
+        }
     };
     let terminal_replay = if proof.final_w_len().is_some() {
         let layout =
@@ -223,16 +237,27 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let computed_next_w_len = w_ring_element_count_with_counts_for_layout::<F>(
-                    current_lp,
-                    1,
-                    1,
-                    MRowLayout::WithDBlock,
-                )?
-                .checked_mul(level_d)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("next witness length overflow".to_string())
-                })?;
+                let next_chunks = current_lp.witness_chunk.num_chunks;
+                let computed_next_w_ring = if next_chunks > 1 {
+                    akita_types::w_ring_element_count_for_chunks(
+                        F::modulus_bits(),
+                        current_lp,
+                        1,
+                        MRowLayout::WithDBlock,
+                        next_chunks,
+                    )?
+                } else {
+                    w_ring_element_count_with_counts_for_layout::<F>(
+                        current_lp,
+                        1,
+                        1,
+                        MRowLayout::WithDBlock,
+                    )?
+                };
+                let computed_next_w_len =
+                    computed_next_w_ring.checked_mul(level_d).ok_or_else(|| {
+                        AkitaError::InvalidSetup("next witness length overflow".to_string())
+                    })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
                 current_state = SuffixVerifierState {
                     opening_point: challenges,

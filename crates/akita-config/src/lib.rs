@@ -17,10 +17,78 @@ use akita_types::sis::{
     min_secure_rank, rounded_up_collision_linf_t, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
 };
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupScheduleKey,
-    DecompositionParams, LevelParams, OpeningBatchShape, Schedule, SetupMatrixEnvelope,
-    SisModulusFamily, Step,
+    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg,
+    CommitmentGroupScheduleKey, DecompositionParams, LevelParams, OpeningBatchShape, Schedule,
+    SetupMatrixEnvelope, SisModulusFamily, Step,
 };
+
+/// Define a multi-chunk companion preset that delegates every layout-affecting
+/// parameter to a base `Cfg` and overrides only the multi-chunk witness config
+/// and the shipped schedule catalog.
+///
+/// The companion shares the base's field, ring dimension, decomposition,
+/// challenge config, and SIS family, so its `_multi_chunk` table enumerates the
+/// same `(num_vars, num_polynomials)` keys as its sibling; the schedules differ
+/// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
+macro_rules! impl_multi_chunk_companion {
+    ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident) => {
+        impl $crate::CommitmentConfig for $cfg {
+            type Field = <$base as $crate::CommitmentConfig>::Field;
+            type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
+            const D: usize = <$base as $crate::CommitmentConfig>::D;
+            const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
+            const TIERED_COMMITMENT: bool = <$base as $crate::CommitmentConfig>::TIERED_COMMITMENT;
+
+            fn decomposition() -> akita_types::DecompositionParams {
+                <$base as $crate::CommitmentConfig>::decomposition()
+            }
+            fn ring_challenge_config(
+                d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+                <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
+            }
+            fn fold_challenge_shape_at_level(
+                inputs: akita_types::AkitaScheduleInputs,
+            ) -> akita_challenges::TensorChallengeShape {
+                <$base as $crate::CommitmentConfig>::fold_challenge_shape_at_level(inputs)
+            }
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                <$base as $crate::CommitmentConfig>::sis_modulus_family()
+            }
+            fn ring_subfield_embedding_norm_bound() -> u32 {
+                <$base as $crate::CommitmentConfig>::ring_subfield_embedding_norm_bound()
+            }
+            fn max_setup_matrix_size(
+                max_num_vars: usize,
+                max_num_batched_polys: usize,
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<$cfg>(
+                    max_num_vars,
+                    max_num_batched_polys,
+                )
+            }
+            fn basis_range() -> (u32, u32) {
+                <$base as $crate::CommitmentConfig>::basis_range()
+            }
+            fn onehot_chunk_size() -> usize {
+                <$base as $crate::CommitmentConfig>::onehot_chunk_size()
+            }
+            fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+                $profile.cfg()
+            }
+            fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+                #[cfg(feature = $feat)]
+                {
+                    Some(akita_schedules::$table())
+                }
+                #[cfg(not(feature = $feat))]
+                {
+                    None
+                }
+            }
+        }
+    };
+}
 
 pub mod conservative_commitment;
 pub mod generated_families;
@@ -56,6 +124,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         tiered: Cfg::TIERED_COMMITMENT,
+        witness_chunk: Cfg::chunked_witness_cfg(),
     }
 }
 
@@ -197,6 +266,16 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// override this hook to recover tighter one-hot schedules.
     fn onehot_chunk_size() -> usize {
         1
+    }
+
+    /// Multi-chunk witness layout parameters for schedule planning and (future)
+    /// prover orchestration.
+    ///
+    /// Default is single-chunk ([`ChunkedWitnessCfg::default`]), which leaves
+    /// every schedule byte-identical to the historical layout. Distributed-prover
+    /// presets override this to price the chunked witness layout.
+    fn chunked_witness_cfg() -> ChunkedWitnessCfg {
+        ChunkedWitnessCfg::default()
     }
 
     /// Optional shipped schedule catalog for this preset.
