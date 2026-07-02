@@ -415,7 +415,6 @@ mod tests {
 
     type Cfg = fp128::D64Full;
     type TestF = fp128::Field;
-    const TEST_D: usize = 64;
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
@@ -453,6 +452,7 @@ mod tests {
 
     #[cfg(feature = "disk-persistence")]
     mod disk_persistence {
+        const TEST_D: usize = 64;
         use super::*;
         use std::fs;
         use std::sync::{LazyLock, Mutex};

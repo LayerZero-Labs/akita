@@ -356,13 +356,13 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             .expect("stack");
     let verifier_setup = SmallScheme::setup_verifier(&setup);
     let (commitment, hint) =
-        SmallScheme::commit::<_, _, SMALL_D>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+        SmallScheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let poly_refs = [&poly];
     let commitments = [commitment];
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
-    let proof = SmallScheme::batched_prove::<_, _, _, SMALL_D>(
+    let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -511,14 +511,13 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     let verifier_setup = SmallScheme::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) =
-        SmallScheme::commit::<_, _, SMALL_D>(&setup, &[poly_a.clone(), poly_b.clone()], &stack)
-            .unwrap();
+        SmallScheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_b];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
-    let proof = SmallScheme::batched_prove::<_, _, _, SMALL_D>(
+    let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -620,14 +619,13 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     let verifier_setup = SmallScheme::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) =
-        SmallScheme::commit::<_, _, SMALL_D>(&setup, &[poly_a.clone(), poly_b.clone()], &stack)
-            .unwrap();
+        SmallScheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_b];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
-    let proof = SmallScheme::batched_prove::<_, _, _, SMALL_D>(
+    let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -712,13 +710,13 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let verifier_setup = SmallScheme::setup_verifier(&setup);
     let polys = [poly.clone(), poly];
     let poly_refs = [&polys[0], &polys[1]];
-    let (commitment, hint) = SmallScheme::commit::<_, _, SMALL_D>(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = SmallScheme::commit::<_, _>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_a];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
-    let proof = SmallScheme::batched_prove::<_, _, _, SMALL_D>(
+    let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&point_a[..], &poly_refs[..], &commitments[0], hint),
         &stack,

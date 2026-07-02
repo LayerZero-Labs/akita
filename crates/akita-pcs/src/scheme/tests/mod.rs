@@ -289,7 +289,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
     let (commitment, hint) =
-        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
@@ -304,7 +304,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove::<_, _, _, D>(
+    let proof = Scheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
         &stack,

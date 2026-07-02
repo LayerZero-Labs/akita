@@ -29,19 +29,21 @@ type F = <Cfg as CommitmentConfig>::Field;
 const D: usize = Cfg::D;
 
 /// Downstream-like root polynomial: not `DensePoly`, `OneHotPoly`, etc.
+///
+/// D-free storage; the commit source impls are generic over every runtime
+/// ring dimension, matching the `Runtime*` capability bounds on the D-free
+/// commit entry points.
 #[derive(Debug, Clone)]
 struct ContractRootPoly {
     num_vars: usize,
-    coeffs: Vec<CyclotomicRing<F, D>>,
+    dense: DensePoly<F>,
 }
 
 impl ContractRootPoly {
     fn from_field_evals(num_vars: usize, evals: &[F]) -> Result<Self, AkitaError> {
         Ok(Self {
             num_vars,
-            coeffs: DensePoly::<F>::from_field_evals(num_vars, D, evals)?
-                .ring_coeffs::<D>()?
-                .to_vec(),
+            dense: DensePoly::<F>::from_field_evals(num_vars, D, evals)?,
         })
     }
 }
@@ -52,9 +54,9 @@ struct ContractCommitView<'a> {
     poly: &'a ContractRootPoly,
 }
 
-impl RootPolyShape<F, D> for ContractRootPoly {
+impl<const DD: usize> RootPolyShape<F, DD> for ContractRootPoly {
     fn num_ring_elems(&self) -> usize {
-        self.coeffs.len()
+        RootPolyShape::<F, DD>::num_ring_elems(&self.dense)
     }
 
     fn num_vars(&self) -> usize {
@@ -64,7 +66,7 @@ impl RootPolyShape<F, D> for ContractRootPoly {
 
 impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
     fn num_ring_elems(&self) -> usize {
-        self.coeffs.len()
+        akita_prover::RootPolyMeta::num_ring_elems(&self.dense)
     }
 
     fn num_vars(&self) -> usize {
@@ -76,7 +78,7 @@ impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
     }
 }
 
-impl RootCommitSource<F, D> for ContractRootPoly {
+impl<const DD: usize> RootCommitSource<F, DD> for ContractRootPoly {
     type CommitView<'a>
         = ContractCommitView<'a>
     where
@@ -145,7 +147,7 @@ where
     }
 }
 
-impl RootCommitKernel<ContractCommitView<'_>, F, D> for ContractCommitBackend
+impl<const DD: usize> RootCommitKernel<ContractCommitView<'_>, F, DD> for ContractCommitBackend
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -156,11 +158,10 @@ where
         source: ContractCommitView<'_>,
         plan: CommitInnerPlan,
     ) -> Result<akita_prover::CommitInnerWitness<F>, AkitaError> {
-        let dense = DensePoly::<F>::from_ring_coeffs(source.poly.coeffs.clone());
-        RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
+        RootCommitKernel::<DenseView<'_, F, DD>, F, DD>::commit_inner(
             &CpuBackend,
             prepared,
-            dense.commit_view()?,
+            RootCommitSource::<F, DD>::commit_view(&source.poly.dense)?,
             plan,
         )
     }
@@ -194,7 +195,7 @@ fn custom_commit_source_runs_commit_with_params() {
     let contract_ctx =
         OperationCtx::new(&ContractCommitBackend, &prepared, expanded).expect("contract ctx");
 
-    let (contract_commitment, contract_hint) = commit_with_params::<F, D, ContractRootPoly, _>(
+    let (contract_commitment, contract_hint) = commit_with_params::<F, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
         &contract_ctx,
@@ -204,7 +205,7 @@ fn custom_commit_source_runs_commit_with_params() {
 
     let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
     let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
-    let (dense_commitment, dense_hint) = commit_with_params::<F, D, DensePoly<F>, CpuBackend>(
+    let (dense_commitment, dense_hint) = commit_with_params::<F, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),
         expanded,
         &cpu_ctx,
@@ -243,7 +244,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         OperationCtx::new(&ContractCommitBackend, &prepared, expanded).expect("contract ctx");
 
     let (contract_commitment, contract_hint) =
-        batched_commit_with_params::<F, D, ContractRootPoly, ContractCommitBackend>(
+        batched_commit_with_params::<F, ContractRootPoly, ContractCommitBackend>(
             std::slice::from_ref(&contract),
             expanded,
             &contract_ctx,
@@ -253,14 +254,13 @@ fn custom_commit_source_runs_batched_commit_with_params() {
 
     let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
     let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
-    let (dense_commitment, dense_hint) =
-        batched_commit_with_params::<F, D, DensePoly<F>, CpuBackend>(
-            std::slice::from_ref(&dense),
-            expanded,
-            &cpu_ctx,
-            &params,
-        )
-        .expect("dense batched commit");
+    let (dense_commitment, dense_hint) = batched_commit_with_params::<F, DensePoly<F>, CpuBackend>(
+        std::slice::from_ref(&dense),
+        expanded,
+        &cpu_ctx,
+        &params,
+    )
+    .expect("dense batched commit");
 
     assert_eq!(
         contract_commitment.rows().count(),

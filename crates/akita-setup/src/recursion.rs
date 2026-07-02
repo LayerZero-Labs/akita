@@ -15,7 +15,7 @@ use akita_types::{
     OpeningBatchShape, SETUP_OFFLOAD_D_SETUP,
 };
 
-fn commit_setup_prefix_for_level<F, const D: usize, B>(
+fn commit_setup_prefix_for_level<F, B>(
     setup: &mut AkitaProverSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup,
@@ -27,36 +27,43 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
 {
-    if D != SETUP_OFFLOAD_D_SETUP {
-        return Err(AkitaError::InvalidSetup(format!(
-            "setup prefix preprocessing requires D={SETUP_OFFLOAD_D_SETUP}, got D={D}"
-        )));
-    }
+    let d_setup = SETUP_OFFLOAD_D_SETUP;
     let seed_digest = setup_seed_digest(setup.expanded.seed())
         .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
-    let Some(prefix_params) = setup_prefix_level_params(commitment_params, n_prefix, D)? else {
+    let Some(prefix_params) = setup_prefix_level_params(commitment_params, n_prefix, d_setup)?
+    else {
         return Ok(());
     };
     let level_params_digest = digest_level_params(std::slice::from_ref(&prefix_params));
-    let id = setup_prefix_slot_id(seed_digest, D, natural_len, n_prefix, level_params_digest);
+    let id = setup_prefix_slot_id(
+        seed_digest,
+        d_setup,
+        natural_len,
+        n_prefix,
+        level_params_digest,
+    );
     if setup.prefix_slots.get(&id).is_some() {
         return Ok(());
     }
-    let slot = commit_setup_prefix::<F, D, B>(
-        &setup.expanded,
-        backend,
-        prepared,
-        akita_prover::SetupPrefixCommitShape::from_level(&prefix_params),
-        level_params_digest,
-        seed_digest,
-        n_prefix,
-        natural_len,
-    )?;
+    // Setup-offload prefix commitments are pinned to `SETUP_OFFLOAD_D_SETUP`;
+    // dispatch on that (constant) dimension at this single kernel entry.
+    let slot = dispatch_ring_dim_result!(d_setup, |D| {
+        commit_setup_prefix::<F, D, B>(
+            &setup.expanded,
+            backend,
+            prepared,
+            akita_prover::SetupPrefixCommitShape::from_level(&prefix_params),
+            level_params_digest,
+            seed_digest,
+            n_prefix,
+            natural_len,
+        )
+    })?;
     setup.prefix_slots.insert(slot)?;
     Ok(())
 }
 
-fn populate_recursive_setup_prefixes<F, const D: usize, Cfg>(
+fn populate_recursive_setup_prefixes<F, Cfg>(
     setup: &mut AkitaProverSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -65,7 +72,9 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     Cfg: CommitmentConfig<Field = F>,
 {
-    if D != SETUP_OFFLOAD_D_SETUP {
+    // Setup-claim offloading is only defined at the pinned offload dimension.
+    let gen_ring_dim = setup.expanded.seed().gen_ring_dim;
+    if gen_ring_dim != SETUP_OFFLOAD_D_SETUP {
         return Ok(());
     }
 
@@ -75,8 +84,8 @@ where
     let available_field_len = setup
         .expanded
         .shared_matrix()
-        .total_ring_elements_at::<D>()?
-        .checked_mul(D)
+        .total_ring_elements_at_dyn(gen_ring_dim)?
+        .checked_mul(gen_ring_dim)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
         })?;
@@ -96,13 +105,13 @@ where
             &recursive_opening_batch
         };
         let next_fold = &folds[idx + 1];
-        let natural_len =
-            active_setup_field_len(&fold.params, opening_batch, D)?.min(available_field_len);
+        let natural_len = active_setup_field_len(&fold.params, opening_batch, gen_ring_dim)?
+            .min(available_field_len);
         let n_prefix = padded_setup_prefix_len(natural_len);
         if n_prefix > available_field_len {
             continue;
         }
-        commit_setup_prefix_for_level::<F, D, CpuBackend>(
+        commit_setup_prefix_for_level::<F, CpuBackend>(
             setup,
             &backend,
             &prepared,
@@ -138,17 +147,10 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     let mut setup = new_prover_setup::<F, Cfg>(max_num_vars, max_num_batched_polys)?;
-    // Recursive setup-prefix population is keyed on the setup generation ring
-    // dimension; dispatch on the runtime `gen_ring_dim` at this single
-    // kernel-entry boundary (the const-D prefix kernels stay `<D>`).
-    let gen_ring_dim = setup.expanded.seed().gen_ring_dim;
-    dispatch_ring_dim_result!(gen_ring_dim, |D| {
-        populate_recursive_setup_prefixes::<F, D, Cfg>(
-            &mut setup,
-            max_num_vars,
-            max_num_batched_polys,
-        )
-    })?;
+    // Recursive setup-prefix population is orchestration (it walks the config
+    // schedule); the const-D prefix commit kernel dispatches internally on the
+    // pinned `SETUP_OFFLOAD_D_SETUP` dimension.
+    populate_recursive_setup_prefixes::<F, Cfg>(&mut setup, max_num_vars, max_num_batched_polys)?;
 
     #[cfg(feature = "disk-persistence")]
     save_prover_setup::<F, Cfg>(&setup, max_num_vars, max_num_batched_polys)?;

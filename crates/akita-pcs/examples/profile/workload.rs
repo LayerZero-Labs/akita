@@ -11,8 +11,8 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootCommitBackend, RootCommitPoly,
-    RootPolyMeta, RootPolyShape, RootProvePoly,
+    OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootPolyShape, RootProvePoly,
+    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
 use akita_prover::{
     AkitaProverSetup, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
@@ -382,7 +382,7 @@ fn run_prove<
     FF,
     const D: usize,
     Cfg: CommitmentConfig<Field = FF>,
-    P: RootPolyMeta<FF> + RootProvePoly<FF, D> + RootCommitPoly<FF, D>,
+    P: RuntimeRootProvePoly<FF> + RuntimeRootCommitPoly<FF>,
 >(
     label: &str,
     setup: &AkitaProverSetup<Cfg::Field>,
@@ -409,8 +409,8 @@ fn run_prove<
         + HasUnreducedOps
         + HasOptimizedFold
         + AkitaSerialize,
-    CpuBackend:
-        RootCommitBackend<FF, P, Cfg::ExtField, D> + RecursiveProveBackend<FF, P, Cfg::ExtField, D>,
+    CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
+        + RecursiveProveBackend<FF, P, Cfg::ExtField>,
 {
     let t0 = Instant::now();
     let (commitment, hint) =
@@ -803,7 +803,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack).unwrap();
+        AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -817,7 +817,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let _grind_observer = FoldGrindObserverGuard::install();
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
         prover_claims(
             &pt[..],

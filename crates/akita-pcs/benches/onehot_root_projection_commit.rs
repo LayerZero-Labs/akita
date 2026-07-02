@@ -168,14 +168,13 @@ where
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let start = Instant::now();
-                let committed =
-                    commit_with_params::<F, D, RootTensorProjectionPoly<F>, CpuBackend>(
-                        &transformed_polys,
-                        setup.expanded.as_ref(),
-                        stack.commit(),
-                        &params,
-                    )
-                    .expect("benchmark transformed commitment");
+                let committed = commit_with_params::<F, RootTensorProjectionPoly<F>, CpuBackend>(
+                    &transformed_polys,
+                    setup.expanded.as_ref(),
+                    stack.commit(),
+                    &params,
+                )
+                .expect("benchmark transformed commitment");
                 total += start.elapsed();
                 black_box(committed);
             }
@@ -190,7 +189,7 @@ where
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
                 let committed =
-                    AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack)
+                    AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
                         .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);

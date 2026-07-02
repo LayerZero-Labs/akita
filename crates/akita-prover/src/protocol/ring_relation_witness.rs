@@ -20,21 +20,23 @@ pub struct RingRelationWitness<F: FieldCore> {
 }
 
 impl<F: FieldCore> RingRelationWitness<F> {
-    /// Construct from typed fold outputs at a kernel boundary.
-    pub fn from_parts<const D: usize>(
+    /// Construct from D-free fold outputs under a schedule-derived ring
+    /// dimension.
+    pub fn from_flat_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
         fold_grind_nonce: u32,
-        e_hat: FlatDigitBlocks<D>,
-        e_folded: Vec<akita_algebra::CyclotomicRing<F, D>>,
+        e_hat: DigitBlocks,
+        e_folded: RingVec<F>,
         hint: AkitaCommitmentHint<F>,
+        ring_dim: usize,
     ) -> Self {
         Self {
             z_folded_rings,
             fold_grind_nonce,
-            e_hat: e_hat.into_digit_blocks(),
-            e_folded: RingVec::from_ring_elems(&e_folded),
+            e_hat,
+            e_folded,
             hint,
-            ring_dim: D,
+            ring_dim,
         }
     }
 

@@ -637,7 +637,8 @@ where
 pub fn prepare_opening_point<F, E, const D: usize>(
     opening_point: &[E],
     basis: BasisMode,
-    lp: &LevelParams,
+    m_vars: usize,
+    r_vars: usize,
     alpha_bits: usize,
     block_order: BlockOrder,
 ) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
@@ -646,9 +647,8 @@ where
     E: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
-    let target_num_vars = lp
-        .m_vars
-        .checked_add(lp.r_vars)
+    let target_num_vars = m_vars
+        .checked_add(r_vars)
         .and_then(|n| n.checked_add(alpha_bits))
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() > target_num_vars {
@@ -673,13 +673,8 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let inner_point = &base_point[..alpha_bits];
         let outer_point = &base_point[alpha_bits..];
-        let ring_opening_point = ring_opening_point_from_field::<F>(
-            outer_point,
-            lp.r_vars,
-            lp.m_vars,
-            basis,
-            block_order,
-        )?;
+        let ring_opening_point =
+            ring_opening_point_from_field::<F>(outer_point, r_vars, m_vars, basis, block_order)?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
         return Ok(PreparedOpeningPoint::from_parts::<D>(
@@ -716,15 +711,15 @@ where
     let outer_point = &padded_point[alpha_bits..];
     let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, E, D>(
         outer_point,
-        lp.r_vars,
-        lp.m_vars,
+        r_vars,
+        m_vars,
         basis,
         block_order,
     )?;
     let ring_opening_point = ring_opening_point_from_field::<F>(
         &vec![F::zero(); outer_point.len()],
-        lp.r_vars,
-        lp.m_vars,
+        r_vars,
+        m_vars,
         basis,
         block_order,
     )?;
@@ -837,7 +832,10 @@ where
 }
 
 /// Return whether root tensor projection can represent this field/ring shape.
-pub fn root_tensor_projection_enabled<F, E, const D: usize>(num_vars: usize) -> bool
+///
+/// `ring_d` is the schedule-derived root ring dimension (plain usize math —
+/// no typed ring work happens here).
+pub fn root_tensor_projection_enabled<F, E>(ring_d: usize, num_vars: usize) -> bool
 where
     F: FieldCore,
     E: ExtField<F>,
@@ -848,10 +846,10 @@ where
     };
     width > 1
         && width.is_power_of_two()
-        && D.is_power_of_two()
-        && D >= double_width
-        && D.is_multiple_of(width)
-        && num_vars >= D.trailing_zeros() as usize
+        && ring_d.is_power_of_two()
+        && ring_d >= double_width
+        && ring_d.is_multiple_of(width)
+        && num_vars >= ring_d.trailing_zeros() as usize
 }
 
 #[cfg(test)]
@@ -909,7 +907,8 @@ mod tests {
         let prepared = prepare_opening_point::<F, E, 32>(
             &point,
             BasisMode::Lagrange,
-            &lp,
+            lp.m_vars,
+            lp.r_vars,
             5,
             BlockOrder::ColumnMajor,
         )
@@ -956,8 +955,8 @@ mod tests {
 
     #[test]
     fn root_tensor_projection_gate_requires_room_for_signed_subfield_basis() {
-        assert!(root_tensor_projection_enabled::<F, E, 8>(3));
-        assert!(!root_tensor_projection_enabled::<F, E, 4>(2));
+        assert!(root_tensor_projection_enabled::<F, E>(8, 3));
+        assert!(!root_tensor_projection_enabled::<F, E>(4, 2));
     }
 
     #[test]

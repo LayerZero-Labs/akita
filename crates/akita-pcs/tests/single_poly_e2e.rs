@@ -55,12 +55,9 @@ fn run_single_onehot(nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _, ONEHOT_D>(
-            &setup,
-            commit_input,
-            &stack,
-        )
-        .expect("commit");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)
+                .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -69,7 +66,7 @@ fn run_single_onehot(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _, ONEHOT_D>(
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
             &setup,
             prove_input(
                 &pt[..],
@@ -143,12 +140,9 @@ fn run_single_dense(nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _, DENSE_D>(
-            &setup,
-            commit_input,
-            &stack,
-        )
-        .expect("commit");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, commit_input, &stack)
+                .expect("commit");
 
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let commitments = [commitment];
@@ -157,7 +151,7 @@ fn run_single_dense(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _, DENSE_D>(
+        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
             &setup,
             prove_input(
                 &pt[..],
@@ -283,12 +277,9 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _, ONEHOT_D>(
-            &setup,
-            commit_input,
-            &stack,
-        )
-        .expect("commit with oversized setup");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)
+                .expect("commit with oversized setup");
 
         let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -297,7 +288,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _, ONEHOT_D>(
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
             &setup,
             prove_input(
                 &pt[..],

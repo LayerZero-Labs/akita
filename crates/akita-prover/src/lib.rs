@@ -40,14 +40,15 @@ pub use compute::{
     LevelProveStacks, OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster,
     OpeningProveBackendFor, OperationCtx, PreparedCrtNttProfile, ProveBackendFor,
     ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
-    RecursiveWitnessCommitRowsPlan, RecursiveWitnessProveBackend, RingSwitchCluster,
-    RingSwitchComputeBackend, RingSwitchProveBackend, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
-    RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly,
-    RootTensorSource, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
-    SparseRingCommitRowsPlan, SuffixDispatchOpeningProveBackendFor,
-    SuffixDispatchTensorProveBackendFor, TensorBackendFor, TensorCluster, TieredProveStacks,
-    UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    RecursiveWitnessCommitRowsPlan, RingSwitchCluster, RingSwitchComputeBackend,
+    RingSwitchProveBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeProveBackendFor,
+    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor, SparseRingCommitRowsPlan,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor, TensorCluster,
+    TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};

@@ -18,8 +18,7 @@ fn commit_group_returns_frozen_conservative_layout() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let handle =
-        OneHotScheme::commit_group::<_, _, ONEHOT_D>(&setup, &polys, &stack).expect("commit group");
+    let handle = OneHotScheme::commit_group::<_, _>(&setup, &polys, &stack).expect("commit group");
 
     assert_eq!(handle.schedule.layout.key, key);
     assert_eq!(handle.schedule.layout.m_vars, layout.m_vars);
@@ -69,13 +68,13 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = OneHotScheme::setup_verifier(&setup);
-    let (commitment, hint) = OneHotScheme::commit::<_, _, ONEHOT_D>(&setup, &polys, &stack)
-        .expect("batched onehot commit");
+    let (commitment, hint) =
+        OneHotScheme::commit::<_, _>(&setup, &polys, &stack).expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-    let proof = OneHotScheme::batched_prove::<_, _, _, ONEHOT_D>(
+    let proof = OneHotScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(
             &point[..],

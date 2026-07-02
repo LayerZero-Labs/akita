@@ -155,14 +155,21 @@ where
     let prepared_points = if let Some(rho) = &reduction_check {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)?;
-        let prepared =
-            prepare_opening_point::<F, E, D>(&protocol_point, basis, lp, alpha_bits, block_order)?;
+        let prepared = prepare_opening_point::<F, E, D>(
+            &protocol_point,
+            basis,
+            lp.m_vars,
+            lp.r_vars,
+            alpha_bits,
+            block_order,
+        )?;
         vec![prepared]
     } else {
         vec![prepare_opening_point::<F, E, D>(
             challenge_point,
             basis,
-            lp,
+            lp.m_vars,
+            lp.r_vars,
             alpha_bits,
             block_order,
         )?]

@@ -114,13 +114,13 @@ fn prove_onehot_with_setup_mode(
     let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
     let commit_input = std::slice::from_ref(&poly);
     let (commitment, hint) =
-        AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _, ONEHOT_D>(&setup, commit_input, &stack)
+        AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)
             .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _, ONEHOT_D>(
+    let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
         &setup,
         prove_input(&point[..], &poly_refs[..], &commitment, hint),
         &stack,

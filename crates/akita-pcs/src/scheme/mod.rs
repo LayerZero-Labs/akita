@@ -7,8 +7,8 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RootCommitBackend,
-    RootCommitPoly, RootPolyMeta, RootProvePoly, UniformProverStack,
+    ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeRootProvePoly, UniformProverStack,
 };
 use akita_prover::ProverOpeningBatch;
 use akita_prover::ProverTranscriptGrind;
@@ -99,13 +99,24 @@ where
             .expect("prover setup must convert to verifier setup")
     }
 
+    /// Validate the field tower and setup envelope against the config's
+    /// schedule policy ring dimension (the schedule-derived replacement for
+    /// the former compile-time `D` checks).
+    fn validate_policy_ring_dim(setup: &AkitaProverSetup<Cfg::Field>) -> Result<(), AkitaError> {
+        let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
+        dispatch_ring_dim_result!(ring_d, |D| {
+            validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
+        })?;
+        setup.ensure_root_ring_dim(ring_d)
+    }
+
     /// Commit a single opening-point bundle.
     ///
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
-    pub fn commit<P, B, const D: usize>(
+    pub fn commit<P, B>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
@@ -113,12 +124,11 @@ where
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        P: RootCommitPoly<Cfg::Field, D> + akita_prover::RootPolyMeta<Cfg::Field>,
-        B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
+        P: RuntimeRootCommitPoly<Cfg::Field>,
+        B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
-        validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-        setup.ensure_root_ring_dim(D)?;
-        akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
+        Self::validate_policy_ring_dim(setup)?;
+        akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
     /// Commit the polynomial bundle used by a batched prove.
@@ -127,7 +137,7 @@ where
     ///
     /// Returns an error if input validation, layout selection, or any per-point commitment fails.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
-    pub fn batched_commit<P, B, const D: usize>(
+    pub fn batched_commit<P, B>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
@@ -135,12 +145,11 @@ where
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        P: RootCommitPoly<Cfg::Field, D> + akita_prover::RootPolyMeta<Cfg::Field>,
-        B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
+        P: RuntimeRootCommitPoly<Cfg::Field>,
+        B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
-        validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-        setup.ensure_root_ring_dim(D)?;
-        akita_prover::batched_commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
+        Self::validate_policy_ring_dim(setup)?;
+        akita_prover::batched_commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
     /// Commit one standalone one-hot commitment group.
@@ -150,7 +159,7 @@ where
     /// Returns an error if the group is empty, dense, exceeds setup capacity, or cannot be planned.
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_group")]
-    pub fn commit_group<P, B, const D: usize>(
+    pub fn commit_group<P, B>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
@@ -161,12 +170,11 @@ where
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        P: RootCommitPoly<Cfg::Field, D> + akita_prover::RootPolyMeta<Cfg::Field>,
-        B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
+        P: RuntimeRootCommitPoly<Cfg::Field>,
+        B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
-        validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-        setup.ensure_root_ring_dim(D)?;
-        akita_prover::commit_group::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
+        Self::validate_policy_ring_dim(setup)?;
+        akita_prover::commit_group::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
     /// Produce a fused batched opening proof for one shared opening point.
@@ -176,7 +184,7 @@ where
     /// Returns an error if any opening point is invalid or proof generation fails.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
-    pub fn batched_prove<'a, T, P, B, const D: usize>(
+    pub fn batched_prove<'a, T, P, B>(
         setup: &AkitaProverSetup<Cfg::Field>,
         claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
         stacks: &'a impl LevelProveStacks<
@@ -195,16 +203,15 @@ where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-        P: RootProvePoly<Cfg::Field, D> + RootPolyMeta<Cfg::Field>,
-        B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField, D>
+        P: RuntimeRootProvePoly<Cfg::Field>,
+        B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField>
             + ComputeBackendSetup<Cfg::Field>
             + 'a,
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     {
         let t_prove_total = Instant::now();
-        validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-        setup.ensure_root_ring_dim(D)?;
-        let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B, D>(
+        Self::validate_policy_ring_dim(setup)?;
+        let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
             &setup.expanded,
             &setup.prefix_slots,
             stacks,

@@ -67,6 +67,7 @@ pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: FieldCore> {
 
 mod extension_opening_reduction;
 mod fold;
+mod fold_kernels;
 mod prove;
 mod root_fold;
 mod suffix;
@@ -75,6 +76,7 @@ mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{prepare_fold_inner, prove_fold, PreparedFold};
+pub(in crate::protocol::core) use fold_kernels::*;
 pub use prove::{batched_prove, prove, prove_root_direct};
 pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
 pub use suffix::{prove_suffix, SuffixProverState};
@@ -103,76 +105,4 @@ pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
     pub(in crate::protocol::core) next_w_point: Vec<E>,
     pub(in crate::protocol::core) next_w_eval: E,
-}
-
-fn scalar_opening_from_folded_ring<F, E, const D: usize>(
-    folded_ring: &CyclotomicRing<F, D>,
-    prepared_point: &PreparedOpeningPoint<F, E>,
-    inner_opening_point: &[E],
-    basis: BasisMode,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FpExtEncoding<F>,
-{
-    if <E as ExtField<F>>::EXT_DEGREE == 1 {
-        return (*folded_ring * prepared_point.packed_inner_trusted::<D>()?.sigma_m1())
-            .coefficients()
-            .first()
-            .copied()
-            .map(E::lift_base)
-            .ok_or_else(|| AkitaError::InvalidInput("empty folded opening ring".to_string()));
-    }
-    if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
-        || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
-    {
-        return Err(AkitaError::InvalidInput(
-            "extension-field degree must divide the ring dimension into power-of-two slots"
-                .to_string(),
-        ));
-    }
-    let packed_slots = D / <E as ExtField<F>>::EXT_DEGREE;
-    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    if inner_opening_point.len() > packed_inner_bits
-        && inner_opening_point[packed_inner_bits..]
-            .iter()
-            .any(|coord| !coord.is_zero())
-    {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: packed_inner_bits,
-            actual: inner_opening_point.len(),
-        });
-    }
-    let mut point =
-        inner_opening_point[..inner_opening_point.len().min(packed_inner_bits)].to_vec();
-    point.resize(packed_inner_bits, E::zero());
-    let weights = basis_weights(&point, basis)?;
-    let packed_inner_point = embed_ring_subfield_vector::<F, E, D>(
-        &weights,
-        AkitaError::InvalidInput(
-            "root opening point does not encode in the ring-subfield basis".to_string(),
-        ),
-    )?;
-    recover_ring_subfield_inner_product::<F, E, D>(folded_ring, &packed_inner_point)
-}
-
-fn row_coefficient_rings<F, E, const D: usize>(
-    coefficients: &[E],
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FpExtEncoding<F>,
-{
-    coefficients
-        .iter()
-        .copied()
-        .map(|coefficient| {
-            embed_ring_subfield_scalar::<F, E, D>(
-                coefficient,
-                AkitaError::InvalidInput(
-                    "public-row coefficient does not encode in the ring-subfield basis".to_string(),
-                ),
-            )
-        })
-        .collect()
 }

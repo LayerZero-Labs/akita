@@ -2,8 +2,8 @@ use super::*;
 use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RuntimeRingSwitchProveBackend,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor,
+    ProverComputeStack, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
+    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -143,19 +143,15 @@ where
         let prepared_fold = {
             let stack = stacks.prove_stack_at_level(level);
             stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), level_d)?;
-            use akita_types::dispatch_ring_dim_result;
-
-            dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
-                    stack,
-                    transcript,
-                    current_state,
-                    level,
-                    level_params,
-                    m_row_layout,
-                    tail_t_vectors,
-                )
-            })
+            prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
+                stack,
+                transcript,
+                current_state,
+                level,
+                level_params,
+                m_row_layout,
+                tail_t_vectors,
+            )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!(
                     "suffix prepare level {level} D{level_d} failed: {err:?}"
@@ -218,7 +214,7 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R, const D: usize>(
+pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     current_state: SuffixProverState<F, E>,
@@ -246,10 +242,10 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    TS: TensorBackendFor<F, RecursiveWitnessFlat, E, D>,
+    TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>,
     O: DigitRowsComputeBackend<F>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, D>,
+        + RuntimeOpeningProveBackendFor<F, RecursiveWitnessFlat>
+        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
@@ -302,7 +298,7 @@ where
         &fold_polys,
         suffix_commitment,
     )?;
-    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R, D>(
+    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
         stack,
         needs_extension_reduction,
         fold_claims,
@@ -324,7 +320,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::core::fold::compute_trace_target;
+    use crate::protocol::core::fold_kernels::compute_trace_target;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
     use akita_types::RingOpeningPoint;

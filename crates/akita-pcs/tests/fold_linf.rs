@@ -54,11 +54,10 @@ fn run_tail_bound_with_grind_onehot_roundtrip(
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
     let (commitment, hint) =
-        Scheme::commit::<_, _, ONEHOT_D>(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("commit");
+        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    let proof = Scheme::batched_prove::<_, _, _, ONEHOT_D>(
+    let proof = Scheme::batched_prove::<_, _, _>(
         &setup,
         prove_input(&point, &[&poly], &commitment, hint),
         &stack,
@@ -131,8 +130,7 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup);
         let (commitment, _) =
-            Scheme::commit::<_, _, ONEHOT_D>(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commit");
+            Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         Scheme::batched_verify(
@@ -200,8 +198,7 @@ fn fold_recursive_handle_tamper_rejected() {
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup);
         let (commitment, _) =
-            Scheme::commit::<_, _, ONEHOT_D>(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commit");
+            Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let result = Scheme::batched_verify(
@@ -242,12 +239,11 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup);
         let (commitment, hint) =
-            Scheme::commit::<_, _, ONEHOT_D>(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commit");
+            Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
-        let proof = Scheme::batched_prove::<_, _, _, ONEHOT_D>(
+        let proof = Scheme::batched_prove::<_, _, _>(
             &setup,
             prove_input(&point, &[&poly], &commitment, hint),
             &stack,

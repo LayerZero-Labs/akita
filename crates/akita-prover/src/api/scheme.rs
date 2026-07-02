@@ -2,8 +2,8 @@
 
 use crate::compute::ComputeBackendSetup;
 use crate::compute::{
-    LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootPolyMeta,
-    RootProvePoly, UniformProverStack,
+    LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
+    RuntimeRootProvePoly, UniformProverStack,
 };
 use crate::CommittedGroupHandle;
 use crate::ProverOpeningBatch;
@@ -18,10 +18,10 @@ use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
-/// Generic over base field `F` only. The cyclotomic ring dimension `D` enters at
-/// kernel boundaries via the caller's prepared stack (`UniformProverStack<_, _, D>`)
-/// and the `const D` parameter on commit/prove methods, not as a trait-level type
-/// parameter.
+/// Generic over base field `F` only. The cyclotomic ring dimension enters at
+/// kernel boundaries via schedule-derived dispatch inside the prover; commit
+/// and prove methods are D-free and bound on the `Runtime*` capability
+/// bundles.
 pub trait CommitmentProver<F>
 where
     F: FieldCore + CanonicalField,
@@ -73,7 +73,7 @@ where
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
-    fn commit<P, B, const D: usize>(
+    fn commit<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
@@ -82,8 +82,8 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         Self::ExtField: FpExtEncoding<F>,
-        P: RootCommitPoly<F, D>,
-        B: RootCommitBackend<F, P, Self::ExtField, D>;
+        P: RuntimeRootCommitPoly<F>,
+        B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
 
     /// Commit the polynomial bundle used by a batched prove.
     ///
@@ -94,7 +94,7 @@ where
     ///
     /// Returns an error if input validation, layout selection, or any
     /// per-point commitment fails.
-    fn batched_commit<P, B, const D: usize>(
+    fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
@@ -103,8 +103,8 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         Self::ExtField: FpExtEncoding<F>,
-        P: RootCommitPoly<F, D>,
-        B: RootCommitBackend<F, P, Self::ExtField, D>;
+        P: RuntimeRootCommitPoly<F>,
+        B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
 
     /// Commit one standalone one-hot commitment group with conservative B rank.
     ///
@@ -116,7 +116,7 @@ where
     ///
     /// Returns an error if the group is empty, dense, exceeds setup capacity, or
     /// cannot be conservatively planned.
-    fn commit_group<P, B, const D: usize>(
+    fn commit_group<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
@@ -125,8 +125,8 @@ where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         Self::ExtField: FpExtEncoding<F>,
-        P: RootCommitPoly<F, D>,
-        B: RootCommitBackend<F, P, Self::ExtField, D>;
+        P: RuntimeRootCommitPoly<F>,
+        B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
 
     /// Produce a fused batched opening proof for one shared opening point.
     ///
@@ -138,7 +138,7 @@ where
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
     #[allow(clippy::too_many_arguments)]
-    fn batched_prove<'a, T, P, B, const D: usize>(
+    fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
         claims: ProverOpeningBatch<'a, Self::ExtField, P, F>,
         stacks: &'a impl LevelProveStacks<'a, F, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
@@ -150,7 +150,7 @@ where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-        P: RootProvePoly<F, D> + RootPolyMeta<F>,
-        B: RecursiveProveBackend<F, P, Self::ExtField, D> + ComputeBackendSetup<F> + 'a,
+        P: RuntimeRootProvePoly<F>,
+        B: RecursiveProveBackend<F, P, Self::ExtField> + ComputeBackendSetup<F> + 'a,
         <B as ComputeBackendSetup<F>>::PreparedSetup: 'a;
 }

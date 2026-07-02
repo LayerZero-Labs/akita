@@ -137,7 +137,8 @@ where
         let prepared_point = prepare_opening_point::<F, E, D>(
             shared_opening_point,
             basis,
-            root_lp,
+            root_lp.m_vars,
+            root_lp.r_vars,
             root_lp.ring_dimension.trailing_zeros() as usize,
             BlockOrder::RowMajor,
         )?;

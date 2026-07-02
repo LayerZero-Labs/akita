@@ -19,15 +19,15 @@ fn batched_commit_matches_individual_commits() {
 
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
-        .map(|group| Scheme::commit::<_, _, D>(&setup, group, &stack))
+        .map(|group| Scheme::commit::<_, _>(&setup, group, &stack))
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
         .unzip();
     let (commitment_a, hint_a) =
-        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly_a), &stack).unwrap();
+        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly_a), &stack).unwrap();
     let (commitment_b, hint_b) =
-        Scheme::commit::<_, _, D>(&setup, std::slice::from_ref(&poly_b), &stack).unwrap();
+        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly_b), &stack).unwrap();
 
     assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
     assert_eq!(batched_hints, vec![hint_a, hint_b]);
@@ -61,7 +61,7 @@ fn batched_root_direct_fast_path_round_trip() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) = Scheme::commit::<_, _, D>(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = Scheme::commit::<_, _>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -84,7 +84,7 @@ fn batched_root_direct_fast_path_round_trip() {
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
-    let proof = Scheme::batched_prove::<_, _, _, D>(
+    let proof = Scheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(
             &opening_point[..],
@@ -153,7 +153,7 @@ fn batched_root_direct_rejects_wrong_opening() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup);
-    let (commitment, hint) = Scheme::commit::<_, _, D>(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) = Scheme::commit::<_, _>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -163,7 +163,7 @@ fn batched_root_direct_rejects_wrong_opening() {
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
-    let proof = Scheme::batched_prove::<_, _, _, D>(
+    let proof = Scheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(
             &opening_point[..],
@@ -210,7 +210,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let verifier_setup = Scheme::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
     let (commitment, hint) =
-        Scheme::commit::<_, _, D>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
+        Scheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -223,7 +223,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     const TRANSCRIPT_LABEL: &[u8] = b"test/batched-prove";
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-    let proof = Scheme::batched_prove::<_, _, _, D>(
+    let proof = Scheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(
             &opening_point[..],

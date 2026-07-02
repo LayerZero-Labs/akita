@@ -174,7 +174,9 @@ where
 }
 
 struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore> {
-    lp: &'a LevelParams,
+    /// M-matrix block count per claim (`LevelParams::num_blocks`, extracted by
+    /// the caller — trace-weight construction must not read schedule types).
+    num_blocks: usize,
     opening_batch: &'a OpeningBatchShape,
     prepared_point: &'a PreparedOpeningPoint<F, E>,
     row_coefficients: &'a [E],
@@ -218,7 +220,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
             .and_then(|scales| scales.get(claim_idx).copied())
             .unwrap_or_else(E::one);
         let block_offset = claim_idx
-            .checked_mul(inputs.lp.num_blocks)
+            .checked_mul(inputs.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block offset overflow".to_string()))?;
         items.push(RootTraceClaimItem {
             prepared: inputs.prepared_point,
@@ -242,7 +244,7 @@ pub fn stage2_trace_coeff<E: FieldCore>(batching_coeff: E, trace_gamma: E, is_te
 /// Build public trace weights for a root opening_batch, optionally scaling each
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
-    lp: &LevelParams,
+    num_blocks: usize,
     opening_batch: &OpeningBatchShape,
     prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
@@ -253,7 +255,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
-        lp,
+        num_blocks,
         opening_batch,
         prepared_point,
         row_coefficients,
@@ -383,7 +385,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
-        lp,
+        num_blocks: lp.num_blocks,
         opening_batch,
         prepared_point,
         row_coefficients,

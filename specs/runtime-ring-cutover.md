@@ -271,39 +271,39 @@ Mixed-D:
 
 ### Acceptance Criteria
 
-- [ ] `AkitaCommitmentScheme` is no longer const-generic over `D`.
-- [ ] `CommitmentProver<F, D>` and `CommitmentVerifier<F, D>` are removed or
+- [x] `AkitaCommitmentScheme` is no longer const-generic over `D`.
+- [x] `CommitmentProver<F, D>` and `CommitmentVerifier<F, D>` are removed or
       replaced by D-free API surfaces.
-- [ ] `AkitaProverSetup<F, D>` is replaced by `AkitaProverSetup<F>`.
-- [ ] Protocol-facing commitments use `RingVec<F>` or an equivalent D-free
+- [x] `AkitaProverSetup<F, D>` is replaced by `AkitaProverSetup<F>`.
+- [x] Protocol-facing commitments use `RingVec<F>` or an equivalent D-free
       owned field-vector type, not `RingCommitment<F, D>`.
-- [ ] Protocol-facing prover and verifier opening batches are D-free.
-- [ ] `AkitaCommitmentHint` and digit-block storage no longer carry a
+- [x] Protocol-facing prover and verifier opening batches are D-free.
+- [x] `AkitaCommitmentHint` and digit-block storage no longer carry a
       compile-time `D`.
-- [ ] Transcript absorption of commitments and ring-shaped proof data uses
+- [x] Transcript absorption of commitments and ring-shaped proof data uses
       flat field coefficients under schedule-derived shape.
-- [ ] Top-level `akita_prover::batched_prove` and
+- [x] Top-level `akita_prover::batched_prove` and
       `akita_verifier::batched_verify` are not const-generic over a root `D`.
-- [ ] Root polynomial inputs do not force `D` through PCS orchestration. Any
+- [x] Root polynomial inputs do not force `D` through PCS orchestration. Any
       remaining `DensePoly<F, D>`, `OneHotPoly<F, D>`, or `SparseRingPoly<F, D>`
       usage is confined to implementation views or kernel-entry conversions.
 - [ ] Verifier-reachable shape mismatches return errors, not panics.
-- [ ] Uniform-D existing E2E tests still pass.
+- [x] Uniform-D existing E2E tests still pass.
 - [ ] A mixed-D-per-level fixture proves and verifies through the normal
       public PCS API, not a special test-only typed path.
-- [ ] `rg "AkitaCommitmentScheme<.*const D|CommitmentProver<.*,.*D|CommitmentVerifier<.*,.*D|AkitaProverSetup<.*,.*D|AkitaCommitmentHint<.*,.*D|ProverOpeningBatch<.*,.*D" crates`
+- [x] `rg "AkitaCommitmentScheme<.*const D|CommitmentProver<.*,.*D|CommitmentVerifier<.*,.*D|AkitaProverSetup<.*,.*D|AkitaCommitmentHint<.*,.*D|ProverOpeningBatch<.*,.*D" crates`
       has no protocol-facing hits at merge time.
-- [ ] `scripts/ring-cutover-progress.sh --merge-gate` passes: zero `const D`
+- [x] `scripts/ring-cutover-progress.sh --merge-gate` passes: zero `const D`
       in the prover orchestration spine
       (`crates/akita-prover/src/protocol/core.rs` and
       `crates/akita-prover/src/protocol/core/{prove,fold,root_fold,suffix}.rs`)
       and zero hits for the banned #227 bridge names.
-- [ ] No function reads a schedule type (`ExecutionSchedule`, `LevelParams`,
+- [x] No function reads a schedule type (`ExecutionSchedule`, `LevelParams`,
       `ValidatedScheduleContext`, `RingDimPlan`) and also has `const D`
       (discriminator rule; enforced by review over the spine diff).
-- [ ] Every dispatch arm in orchestration calls a kernel or an operation
+- [x] Every dispatch arm in orchestration calls a kernel or an operation
       adapter, never another orchestration function (no F1/F2 patterns).
-- [ ] For each D-free replacement added during the cutover, the typed path it
+- [x] For each D-free replacement added during the cutover, the typed path it
       replaced is deleted in the same slice — the API-surface greps above are
       satisfiable by a facade; these structural criteria are the ones that
       cannot be gamed.

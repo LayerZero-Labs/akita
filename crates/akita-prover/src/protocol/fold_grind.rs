@@ -1,12 +1,13 @@
 //! Fold-l∞ Fiat–Shamir grind: preview off-sponge clones, commit the winning nonce.
 
-use crate::compute::{OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource};
+use crate::compute::{RootOpeningSource, RuntimeOpeningProveBackendFor};
 use crate::DecomposeFoldWitness;
 use akita_challenges::{
     grind_probe_permutation, preview_folding_challenges, sample_folding_challenges,
     stage1_fold_challenge_labels, Challenges,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
     golomb_rice_flat_rows_admit_terminal_wire,
@@ -109,7 +110,7 @@ fn grind_probe_nonces(
 /// When `tail_t_vectors` is set, presets reject witnesses whose centered coefficients do not
 /// fit the terminal Golomb planner budget at wire low bits (including `WorstCaseBetaOnly`
 /// presets that do not reroll on linf cap).
-pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
+pub(crate) fn sample_fold_decompose_witness<F, P, B, T>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
@@ -119,18 +120,19 @@ pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
     tail_t_vectors: Option<usize>,
 ) -> Result<(DecomposeFoldWitness<F>, Challenges, u32), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    P: RootOpeningSource<F, D>,
-    B: crate::compute::ComputeBackendSetup<F>
-        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
-        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, 32>
+        + RootOpeningSource<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootOpeningSource<F, 256>,
+    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     // A-role fold dimension; per-role split attaches here (mixed-row spec).
-    // While this orchestration is still const-D (P/B bounds convert in the
-    // next slice), the grind loop itself is already D-free: every use below
-    // goes through the runtime `ring_d`.
-    let ring_d = D;
+    // The grind loop is D-free: every use below goes through the runtime
+    // `ring_d`, and each probe's point fold dispatches per attempt.
+    let ring_d = lp.ring_dimension;
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
     let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;
@@ -152,14 +154,18 @@ where
             labels,
             nonce,
         )?;
-        let witness = build_point_decompose_fold_witness::<F, P, B, D>(
-            backend,
-            prepared,
-            &challenges,
-            polys,
-            &point_indices,
-            point_fold_shape,
-        )?;
+        // A-role point-fold kernel entry: dispatch per grind attempt on the
+        // schedule-derived fold dimension (4-way match, negligible cost).
+        let witness = akita_types::dispatch_ring_dim_result!(ring_d, |D| {
+            build_point_decompose_fold_witness::<F, P, B, D>(
+                backend,
+                prepared,
+                &challenges,
+                polys,
+                &point_indices,
+                point_fold_shape,
+            )
+        })?;
         if !accepts_fold_witness::<F>(
             &contract,
             &witness,

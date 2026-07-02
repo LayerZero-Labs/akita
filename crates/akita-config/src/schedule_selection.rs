@@ -39,10 +39,10 @@ where
                     alpha_bits,
                 )
             ))?;
-        let tensor_projection_enabled = dispatch_ring_dim_result!(
+        let tensor_projection_enabled = root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
             root_step.params.ring_dimension,
-            |D| Ok(root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars))
-        )?;
+            num_vars,
+        );
         if !supports_opening_shape && !tensor_projection_enabled {
             let commit_params = Cfg::get_params_for_batched_commitment(opening_batch)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;

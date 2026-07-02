@@ -45,6 +45,7 @@ pub(crate) fn validate_fold_grind_nonce(
 /// # Errors
 ///
 /// Returns an error if challenge sampling fails.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_stage1_challenges<F, T>(
     transcript: &mut T,
     v_coeffs: &[F],

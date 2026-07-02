@@ -390,13 +390,11 @@ fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &RingVec<F>) -> Ve
 /// # Errors
 ///
 /// Propagates field serialization failures as [`AkitaError::InvalidProof`].
-pub fn e_folded_segment_bytes<F, const D: usize>(
-    e_folded: &[CyclotomicRing<F, D>],
-) -> Result<Vec<u8>, AkitaError>
+pub fn e_folded_segment_bytes<F>(e_folded: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
 {
-    let fields = RingVec::from_ring_elems(e_folded).into_compact();
+    let fields = e_folded.clone().into_compact();
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs())?;
     Ok(out)

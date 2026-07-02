@@ -2,9 +2,9 @@ use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
-    DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor, RootPolyMeta,
-    RootPolyShape, RootProvePoly, RuntimeRingSwitchProveBackend, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend, TensorBackendFor,
+    DirectRootWitnessSource, LevelProveStacks, ProveStackFor, RootPolyMeta,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
+    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
@@ -12,12 +12,12 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
-    validate_level_dispatch, ValidatedScheduleContext, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    ValidatedScheduleContext, GROUPED_ROOT_DENSE_UNSUPPORTED,
     GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
     GROUPED_ROOT_UNSUPPORTED,
 };
 
-fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
+fn reject_unsupported_grouped_root<Cfg, F, P>(
     opening_batch: &OpeningBatchShape,
     polys: &[&P],
     setup_contribution_mode: SetupContributionMode,
@@ -25,7 +25,7 @@ fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
 where
     Cfg: CommitmentConfig,
     F: FieldCore,
-    P: RootPolyShape<F, D>,
+    P: RootPolyMeta<F>,
 {
     if opening_batch.num_commitment_groups() <= 1 {
         return Ok(());
@@ -52,22 +52,31 @@ where
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
 ///
+/// `ring_d` is the schedule-derived root commit ring dimension; the direct
+/// witness materialization is the one typed operation and dispatches on it.
+///
 /// # Errors
 ///
 /// Returns an error if any polynomial cannot produce a direct root witness.
-pub fn prove_root_direct<F, E, const D: usize, P>(
+pub fn prove_root_direct<F, E, P>(
     polys: &[&P],
     hints: &[AkitaCommitmentHint<F>],
+    ring_d: usize,
 ) -> Result<AkitaBatchedProof<F, E>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
-    P: DirectRootWitnessSource<F, D>,
+    P: DirectRootWitnessSource<F, 32>
+        + DirectRootWitnessSource<F, 64>
+        + DirectRootWitnessSource<F, 128>
+        + DirectRootWitnessSource<F, 256>,
 {
-    let witnesses = polys
-        .iter()
-        .map(|poly| poly.direct_root_witness())
-        .collect::<Result<Vec<_>, _>>()?;
+    let witnesses = dispatch_ring_dim_result!(ring_d, |D| {
+        polys
+            .iter()
+            .map(|poly| DirectRootWitnessSource::<F, D>::direct_root_witness(*poly))
+            .collect::<Result<Vec<_>, _>>()
+    })?;
     let _ = hints;
     Ok(AkitaBatchedProof {
         root: AkitaBatchedRootProof::new_zero_fold(witnesses),
@@ -88,7 +97,7 @@ where
 /// Returns an error if claim preparation, schedule selection, root-direct
 /// witness construction, transcript binding, or folded-root proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
+pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
@@ -124,24 +133,24 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: RootProvePoly<Cfg::Field, D> + RootPolyMeta<Cfg::Field>,
+    P: RuntimeRootProvePoly<Cfg::Field>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
-        + OpeningProveBackendFor<Cfg::Field, P, D>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, D>
+        + RuntimeOpeningProveBackendFor<Cfg::Field, P>
+        + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
         + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
-        + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField, D>
+        + RuntimeTensorBackendFor<Cfg::Field, P, Cfg::ExtField>
+        + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
         + RuntimeRingSwitchProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
-    (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
+    (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, C, O, TS, R>,
     <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
@@ -151,7 +160,7 @@ where
     validate_batched_inputs(expanded.as_ref(), claims.point(), &group_sizes, true)?;
     let opening_batch = claims.to_opening_shape::<Cfg::Field>()?;
     let flat_polys = claims.flat_polys();
-    reject_unsupported_grouped_root::<Cfg, Cfg::Field, P, D>(
+    reject_unsupported_grouped_root::<Cfg, Cfg::Field, P>(
         &opening_batch,
         &flat_polys,
         setup_contribution_mode,
@@ -159,10 +168,7 @@ where
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     let schedule_ctx = ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
     let root_commit_params = match schedule.steps.first() {
-        Some(Step::Fold(root)) => {
-            validate_level_dispatch::<D>(&root.params)?;
-            &root.params
-        }
+        Some(Step::Fold(root)) => &root.params,
         Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {
             AkitaError::InvalidSetup("root-direct schedule missing commit params".to_string())
         })?,
@@ -197,9 +203,10 @@ where
             .iter()
             .map(|group| group.commitment.1.clone())
             .collect::<Vec<_>>();
-        return prove_root_direct::<Cfg::Field, Cfg::ExtField, D, P>(
+        return prove_root_direct::<Cfg::Field, Cfg::ExtField, P>(
             &flat_polys,
             &commitment_hints,
+            root_commit_params.ring_dimension,
         );
     }
 
@@ -208,7 +215,7 @@ where
             "root schedule does not start with a fold".to_string(),
         ));
     }
-    prove::<Cfg, T, P, C, O, TS, R, D>(
+    prove::<Cfg, T, P, C, O, TS, R>(
         expanded,
         prefix_slots,
         stacks,
@@ -236,7 +243,7 @@ where
 /// root proving fails, or suffix construction fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[inline(never)]
-pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
+pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
     stacks: &'a impl LevelProveStacks<
@@ -274,35 +281,33 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: RootProvePoly<Cfg::Field, D> + RootPolyMeta<Cfg::Field>,
+    P: RuntimeRootProvePoly<Cfg::Field>,
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
-        + OpeningProveBackendFor<Cfg::Field, P, D>
-        + OpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, D>
+        + RuntimeOpeningProveBackendFor<Cfg::Field, P>
+        + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
         + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
-        + TensorBackendFor<Cfg::Field, P, Cfg::ExtField, D>
-        + TensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField, D>
+        + RuntimeTensorBackendFor<Cfg::Field, P, Cfg::ExtField>
+        + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
         + RuntimeRingSwitchProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
-    (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
+    (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, C, O, TS, R>,
     <C as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <O as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    let root_ring_d = schedule_ctx.ring_plan().dim_at(0)?;
-    if root_ring_d != D {
-        return Err(AkitaError::InvalidSetup(format!(
-            "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
-        )));
-    }
+    // `RingDimPlan` (via `schedule_ctx`) is the sole ring-dimension authority:
+    // every level's dims were validated against the setup envelope when the
+    // context was built, and each operation adapter takes its dimension from
+    // the schedule data at the operation.
     for level in 0..schedule_ctx.ring_plan().num_folds() {
         let ring_d = schedule_ctx.ring_plan().dim_at(level)?;
         stacks
@@ -311,7 +316,6 @@ where
     }
 
     let root_scheduled = schedule.get_execution_schedule(0)?;
-    validate_level_dispatch::<D>(&root_scheduled.params)?;
     {
         // §6 invariant — commitment vector length == num_rings · ring_dim.
         // The flat `Commitment` stores raw coefficients; validate its ring count
@@ -347,7 +351,6 @@ where
             O,
             TS,
             R,
-            D,
         >(
             expanded,
             stacks,
@@ -367,7 +370,7 @@ where
         ));
     }
 
-    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, C, O, TS, R, Cfg, D>(
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, C, O, TS, R, Cfg>(
         expanded,
         prefix_slots,
         stacks,

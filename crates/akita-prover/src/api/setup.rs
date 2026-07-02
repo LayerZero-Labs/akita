@@ -48,16 +48,6 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         Ok(())
     }
 
-    /// Reject use of this setup with a mismatched compile-time ring degree.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `D` does not match [`Self::gen_ring_dim`].
-    #[inline]
-    pub fn ensure_compile_time_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        self.ensure_root_ring_dim(D)
-    }
-
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// The caller supplies config-derived capacity bounds, including the

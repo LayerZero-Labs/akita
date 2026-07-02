@@ -105,7 +105,7 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::{
         ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, Commitment,
-        MRowLayout, PointVariableSelection, RingMultiplierOpeningPoint,
+        MRowLayout, PointVariableSelection, RingMultiplierOpeningPoint, RingVec,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -296,7 +296,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -347,16 +347,16 @@ mod tests {
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
-            RingRelationProver::new::<F, F, D, _, DensePoly<F>, CpuBackend, CpuBackend>(
+            RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point.clone(),
                 fold_claims,
-                vec![e_folded],
+                vec![RingVec::from_ring_elems(&e_folded)],
                 lp.clone(),
                 &mut transcript,
-                vec![CyclotomicRing::<F, D>::one()],
+                RingVec::from_single(&CyclotomicRing::<F, D>::one()),
                 MRowLayout::WithDBlock,
                 None,
             )
@@ -445,7 +445,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -489,16 +489,16 @@ mod tests {
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
-            RingRelationProver::new::<F, F, D, _, DensePoly<F>, CpuBackend, CpuBackend>(
+            RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point.clone(),
                 fold_claims,
-                vec![e_folded],
+                vec![RingVec::from_ring_elems(&e_folded)],
                 lp.clone(),
                 &mut transcript,
-                vec![CyclotomicRing::<F, D>::one()],
+                RingVec::from_single(&CyclotomicRing::<F, D>::one()),
                 MRowLayout::WithDBlock,
                 None,
             )
@@ -621,7 +621,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -665,16 +665,16 @@ mod tests {
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
-            RingRelationProver::new::<F, F, D, _, DensePoly<F>, CpuBackend, CpuBackend>(
+            RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point.clone(),
                 ring_multiplier_point.clone(),
                 fold_claims,
-                vec![e_folded],
+                vec![RingVec::from_ring_elems(&e_folded)],
                 level_params.clone(),
                 &mut transcript,
-                vec![CyclotomicRing::<F, D>::one()],
+                RingVec::from_single(&CyclotomicRing::<F, D>::one()),
                 MRowLayout::WithDBlock,
                 None,
             )
@@ -775,7 +775,7 @@ mod tests {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -819,16 +819,16 @@ mod tests {
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
-            RingRelationProver::new::<F, F, D, _, DensePoly<F>, CpuBackend, CpuBackend>(
+            RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point,
                 fold_claims,
-                vec![e_folded],
+                vec![RingVec::from_ring_elems(&e_folded)],
                 level_params.clone(),
                 &mut transcript,
-                vec![CyclotomicRing::<F, D>::one()],
+                RingVec::from_single(&CyclotomicRing::<F, D>::one()),
                 MRowLayout::WithoutDBlock,
                 None,
             )

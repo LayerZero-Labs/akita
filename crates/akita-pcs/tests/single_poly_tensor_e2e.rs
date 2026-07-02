@@ -52,12 +52,8 @@ fn run_single_onehot_tensor(nv: usize) {
         let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
-            AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _, TENSOR_D>(
-                &setup,
-                commit_input,
-                &stack,
-            )
-            .expect("commit");
+            AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _>(&setup, commit_input, &stack)
+                .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
         let commitments = [commitment];
@@ -65,7 +61,7 @@ fn run_single_onehot_tensor(nv: usize) {
         let opening_groups = [&openings[..]];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
-        let proof = AkitaCommitmentScheme::<D64OneHotTensor>::batched_prove::<_, _, _, TENSOR_D>(
+        let proof = AkitaCommitmentScheme::<D64OneHotTensor>::batched_prove::<_, _, _>(
             &setup,
             prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
             &stack,
@@ -130,12 +126,8 @@ fn run_single_dense_tensor(nv: usize) {
         let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
-            AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _, TENSOR_D>(
-                &setup,
-                commit_input,
-                &stack,
-            )
-            .expect("commit");
+            AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _>(&setup, commit_input, &stack)
+                .expect("commit");
 
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
         let commitments = [commitment];
@@ -143,7 +135,7 @@ fn run_single_dense_tensor(nv: usize) {
         let opening_groups = [&openings[..]];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
-        let proof = AkitaCommitmentScheme::<D64OneHotTensor>::batched_prove::<_, _, _, TENSOR_D>(
+        let proof = AkitaCommitmentScheme::<D64OneHotTensor>::batched_prove::<_, _, _>(
             &setup,
             prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
             &stack,
