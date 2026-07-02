@@ -72,12 +72,21 @@ where
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let commitment_rows = commitment
-        .as_ring_slice::<D>()
-        .map_err(|_| AkitaError::InvalidProof)?;
-    if commitment_rows.len() != root_lp.b_key.row_len() {
-        return Err(AkitaError::InvalidProof);
-    }
+    let (commitment_rows, compressed_current_u_payload) =
+        if let Some(plan) = scheduled.current_u_compression.as_ref() {
+            if commitment.coeff_len() != plan.public_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            (&[][..], Some(commitment))
+        } else {
+            let rows = commitment
+                .as_ring_slice::<D>()
+                .map_err(|_| AkitaError::InvalidProof)?;
+            if rows.len() != root_lp.b_key.row_len() {
+                return Err(AkitaError::InvalidProof);
+            }
+            (rows, None)
+        };
 
     claims.append_to_transcript::<F, T>(transcript)?;
     if extension_opening_reduction.is_none() {
@@ -188,6 +197,8 @@ where
         v: v_typed,
         v_compression: scheduled.compression.v.as_ref(),
         compressed_v_payload,
+        current_u_compression: scheduled.current_u_compression.as_ref(),
+        compressed_current_u_payload,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

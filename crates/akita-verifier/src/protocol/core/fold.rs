@@ -186,6 +186,8 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
     pub(in crate::protocol::core) v: Vec<CyclotomicRing<F, D>>,
     pub(in crate::protocol::core) v_compression: Option<&'a CommitmentCompressionPlan>,
     pub(in crate::protocol::core) compressed_v_payload: Option<&'a FlatRingVec<F>>,
+    pub(in crate::protocol::core) current_u_compression: Option<&'a CommitmentCompressionPlan>,
+    pub(in crate::protocol::core) compressed_current_u_payload: Option<&'a FlatRingVec<F>>,
     pub(in crate::protocol::core) opening_batch:
         VerifierOpeningBatch<'a, E, &'a [CyclotomicRing<F, D>]>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
@@ -222,13 +224,6 @@ pub(in crate::protocol::core) fn scheduled_m_row_layout(
 pub(in crate::protocol::core) fn reject_active_b_side_compression(
     scheduled: &ExecutionSchedule,
 ) -> Result<(), AkitaError> {
-    if scheduled.current_u_compression.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "B-side commitment compression for the current u is not enabled yet; \
-             it needs a base-prefix commitment relation before B rows can be omitted"
-                .to_string(),
-        ));
-    }
     if scheduled.compression.next_u.is_some() {
         return Err(AkitaError::InvalidSetup(
             "B-side commitment compression for next u is not enabled yet; \
@@ -245,15 +240,6 @@ struct Stage1Replay<E: FieldCore> {
     stage1_point: Vec<E>,
 }
 
-fn compression_suffix_offset(
-    physical_w_len: usize,
-    plan: &CommitmentCompressionPlan,
-) -> Result<usize, AkitaError> {
-    physical_w_len
-        .checked_sub(plan.padded_suffix_len)
-        .ok_or(AkitaError::InvalidProof)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn build_v_compression_stage2_table<F, E, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
@@ -265,6 +251,7 @@ fn build_v_compression_stage2_table<F, E, const D: usize>(
     live_x_cols: usize,
     y_len: usize,
     row_challenge: E,
+    initial_row_weight: E,
     log_basis: u32,
 ) -> Result<CompressionLinearization<E>, AkitaError>
 where
@@ -291,7 +278,69 @@ where
         live_x_cols,
         y_len,
         row_challenge,
-        E::one(),
+        initial_row_weight,
+        log_basis,
+    )?;
+    let chain = linearize_compression_chain(
+        expanded.shared_matrix().as_field_slice(),
+        plan,
+        public_payload,
+        suffix_offset,
+        live_x_cols,
+        y_len,
+        row_challenge,
+        raw.next_row_weight,
+        log_basis,
+    )?;
+    let mut table = raw.table;
+    table.add_assign_table(&chain.table, live_x_cols, y_len)?;
+    Ok(CompressionLinearization {
+        table,
+        claim: raw.claim + chain.claim,
+        next_row_weight: chain.next_row_weight,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_current_u_compression_stage2_table<F, E, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    lp: &LevelParams,
+    instance: &RingRelationInstance<F, D>,
+    plan: &CommitmentCompressionPlan,
+    public_payload: &FlatRingVec<F>,
+    suffix_offset: usize,
+    live_x_cols: usize,
+    y_len: usize,
+    row_challenge: E,
+    initial_row_weight: E,
+    log_basis: u32,
+) -> Result<CompressionLinearization<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + LiftBase<F>,
+{
+    let segment = instance.segment_layout(lp)?;
+    let col_len = instance
+        .opening_batch()
+        .num_polynomials()
+        .checked_mul(lp.num_blocks)
+        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("B compression width overflow".to_string()))?;
+    let b_view = expanded
+        .shared_matrix()
+        .ring_view::<D>(lp.b_key.row_len(), col_len)?;
+    let raw = linearize_raw_ring_rows_to_first_digits::<F, E, D>(
+        b_view.as_slice(),
+        lp.b_key.row_len(),
+        col_len,
+        segment.offset_t,
+        plan,
+        suffix_offset,
+        live_x_cols,
+        y_len,
+        row_challenge,
+        initial_row_weight,
         log_basis,
     )?;
     let chain = linearize_compression_chain(
@@ -659,39 +708,101 @@ where
             prepared.trace_claim_scales.as_deref(),
         )?)
     };
-    let extra_linear = if let (Some(plan), Some(public_payload)) =
-        (prepared.v_compression, prepared.compressed_v_payload)
-    {
-        if is_terminal_stage2 {
-            return Err(AkitaError::InvalidProof);
-        }
-        let suffix_offset = compression_suffix_offset(prepared.w_len, plan)?;
-        let row_challenge =
-            sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMMITMENT_COMPRESSION_ROW);
-        let y_len = 1usize << rs.ring_bits;
-        if !prepared.w_len.is_multiple_of(y_len) {
-            return Err(AkitaError::InvalidProof);
-        }
-        let live_x_cols = prepared.w_len / y_len;
-        let linearization = build_v_compression_stage2_table::<F, E, D>(
-            &setup.expanded,
-            prepared.lp,
-            &relation_instance,
-            plan,
-            public_payload,
-            suffix_offset,
-            live_x_cols,
-            y_len,
-            row_challenge,
-            prepared.lp.log_basis,
-        )?;
-        Some(ExtraLinearClaim {
-            table: linearization.table,
-            claim: linearization.claim,
-        })
-    } else {
-        None
-    };
+    let extra_linear =
+        if prepared.current_u_compression.is_some() || prepared.v_compression.is_some() {
+            if is_terminal_stage2 {
+                return Err(AkitaError::InvalidProof);
+            }
+            let row_challenge =
+                sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMMITMENT_COMPRESSION_ROW);
+            let y_len = 1usize << rs.ring_bits;
+            if !prepared.w_len.is_multiple_of(y_len) {
+                return Err(AkitaError::InvalidProof);
+            }
+            let live_x_cols = prepared.w_len / y_len;
+            let suffix_len = prepared
+                .current_u_compression
+                .map(|plan| plan.padded_suffix_len)
+                .unwrap_or(0usize)
+                .checked_add(
+                    prepared
+                        .v_compression
+                        .map(|plan| plan.padded_suffix_len)
+                        .unwrap_or(0usize),
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("compression suffix length overflow".to_string())
+                })?;
+            let mut suffix_offset = prepared
+                .w_len
+                .checked_sub(suffix_len)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut next_row_weight = E::one();
+            let mut extra: Option<CompressionLinearization<E>> = None;
+            if let (Some(plan), Some(public_payload)) = (
+                prepared.current_u_compression,
+                prepared.compressed_current_u_payload,
+            ) {
+                let linearization = build_current_u_compression_stage2_table::<F, E, D>(
+                    &setup.expanded,
+                    prepared.lp,
+                    &relation_instance,
+                    plan,
+                    public_payload,
+                    suffix_offset,
+                    live_x_cols,
+                    y_len,
+                    row_challenge,
+                    next_row_weight,
+                    prepared.lp.log_basis,
+                )?;
+                next_row_weight = linearization.next_row_weight;
+                suffix_offset = suffix_offset
+                    .checked_add(plan.padded_suffix_len)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression suffix offset overflow".to_string())
+                    })?;
+                extra = Some(linearization);
+            } else if prepared.current_u_compression.is_some()
+                || prepared.compressed_current_u_payload.is_some()
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            if let (Some(plan), Some(public_payload)) =
+                (prepared.v_compression, prepared.compressed_v_payload)
+            {
+                let linearization = build_v_compression_stage2_table::<F, E, D>(
+                    &setup.expanded,
+                    prepared.lp,
+                    &relation_instance,
+                    plan,
+                    public_payload,
+                    suffix_offset,
+                    live_x_cols,
+                    y_len,
+                    row_challenge,
+                    next_row_weight,
+                    prepared.lp.log_basis,
+                )?;
+                if let Some(accumulated) = extra.as_mut() {
+                    accumulated
+                        .table
+                        .add_assign_table(&linearization.table, live_x_cols, y_len)?;
+                    accumulated.claim += linearization.claim;
+                    accumulated.next_row_weight = linearization.next_row_weight;
+                } else {
+                    extra = Some(linearization);
+                }
+            } else if prepared.v_compression.is_some() || prepared.compressed_v_payload.is_some() {
+                return Err(AkitaError::InvalidProof);
+            }
+            extra.map(|linearization| ExtraLinearClaim {
+                table: linearization.table,
+                claim: linearization.claim,
+            })
+        } else {
+            None
+        };
     let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
     let sumcheck_challenges = verify_stage2::<F, E, T, D>(
         transcript,

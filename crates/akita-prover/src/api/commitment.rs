@@ -13,10 +13,11 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
+    decomposition_digits_per_scalar, evaluate_commitment_compression,
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
-    AkitaExpandedSetup, CommitmentGroupLayout, CommitmentGroupScheduleKey, FlatDigitBlocks,
-    FlatRingVec, FpExtEncoding, LevelParams, OpeningBatchShape, RingCommitment,
-    GROUPED_ROOT_DENSE_UNSUPPORTED,
+    AkitaExpandedSetup, CommitmentCompressionPlan, CommitmentGroupLayout,
+    CommitmentGroupScheduleKey, FlatDigitBlocks, FlatRingVec, FpExtEncoding, LevelParams,
+    OpeningBatchShape, RingCommitment, Schedule, GROUPED_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -427,6 +428,7 @@ where
 /// Propagates [`CommitmentConfig::get_params_for_prove`].
 fn should_transform_root_commitment<Cfg, const D: usize>(
     opening_batch: &OpeningBatchShape,
+    schedule: &Schedule,
 ) -> Result<bool, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -434,8 +436,31 @@ where
     if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(opening_batch.num_vars()) {
         return Ok(false);
     }
-    let schedule = Cfg::get_params_for_prove(opening_batch)?;
-    Ok(schedule_root_fold_step(&schedule).is_some())
+    Ok(schedule_root_fold_step(schedule).is_some())
+}
+
+fn encode_root_commitment<F, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    log_basis: u32,
+    compression: Option<&CommitmentCompressionPlan>,
+    commitment: &RingCommitment<F, D>,
+) -> Result<FlatRingVec<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    let raw = FlatRingVec::from_commitment(commitment);
+    let Some(plan) = compression else {
+        return Ok(raw);
+    };
+    let num_digits = decomposition_digits_per_scalar(plan)?;
+    let evaluation = evaluate_commitment_compression(
+        expanded.shared_matrix().as_field_slice(),
+        plan,
+        raw.coeffs(),
+        num_digits,
+        log_basis,
+    )?;
+    Ok(evaluation.public_payload)
 }
 
 fn should_transform_group_commitment<Cfg, const D: usize>(
@@ -478,8 +503,10 @@ where
     let tensor_ctx = stack.tensor();
     let opening_batch = prepare_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
+    let prove_schedule = Cfg::get_params_for_prove(&opening_batch)?;
+    let root_compression = prove_schedule.root_compression.as_ref();
     validate_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
-    if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
+    if should_transform_root_commitment::<Cfg, D>(&opening_batch, &prove_schedule)? {
         let transformed = polys
             .iter()
             .map(|poly| {
@@ -497,12 +524,18 @@ where
             RootTensorProjectionPoly<Cfg::Field, D>,
             B,
         >(&transformed, commit_ctx, &params)?;
-        return Ok((FlatRingVec::from_commitment(&commitment), hint));
+        return Ok((
+            encode_root_commitment(expanded, params.log_basis, root_compression, &commitment)?,
+            hint,
+        ));
     }
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     let (commitment, hint) =
         commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)?;
-    Ok((FlatRingVec::from_commitment(&commitment), hint))
+    Ok((
+        encode_root_commitment(expanded, params.log_basis, root_compression, &commitment)?,
+        hint,
+    ))
 }
 
 /// Validate a batched commitment request and derive its `OpeningBatchShape`.
@@ -661,8 +694,10 @@ where
     let tensor_ctx = stack.tensor();
     let opening_batch = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
+    let prove_schedule = Cfg::get_params_for_prove(&opening_batch)?;
+    let root_compression = prove_schedule.root_compression.as_ref();
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
-    if should_transform_root_commitment::<Cfg, D>(&opening_batch)? {
+    if should_transform_root_commitment::<Cfg, D>(&opening_batch, &prove_schedule)? {
         let transformed = polys
             .iter()
             .map(|poly| {
@@ -680,12 +715,18 @@ where
             RootTensorProjectionPoly<Cfg::Field, D>,
             B,
         >(&transformed, commit_ctx, &params)?;
-        return Ok((FlatRingVec::from_commitment(&commitment), hint));
+        return Ok((
+            encode_root_commitment(expanded, params.log_basis, root_compression, &commitment)?,
+            hint,
+        ));
     }
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     let (commitment, hint) =
         commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)?;
-    Ok((FlatRingVec::from_commitment(&commitment), hint))
+    Ok((
+        encode_root_commitment(expanded, params.log_basis, root_compression, &commitment)?,
+        hint,
+    ))
 }
 
 /// Commit one polynomial bundle using already-selected level parameters.
@@ -724,7 +765,10 @@ mod tests {
     use crate::{AkitaProverSetup, MultilinearPolynomial, OneHotPoly};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
-    use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
+    use akita_types::{
+        CommitmentCompressionPlan, CompressionLayerPlan, CompressionMapRole, SetupMatrixEnvelope,
+        SisModulusFamily,
+    };
 
     type F = Fp64<4294967197>;
     const D: usize = 32;
@@ -822,6 +866,72 @@ mod tests {
             validate_commit_level_params::<F, D>(&params, &expanded),
             Err(AkitaError::InvalidSetup(_))
         ));
+    }
+
+    #[test]
+    fn encode_root_commitment_applies_compression_plan() {
+        let raw_len = D;
+        let num_digits = 2usize;
+        let public_len = 3usize;
+        let plan = CommitmentCompressionPlan {
+            raw_len,
+            public_len,
+            suffix_len: raw_len * num_digits,
+            padded_suffix_len: raw_len * num_digits,
+            layers: vec![CompressionLayerPlan {
+                role: CompressionMapRole::RootF,
+                layer: 0,
+                input_len: raw_len * num_digits,
+                output_len: public_len,
+                setup_offset: 0,
+            }],
+        };
+        let expanded = AkitaProverSetup::<F, D>::generate_with_capacity(
+            5,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: plan.layers[0].input_len * plan.public_len,
+            },
+        )
+        .unwrap()
+        .expanded;
+        let commitment = RingCommitment {
+            u: vec![CyclotomicRing::<F, D>::one()],
+        };
+
+        let encoded = encode_root_commitment(&expanded, 2, Some(&plan), &commitment)
+            .expect("root compression should encode");
+        let expected = evaluate_commitment_compression(
+            expanded.shared_matrix().as_field_slice(),
+            &plan,
+            FlatRingVec::from_commitment(&commitment).coeffs(),
+            num_digits,
+            2,
+        )
+        .expect("direct compression should evaluate")
+        .public_payload;
+        assert_eq!(encoded, expected);
+        assert_eq!(encoded.coeff_len(), public_len);
+        assert!(!encoded.can_decode_vec(D));
+    }
+
+    #[test]
+    fn encode_root_commitment_without_plan_preserves_ring_payload() {
+        let expanded = AkitaProverSetup::<F, D>::generate_with_capacity(
+            5,
+            1,
+            SetupMatrixEnvelope { max_setup_len: 1 },
+        )
+        .unwrap()
+        .expanded;
+        let commitment = RingCommitment {
+            u: vec![CyclotomicRing::<F, D>::one()],
+        };
+
+        let encoded = encode_root_commitment(&expanded, 2, None, &commitment)
+            .expect("raw root commitment should encode");
+        assert_eq!(encoded, FlatRingVec::from_commitment(&commitment));
+        assert!(encoded.can_decode_vec(D));
     }
 
     #[test]

@@ -17,7 +17,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, CommitmentCompressionPlan, FlatDigitBlocks,
+    MRowLayout, RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -286,6 +287,24 @@ where
     Ok(rows)
 }
 
+fn compute_u_rows<F, B, const D: usize>(
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    row_len: usize,
+    t_hat: &FlatDigitBlocks<D>,
+    log_basis: u32,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    B: DigitRowsComputeBackend<F>,
+{
+    let rows = backend.digit_rows::<D>(prepared, row_len, t_hat.flat_digits(), log_basis)?;
+    if rows.len() != row_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(rows)
+}
+
 fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
     transcript: &mut T,
@@ -331,6 +350,7 @@ type RingRelationProverOutput<F, const D: usize> = (
     RingRelationInstance<F, D>,
     RingRelationWitness<F, D>,
     Option<Vec<CyclotomicRing<F, D>>>,
+    Option<Vec<CyclotomicRing<F, D>>>,
 );
 
 impl RingRelationProver {
@@ -370,6 +390,7 @@ impl RingRelationProver {
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
         compute_hidden_v: bool,
+        current_u_compression: Option<&CommitmentCompressionPlan>,
     ) -> Result<RingRelationProverOutput<F, D>, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -385,21 +406,36 @@ impl RingRelationProver {
         let opening_batch = fold_claims.to_opening_shape::<F>()?;
         let polys = fold_claims.flat_polys();
         let group_sizes = opening_batch.num_polys_per_commitment_group();
+        let group_count = fold_claims.groups.len();
+        if current_u_compression.is_some() && group_count != 1 {
+            return Err(AkitaError::InvalidInput(
+                "compressed current u only supports a single commitment group".to_string(),
+            ));
+        }
         let mut hints = Vec::with_capacity(fold_claims.groups.len());
         let mut commitment_rows = Vec::new();
         for group in fold_claims.groups {
             let (group_commitment, group_hint) = group.commitment;
-            let group_commitment_rows = group_commitment.try_to_vec::<D>().map_err(|_| {
-                AkitaError::InvalidInput(
-                    "batched prover received a non-ring root commitment payload before compression wiring".to_string(),
-                )
-            })?;
-            if group_commitment_rows.len() != lp.b_key.row_len() {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover received a commitment with the wrong length".to_string(),
-                ));
+            if let Some(plan) = current_u_compression {
+                if group_commitment.coeff_len() != plan.public_len {
+                    return Err(AkitaError::InvalidInput(
+                        "batched prover received a compressed commitment with the wrong length"
+                            .to_string(),
+                    ));
+                }
+            } else {
+                let group_commitment_rows = group_commitment.try_to_vec::<D>().map_err(|_| {
+                    AkitaError::InvalidInput(
+                        "batched prover received a non-ring root commitment payload before compression wiring".to_string(),
+                    )
+                })?;
+                if group_commitment_rows.len() != lp.b_key.row_len() {
+                    return Err(AkitaError::InvalidInput(
+                        "batched prover received a commitment with the wrong length".to_string(),
+                    ));
+                }
+                commitment_rows.extend_from_slice(&group_commitment_rows);
             }
-            commitment_rows.extend_from_slice(&group_commitment_rows);
             hints.push(group_hint.clone());
         }
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
@@ -445,6 +481,22 @@ impl RingRelationProver {
             lp.num_digits_open,
             lp.log_basis,
         )?;
+        let hidden_u = if !m_row_layout.has_b_block() {
+            if current_u_compression.is_some() {
+                let (flat_t_hat, _) = flattened_hint.clone().into_flat_parts();
+                Some(compute_u_rows(
+                    opening_ctx.backend(),
+                    opening_ctx.prepared(),
+                    lp.b_key.row_len(),
+                    &flat_t_hat,
+                    lp.log_basis,
+                )?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Terminal layout drops the D-block from the M-matrix entirely:
         // `v = D · e_hat` never travels on the wire, the verifier never
@@ -526,6 +578,6 @@ impl RingRelationProver {
             e_folded,
             hint: flattened_hint,
         };
-        Ok((instance, witness, hidden_v))
+        Ok((instance, witness, hidden_v, hidden_u))
     }
 }

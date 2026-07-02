@@ -61,15 +61,29 @@ where
         }
         (MRowLayout::WithDBlock, Some(_)) => return Err(AkitaError::InvalidProof),
     };
-    let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
+    let (commitment_u, compressed_current_u_payload) =
+        if let Some(plan) = scheduled.current_u_compression.as_ref() {
+            if current_state.commitment.coeff_len() != plan.public_len {
+                return Err(AkitaError::InvalidProof);
+            }
+            (&[][..], Some(current_state.commitment))
+        } else {
+            (current_state.commitment.as_ring_slice::<D>()?, None)
+        };
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
         ));
     }
-    current_state
-        .commitment
-        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    if scheduled.current_u_compression.is_some() {
+        current_state
+            .commitment
+            .append_to_transcript(ABSORB_COMMITMENT, transcript);
+    } else {
+        current_state
+            .commitment
+            .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    }
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
     let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
@@ -149,6 +163,8 @@ where
         v: v_typed,
         v_compression: scheduled.compression.v.as_ref(),
         compressed_v_payload,
+        current_u_compression: scheduled.current_u_compression.as_ref(),
+        compressed_current_u_payload,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
@@ -211,7 +227,13 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 let m_row_layout = scheduled_m_row_layout(&scheduled);
-                if !current_state.commitment.can_decode_vec(level_d)
+                let current_commitment_shape_invalid =
+                    if let Some(plan) = scheduled.current_u_compression.as_ref() {
+                        current_state.commitment.coeff_len() != plan.public_len
+                    } else {
+                        !current_state.commitment.can_decode_vec(level_d)
+                    };
+                if current_commitment_shape_invalid
                     || match (m_row_layout, scheduled.compression.v.as_ref()) {
                         (MRowLayout::WithDBlock, None) => !level_proof.v().can_decode_vec(level_d),
                         (
@@ -258,7 +280,13 @@ where
             }
             AkitaLevelProof::Terminal { .. } => {
                 let terminal_proof = step;
-                if !current_state.commitment.can_decode_vec(level_d) {
+                let current_commitment_shape_invalid =
+                    if let Some(plan) = scheduled.current_u_compression.as_ref() {
+                        current_state.commitment.coeff_len() != plan.public_len
+                    } else {
+                        !current_state.commitment.can_decode_vec(level_d)
+                    };
+                if current_commitment_shape_invalid {
                     return Err(AkitaError::InvalidProof);
                 }
                 if terminal_proof

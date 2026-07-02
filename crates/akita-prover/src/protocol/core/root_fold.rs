@@ -46,6 +46,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
     compute_hidden_v: bool,
+    current_u_compression: Option<&CommitmentCompressionPlan>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
@@ -112,6 +113,7 @@ where
         m_row_layout,
         terminal_tail_t_vectors,
         compute_hidden_v,
+        current_u_compression,
     )
 }
 
@@ -204,6 +206,7 @@ where
         scheduled_m_row_layout(scheduled),
         None,
         scheduled.compression.v.is_some(),
+        scheduled.current_u_compression.as_ref(),
         basis,
     )?;
 
@@ -304,9 +307,10 @@ where
 
     claims.append_to_transcript::<T>(transcript)?;
 
+    let m_row_layout = scheduled_m_row_layout(scheduled);
     let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
         root_params,
-        MRowLayout::WithoutDBlock,
+        m_row_layout,
         Some(terminal_direct_witness_shape),
     )?;
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
@@ -314,9 +318,10 @@ where
         transcript,
         claims,
         root_params,
-        MRowLayout::WithoutDBlock,
+        m_row_layout,
         terminal_tail_t_vectors,
         scheduled.compression.v.is_some(),
+        scheduled.current_u_compression.as_ref(),
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();

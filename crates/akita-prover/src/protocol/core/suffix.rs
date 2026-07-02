@@ -124,7 +124,7 @@ where
         let terminal_scheduled = schedule.get_execution_schedule(terminal_level)?;
         terminal_golomb_grind_tail_t_vectors(
             &terminal_scheduled.params,
-            MRowLayout::WithoutDBlock,
+            scheduled_m_row_layout(&terminal_scheduled),
             Some(terminal_direct_witness_shape),
         )?
     };
@@ -153,6 +153,7 @@ where
                 m_row_layout,
                 tail_t_vectors,
                 compute_hidden_v,
+                scheduled.current_u_compression.as_ref(),
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
@@ -209,6 +210,7 @@ where
                         m_row_layout,
                         tail_t_vectors,
                         compute_hidden_v,
+                        scheduled.current_u_compression.as_ref(),
                     )
                     .map_err(|err| {
                         AkitaError::InvalidInput(format!(
@@ -287,6 +289,7 @@ fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
     compute_hidden_v: bool,
+    current_u_compression: Option<&CommitmentCompressionPlan>,
 ) -> Result<PreparedFold<F, L, D>, AkitaError>
 where
     F: FieldCore
@@ -359,6 +362,7 @@ where
         m_row_layout,
         terminal_tail_t_vectors,
         compute_hidden_v,
+        current_u_compression,
     )
 }
 

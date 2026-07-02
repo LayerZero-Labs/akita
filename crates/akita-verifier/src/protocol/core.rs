@@ -31,6 +31,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
+use akita_types::AppendToTranscript;
 use akita_types::{
     append_claim_values_to_transcript, batched_eval_target_from_opening_batch,
     build_trace_claim_root, ensure_trace_stage2_supported, generate_y, linearize_compression_chain,

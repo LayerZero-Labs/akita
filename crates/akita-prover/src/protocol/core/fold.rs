@@ -127,6 +127,31 @@ where
     })
 }
 
+fn evaluate_current_u_compression<F, const D: usize>(
+    setup_fields: &[F],
+    plan: &CommitmentCompressionPlan,
+    hidden_u: Option<&[CyclotomicRing<F, D>]>,
+    suffix_offset: usize,
+    log_basis: u32,
+) -> Result<VCompressionProverData<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    let hidden_u = hidden_u.ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "scheduled current u compression did not compute hidden raw u".to_string(),
+        )
+    })?;
+    let raw_payload = flatten_ring_rows(hidden_u);
+    let num_digits = decomposition_digits_per_scalar(plan)?;
+    let evaluation =
+        evaluate_commitment_compression(setup_fields, plan, &raw_payload, num_digits, log_basis)?;
+    Ok(VCompressionProverData {
+        evaluation,
+        suffix_offset,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_v_compression_stage2_table<F, E, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
@@ -138,6 +163,7 @@ fn build_v_compression_stage2_table<F, E, const D: usize>(
     live_x_cols: usize,
     y_len: usize,
     row_challenge: E,
+    initial_row_weight: E,
     log_basis: u32,
 ) -> Result<CompressionLinearization<E>, AkitaError>
 where
@@ -164,7 +190,69 @@ where
         live_x_cols,
         y_len,
         row_challenge,
-        E::one(),
+        initial_row_weight,
+        log_basis,
+    )?;
+    let chain = linearize_compression_chain(
+        expanded.shared_matrix().as_field_slice(),
+        plan,
+        public_payload,
+        suffix_offset,
+        live_x_cols,
+        y_len,
+        row_challenge,
+        raw.next_row_weight,
+        log_basis,
+    )?;
+    let mut table = raw.table;
+    table.add_assign_table(&chain.table, live_x_cols, y_len)?;
+    Ok(CompressionLinearization {
+        table,
+        claim: raw.claim + chain.claim,
+        next_row_weight: chain.next_row_weight,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_current_u_compression_stage2_table<F, E, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    lp: &LevelParams,
+    instance: &RingRelationInstance<F, D>,
+    plan: &CommitmentCompressionPlan,
+    public_payload: &FlatRingVec<F>,
+    suffix_offset: usize,
+    live_x_cols: usize,
+    y_len: usize,
+    row_challenge: E,
+    initial_row_weight: E,
+    log_basis: u32,
+) -> Result<CompressionLinearization<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + LiftBase<F>,
+{
+    let segment = instance.segment_layout(lp)?;
+    let col_len = instance
+        .opening_batch()
+        .num_polynomials()
+        .checked_mul(lp.num_blocks)
+        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("B compression width overflow".to_string()))?;
+    let b_view = expanded
+        .shared_matrix()
+        .ring_view::<D>(lp.b_key.row_len(), col_len)?;
+    let raw = linearize_raw_ring_rows_to_first_digits::<F, E, D>(
+        b_view.as_slice(),
+        lp.b_key.row_len(),
+        col_len,
+        segment.offset_t,
+        plan,
+        suffix_offset,
+        live_x_cols,
+        y_len,
+        row_challenge,
+        initial_row_weight,
         log_basis,
     )?;
     let chain = linearize_compression_chain(
@@ -198,6 +286,7 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
     pub(in crate::protocol::core) hidden_v: Option<Vec<CyclotomicRing<F, D>>>,
+    pub(in crate::protocol::core) hidden_u: Option<Vec<CyclotomicRing<F, D>>>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
     pub(in crate::protocol::core) trace_eval_target: L,
@@ -224,13 +313,6 @@ pub(in crate::protocol::core) fn scheduled_m_row_layout(
 pub(in crate::protocol::core) fn reject_active_b_side_compression(
     scheduled: &ExecutionSchedule,
 ) -> Result<(), AkitaError> {
-    if scheduled.current_u_compression.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "B-side commitment compression for the current u is not enabled yet; \
-             it needs a base-prefix commitment relation before B rows can be omitted"
-                .to_string(),
-        ));
-    }
     if scheduled.compression.next_u.is_some() {
         return Err(AkitaError::InvalidSetup(
             "B-side commitment compression for next u is not enabled yet; \
@@ -413,6 +495,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
     compute_hidden_v: bool,
+    current_u_compression: Option<&'a CommitmentCompressionPlan>,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -483,6 +566,7 @@ where
                 m_row_layout,
                 terminal_tail_t_vectors,
                 compute_hidden_v,
+                current_u_compression,
             })
         } else {
             let transformed: Vec<RootTensorProjectionPoly<F, D>> = {
@@ -519,6 +603,7 @@ where
                     m_row_layout,
                     terminal_tail_t_vectors,
                     compute_hidden_v,
+                    current_u_compression,
                 },
             )
         }
@@ -541,6 +626,7 @@ where
             m_row_layout,
             terminal_tail_t_vectors,
             compute_hidden_v,
+            current_u_compression,
         })
     }
 }
@@ -571,6 +657,7 @@ where
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
     compute_hidden_v: bool,
+    current_u_compression: Option<&'a CommitmentCompressionPlan>,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
@@ -613,6 +700,7 @@ where
         m_row_layout,
         terminal_tail_t_vectors,
         compute_hidden_v,
+        current_u_compression,
     } = args;
     let opening = stack.opening();
     let prepared_point = prepare_opening_point::<F, E, D>(
@@ -645,7 +733,7 @@ where
     )?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let commitment = fold_claims.single_fold_commitment()?;
-    let (instance, witness, hidden_v) = RingRelationProver::new(
+    let (instance, witness, hidden_v, hidden_u) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
         prepared_point.ring_opening_point.clone(),
@@ -658,6 +746,7 @@ where
         m_row_layout,
         terminal_tail_t_vectors,
         compute_hidden_v,
+        current_u_compression,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let row_coefficients = if pad_base_evals {
@@ -675,6 +764,7 @@ where
         instance,
         witness,
         hidden_v,
+        hidden_u,
         extension_opening_reduction,
         trace_eval_target: trace_target.trace_eval_target,
         trace_scale: trace_target.trace_scale,
@@ -770,7 +860,11 @@ where
 {
     let lp = &scheduled.params;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
-    let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
+    let commitment_u = if prepared_fold.instance.m_row_layout().has_b_block() {
+        prepared_fold.commitment.as_ring_slice::<D>()?
+    } else {
+        &[][..]
+    };
     let build_output = ring_switch_build_w::<F, R, D>(
         &prepared_fold.instance,
         prepared_fold.witness,
@@ -783,23 +877,42 @@ where
             "terminal fold proof cannot carry compressed v payload".to_string(),
         ));
     }
-    let base_w_len = build_output.w.len();
-    let v_compression = if let Some(plan) = scheduled.compression.v.as_ref() {
-        Some(evaluate_v_compression::<F, D>(
+    if is_terminal_fold && scheduled.current_u_compression.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "terminal fold proof cannot carry compressed current u payload".to_string(),
+        ));
+    }
+    let mut logical_w = build_output.w;
+    let current_u_compression = if let Some(plan) = scheduled.current_u_compression.as_ref() {
+        let suffix_offset = logical_w.len();
+        Some(evaluate_current_u_compression::<F, D>(
             expanded.shared_matrix().as_field_slice(),
             plan,
-            prepared_fold.hidden_v.as_deref(),
-            base_w_len,
+            prepared_fold.hidden_u.as_deref(),
+            suffix_offset,
             lp.log_basis,
         )?)
     } else {
         None
     };
-    let logical_w = if let Some(compression) = v_compression.as_ref() {
-        append_i8_suffix(build_output.w, &compression.evaluation.padded_suffix_digits)
+    if let Some(compression) = current_u_compression.as_ref() {
+        logical_w = append_i8_suffix(logical_w, &compression.evaluation.padded_suffix_digits);
+    }
+    let v_compression = if let Some(plan) = scheduled.compression.v.as_ref() {
+        let suffix_offset = logical_w.len();
+        Some(evaluate_v_compression::<F, D>(
+            expanded.shared_matrix().as_field_slice(),
+            plan,
+            prepared_fold.hidden_v.as_deref(),
+            suffix_offset,
+            lp.log_basis,
+        )?)
     } else {
-        build_output.w
+        None
     };
+    if let Some(compression) = v_compression.as_ref() {
+        logical_w = append_i8_suffix(logical_w, &compression.evaluation.padded_suffix_digits);
+    }
     scheduled.validate_next_w_len(logical_w.len())?;
     let next_commitment = if is_terminal_fold {
         None
@@ -906,32 +1019,65 @@ where
     } else {
         None
     };
-    if let (Some(plan), Some(compression)) =
-        (scheduled.compression.v.as_ref(), v_compression.as_ref())
-    {
+    if current_u_compression.is_some() || v_compression.is_some() {
         let row_challenge =
             sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_COMMITMENT_COMPRESSION_ROW);
-        let compression_linearization = build_v_compression_stage2_table::<F, L, D>(
-            expanded.as_ref(),
-            lp,
-            &prepared_fold.instance,
-            plan,
-            &compression.evaluation.public_payload,
-            compression.suffix_offset,
-            rs.live_x_cols,
-            1usize << rs.ring_bits,
-            row_challenge,
-            lp.log_basis,
-        )?;
-        trace_opening_claim += compression_linearization.claim;
-        if let Some(trace_table) = trace_compact.as_mut() {
-            trace_table.add_assign_table(
-                &compression_linearization.table,
+        let mut next_row_weight = L::one();
+        if let (Some(plan), Some(compression)) = (
+            scheduled.current_u_compression.as_ref(),
+            current_u_compression.as_ref(),
+        ) {
+            let compression_linearization = build_current_u_compression_stage2_table::<F, L, D>(
+                expanded.as_ref(),
+                lp,
+                &prepared_fold.instance,
+                plan,
+                &prepared_fold.commitment,
+                compression.suffix_offset,
                 rs.live_x_cols,
                 1usize << rs.ring_bits,
+                row_challenge,
+                next_row_weight,
+                lp.log_basis,
             )?;
-        } else {
-            trace_compact = Some(compression_linearization.table);
+            next_row_weight = compression_linearization.next_row_weight;
+            trace_opening_claim += compression_linearization.claim;
+            if let Some(trace_table) = trace_compact.as_mut() {
+                trace_table.add_assign_table(
+                    &compression_linearization.table,
+                    rs.live_x_cols,
+                    1usize << rs.ring_bits,
+                )?;
+            } else {
+                trace_compact = Some(compression_linearization.table);
+            }
+        }
+        if let (Some(plan), Some(compression)) =
+            (scheduled.compression.v.as_ref(), v_compression.as_ref())
+        {
+            let compression_linearization = build_v_compression_stage2_table::<F, L, D>(
+                expanded.as_ref(),
+                lp,
+                &prepared_fold.instance,
+                plan,
+                &compression.evaluation.public_payload,
+                compression.suffix_offset,
+                rs.live_x_cols,
+                1usize << rs.ring_bits,
+                row_challenge,
+                next_row_weight,
+                lp.log_basis,
+            )?;
+            trace_opening_claim += compression_linearization.claim;
+            if let Some(trace_table) = trace_compact.as_mut() {
+                trace_table.add_assign_table(
+                    &compression_linearization.table,
+                    rs.live_x_cols,
+                    1usize << rs.ring_bits,
+                )?;
+            } else {
+                trace_compact = Some(compression_linearization.table);
+            }
         }
     }
     let ring_bits = rs.ring_bits;
