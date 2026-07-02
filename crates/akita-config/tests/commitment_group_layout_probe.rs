@@ -1,3 +1,9 @@
+//! Diagnostic: print limited-vs-full basis planner layout summaries for
+//! multi-group sizing exploration.
+//!
+//! Marked `#[ignore]` so it never runs in default CI; invoke with
+//! `cargo test -p akita-config --test commitment_group_layout_probe -- --ignored --nocapture`.
+
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
@@ -84,6 +90,7 @@ fn print_layout(result: Result<LayoutSummary, AkitaError>) {
 }
 
 #[test]
+#[ignore = "diagnostic"]
 fn print_commitment_group_layout_probe() -> Result<(), AkitaError> {
     let mut limited_policy = policy_of::<Cfg>();
     let full_policy = policy_of::<Cfg>();
