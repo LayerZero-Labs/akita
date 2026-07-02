@@ -255,12 +255,17 @@ impl SparseChallengeConfig {
 
     /// Validate basic invariants for a given ring degree `D`.
     pub fn validate<const D: usize>(&self) -> Result<(), &'static str> {
+        self.validate_dyn(D)
+    }
+
+    /// Runtime ring-dimension form of [`Self::validate`].
+    pub fn validate_dyn(&self, ring_d: usize) -> Result<(), &'static str> {
         match self {
             Self::Uniform {
                 weight,
                 nonzero_coeffs,
             } => {
-                if *weight > D {
+                if *weight > ring_d {
                     return Err("weight must be <= ring degree D");
                 }
                 validate_uniform_coeffs(nonzero_coeffs)
@@ -271,14 +276,14 @@ impl SparseChallengeConfig {
             } => {
                 if count_mag1
                     .checked_add(*count_mag2)
-                    .is_none_or(|weight| weight > D)
+                    .is_none_or(|weight| weight > ring_d)
                 {
                     return Err("count_mag1 + count_mag2 must be <= ring degree D");
                 }
                 Ok(())
             }
             Self::BoundedL1Norm => {
-                if D != D_32 {
+                if ring_d != D_32 {
                     return Err("BoundedL1Norm: only D = 32 is supported");
                 }
                 Ok(())

@@ -395,9 +395,10 @@ where
         prepared.fold_grind_nonce,
     )?;
     let v_rings = prepared.v.as_ring_slice::<D>()?;
-    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
+    let stage1_challenges = derive_stage1_challenges::<F, T>(
         transcript,
-        v_rings,
+        prepared.v.coeffs(),
+        D,
         prepared.lp.num_blocks,
         opening_shape.num_polynomials(),
         prepared.lp,

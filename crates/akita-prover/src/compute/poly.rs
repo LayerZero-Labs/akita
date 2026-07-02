@@ -670,6 +670,119 @@ where
 {
 }
 
+/// Root polynomial usable at every runtime-supported ring dimension.
+///
+/// D-free orchestration bounds on this; operation adapters select a concrete
+/// dimension with `dispatch_ring_dim_result!` and use the per-D capability
+/// inside the arm. Blanket-implemented: the D-free storage types
+/// (`DensePoly<F>`, `OneHotPoly<F, I>`, `SparseRingPoly<F>`,
+/// `RootTensorProjectionPoly<F>`, `RecursiveWitnessFlat`) satisfy it through
+/// their all-D source impls.
+pub trait RuntimeRootProvePoly<F>:
+    RootPolyMeta<F>
+    + RootProvePoly<F, 32>
+    + RootProvePoly<F, 64>
+    + RootProvePoly<F, 128>
+    + RootProvePoly<F, 256>
+where
+    F: FieldCore,
+{
+}
+
+impl<F, P> RuntimeRootProvePoly<F> for P
+where
+    F: FieldCore,
+    P: RootPolyMeta<F>
+        + RootProvePoly<F, 32>
+        + RootProvePoly<F, 64>
+        + RootProvePoly<F, 128>
+        + RootProvePoly<F, 256>,
+{
+}
+
+/// Root polynomial committable at every runtime-supported ring dimension.
+pub trait RuntimeRootCommitPoly<F>:
+    RootPolyMeta<F>
+    + RootCommitPoly<F, 32>
+    + RootCommitPoly<F, 64>
+    + RootCommitPoly<F, 128>
+    + RootCommitPoly<F, 256>
+where
+    F: FieldCore,
+{
+}
+
+impl<F, P> RuntimeRootCommitPoly<F> for P
+where
+    F: FieldCore,
+    P: RootPolyMeta<F>
+        + RootCommitPoly<F, 32>
+        + RootCommitPoly<F, 64>
+        + RootCommitPoly<F, 128>
+        + RootCommitPoly<F, 256>,
+{
+}
+
+/// Opening-fold backend capability for `P` at every runtime-supported ring
+/// dimension (P-generic counterpart of `SuffixOpeningProveBackend`).
+pub trait RuntimeOpeningProveBackendFor<F, P>:
+    OpeningProveBackendFor<F, P, 32>
+    + OpeningProveBackendFor<F, P, 64>
+    + OpeningProveBackendFor<F, P, 128>
+    + OpeningProveBackendFor<F, P, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, 32>
+        + RootOpeningSource<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootOpeningSource<F, 256>,
+{
+}
+
+impl<F, P, B> RuntimeOpeningProveBackendFor<F, P> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, 32>
+        + RootOpeningSource<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootOpeningSource<F, 256>,
+    B: OpeningProveBackendFor<F, P, 32>
+        + OpeningProveBackendFor<F, P, 64>
+        + OpeningProveBackendFor<F, P, 128>
+        + OpeningProveBackendFor<F, P, 256>,
+{
+}
+
+/// Combined opening + tensor prove capability for `P` at every
+/// runtime-supported ring dimension.
+pub trait RuntimeProveBackendFor<F, P, E>:
+    ProveBackendFor<F, P, E, 32>
+    + ProveBackendFor<F, P, E, 64>
+    + ProveBackendFor<F, P, E, 128>
+    + ProveBackendFor<F, P, E, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootProvePoly<F>,
+{
+}
+
+impl<F, P, E, B> RuntimeProveBackendFor<F, P, E> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootProvePoly<F>,
+    B: ProveBackendFor<F, P, E, 32>
+        + ProveBackendFor<F, P, E, 64>
+        + ProveBackendFor<F, P, E, 128>
+        + ProveBackendFor<F, P, E, 256>,
+{
+}
+
 /// Backend capability bundle for scheme-level prove.
 ///
 /// Use as **`B: RootProveBackend<F, P, E, D>`** on generic prove entry points.

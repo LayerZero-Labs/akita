@@ -366,6 +366,11 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
         self.z_folded_rings.as_ring_slice_trusted::<D>()
     }
 
+    /// Borrow the centered coefficients as row-major flat storage (D-free).
+    pub fn centered_coeffs_flat(&self) -> &[i32] {
+        &self.centered_coeffs_flat
+    }
+
     /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].
     pub fn centered_coeffs_trusted<const D: usize>(&self) -> &[[i32; D]] {
         debug_assert_eq!(self.ring_dim, D);

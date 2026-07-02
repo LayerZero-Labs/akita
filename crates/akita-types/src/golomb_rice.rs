@@ -442,8 +442,32 @@ pub fn golomb_rice_rows_admit_terminal_wire<const D: usize>(
     rows: &[[i32; D]],
     cap: u128,
 ) -> Result<(), AkitaError> {
-    golomb_rice_rows_encodable_at_wire_low_bits(rows, cap)?;
-    golomb_rice_flat_admit_terminal_wire(&centered_rows_to_i64(rows), cap)
+    golomb_rice_flat_rows_admit_terminal_wire(rows.as_flattened(), D, cap)
+}
+
+/// Runtime ring-dimension form of [`golomb_rice_rows_admit_terminal_wire`]:
+/// `flat` holds centered row coefficients row-major, chunked at `ring_d`.
+///
+/// The admissibility checks (cap range + planner wire budget) are
+/// per-coefficient and per-total, so the row chunking does not affect the
+/// result; `ring_d` documents the layout and is asserted in debug builds.
+///
+/// # Errors
+///
+/// Returns an error if any coefficient exceeds `cap` (including any non-zero
+/// coefficient at `cap == 0`) or if the total wire bits exceed the planner
+/// budget.
+pub fn golomb_rice_flat_rows_admit_terminal_wire(
+    flat: &[i32],
+    ring_d: usize,
+    cap: u128,
+) -> Result<(), AkitaError> {
+    debug_assert!(
+        ring_d > 0 && flat.len().is_multiple_of(ring_d),
+        "flat centered coefficients must be row-major chunks of ring_d"
+    );
+    let values: Vec<i64> = flat.iter().map(|&n| i64::from(n)).collect();
+    golomb_rice_flat_admit_terminal_wire(&values, cap)
 }
 
 /// Whether every centered coefficient is admissible at wire low bits and fits the planner bit budget.

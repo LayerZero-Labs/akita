@@ -201,7 +201,17 @@ impl Challenges {
     /// Returns an error if the factored input is malformed or if any tensor
     /// product overflows its integer coefficient representation.
     pub fn from_tensor<const D: usize>(factored: TensorChallenges) -> Result<Self, AkitaError> {
-        factored.validate::<D>()?;
+        Self::from_tensor_dyn(factored, D)
+    }
+
+    /// Runtime ring-dimension form of [`Self::from_tensor`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the factored input is malformed or if any tensor
+    /// product overflows its integer coefficient representation.
+    pub fn from_tensor_dyn(factored: TensorChallenges, ring_d: usize) -> Result<Self, AkitaError> {
+        factored.validate_dyn(ring_d)?;
         Ok(Self::Tensor { factored })
     }
 
@@ -344,6 +354,16 @@ impl TensorChallenges {
     /// count overflows, or any sparse factor is malformed for ring dimension
     /// `D`.
     pub fn validate<const D: usize>(&self) -> Result<(), AkitaError> {
+        self.validate_dyn(D)
+    }
+
+    /// Runtime ring-dimension form of [`Self::validate`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::validate`] with
+    /// ring dimension `ring_d`.
+    pub fn validate_dyn(&self, ring_d: usize) -> Result<(), AkitaError> {
         if !self.left_len.is_power_of_two() || !self.right_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
                 "tensor challenge dimensions must be powers of two".to_string(),
@@ -352,7 +372,7 @@ impl TensorChallenges {
         self.total_blocks()?;
         self.validate_lengths()?;
         for challenge in self.left.iter().chain(self.right.iter()) {
-            challenge.validate::<D>()?;
+            challenge.validate_dyn(ring_d)?;
         }
         Ok(())
     }
@@ -740,10 +760,11 @@ pub fn fold_sparse_challenge_sample_count(
 ///
 /// Returns an error if the tensor-left vector length is inconsistent with the
 /// supplied shape or if any sparse challenge violates structural invariants.
-pub fn tensor_left_digest<const D: usize>(
+pub fn tensor_left_digest(
     left: &[SparseChallenge],
     left_len: usize,
     num_claims: usize,
+    ring_d: usize,
 ) -> Result<[u8; 32], AkitaError> {
     let expected = left_len
         .checked_mul(num_claims)
@@ -757,13 +778,15 @@ pub fn tensor_left_digest<const D: usize>(
 
     let mut hasher = Sha3_256::new();
     hasher.update(TENSOR_LEFT_DIGEST_DOMAIN);
-    hasher.update((D as u64).to_le_bytes());
+    // Byte-critical: same little-endian u64 encoding of the ring dimension as
+    // the former `(D as u64)`; identical bytes for equal values.
+    hasher.update((ring_d as u64).to_le_bytes());
     hasher.update((num_claims as u64).to_le_bytes());
     hasher.update((left_len as u64).to_le_bytes());
     hasher.update((left.len() as u64).to_le_bytes());
 
     for challenge in left {
-        challenge.validate::<D>()?;
+        challenge.validate_dyn(ring_d)?;
         hasher.update((challenge.positions.len() as u64).to_le_bytes());
 
         let mut terms: Vec<(u32, i8)> = challenge

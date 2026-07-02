@@ -9,13 +9,13 @@ use akita_challenges::{
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    golomb_rice_rows_admit_terminal_wire,
+    golomb_rice_flat_rows_admit_terminal_wire,
     sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
     FoldLinfProtocolBinding, LevelParams, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
-use super::ring_relation::build_point_decompose_fold_witness;
+use super::ring_relation::{build_point_decompose_fold_witness, PointFoldShape};
 
 /// Preview-only transcript access for prover-side fold grinding.
 ///
@@ -40,9 +40,10 @@ where
 {
 }
 
-fn accepts_fold_witness<F: CanonicalField, const D: usize>(
+fn accepts_fold_witness<F: CanonicalField>(
     contract: &FoldWitnessGrindContract,
     witness: &DecomposeFoldWitness<F>,
+    ring_d: usize,
     witness_linf_cap: u128,
     tail_t_vectors: Option<usize>,
 ) -> bool {
@@ -52,8 +53,9 @@ fn accepts_fold_witness<F: CanonicalField, const D: usize>(
         return false;
     }
     if tail_t_vectors.is_some()
-        && golomb_rice_rows_admit_terminal_wire(
-            witness.centered_coeffs_trusted::<D>(),
+        && golomb_rice_flat_rows_admit_terminal_wire(
+            witness.centered_coeffs_flat(),
+            ring_d,
             witness_linf_cap,
         )
         .is_err()
@@ -124,18 +126,25 @@ where
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
+    // A-role fold dimension; per-role split attaches here (mixed-row spec).
+    // While this orchestration is still const-D (P/B bounds convert in the
+    // next slice), the grind loop itself is already D-free: every use below
+    // goes through the runtime `ring_d`.
+    let ring_d = D;
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
     let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
     let labels = stage1_fold_challenge_labels();
+    let point_fold_shape = PointFoldShape::from_level(lp);
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
 
     let mut grind_probe_count = 0u32;
     for nonce in probe_nonces {
         grind_probe_count = grind_probe_count.saturating_add(1);
-        let challenges = preview_folding_challenges::<D>(
+        let challenges = preview_folding_challenges(
             transcript,
+            ring_d,
             lp.num_blocks,
             num_claims,
             &lp.stage1_config,
@@ -149,14 +158,21 @@ where
             &challenges,
             polys,
             &point_indices,
-            lp,
+            point_fold_shape,
         )?;
-        if !accepts_fold_witness::<F, D>(&contract, &witness, witness_linf_cap, tail_t_vectors) {
+        if !accepts_fold_witness::<F>(
+            &contract,
+            &witness,
+            ring_d,
+            witness_linf_cap,
+            tail_t_vectors,
+        ) {
             continue;
         }
         super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);
-        let challenges = sample_folding_challenges::<F, T, D>(
+        let challenges = sample_folding_challenges::<F, T>(
             transcript,
+            ring_d,
             lp.num_blocks,
             num_claims,
             &lp.stage1_config,
@@ -230,9 +246,10 @@ mod tests {
             vec![[cap as i32; D]],
             cap as u32,
         );
-        assert!(!accepts_fold_witness::<F, D>(
+        assert!(!accepts_fold_witness::<F>(
             &contract,
             &witness,
+            D,
             cap,
             Some(1),
         ));

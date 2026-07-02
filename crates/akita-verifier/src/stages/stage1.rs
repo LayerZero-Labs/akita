@@ -6,7 +6,6 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_algebra::CyclotomicRing;
 use akita_challenges::{sample_folding_challenges, stage1_fold_challenge_labels, Challenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -46,9 +45,10 @@ pub(crate) fn validate_fold_grind_nonce(
 /// # Errors
 ///
 /// Returns an error if challenge sampling fails.
-pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
+pub(crate) fn derive_stage1_challenges<F, T>(
     transcript: &mut T,
-    v: &[CyclotomicRing<F, D>],
+    v_coeffs: &[F],
+    ring_d: usize,
     num_blocks_per_claim: usize,
     num_claims: usize,
     lp: &LevelParams,
@@ -64,14 +64,15 @@ where
     // both prover and verifier to keep the Fiat-Shamir transcript in
     // sync. Intermediate layouts still bind the prover's `v` rows.
     if matches!(m_row_layout, MRowLayout::WithDBlock) {
-        // Absorb `v` as flat ring coefficients under dimension `D` — byte-identical
-        // to the former typed `RingSliceSerializer(v)` path (S2 byte-identity test):
-        // ring-major coefficient order, no length header.
-        let v_coeffs: Vec<F> = v.iter().flat_map(|r| r.coefficients().to_vec()).collect();
-        append_flat_coefficients(ABSORB_PROVER_V, &v_coeffs, D, transcript)?;
+        // Absorb `v` as flat ring coefficients under dimension `ring_d` —
+        // byte-identical to the former typed `RingSliceSerializer(v)` path
+        // (S2 byte-identity test): ring-major coefficient order, no length
+        // header.
+        append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, ring_d, transcript)?;
     }
-    sample_folding_challenges::<F, T, D>(
+    sample_folding_challenges::<F, T>(
         transcript,
+        ring_d,
         num_blocks_per_claim,
         num_claims,
         &lp.stage1_config,
