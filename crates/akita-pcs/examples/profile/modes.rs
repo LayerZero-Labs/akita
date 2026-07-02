@@ -238,10 +238,7 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64_tensor,
     },
     // Chunked relation (distributed prover witness layout on leading fold levels).
-    ProfileMode {
-        name: "onehot_fp128_d64_multi_chunk",
-        run: run_profile_onehot_fp128_d64_multi_chunk,
-    },
+    // Ordered by chunk count (W2, W4, W8) so the CI bench matrix reads in order.
     ProfileMode {
         name: "onehot_fp128_d64_multi_chunk_w2r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
@@ -249,6 +246,10 @@ const PROFILE_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "onehot_fp128_d64_multi_chunk_w4r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w4r2,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk",
+        run: run_profile_onehot_fp128_d64_multi_chunk,
     },
     // Tiered second-tier commitment (F). Only tiers with a batch (B > A), so
     // run with `AKITA_NUM_POLYS=16` or more; excluded from the `all` sweep.
@@ -302,9 +303,9 @@ const PROFILE_MODES: &[ProfileMode] = &[
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_tensor",
     "onehot_fp128_d64_tiered",
-    "onehot_fp128_d64_multi_chunk",
     "onehot_fp128_d64_multi_chunk_w2r2",
     "onehot_fp128_d64_multi_chunk_w4r2",
+    "onehot_fp128_d64_multi_chunk",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
