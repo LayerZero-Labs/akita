@@ -28,9 +28,28 @@ pub enum MRowLayout {
     /// Full layout including the D-block (`v = D * e_hat` rows). Used at every
     /// intermediate fold level and at the root when stage-1 runs.
     WithDBlock,
-    /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
-    /// the terminal fold level where `final_witness` ships on the wire.
+    /// Omit the D-block from the M-matrix while keeping B rows. Used when the
+    /// D image is either checked by commitment compression or unnecessary for
+    /// the terminal cleartext witness.
     WithoutDBlock,
+    /// Omit both public commitment blocks from the M-matrix. Used when the
+    /// current `u` image is checked by commitment compression and the D image
+    /// is also absent from the ring relation.
+    WithoutCommitmentBlocks,
+}
+
+impl MRowLayout {
+    /// Whether this M-row layout includes public B commitment rows.
+    #[inline]
+    pub fn has_b_block(self) -> bool {
+        matches!(self, Self::WithDBlock | Self::WithoutDBlock)
+    }
+
+    /// Whether this M-row layout includes public D commitment rows.
+    #[inline]
+    pub fn has_d_block(self) -> bool {
+        matches!(self, Self::WithDBlock)
+    }
 }
 
 /// Group-local root parameters for a precommitted commitment group.
@@ -605,18 +624,29 @@ impl LevelParams {
 
     // ---- Canonical M-row layout offsets (single source of truth) ----
     //
-    // Row layout: consistency (1) | A (n_a) | B (n_b · nc) | D (n_d_active).
+    // Row layout: consistency (1) | A (n_a) | B (n_b_active · nc) | D (n_d_active).
     // Public-output rows bind through the fused trace term, not the M-matrix.
     // Every row-offset site (prover quotient/`generate_y`, setup-contribution
     // `prepare`, the relation claim, the verifier ring-switch row eval) must
     // derive its block starts from these helpers rather than recompute inline.
 
-    /// Active D-block rows for an M-row layout (dropped at a terminal fold).
+    /// Active B-block rows for an M-row layout.
+    #[inline]
+    pub fn n_b_active_for(&self, layout: MRowLayout) -> usize {
+        if layout.has_b_block() {
+            self.b_key.row_len()
+        } else {
+            0
+        }
+    }
+
+    /// Active D-block rows for an M-row layout.
     #[inline]
     pub fn n_d_active_for(&self, layout: MRowLayout) -> usize {
-        match layout {
-            MRowLayout::WithDBlock => self.d_key.row_len(),
-            MRowLayout::WithoutDBlock => 0,
+        if layout.has_d_block() {
+            self.d_key.row_len()
+        } else {
+            0
         }
     }
 
@@ -652,9 +682,25 @@ impl LevelParams {
             .ok_or_else(Self::m_row_overflow)
     }
 
+    /// Absolute start row of the D block for a selected M-row layout.
+    #[inline]
+    pub fn d_start_for(
+        &self,
+        num_commitments: usize,
+        layout: MRowLayout,
+    ) -> Result<usize, AkitaError> {
+        let b_rows = self
+            .n_b_active_for(layout)
+            .checked_mul(num_commitments)
+            .ok_or_else(Self::m_row_overflow)?;
+        self.b_start()?
+            .checked_add(b_rows)
+            .ok_or_else(Self::m_row_overflow)
+    }
+
     /// Row count for an explicit M-row layout.
     ///
-    /// Row layout: consistency (1) | A (n_a) | B (n_b · num_commitments)
+    /// Row layout: consistency (1) | A (n_a) | optional B (`n_b · num_commitments`)
     /// | optional D (n_d). Public openings bind through the fused trace term,
     /// not M rows.
     ///
@@ -667,7 +713,7 @@ impl LevelParams {
         layout: MRowLayout,
     ) -> Result<usize, AkitaError> {
         self.reject_grouped_root("m_row_count_for")?;
-        self.d_start(num_commitments)?
+        self.d_start_for(num_commitments, layout)?
             .checked_add(self.n_d_active_for(layout))
             .ok_or_else(Self::m_row_overflow)
     }
@@ -950,22 +996,30 @@ mod tests {
         let lp = sample_params_only()
             .with_layout(&sample_layout_lp(), 128)
             .unwrap();
+        let n_a = lp.a_key.row_len();
+        let n_b = lp.b_key.row_len();
+        let n_d = lp.d_key.row_len();
 
         assert_eq!(
             lp.m_row_count_for(1, MRowLayout::WithDBlock).unwrap(),
-            1 + 3 + 4 + 2
+            1 + n_a + n_b + n_d
         );
         assert_eq!(
             lp.m_row_count_for(2, MRowLayout::WithDBlock).unwrap(),
-            1 + 3 + 4 * 2 + 2
+            1 + n_a + n_b * 2 + n_d
         );
         assert_eq!(
             lp.m_row_count_for(4, MRowLayout::WithDBlock).unwrap(),
-            1 + 3 + 4 * 4 + 2
+            1 + n_a + n_b * 4 + n_d
         );
         assert_eq!(
             lp.m_row_count_for(2, MRowLayout::WithoutDBlock).unwrap(),
-            1 + 4 * 2 + 2
+            1 + n_a + n_b * 2
+        );
+        assert_eq!(
+            lp.m_row_count_for(2, MRowLayout::WithoutCommitmentBlocks)
+                .unwrap(),
+            1 + n_a
         );
     }
 
@@ -976,26 +1030,29 @@ mod tests {
             .unwrap();
         let n_a = lp.a_key.row_len();
         let n_b = lp.b_key.row_len();
-        let n_d = lp.d_key.row_len();
 
         for nc in [1usize, 2, 4] {
-            for layout in [MRowLayout::WithDBlock, MRowLayout::WithoutDBlock] {
-                let n_d_active = match layout {
-                    MRowLayout::WithDBlock => n_d,
-                    MRowLayout::WithoutDBlock => 0,
-                };
+            for layout in [
+                MRowLayout::WithDBlock,
+                MRowLayout::WithoutDBlock,
+                MRowLayout::WithoutCommitmentBlocks,
+            ] {
+                let n_b_active = lp.n_b_active_for(layout);
+                let n_d_active = lp.n_d_active_for(layout);
                 let a_start = 1;
                 let b_start = a_start + n_a;
-                let d_start = b_start + n_b * nc;
+                let d_start = b_start + n_b_active * nc;
 
                 assert_eq!(lp.a_start(), a_start);
                 assert_eq!(lp.b_start().unwrap(), b_start);
-                assert_eq!(lp.d_start(nc).unwrap(), d_start);
+                assert_eq!(lp.d_start_for(nc, layout).unwrap(), d_start);
                 assert_eq!(
                     lp.m_row_count_for(nc, layout).unwrap(),
                     d_start + n_d_active
                 );
             }
         }
+
+        assert_eq!(lp.d_start(2).unwrap(), 1 + n_a + n_b * 2);
     }
 }

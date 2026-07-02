@@ -40,7 +40,7 @@ where
     let extension_opening_reduction = proof.fold_extension_opening_reduction();
     let (v_typed, compressed_v_payload) = match (m_row_layout, scheduled.compression.v.as_ref()) {
         (MRowLayout::WithDBlock, None) => (proof.fold_v::<D>()?.to_vec(), None),
-        (MRowLayout::WithoutDBlock, Some(plan)) => {
+        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, Some(plan)) => {
             let AkitaBatchedRootProof::Fold(fold) = proof else {
                 return Err(AkitaError::InvalidProof);
             };
@@ -49,7 +49,9 @@ where
             }
             (Vec::new(), Some(&fold.v))
         }
-        (MRowLayout::WithoutDBlock, None) => (Vec::new(), None),
+        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, None) => {
+            (Vec::new(), None)
+        }
         (MRowLayout::WithDBlock, Some(_)) => return Err(AkitaError::InvalidProof),
     };
     let next_fold_level_params = match proof {

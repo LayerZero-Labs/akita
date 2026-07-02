@@ -73,7 +73,9 @@ pub fn level_proof_bytes(
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     match layout {
-        MRowLayout::WithoutDBlock => FOLD_GRIND_NONCE_BYTES + sumcheck,
+        MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks => {
+            FOLD_GRIND_NONCE_BYTES + sumcheck
+        }
         MRowLayout::WithDBlock => {
             let next_lp = next_lp
                 .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");

@@ -210,10 +210,14 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
 pub(in crate::protocol::core) fn scheduled_m_row_layout(
     scheduled: &ExecutionSchedule,
 ) -> MRowLayout {
-    if scheduled.is_terminal || scheduled.compression.v.is_some() {
-        MRowLayout::WithoutDBlock
-    } else {
-        MRowLayout::WithDBlock
+    match (
+        scheduled.current_u_compression.is_some(),
+        scheduled.is_terminal || scheduled.compression.v.is_some(),
+    ) {
+        (true, true) => MRowLayout::WithoutCommitmentBlocks,
+        (true, false) => MRowLayout::WithoutCommitmentBlocks,
+        (false, true) => MRowLayout::WithoutDBlock,
+        (false, false) => MRowLayout::WithDBlock,
     }
 }
 
@@ -813,16 +817,22 @@ where
         !is_terminal_fold,
     )?;
 
-    let relation_rows = match m_row_layout {
-        MRowLayout::WithDBlock => prepared_fold.instance.v.as_slice(),
-        MRowLayout::WithoutDBlock => &[][..],
+    let relation_rows = if m_row_layout.has_d_block() {
+        prepared_fold.instance.v.as_slice()
+    } else {
+        &[][..]
+    };
+    let relation_commitment_rows = if m_row_layout.has_b_block() {
+        commitment_u
+    } else {
+        &[][..]
     };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
         lp.a_key.row_len(),
         relation_rows,
-        commitment_u,
+        relation_commitment_rows,
     )?;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
         (None, vec![L::zero(); rs.col_bits + rs.ring_bits], L::zero())

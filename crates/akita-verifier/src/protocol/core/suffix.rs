@@ -47,7 +47,7 @@ where
     let m_row_layout = scheduled_m_row_layout(scheduled);
     let (v_typed, compressed_v_payload) = match (m_row_layout, scheduled.compression.v.as_ref()) {
         (MRowLayout::WithDBlock, None) => (proof.v_as_ring_slice::<D>()?.to_vec(), None),
-        (MRowLayout::WithoutDBlock, Some(plan)) => {
+        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, Some(plan)) => {
             let AkitaLevelProof::Intermediate { v, .. } = proof else {
                 return Err(AkitaError::InvalidProof);
             };
@@ -56,7 +56,9 @@ where
             }
             (Vec::new(), Some(v))
         }
-        (MRowLayout::WithoutDBlock, None) => (Vec::new(), None),
+        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, None) => {
+            (Vec::new(), None)
+        }
         (MRowLayout::WithDBlock, Some(_)) => return Err(AkitaError::InvalidProof),
     };
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
@@ -211,10 +213,13 @@ where
                 if !current_state.commitment.can_decode_vec(level_d)
                     || match (m_row_layout, scheduled.compression.v.as_ref()) {
                         (MRowLayout::WithDBlock, None) => !level_proof.v().can_decode_vec(level_d),
-                        (MRowLayout::WithoutDBlock, Some(plan)) => {
-                            level_proof.v().coeff_len() != plan.public_len
+                        (
+                            MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks,
+                            Some(plan),
+                        ) => level_proof.v().coeff_len() != plan.public_len,
+                        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, None) => {
+                            false
                         }
-                        (MRowLayout::WithoutDBlock, None) => false,
                         (MRowLayout::WithDBlock, Some(_)) => true,
                     }
                 {

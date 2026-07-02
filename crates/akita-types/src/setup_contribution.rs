@@ -346,14 +346,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         let z_dims_pow2 = inputs.block_len.is_power_of_two();
 
-        let n_d_active = match inputs.m_row_layout {
-            MRowLayout::WithDBlock => inputs.n_d,
-            MRowLayout::WithoutDBlock => 0,
+        let n_b_active = if inputs.m_row_layout.has_b_block() {
+            inputs.n_b
+        } else {
+            0
         };
-        // Canonical row layout: consistency (1) | A | B | D.
+        let n_d_active = if inputs.m_row_layout.has_d_block() {
+            inputs.n_d
+        } else {
+            0
+        };
+        // Canonical row layout: consistency (1) | A | optional B | optional D.
         let a_start = 1usize;
         let b_start = checked_add(a_start, inputs.n_a, "B row start")?;
-        let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
+        let b_rows_total = checked_mul(n_b_active, inputs.num_segments, "B row count")?;
         let d_start = checked_add(b_start, b_rows_total, "D row start")?;
         let d_end = checked_add(d_start, n_d_active, "D row end")?;
         if d_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
@@ -376,7 +382,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
         let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
         let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
-        let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
+        let b_required = checked_mul(n_b_active, n_cols_t, "B setup footprint")?;
         let required = d_required.max(b_required).max(a_required);
         if required == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -598,19 +604,19 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .collect()
         };
 
-        let b_weights_by_row: Vec<Vec<E>> = (0..inputs.n_b)
+        let b_weights_by_row: Vec<Vec<E>> = (0..n_b_active)
             .map(|row| {
                 (0..inputs.num_segments)
-                    .map(|g| inputs.eq_tau1[b_start + g * inputs.n_b + row])
+                    .map(|g| inputs.eq_tau1[b_start + g * n_b_active + row])
                     .collect()
             })
             .collect();
 
-        let mut endpoints = Vec::with_capacity(n_d_active + inputs.n_b + inputs.n_a + 2);
+        let mut endpoints = Vec::with_capacity(n_d_active + n_b_active + inputs.n_a + 2);
         endpoints.push(0);
         endpoints.push(required);
         push_role_boundaries(&mut endpoints, n_d_active, n_cols_e, "D")?;
-        push_role_boundaries(&mut endpoints, inputs.n_b, n_cols_t, "B")?;
+        push_role_boundaries(&mut endpoints, n_b_active, n_cols_t, "B")?;
         push_role_boundaries(&mut endpoints, inputs.n_a, z_range, "A")?;
         endpoints.sort_unstable();
         endpoints.dedup();

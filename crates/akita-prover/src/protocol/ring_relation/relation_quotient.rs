@@ -258,8 +258,6 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let n_b = lp.b_key.row_len();
-    let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
     let expected_t_hat_block_digits = n_a
         .checked_mul(lp.num_digits_open)
@@ -276,20 +274,16 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    // Terminal layout drops the D-rows from M (and from `y`). All structural
-    // offsets must use `n_d_active`, not `n_d`, to match the verifier.
-    let n_d_active = match m_row_layout {
-        MRowLayout::WithDBlock => n_d,
-        MRowLayout::WithoutDBlock => 0,
-    };
+    let n_b_active = lp.n_b_active_for(m_row_layout);
+    let n_d_active = lp.n_d_active_for(m_row_layout);
     let num_rows = lp.m_row_count_for(1, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Canonical row layout: consistency (1) | A | B | D.
+    // Canonical row layout: consistency (1) | A | optional B | optional D.
     let a_start = lp.a_start();
     let b_start = lp.b_start()?;
-    let d_start = lp.d_start(1)?;
+    let d_start = lp.d_start_for(1, m_row_layout)?;
 
     if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidProof);
@@ -309,13 +303,13 @@ where
         },
         RingSwitchRelationPlan {
             n_d: n_d_active,
-            n_b,
+            n_b: n_b_active,
             n_a,
             log_basis: lp.log_basis,
         },
     )?;
     if relation_rows.d_cyclic.len() != n_d_active
-        || relation_rows.b_cyclic.len() != n_b
+        || relation_rows.b_cyclic.len() != n_b_active
         || relation_rows.a_quotients.len() != n_a
     {
         return Err(AkitaError::InvalidProof);
@@ -341,7 +335,7 @@ where
         }
     }
     let commitment_cyclic_rows = b_cyclic;
-    if commitment_cyclic_rows.len() != n_b {
+    if commitment_cyclic_rows.len() != n_b_active {
         return Err(AkitaError::InvalidProof);
     }
     let constant_opening_multipliers = ring_multiplier_point.is_constant();

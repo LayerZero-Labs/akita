@@ -173,10 +173,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
 
     /// Validate layout-dependent D-row payload shape.
     pub fn check_v_shape_for_level(&self, lp: &LevelParams) -> Result<(), AkitaError> {
-        let expected = match self.m_row_layout {
-            MRowLayout::WithDBlock => lp.d_key.row_len(),
-            MRowLayout::WithoutDBlock => 0,
-        };
+        let expected = lp.n_d_active_for(self.m_row_layout);
         if self.v.len() != expected {
             return Err(AkitaError::InvalidInput(
                 "ring relation v rows do not match M-row layout".to_string(),

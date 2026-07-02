@@ -208,10 +208,14 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
 pub(in crate::protocol::core) fn scheduled_m_row_layout(
     scheduled: &ExecutionSchedule,
 ) -> MRowLayout {
-    if scheduled.is_terminal || scheduled.compression.v.is_some() {
-        MRowLayout::WithoutDBlock
-    } else {
-        MRowLayout::WithDBlock
+    match (
+        scheduled.current_u_compression.is_some(),
+        scheduled.is_terminal || scheduled.compression.v.is_some(),
+    ) {
+        (true, true) => MRowLayout::WithoutCommitmentBlocks,
+        (true, false) => MRowLayout::WithoutCommitmentBlocks,
+        (false, true) => MRowLayout::WithoutDBlock,
+        (false, false) => MRowLayout::WithDBlock,
     }
 }
 
@@ -496,19 +500,21 @@ where
         RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<E>(
             &prepared.row_coefficients,
         )?;
-    let n_d_active = match prepared.m_row_layout {
-        MRowLayout::WithDBlock => prepared.lp.d_key.row_len(),
-        MRowLayout::WithoutDBlock => 0,
+    let y_v_slice = if prepared.m_row_layout.has_d_block() {
+        prepared.v.as_slice()
+    } else {
+        &[]
     };
-    let y_v_slice = match prepared.m_row_layout {
-        MRowLayout::WithDBlock => prepared.v.as_slice(),
-        MRowLayout::WithoutDBlock => &[],
+    let (y_commitment_rows, commit_rows_per_group) = if prepared.m_row_layout.has_b_block() {
+        (commitment_rows, prepared.lp.b_key.row_len())
+    } else {
+        (&[][..], 0usize)
     };
     let relation_y = generate_y::<F, D>(
         y_v_slice,
-        commitment_rows,
-        n_d_active,
-        prepared.lp.b_key.row_len(),
+        y_commitment_rows,
+        prepared.lp.n_d_active_for(prepared.m_row_layout),
+        commit_rows_per_group,
         prepared.lp.a_key.row_len(),
     )?;
     let relation_instance = RingRelationInstance::new(
@@ -555,7 +561,11 @@ where
         rs.alpha,
         prepared.lp.a_key.row_len(),
         &relation_instance.v,
-        commitment_rows,
+        if prepared.m_row_layout.has_b_block() {
+            commitment_rows
+        } else {
+            &[]
+        },
     )?;
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
     let is_terminal_stage2 = matches!(prepared.stage2, AkitaStage2Proof::Terminal(_));

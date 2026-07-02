@@ -312,7 +312,7 @@ where
             transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
             Ok(v)
         }
-        (MRowLayout::WithoutDBlock, true) => {
+        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, true) => {
             let _span = tracing::info_span!(
                 "compute_hidden_compression_v",
                 e_hat_planes = e_hat.flat_digits().len()
@@ -320,7 +320,7 @@ where
             .entered();
             compute_v_rows(backend, prepared, lp.d_key.row_len(), e_hat, lp.log_basis)
         }
-        (MRowLayout::WithoutDBlock, false) => Ok(Vec::new()),
+        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, false) => Ok(Vec::new()),
     }
 }
 
@@ -460,14 +460,15 @@ impl RingRelationProver {
             m_row_layout,
             compute_hidden_v,
         )?;
-        let hidden_v = if matches!(m_row_layout, MRowLayout::WithoutDBlock) && compute_hidden_v {
+        let hidden_v = if !m_row_layout.has_d_block() && compute_hidden_v {
             Some(v.clone())
         } else {
             None
         };
-        let relation_v = match m_row_layout {
-            MRowLayout::WithDBlock => v,
-            MRowLayout::WithoutDBlock => Vec::new(),
+        let relation_v = if m_row_layout.has_d_block() {
+            v
+        } else {
+            Vec::new()
         };
 
         if terminal_tail_t_vectors.is_some() {
@@ -492,15 +493,16 @@ impl RingRelationProver {
         // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
         // `v` slice with `n_d_active = 0` so `generate_y` emits
         // `[consistency | A-zeros | commitment_rows]` (no D-block).
-        let (y_v_slice, n_d_active) = match m_row_layout {
-            MRowLayout::WithDBlock => (relation_v.as_slice(), lp.d_key.row_len()),
-            MRowLayout::WithoutDBlock => (&[][..], 0usize),
+        let (y_commitment_rows, commit_rows_per_group) = if m_row_layout.has_b_block() {
+            (commitment_rows.as_slice(), lp.b_key.row_len())
+        } else {
+            (&[][..], 0usize)
         };
         let y = generate_y::<F, D>(
-            y_v_slice,
-            &commitment_rows,
-            n_d_active,
-            lp.b_key.row_len(),
+            relation_v.as_slice(),
+            y_commitment_rows,
+            lp.n_d_active_for(m_row_layout),
+            commit_rows_per_group,
             lp.a_key.row_len(),
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
