@@ -592,12 +592,16 @@ mod tests {
 
         let got = parallel_high_half_accumulate::<F, _, D>(&challenges, |idx| rings[idx]).unwrap();
         let mut expected = vec![F::zero(); D];
-        for idx in 0..tensor.total_blocks().unwrap() {
-            if let Some(ring) = rings[idx] {
+        for (idx, ring) in rings
+            .iter()
+            .enumerate()
+            .take(tensor.total_blocks().unwrap())
+        {
+            if let Some(ring) = ring {
                 let (_, _, left, right) = tensor.factors_for_logical_block(idx).unwrap();
                 let challenge =
                     sparse_challenge_as_ring::<D>(left) * sparse_challenge_as_ring::<D>(right);
-                add_ring_product_reference_high_half::<D>(&mut expected, &challenge, &ring);
+                add_ring_product_reference_high_half::<D>(&mut expected, &challenge, ring);
             }
         }
 
