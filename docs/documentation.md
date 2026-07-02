@@ -92,7 +92,7 @@ Fork PRs do not receive blast-radius comments (read-only `GITHUB_TOKEN`).
 | API / proof shape change | Update or new spec | Owning chapter | Yes | crate-graph if deps change |
 | Internal refactor, same API | Optional note | Only if narrative wrong | If hooks move | No |
 | Preset / schedule table | planner specs | `how/configuration.md` | Pointer only | `usage/profiling.md` if modes change |
-| Security / SIS sizing | `sis-euclidean-estimator.md`, `fold-linf-rejection.md`, `akita-sis-*` | `how/security.md` | If verifier-reachable | No |
+| Security / SIS sizing | `sis-linf-table-cutover.md`, `fold-linf-rejection.md`, `akita-sis-*` | `how/security.md` | If verifier-reachable | No |
 | Doc-only PR | Archive/fold as needed | Yes | If commands change | Yes |
 
 ## Folding and pruning cadence

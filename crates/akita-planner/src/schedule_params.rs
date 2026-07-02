@@ -15,8 +15,9 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    rounded_up_collision_linf_t, rounded_up_collision_linf_tiered_commitment,
+    rounded_up_collision_linf_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
@@ -26,6 +27,15 @@ use akita_types::{
 };
 
 use crate::PlannerPolicy;
+
+fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
+    SisTableKey {
+        min_security_bits: policy.min_sis_security_bits,
+        family: policy.sis_family,
+        ring_dimension: policy.ring_dimension as u32,
+        coeff_linf_bound,
+    }
+}
 
 /// Validate the policy's multi-chunk witness settings at a planner entry point.
 ///
@@ -84,7 +94,7 @@ const MAX_TIERED_SPLIT_FACTOR: usize = 16;
 /// slices (`f | width`). No column structure is preserved and `f` need not be a
 /// power of two — the relation only enforces `B'·t_i = u_i` and
 /// `F(u_1 ‖ … ‖ u_f) = u_final`, and every prover/verifier path slices `t̂` flatly.
-/// `F` is sized at its own collision bucket ([`rounded_up_collision_norm_tiered_commitment`]).
+/// `F` is sized at its own collision bucket ([`rounded_up_collision_linf_tiered_commitment`]).
 ///
 /// `B'` matrix size is monotonically non-increasing in `f`, so the **smallest**
 /// divisor `f` in `2..=MAX_TIERED_SPLIT_FACTOR` whose size drops to
@@ -115,9 +125,12 @@ fn multi_tiered_keys(
     }
 
     // `F` commits balanced base-`2^log_basis` digits of `u_concat`.
-    let Some(norm_f) =
-        rounded_up_collision_norm_tiered_commitment(b_key.sis_family(), ring_d, log_basis)
-    else {
+    let Some(norm_f) = rounded_up_collision_linf_tiered_commitment(
+        b_key.min_security_bits(),
+        b_key.sis_family(),
+        ring_d,
+        log_basis,
+    ) else {
         return Ok((1, b_key.clone(), None));
     };
 
@@ -128,12 +141,7 @@ fn multi_tiered_keys(
             continue;
         }
         let shrunk_width = b_key.col_len() / f; // exact: f divides the B width
-        let Some(n_b_small) = min_secure_rank(
-            b_key.sis_family(),
-            ring_d as u32,
-            b_key.collision_l2_sq(),
-            shrunk_width as u64,
-        ) else {
+        let Some(n_b_small) = min_secure_rank(b_key.sis_table_key(), shrunk_width as u64) else {
             continue;
         };
         let Some(b_small_size) = n_b_small.checked_mul(shrunk_width) else {
@@ -149,16 +157,31 @@ fn multi_tiered_keys(
         else {
             continue;
         };
-        let Some(n_f) = min_secure_rank(b_key.sis_family(), ring_d as u32, norm_f, width_f as u64)
-        else {
+        let Some(n_f) = min_secure_rank(
+            SisTableKey {
+                min_security_bits: b_key.min_security_bits(),
+                family: b_key.sis_family(),
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: norm_f,
+            },
+            width_f as u64,
+        ) else {
             continue;
         };
-        let f_key = AjtaiKeyParams::try_new(b_key.sis_family(), n_f, width_f, norm_f, ring_d)?;
+        let f_key = AjtaiKeyParams::try_new(
+            b_key.min_security_bits(),
+            b_key.sis_family(),
+            n_f,
+            width_f,
+            norm_f,
+            ring_d,
+        )?;
         let tiered_b_key = AjtaiKeyParams::try_new(
+            b_key.min_security_bits(),
             b_key.sis_family(),
             n_b_small,
             shrunk_width,
-            b_key.collision_l2_sq(),
+            b_key.coeff_linf_bound(),
             ring_d,
         )?;
         return Ok((f, tiered_b_key, Some(f_key)));
@@ -227,6 +250,7 @@ fn derive_candidate_level_params(
             continue;
         };
         let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+            policy.min_sis_security_bits,
             family,
             d,
             decomp,
@@ -241,27 +265,52 @@ fn derive_candidate_level_params(
         ) else {
             continue;
         };
-        let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
-        let Some(norm_t) = rounded_up_collision_norm_t(family, d, log_basis) else {
+        let a_key = AjtaiKeyParams::try_new(
+            policy.min_sis_security_bits,
+            family,
+            n_a,
+            width_s,
+            norm_s,
+            d,
+        )?;
+        let Some(norm_t) =
+            rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, log_basis)
+        else {
             continue;
         };
         let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, 1) else {
             continue;
         };
-        let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
+        let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
             continue;
         };
-        let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
-        let Some(norm_w) = rounded_up_collision_norm_w(family, d, log_basis) else {
+        let b_key = AjtaiKeyParams::try_new(
+            policy.min_sis_security_bits,
+            family,
+            n_b,
+            width_t,
+            norm_t,
+            d,
+        )?;
+        let Some(norm_w) =
+            rounded_up_collision_linf_w(policy.min_sis_security_bits, family, d, log_basis)
+        else {
             continue;
         };
         let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
             continue;
         };
-        let Some(n_d) = min_secure_rank(family, d as u32, norm_w, width_w as u64) else {
+        let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
             continue;
         };
-        let d_key = AjtaiKeyParams::try_new(family, n_d, width_w, norm_w, d)?;
+        let d_key = AjtaiKeyParams::try_new(
+            policy.min_sis_security_bits,
+            family,
+            n_d,
+            width_w,
+            norm_w,
+            d,
+        )?;
 
         let (tier_split, b_key, f_key) = if policy.tiered {
             let Some(a_matrix_size) = a_key.row_len().checked_mul(a_key.col_len()) else {
@@ -726,6 +775,7 @@ fn compute_root_direct_level_params(
         let is_onehot = decomp.log_commit_bound == 1;
         let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
         let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
+            policy.min_sis_security_bits,
             sis_family,
             d as u32,
             num_claims,
@@ -759,6 +809,7 @@ fn compute_root_direct_level_params(
         return Ok(None);
     };
     let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+        policy.min_sis_security_bits,
         sis_family,
         d,
         level_decomp,
@@ -773,27 +824,52 @@ fn compute_root_direct_level_params(
     ) else {
         return Ok(None);
     };
-    let a_key = AjtaiKeyParams::try_new(sis_family, n_a, width_s, norm_s, d)?;
-    let Some(norm_t) = rounded_up_collision_norm_t(sis_family, d, log_basis) else {
+    let a_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        sis_family,
+        n_a,
+        width_s,
+        norm_s,
+        d,
+    )?;
+    let Some(norm_t) =
+        rounded_up_collision_linf_t(policy.min_sis_security_bits, sis_family, d, log_basis)
+    else {
         return Ok(None);
     };
     let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Some(n_b) = min_secure_rank(sis_family, d as u32, norm_t, width_t as u64) else {
+    let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
         return Ok(None);
     };
-    let b_key = AjtaiKeyParams::try_new(sis_family, n_b, width_t, norm_t, d)?;
-    let Some(norm_w) = rounded_up_collision_norm_w(sis_family, d, log_basis) else {
+    let b_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        sis_family,
+        n_b,
+        width_t,
+        norm_t,
+        d,
+    )?;
+    let Some(norm_w) =
+        rounded_up_collision_linf_w(policy.min_sis_security_bits, sis_family, d, log_basis)
+    else {
         return Ok(None);
     };
     let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Some(n_d) = min_secure_rank(sis_family, d as u32, norm_w, width_w as u64) else {
+    let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
         return Ok(None);
     };
-    let d_key = AjtaiKeyParams::try_new(sis_family, n_d, width_w, norm_w, d)?;
+    let d_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        sis_family,
+        n_d,
+        width_w,
+        norm_w,
+        d,
+    )?;
 
     // A one-hot root (`log_commit_bound == 1`) commits a sparse witness; record
     // its chunk size so `num_digits_fold` and the binding norm size the folded
@@ -971,6 +1047,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+                policy.min_sis_security_bits,
                 family,
                 d,
                 level_decomp,
@@ -985,8 +1062,20 @@ fn find_schedule_inner(
             ) else {
                 continue;
             };
-            let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
-            let Some(norm_t) = rounded_up_collision_norm_t(family, d, candidate_log_basis) else {
+            let a_key = AjtaiKeyParams::try_new(
+                policy.min_sis_security_bits,
+                family,
+                n_a,
+                width_s,
+                norm_s,
+                d,
+            )?;
+            let Some(norm_t) = rounded_up_collision_linf_t(
+                policy.min_sis_security_bits,
+                family,
+                d,
+                candidate_log_basis,
+            ) else {
                 continue;
             };
             let Some(width_t) =
@@ -994,11 +1083,23 @@ fn find_schedule_inner(
             else {
                 continue;
             };
-            let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
+            let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
                 continue;
             };
-            let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
-            let Some(norm_w) = rounded_up_collision_norm_w(family, d, candidate_log_basis) else {
+            let b_key = AjtaiKeyParams::try_new(
+                policy.min_sis_security_bits,
+                family,
+                n_b,
+                width_t,
+                norm_t,
+                d,
+            )?;
+            let Some(norm_w) = rounded_up_collision_linf_w(
+                policy.min_sis_security_bits,
+                family,
+                d,
+                candidate_log_basis,
+            ) else {
                 continue;
             };
             let Some(width_w) =
@@ -1006,10 +1107,17 @@ fn find_schedule_inner(
             else {
                 continue;
             };
-            let Some(n_d) = min_secure_rank(family, d as u32, norm_w, width_w as u64) else {
+            let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
                 continue;
             };
-            let d_key = AjtaiKeyParams::try_new(family, n_d, width_w, norm_w, d)?;
+            let d_key = AjtaiKeyParams::try_new(
+                policy.min_sis_security_bits,
+                family,
+                n_d,
+                width_w,
+                norm_w,
+                d,
+            )?;
 
             let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
                 policy.onehot_chunk_size
@@ -1180,19 +1288,29 @@ fn find_schedule_inner(
 #[cfg(test)]
 mod tiering_tests {
     use super::*;
-    use akita_types::sis::{min_secure_rank, AjtaiKeyParams, SisModulusFamily};
+    use akita_types::sis::{
+        min_secure_rank, AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
+    };
 
     const D: usize = 64;
     const FAMILY: SisModulusFamily = SisModulusFamily::Q128;
     const LOG_BASIS: u32 = 3;
     const DELTA_OPEN: usize = 43;
 
-    fn tiered_collision() -> u128 {
-        rounded_up_collision_norm_tiered_commitment(FAMILY, D, LOG_BASIS).unwrap()
+    fn tiered_linf_bound() -> u128 {
+        rounded_up_collision_linf_tiered_commitment(DEFAULT_SIS_SECURITY_BITS, FAMILY, D, LOG_BASIS)
+            .unwrap()
     }
 
     fn b_key(n_b: usize, width: usize) -> AjtaiKeyParams {
-        AjtaiKeyParams::new_unchecked(FAMILY, n_b, width, tiered_collision(), D)
+        AjtaiKeyParams::new_unchecked(
+            DEFAULT_SIS_SECURITY_BITS,
+            FAMILY,
+            n_b,
+            width,
+            tiered_linf_bound(),
+            D,
+        )
     }
 
     #[test]
@@ -1222,16 +1340,25 @@ mod tiering_tests {
         assert_eq!(out_b.col_len(), width_t / f);
         // F width = f · n_b' · δ_open, same collision bucket as B.
         assert_eq!(fk.col_len(), f * out_b.row_len() * DELTA_OPEN);
-        let norm = tiered_collision();
-        assert_eq!(out_b.collision_l2_sq(), norm);
-        assert_eq!(fk.collision_l2_sq(), norm);
+        let norm = tiered_linf_bound();
+        assert_eq!(out_b.coeff_linf_bound(), norm);
+        assert_eq!(fk.coeff_linf_bound(), norm);
         // Minimality: no smaller divisor of width_t (in 2..f) makes B' fit under A.
         for smaller in 2..f {
             if !width_t.is_multiple_of(smaller) {
                 continue;
             }
             let w = width_t / smaller;
-            let n = min_secure_rank(FAMILY, D as u32, norm, w as u64).unwrap();
+            let n = min_secure_rank(
+                SisTableKey {
+                    min_security_bits: DEFAULT_SIS_SECURITY_BITS,
+                    family: FAMILY,
+                    ring_dimension: D as u32,
+                    coeff_linf_bound: norm,
+                },
+                w as u64,
+            )
+            .unwrap();
             assert!(
                 n * w > a_matrix_size,
                 "split f={smaller} should not fit under A"

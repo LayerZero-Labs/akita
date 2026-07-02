@@ -1,14 +1,14 @@
 //! Weak-binding collision norms (Hachi paper, Lemma 7) and the folded-witness
 //! bound, per witness role.
 //!
-//! `rounded_up_collision_norm_{s,t,w}` return the audited SIS collision *bucket*
-//! ready to feed [`super::ajtai_key::min_secure_rank`]. The folded witness `z`
+//! `rounded_up_collision_linf_{s,t,w}` return the audited SIS coefficient
+//! `L∞` bucket ready to feed [`super::ajtai_key::min_secure_rank`]. The folded witness `z`
 //! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use super::ajtai_key::{collision_l2_sq_for_linf_envelope, min_secure_rank, SisModulusFamily};
+use super::ajtai_key::{ceil_supported_linf_bound, min_secure_rank, SisModulusFamily, SisTableKey};
 use super::decomposition_digits::{
     fold_witness_verifier_linf_bound, num_digits_fold, num_digits_for_bound,
 };
@@ -185,18 +185,17 @@ pub fn fold_witness_honest_prover_linf_cap(
     }
 }
 
-/// A-role committed-level per-ring-row squared Euclidean collision bucket.
+/// A-role committed-level coefficient-`L∞` collision bucket.
 ///
-/// Prices the folded witness sum `z = Σ c_i·s_i` in the L2 MSIS table. Lemma 7
+/// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
 /// bounds the extracted kernel by challenge mass; stage-1 digit membership
 /// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
 /// envelope is [`fold_witness_verifier_linf_bound`] at the `δ_fold` depth
-/// induced by [`fold_witness_honest_prover_linf_cap`]. MSIS accounting converts
-/// the resulting L∞ collision via `‖v‖_2^2 ≤ d · ‖v‖_inf^2`:
+/// induced by [`fold_witness_honest_prover_linf_cap`]. MSIS accounting keeps
+/// the natural coefficient-`L∞` collision:
 ///
 /// ```text
 /// collision_A_inf = 8 · challenge_l1_mass · fold_witness_verifier_linf_bound · nu,
-/// collision_l2_sq   = ceil_bucket(d · collision_A_inf^2),
 ///   challenge_l1_mass = ω (effective L1 mass per logical block),
 ///   nu     = ring_subfield_norm_bound.
 /// ```
@@ -205,7 +204,8 @@ pub fn fold_witness_honest_prover_linf_cap(
 /// for `(sis_family, d)`.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn committed_fold_collision_l2_sq(
+pub fn committed_fold_collision_linf_bound(
+    min_security_bits: u16,
     sis_family: SisModulusFamily,
     d: u32,
     challenge_l1_mass: u128,
@@ -233,7 +233,7 @@ pub fn committed_fold_collision_l2_sq(
         .checked_mul(challenge_l1_mass)?
         .checked_mul(z_verifier_linf_bound)?
         .checked_mul(u128::from(ring_subfield_norm_bound))?;
-    collision_l2_sq_for_linf_envelope(sis_family, d, collision_linf)
+    ceil_supported_linf_bound(min_security_bits, sis_family, d, collision_linf)
 }
 
 /// A-role committed-fold collision bucket and audited secure rank at one geometry.
@@ -242,6 +242,7 @@ pub fn committed_fold_collision_l2_sq(
 /// [`SparseChallengeConfig::l1_norm`]. Returns `(collision_bucket, n_a)`.
 #[allow(clippy::too_many_arguments)]
 pub fn committed_fold_a_role_rank(
+    min_security_bits: u16,
     sis_family: SisModulusFamily,
     d: usize,
     decomposition: DecompositionParams,
@@ -268,7 +269,8 @@ pub fn committed_fold_a_role_rank(
         inner_width as usize,
     )
     .ok()?;
-    let bucket = committed_fold_collision_l2_sq(
+    let bucket = committed_fold_collision_linf_bound(
+        min_security_bits,
         sis_family,
         d as u32,
         challenge_l1_mass,
@@ -280,7 +282,13 @@ pub fn committed_fold_a_role_rank(
         decomposition,
         &cap_config,
     )?;
-    let rank = min_secure_rank(sis_family, d as u32, bucket, inner_width)?;
+    let key = SisTableKey {
+        min_security_bits,
+        family: sis_family,
+        ring_dimension: d as u32,
+        coeff_linf_bound: bucket,
+    };
+    let rank = min_secure_rank(key, inner_width)?;
     Some((bucket, rank))
 }
 
@@ -346,36 +354,39 @@ pub fn fold_level_witness_scoring_cost(
     Some(opening_cost.saturating_add(folding_cost))
 }
 
-/// B-role (`t̂`) rounded-up SIS collision bucket via `||v||_2^2 <= d·||v||_inf^2`.
+/// B-role (`t̂`) rounded-up SIS coefficient-`L∞` collision bucket.
 ///
 /// The natural coefficient-`L∞` opening-digit collision is `2^lb − 1`.
-pub fn rounded_up_collision_norm_t(
+pub fn rounded_up_collision_linf_t(
+    min_security_bits: u16,
     sis_family: SisModulusFamily,
     d: usize,
     log_basis: u32,
 ) -> Option<u128> {
     let linf = 1u128.checked_shl(log_basis)?.checked_sub(1)?;
-    collision_l2_sq_for_linf_envelope(sis_family, d as u32, linf)
+    ceil_supported_linf_bound(min_security_bits, sis_family, d as u32, linf)
 }
 
-/// D-role (`ŵ`) rounded-up SIS collision bucket. Identical bound to the B role.
-pub fn rounded_up_collision_norm_w(
+/// D-role (`ŵ`) rounded-up SIS coefficient-`L∞` bucket. Identical bound to the B role.
+pub fn rounded_up_collision_linf_w(
+    min_security_bits: u16,
     sis_family: SisModulusFamily,
     d: usize,
     log_basis: u32,
 ) -> Option<u128> {
-    rounded_up_collision_norm_t(sis_family, d, log_basis)
+    rounded_up_collision_linf_t(min_security_bits, sis_family, d, log_basis)
 }
 
-/// Tiered-commitment second-tier (`F`) rounded-up SIS collision bucket. The
+/// Tiered-commitment second-tier (`F`) rounded-up SIS coefficient-`L∞` bucket. The
 /// matrix `F` commits the balanced base-`2^log_basis` digits of `u_1 ‖ … ‖ u_f`,
 /// so its collision is the same digit-range difference as the B/D roles.
-pub fn rounded_up_collision_norm_tiered_commitment(
+pub fn rounded_up_collision_linf_tiered_commitment(
+    min_security_bits: u16,
     sis_family: SisModulusFamily,
     d: usize,
     log_basis: u32,
 ) -> Option<u128> {
-    rounded_up_collision_norm_t(sis_family, d, log_basis)
+    rounded_up_collision_linf_t(min_security_bits, sis_family, d, log_basis)
 }
 
 /// Deterministic coefficient-`L∞` envelope on the folded witness sum
@@ -413,18 +424,14 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
-// --- L2 MSIS accounting (`l2_sq_from_linf`) ---------------------------------
+// --- Legacy L2 helper (`l2_sq_from_linf`) ------------------------------------
 //
-// A-role table lookup uses Lemma 7 plus [`l2_sq_from_linf`] (see
-// [`committed_fold_collision_l2_sq`]). The same conversion prices B/D roles.
+// Production SIS pricing now uses coefficient-L∞ table keys directly. This
+// helper remains for local arithmetic checks of the old sqrt(d) envelope.
 
 /// Convert a coefficient-`L∞` collision bound to its Euclidean (L2) counterpart
 /// via `||v||_2 <= sqrt(d)·||v||_inf`, kept squared and exact:
 /// `||v||_2^2 <= d·linf^2`.
-///
-/// This lets the B-role and D-role opening-digit collisions (natural bound
-/// `2^lb - 1`, the difference of two balanced digits) be priced by the same
-/// Euclidean MSIS floor as the A-role, rather than a separate `L∞` table.
 ///
 /// # Errors
 ///
@@ -440,6 +447,7 @@ pub fn l2_sq_from_linf(d: u128, linf: u128) -> Result<u128, AkitaError> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::ajtai_key::DEFAULT_SIS_SECURITY_BITS;
     use super::*;
 
     #[test]
@@ -477,8 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_fold_collision_l2_sq_matches_lemma7_conversion() {
-        use super::super::ajtai_key::derived_collision_l2_sq_key;
+    fn committed_fold_collision_linf_bound_matches_lemma7_envelope() {
         use crate::DecompositionParams;
 
         let challenge = FoldChallengeNorms {
@@ -504,10 +511,16 @@ mod tests {
         .unwrap();
         let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
         let collision_linf = 8u128 * challenge.l1_norm * z_bound;
-        let envelope =
-            collision_l2_sq_for_linf_envelope(SisModulusFamily::Q32, 64, collision_linf).unwrap();
+        let envelope = ceil_supported_linf_bound(
+            DEFAULT_SIS_SECURITY_BITS,
+            SisModulusFamily::Q32,
+            64,
+            collision_linf,
+        )
+        .unwrap();
         assert_eq!(
-            committed_fold_collision_l2_sq(
+            committed_fold_collision_linf_bound(
+                DEFAULT_SIS_SECURITY_BITS,
                 SisModulusFamily::Q32,
                 64,
                 challenge.l1_norm,
@@ -522,14 +535,7 @@ mod tests {
             .unwrap(),
             envelope,
         );
-        assert_eq!(
-            envelope,
-            derived_collision_l2_sq_key(SisModulusFamily::Q32, 64, collision_linf).unwrap(),
-        );
-        assert!(
-            envelope >= l2_sq_from_linf(64, collision_linf).unwrap(),
-            "derived bucket ceilings L∞ before squaring",
-        );
+        assert!(envelope >= collision_linf);
     }
 
     #[test]
@@ -571,7 +577,8 @@ mod tests {
             z_bound > honest_cap,
             "verifier envelope {z_bound} must exceed honest cap {honest_cap}"
         );
-        let digit_priced = committed_fold_collision_l2_sq(
+        let digit_priced = committed_fold_collision_linf_bound(
+            DEFAULT_SIS_SECURITY_BITS,
             SisModulusFamily::Q64,
             64,
             challenge.l1_norm,
@@ -584,7 +591,8 @@ mod tests {
             &cap_config,
         )
         .unwrap();
-        let cap_priced = collision_l2_sq_for_linf_envelope(
+        let cap_priced = ceil_supported_linf_bound(
+            DEFAULT_SIS_SECURITY_BITS,
             SisModulusFamily::Q64,
             64,
             8u128
@@ -626,7 +634,8 @@ mod tests {
         )
         .unwrap();
         let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
-        let priced = committed_fold_collision_l2_sq(
+        let priced = committed_fold_collision_linf_bound(
+            DEFAULT_SIS_SECURITY_BITS,
             SisModulusFamily::Q32,
             64,
             challenge.l1_norm,
@@ -641,7 +650,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             priced,
-            collision_l2_sq_for_linf_envelope(
+            ceil_supported_linf_bound(
+                DEFAULT_SIS_SECURITY_BITS,
                 SisModulusFamily::Q32,
                 64,
                 8 * challenge.l1_norm * z_bound

@@ -128,7 +128,8 @@ The feature introduces or modifies:
 
 - **Not** the L2 Euclidean certificate (S6–S13 of the L2 spec; **cancelled and removed #247**): `Z_SQUARED`,
   four-square slack, the two linked sum-checks. Those would have priced the A-role rank via a realized bound;
-  production instead uses envelope `committed_fold_collision_l2_sq` only.
+  production instead uses the coefficient-`L∞` envelope from
+  `committed_fold_collision_linf_bound`.
   This spec's `‖z‖∞` tail work is orthogonal to that stack.
 - **Not** a calibrated/measured threshold (the `~0.03·β_inf` regime). The spec
   uses the rigorous `t*`; a calibrated constant is left as a future opt-in with a
