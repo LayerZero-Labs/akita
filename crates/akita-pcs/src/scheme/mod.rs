@@ -113,7 +113,7 @@ where
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        P: RootCommitPoly<Cfg::Field, D>,
+        P: RootCommitPoly<Cfg::Field, D> + akita_prover::RootPolyMeta<Cfg::Field>,
         B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
     {
         validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
@@ -135,7 +135,7 @@ where
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        P: RootCommitPoly<Cfg::Field, D>,
+        P: RootCommitPoly<Cfg::Field, D> + akita_prover::RootPolyMeta<Cfg::Field>,
         B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
     {
         validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
@@ -160,7 +160,7 @@ where
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        P: RootCommitPoly<Cfg::Field, D>,
+        P: RootCommitPoly<Cfg::Field, D> + akita_prover::RootPolyMeta<Cfg::Field>,
         B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
     {
         validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;

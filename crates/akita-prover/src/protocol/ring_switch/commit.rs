@@ -58,7 +58,7 @@ where
             });
         }
         backend.validate_prepared_setup(prepared, expanded.as_ref())?;
-        validate_commit_level_params::<Cfg::Field, D>(commit_params, expanded.as_ref())?;
+        validate_commit_level_params::<Cfg::Field>(commit_params, expanded.as_ref())?;
 
         let num_ring_elems = w.len() / D;
         tracing::debug!(
@@ -92,7 +92,7 @@ where
             crate::api::commitment::tiered_commit_u_final::<Cfg::Field, D, B>(
                 backend,
                 prepared,
-                commit_params,
+                crate::api::commitment::TieredCommitShape::from_level(commit_params)?,
                 &outer_input,
             )?
         } else {

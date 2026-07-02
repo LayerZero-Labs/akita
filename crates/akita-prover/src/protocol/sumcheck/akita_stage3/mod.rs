@@ -382,7 +382,7 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
-    let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
+    let inputs = create_setup_contribution_inputs::<F, E>(relation, lp, tau1)?;
     let num_t_vectors = relation.opening_batch().num_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
         lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
@@ -408,7 +408,7 @@ where
 }
 
 /// Build the setup-contribution artifact from prover-owned relation data.
-fn create_setup_contribution_inputs<F, E, const D: usize>(
+fn create_setup_contribution_inputs<F, E>(
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,
     tau1: &[E],
