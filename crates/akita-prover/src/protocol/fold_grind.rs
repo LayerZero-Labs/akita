@@ -122,6 +122,9 @@ where
 {
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
+    // Tail Golomb grinding sizes caps from `tail_t_vectors`; keep observer metrics on the
+    // same claim count so snap hints do not mix β/t*/δ from one count with cap from another.
+    let sizing_claims = tail_t_vectors.unwrap_or(num_claims);
     let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
     let labels = stage1_fold_challenge_labels();
@@ -153,10 +156,14 @@ where
         let challenge =
             akita_types::sis::fold_challenge_norms(&lp.stage1_config, lp.fold_challenge_shape);
         let witness_norms = lp.fold_witness_norms();
-        let beta_inf =
-            akita_types::sis::fold_witness_beta(lp.r_vars, num_claims, challenge, witness_norms)?;
+        let beta_inf = akita_types::sis::fold_witness_beta(
+            lp.r_vars,
+            sizing_claims,
+            challenge,
+            witness_norms,
+        )?;
         let t_star = lp
-            .fold_witness_linf_tail_bound_sq(num_claims)
+            .fold_witness_linf_tail_bound_sq(sizing_claims)
             .ok()
             .map(akita_types::sis::isqrt_ceil);
         let field_bits = if lp.field_bits_hint > 0 {
@@ -164,7 +171,7 @@ where
         } else {
             128
         };
-        let delta_fold = lp.num_digits_fold(num_claims, field_bits)?;
+        let delta_fold = lp.num_digits_fold(sizing_claims, field_bits)?;
         let verifier_linf_bound =
             akita_types::sis::fold_witness_verifier_linf_bound(lp.log_basis, delta_fold);
         let level_index = super::fold_grind_observer::next_fold_grind_level_index();
@@ -182,7 +189,7 @@ where
                 policy: contract.policy,
                 log_basis: lp.log_basis,
                 r_vars: u32::try_from(lp.r_vars).unwrap_or(u32::MAX),
-                num_claims: u32::try_from(num_claims).unwrap_or(u32::MAX),
+                num_claims: u32::try_from(sizing_claims).unwrap_or(u32::MAX),
             },
         );
         let challenges = sample_folding_challenges::<F, T, D>(
