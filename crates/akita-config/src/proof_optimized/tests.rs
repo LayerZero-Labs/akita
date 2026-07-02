@@ -362,6 +362,12 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
                 Cfg,
             >(max_num_vars, max_num_batched_polys, &mut envelope)
             .expect("conservative setup envelope inflation");
+            super::inflate_setup_envelope_for_precommitted_grouped_roots::<Cfg>(
+                max_num_vars,
+                max_num_batched_polys,
+                &mut envelope,
+            )
+            .expect("precommitted grouped-root setup envelope inflation");
         }
         envelope
     }
@@ -373,6 +379,40 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
     assert_eq!(
         exhaustive.max_setup_len, endpoint.max_setup_len,
         "D64OneHot nv<={MAX_NV}: endpoint scan must match exhaustive poly scan"
+    );
+}
+
+#[test]
+#[cfg(feature = "schedules-fp128-d64-onehot")]
+fn proof_optimized_setup_includes_precommitted_grouped_root_catalog_entries() {
+    type Cfg = fp128::D64OneHot;
+
+    let catalog = Cfg::schedule_catalog().expect("D64 one-hot catalog");
+    let entry = catalog
+        .group_batch_entries
+        .iter()
+        .find(|entry| {
+            entry.key.final_group.num_vars == 16
+                && entry.key.final_group.num_polynomials == 1
+                && entry.key.precommitteds.len() == 2
+                && entry
+                    .key
+                    .precommitteds
+                    .iter()
+                    .all(|group| group.key.num_vars == 8 && group.key.num_polynomials == 1)
+        })
+        .expect("generated two-precommit grouped-root entry");
+    let key = super::runtime_group_batch_key_from_generated(&entry.key);
+    let schedule = Cfg::runtime_schedule(key).expect("precommitted grouped-root schedule");
+    let grouped_d_len =
+        super::grouped_root_d_setup_len(&schedule).expect("precommitted grouped-root D footprint");
+
+    let setup_envelope = super::proof_optimized_max_setup_matrix_size::<Cfg>(16, 1)
+        .expect("setup envelope should include precommitted grouped-root catalog entries");
+
+    assert!(
+        setup_envelope.max_setup_len >= grouped_d_len,
+        "setup envelope must cover generated precommitted grouped-root D footprints"
     );
 }
 
@@ -419,6 +459,12 @@ fn setup_envelope_endpoint_poly_scan_full_manual() {
                 Cfg,
             >(max_num_vars, max_num_batched_polys, &mut envelope)
             .expect("conservative setup envelope inflation");
+            super::inflate_setup_envelope_for_precommitted_grouped_roots::<Cfg>(
+                max_num_vars,
+                max_num_batched_polys,
+                &mut envelope,
+            )
+            .expect("precommitted grouped-root setup envelope inflation");
         }
         envelope
     }

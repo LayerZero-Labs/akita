@@ -114,6 +114,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_family: Cfg::sis_modulus_family(),
+        min_sis_security_bits: akita_types::DEFAULT_SIS_SECURITY_BITS,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
@@ -486,13 +487,9 @@ mod sis_schedule_width_audit {
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
             let d = u32::try_from(lp.ring_dimension).expect("ring dimension fits in u32");
-            let family = lp.a_key.sis_family();
 
-            let a_collision = lp.a_key.collision_l2_sq();
             let a_rank = min_secure_rank(
-                family,
-                d,
-                a_collision,
+                lp.a_key.sis_table_key(),
                 u64::try_from(lp.inner_width()).expect("inner width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -510,11 +507,8 @@ mod sis_schedule_width_audit {
                 lp.a_key.row_len(),
             );
 
-            let b_collision = lp.b_key.collision_l2_sq();
             let b_rank = min_secure_rank(
-                family,
-                d,
-                b_collision,
+                lp.b_key.sis_table_key(),
                 u64::try_from(lp.outer_width()).expect("outer width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -532,11 +526,8 @@ mod sis_schedule_width_audit {
                 lp.b_key.row_len(),
             );
 
-            let d_collision = lp.d_key.collision_l2_sq();
             let d_rank = min_secure_rank(
-                family,
-                d,
-                d_collision,
+                lp.d_key.sis_table_key(),
                 u64::try_from(lp.d_matrix_width()).expect("d-matrix width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -627,8 +618,8 @@ mod fp128_policy_tests {
             panic!("small-field schedule should start with a root fold");
         };
         assert!(
-            root.params.a_key.collision_l2_sq() >= root.params.b_key.collision_l2_sq() * 2,
-            "A-role collision should include the psi norm bound"
+            root.params.a_key.coeff_linf_bound() >= root.params.b_key.coeff_linf_bound() * 2,
+            "A-role L-infinity bound should include the psi norm bound"
         );
     }
 
