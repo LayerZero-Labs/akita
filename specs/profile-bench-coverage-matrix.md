@@ -60,7 +60,7 @@ The checked-in workflow currently runs:
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | `direct` | Preserves same-point batched one-hot coverage. |
 | `onehot_fp128_d64_multi_chunk_w2r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W2R2 | `direct` | `2` chunks, `2` leading levels. |
 | `onehot_fp128_d64_multi_chunk_w4r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W4R2 | `direct` | `4` chunks, `2` leading levels. |
-| `onehot_fp128_d64_multi_chunk` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W8R2 | `direct` | Production distributed preset (`8` chunks, `2` leading levels). |
+| `onehot_fp128_d64_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W8R2 | `direct` | Production distributed preset (`8` chunks, `2` leading levels). |
 
 Every active cell folds securely under honest committed-fold A-role pricing.
 The ring degree differs by field, for two distinct reasons:

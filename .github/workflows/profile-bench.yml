@@ -84,11 +84,11 @@ jobs:
             # profile mode can still benchmark the PR side even though its
             # merge-base binary cannot run the new mode. Once merged, future
             # PRs compare this case against merge-base like the rest.
-            baseline_required_mode: onehot_fp128_d64_multi_chunk
+            baseline_required_mode: onehot_fp128_d64_multi_chunk_w8r2
             cases: |
               onehot_fp128_d64_multi_chunk_w2r2:32:1
               onehot_fp128_d64_multi_chunk_w4r2:32:1
-              onehot_fp128_d64_multi_chunk:32:1
+              onehot_fp128_d64_multi_chunk_w8r2:32:1
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
