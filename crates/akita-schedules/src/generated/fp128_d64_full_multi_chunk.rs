@@ -916,6 +916,7 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64];
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_d64_full_multi_chunk",
     sis_family: SisModulusFamily::Q128,
+    min_sis_security_bits: 138,
     ring_dimension: 64,
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 128, log_open_bound: None },
     ring_subfield_norm_bound: 1,
