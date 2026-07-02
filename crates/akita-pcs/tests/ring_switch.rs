@@ -577,6 +577,7 @@ mod tests {
     #[test]
     fn prepared_row_eval_matches_materialized() {
         use akita_sumcheck::multilinear_eval;
+        use akita_types::{r_decomp_levels, ChunkedWitnessCfg};
 
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
@@ -705,7 +706,7 @@ mod tests {
             row_coefficients: &gamma,
             lp: &level_params,
         };
-        let prepared = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1)
+        let prepared = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1, None)
             .expect("prepare_ring_switch_row_eval");
 
         let got = prepared
@@ -723,6 +724,142 @@ mod tests {
             got, expected,
             "RingSwitchDeferredRowEval::eval_at_point must match materialized multilinear_eval"
         );
+
+        // ----- Chunked layout ground truth (W ∈ powers of two | num_blocks) --
+        // The chunked relation's column-MLE has the *same per-cell values* as
+        // the single-chunk `m_evals_x`, only repositioned into the
+        // `[z|e_j|t_j]…[r]` layout (z replicated, e/t partitioned by global
+        // block). Rearranging the trusted single-chunk vector therefore yields
+        // an independent reference for the verifier's chunked `eval_at_point`.
+        let num_blocks = level_params.num_blocks;
+        let block_len = level_params.block_len;
+        let depth_open = level_params.num_digits_open;
+        let depth_commit = level_params.num_digits_commit;
+        let depth_fold = level_params
+            .num_digits_fold(1, <F as akita_field::CanonicalField>::modulus_bits())
+            .unwrap();
+        let n_a = level_params.a_key.row_len();
+        let num_claims = 1usize;
+        let num_t_vectors = 1usize;
+        let z_len = depth_fold * depth_commit * block_len;
+        let e_len = depth_open * num_claims * num_blocks;
+        let t_len = depth_open * n_a * num_t_vectors * num_blocks;
+        let r_tail_len = rows * r_decomp_levels::<F>(level_params.log_basis);
+
+        // Single-chunk segments (z ‖ e ‖ t ‖ r; no tiered u in this fixture).
+        let z_seg = m_evals_x[0..z_len].to_vec();
+        let e_seg = m_evals_x[z_len..z_len + e_len].to_vec();
+        let t_seg = m_evals_x[z_len + e_len..z_len + e_len + t_len].to_vec();
+        let r_off1 = z_len + e_len + t_len;
+        let r_seg = m_evals_x[r_off1..r_off1 + r_tail_len].to_vec();
+
+        let chunk_counts: Vec<usize> = (0..)
+            .map(|k| 1usize << k)
+            .take_while(|&w| w <= num_blocks)
+            .filter(|&w| num_blocks % w == 0)
+            .collect();
+        assert!(
+            chunk_counts.iter().any(|&w| w > 1),
+            "fixture must have num_blocks > 1 to exercise chunking (num_blocks={num_blocks})"
+        );
+        for w in chunk_counts.into_iter().filter(|&w| w > 1) {
+            let bpc = num_blocks / w;
+            let mut chunked: Vec<F> = Vec::new();
+            for j in 0..w {
+                // z_j: replicated full single-chunk fold response.
+                chunked.extend_from_slice(&z_seg);
+                // e_j: window of the block axis, order (digit, claim, block).
+                for dig in 0..depth_open {
+                    for claim in 0..num_claims {
+                        for bl in 0..bpc {
+                            let gb = j * bpc + bl;
+                            let src = (dig * num_claims + claim) * num_blocks + gb;
+                            chunked.push(e_seg[src]);
+                        }
+                    }
+                }
+                // t_j: window of the block axis, order (a_row, digit, t_vector, block).
+                for a_idx in 0..n_a {
+                    for digit in 0..depth_open {
+                        for tvec in 0..num_t_vectors {
+                            for bl in 0..bpc {
+                                let compound = a_idx * depth_open + digit;
+                                let gb = j * bpc + bl;
+                                let src = compound * (num_t_vectors * num_blocks)
+                                    + tvec * num_blocks
+                                    + gb;
+                                chunked.push(t_seg[src]);
+                            }
+                        }
+                    }
+                }
+            }
+            // Single shared r̂ tail after the last chunk.
+            chunked.extend_from_slice(&r_seg);
+            let x_len_w = chunked.len().next_power_of_two();
+            chunked.resize(x_len_w, F::zero());
+
+            let x_challenges_w: Vec<F> = (0..x_len_w.trailing_zeros() as usize)
+                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect();
+            let expected_w = multilinear_eval(&chunked, &x_challenges_w).expect("multilinear_eval");
+
+            let mut lp_w = level_params.clone();
+            lp_w.witness_chunk = ChunkedWitnessCfg {
+                num_chunks: w,
+                num_activated_levels: 1,
+            };
+            let replay_w = RingSwitchReplay {
+                relation: &instance,
+                row_coefficients: &gamma,
+                lp: &lp_w,
+            };
+            let prepared_w = prepare_ring_switch_row_eval::<F, F, D>(&replay_w, alpha, &tau1, None)
+                .expect("prepare chunked row eval");
+            let got_w = prepared_w
+                .eval_at_point::<F, D>(
+                    &x_challenges_w,
+                    &setup.expanded,
+                    &ring_opening_point,
+                    &ring_multiplier_point,
+                    alpha,
+                    None,
+                )
+                .expect("chunked eval_at_point");
+            assert_eq!(
+                got_w, expected_w,
+                "chunked eval_at_point must match materialized chunked row for W={w}"
+            );
+
+            // Prover-side cross-check: the chunked `compute_m_evals_x` must emit
+            // exactly the rearranged column layout, and its multilinear eval must
+            // match the verifier's chunked row eval.
+            let prover_chunked = compute_m_evals_x::<F, F, D>(
+                &setup.expanded,
+                &ring_opening_point,
+                &ring_multiplier_point,
+                &instance.challenges,
+                alpha,
+                &alpha_evals_y,
+                &lp_w,
+                &tau1,
+                1,
+                &[F::one()],
+                0,
+                MRowLayout::WithDBlock,
+            )
+            .expect("chunked m evals (prover)");
+            assert_eq!(
+                prover_chunked, chunked,
+                "prover chunked compute_m_evals_x must equal the rearranged column layout for W={w}"
+            );
+            let prover_eval =
+                multilinear_eval(&prover_chunked, &x_challenges_w).expect("multilinear_eval");
+            assert_eq!(
+                prover_eval, got_w,
+                "prover chunked relation MLE must match verifier chunked row eval for W={w}"
+            );
+        }
     }
 
     #[test]

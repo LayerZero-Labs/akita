@@ -249,6 +249,13 @@ fn emit_root_fold_shape(shape: TensorChallengeShape) -> &'static str {
     }
 }
 
+fn emit_witness_chunk(cfg: akita_types::ChunkedWitnessCfg) -> String {
+    format!(
+        "ChunkedWitnessCfg {{ num_chunks: {}, num_activated_levels: {} }}",
+        cfg.num_chunks, cfg.num_activated_levels
+    )
+}
+
 fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
     let ring_dims: String = identity
         .ring_dimensions
@@ -273,6 +280,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    basis_range: ({basis_min}, {basis_max}),\n",
             "    onehot_chunk_size: {onehot_chunk_size},\n",
             "    tiered: {tiered},\n",
+            "    witness_chunk: {witness_chunk},\n",
             "    root_fold_shape: {root_fold_shape},\n",
             "    ring_dimensions: CATALOG_RING_DIMENSIONS,\n",
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
@@ -292,6 +300,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         basis_max = identity.basis_range.1,
         onehot_chunk_size = identity.onehot_chunk_size,
         tiered = identity.tiered,
+        witness_chunk = emit_witness_chunk(identity.witness_chunk),
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
         key_count = identity.key_count,
@@ -363,9 +372,10 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, \
-         GeneratedCommitmentGroupScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, \
-         SisModulusFamily, TensorChallengeShape,\n}};"
+        "use super::{{\n    ChunkedWitnessCfg, GeneratedDirectStep, GeneratedFoldStep, \
+         GeneratedScheduleCatalogIdentity, GeneratedCommitmentGroupScheduleKey, \
+         GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, SisModulusFamily, \
+         TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

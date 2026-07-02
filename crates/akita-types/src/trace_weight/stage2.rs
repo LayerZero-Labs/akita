@@ -8,11 +8,12 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 use super::build::{
     build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
 };
+use super::layout::TraceChunkLayout;
 use super::trace_table::TraceTable;
 use crate::{
     embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams, OpeningBatchShape,
-    PreparedOpeningPoint, RingRelationSegmentLayout, TraceFieldBlockOpening, TraceRingBlockOpening,
-    TraceTerm, TraceWeightLayout,
+    PreparedOpeningPoint, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm,
+    TraceWeightLayout, WitnessLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -81,7 +82,7 @@ pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), Akit
 /// root folds can use a wider claim-weighted block row.
 pub fn trace_weight_layout_from_segment(
     lp: &LevelParams,
-    segment: &RingRelationSegmentLayout,
+    witness_layout: &WitnessLayout,
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
@@ -96,15 +97,37 @@ pub fn trace_weight_layout_from_segment(
             "trace-weight ring bits do not match level ring dimension".to_string(),
         ));
     }
+    let chunk0 = witness_layout.chunks.first().ok_or_else(|| {
+        AkitaError::InvalidSetup("trace-weight witness layout has no chunks".to_string())
+    })?;
+    let num_blocks_global = lp.num_blocks;
+    if num_blocks_global == 0 || !num_trace_blocks.is_multiple_of(num_blocks_global) {
+        return Err(AkitaError::InvalidSetup(
+            "trace block count is not a multiple of the level block count".to_string(),
+        ));
+    }
+    // Chunk geometry: `chunk[c].offset_e = c·chunk_stride + chunk0.offset_e`.
+    let chunk = TraceChunkLayout {
+        num_chunks: witness_layout.num_chunks(),
+        blocks_per_chunk: witness_layout.blocks_per_chunk,
+        num_claims: num_trace_blocks / num_blocks_global,
+        num_blocks_global,
+        chunk_stride: witness_layout
+            .chunks
+            .get(1)
+            .map(|c| c.offset_z)
+            .unwrap_or(0),
+    };
     let r_vars = num_trace_blocks.next_power_of_two().trailing_zeros() as usize;
     let layout = TraceWeightLayout {
         ring_bits,
         col_bits,
-        opening_digit_offset: segment.offset_e,
+        opening_digit_offset: chunk0.offset_e,
         num_blocks: num_trace_blocks,
         num_digits_open: lp.num_digits_open,
         r_vars,
         log_basis: lp.log_basis,
+        chunk,
     };
     layout.validate_opening_digit_segment()?;
     Ok(layout)
