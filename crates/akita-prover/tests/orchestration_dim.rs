@@ -4,7 +4,7 @@
 
 use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::{effective_batched_schedule, CommitmentConfig};
-use akita_field::{AkitaError, FieldCore};
+use akita_field::AkitaError;
 use akita_types::{
     validate_level_dispatch, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
     LevelParams, OpeningBatchShape, Schedule, Step, ValidatedScheduleContext,

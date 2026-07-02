@@ -63,13 +63,15 @@ pub use plans::{
 pub use poly::{
     CommitBackendFor, DirectRootWitnessSource, OpeningProveBackendFor, ProjectBackendFor,
     ProveBackendFor, ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend,
-    RingSwitchProveBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
-    RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProveFlowBackend,
-    RootProvePoly, RootTensorSource, SuffixDispatchOpeningProveBackendFor,
-    SuffixDispatchTensorProveBackendFor, SuffixOpeningProveBackend, SuffixRingSwitchProveBackend,
-    SuffixRootTensorOpeningProveBackendFor, SuffixRootTensorTensorProveBackendFor,
-    SuffixTensorProveBackend, SuffixWitnessOpeningProveBackendFor,
-    SuffixWitnessTensorProveBackendFor, TensorBackendFor, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    RecursiveWitnessProveBackend, RingSwitchProveBackend, RootCommitBackend, RootCommitPoly,
+    RootCommitPolys, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootProveBackend, RootProveFlowBackend, RootProvePoly, RootTensorSource,
+    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
+    SuffixDispatchOpeningProveBackendFor, SuffixDispatchTensorProveBackendFor,
+    SuffixOpeningProveBackend, SuffixRootTensorOpeningProveBackendFor,
+    SuffixRootTensorTensorProveBackendFor, SuffixTensorProveBackend,
+    SuffixWitnessOpeningProveBackendFor, SuffixWitnessTensorProveBackendFor, TensorBackendFor,
+    RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use stack::{
     LevelProveStacks, OperationCtx, ProverComputeStack, TieredProveStacks, UniformProverStack,

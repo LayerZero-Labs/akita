@@ -1,5 +1,5 @@
 use super::*;
-use crate::compute::{OperationCtx, RingSwitchProveBackend};
+use crate::compute::{OperationCtx, RingSwitchProveBackend, RuntimeRingSwitchProveBackend};
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
@@ -227,6 +227,44 @@ where
     Ok(RingSwitchBuildOutput {
         w,
         terminal_artifacts,
+    })
+}
+
+/// Build the ring-switch witness using the schedule-owned level ring dimension.
+///
+/// This is the D-free adapter for prover orchestration. It dispatches locally on
+/// `lp.ring_dimension`, then calls the typed [`ring_switch_build_w`] kernel.
+///
+/// # Errors
+///
+/// Returns an error if `lp.ring_dimension` is unsupported or if the typed
+/// ring-switch build kernel rejects the witness.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_build_witness<F, B>(
+    instance: &RingRelationInstance<F>,
+    witness: RingRelationWitness<F>,
+    ring_switch_ctx: &OperationCtx<'_, F, B>,
+    lp: &LevelParams,
+    retain_terminal_artifacts: bool,
+) -> Result<RingSwitchBuildOutput<F>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + FromPrimitiveInt
+        + HalvingField
+        + AkitaSerialize,
+    B: RuntimeRingSwitchProveBackend<F>,
+{
+    dispatch_ring_dim_result!(lp.ring_dimension, |D_LEVEL| {
+        ring_switch_build_w::<F, B, { D_LEVEL }>(
+            instance,
+            witness,
+            ring_switch_ctx,
+            lp,
+            retain_terminal_artifacts,
+        )
     })
 }
 

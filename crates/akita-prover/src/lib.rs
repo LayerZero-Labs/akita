@@ -40,19 +40,20 @@ pub use compute::{
     LevelProveStacks, OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster,
     OpeningProveBackendFor, OperationCtx, PreparedCrtNttProfile, ProveBackendFor,
     ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
-    RecursiveWitnessCommitRowsPlan, RingSwitchCluster, RingSwitchComputeBackend,
-    RingSwitchProveBackend, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    RecursiveWitnessCommitRowsPlan, RecursiveWitnessProveBackend, RingSwitchCluster,
+    RingSwitchComputeBackend, RingSwitchProveBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
+    RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly,
+    RootTensorSource, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
     SparseRingCommitRowsPlan, SuffixDispatchOpeningProveBackendFor,
-    SuffixDispatchTensorProveBackendFor, SuffixRingSwitchProveBackend, TensorBackendFor,
-    TensorCluster, TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    SuffixDispatchTensorProveBackendFor, TensorBackendFor, TensorCluster, TieredProveStacks,
+    UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
-    batched_prove, commit_next_w, prove, prove_root, prove_root_direct, prove_suffix,
+    batched_prove, commit_next_witness, prove, prove_root, prove_root_direct, prove_suffix,
     prove_terminal_root_fold_with_params, ProveLevelOutput, RecursiveSuffixOutcome,
     RingSwitchOutput, SuffixProverState,
 };

@@ -279,8 +279,8 @@ where
 {
 }
 
-/// Ring-switch kernels at every suffix fold ring dimension.
-pub trait SuffixRingSwitchProveBackend<F>:
+/// Ring-switch kernels at every runtime-supported fold ring dimension.
+pub trait RuntimeRingSwitchProveBackend<F>:
     RingSwitchProveBackend<F, 32>
     + RingSwitchProveBackend<F, 64>
     + RingSwitchProveBackend<F, 128>
@@ -290,7 +290,7 @@ where
 {
 }
 
-impl<F, B> SuffixRingSwitchProveBackend<F> for B
+impl<F, B> RuntimeRingSwitchProveBackend<F> for B
 where
     F: FieldCore + CanonicalField,
     B: RingSwitchProveBackend<F, 32>
@@ -715,10 +715,10 @@ where
 /// Ring dimensions the recursive suffix may dispatch besides the config ring `D`.
 pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256];
 
-/// Full prove-flow capability at a single ring dimension `RING_D`: opening/tensor
-/// prove kernels plus ring-switch and commitment rows.
+/// Full prove-flow capability at a single root ring dimension `RING_D`:
+/// opening/tensor prove kernels plus commitment rows.
 pub trait ProveFlowBackendFor<F, P, E, const RING_D: usize>:
-    RootProveBackend<F, P, E, RING_D> + RingSwitchProveBackend<F, RING_D> + CommitmentComputeBackend<F>
+    RootProveBackend<F, P, E, RING_D> + CommitmentComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -733,9 +733,7 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootProvePoly<F, RING_D>,
-    B: RootProveBackend<F, P, E, RING_D>
-        + RingSwitchProveBackend<F, RING_D>
-        + CommitmentComputeBackend<F>,
+    B: RootProveBackend<F, P, E, RING_D> + CommitmentComputeBackend<F>,
 {
 }
 
@@ -759,18 +757,63 @@ where
 {
 }
 
-/// Backend bundle for a full recursive prove run.
-///
-/// Recursive proving dispatches the suffix witness over [`RECURSIVE_SUFFIX_RING_DIMENSIONS`]
-/// plus the config ring `D`, so prove entry points need [`ProveFlowBackendFor`] for
-/// the root polynomial `P` and [`RecursiveWitnessFlat`] at every supported dimension.
-pub trait RecursiveProveBackend<F, P, E, const D: usize>:
-    ProveFlowBackendFor<F, P, E, D>
-    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, D>
-    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
+/// Recursive witness prove-flow capability over every runtime-supported fold
+/// ring dimension.
+pub trait RuntimeRecursiveWitnessProveBackend<F, E>:
+    ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+{
+}
+
+impl<F, E, B> RuntimeRecursiveWitnessProveBackend<F, E> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    B: ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>,
+{
+}
+
+/// Recursive witness prove-flow capability at config ring `D` plus every
+/// runtime-supported suffix ring dimension.
+pub trait RecursiveWitnessProveBackend<F, E, const D: usize>:
+    ProveFlowBackendFor<F, RecursiveWitnessFlat, E, D> + RuntimeRecursiveWitnessProveBackend<F, E>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+{
+}
+
+impl<F, E, const D: usize, B> RecursiveWitnessProveBackend<F, E, D> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    B: ProveFlowBackendFor<F, RecursiveWitnessFlat, E, D>
+        + RuntimeRecursiveWitnessProveBackend<F, E>,
+{
+}
+
+/// Backend bundle for a full recursive prove run.
+///
+/// Recursive proving dispatches the suffix witness over [`RECURSIVE_SUFFIX_RING_DIMENSIONS`]
+/// so prove entry points need [`RootProveFlowBackend`] for the root polynomial
+/// `P`, [`RecursiveWitnessProveBackend`] for suffix witness opening/tensor
+/// and commitment rows, and [`RuntimeRingSwitchProveBackend`] for ring-switch.
+pub trait RecursiveProveBackend<F, P, E, const D: usize>:
+    RootProveFlowBackend<F, P, E, D>
+    + RecursiveWitnessProveBackend<F, E, D>
+    + RuntimeRingSwitchProveBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -785,12 +828,9 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
-    B: ProveFlowBackendFor<F, P, E, D>
-        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, D>
-        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
-        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
-        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
-        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>,
+    B: RootProveFlowBackend<F, P, E, D>
+        + RecursiveWitnessProveBackend<F, E, D>
+        + RuntimeRingSwitchProveBackend<F>,
 {
 }
 
@@ -826,10 +866,7 @@ where
     TS: ComputeBackendSetup<F>
         + TensorBackendFor<F, P, E, D>
         + SuffixDispatchTensorProveBackendFor<F, E, D>,
-    R: ComputeBackendSetup<F>
-        + SuffixRingSwitchProveBackend<F>
-        + RingSwitchProveBackend<F, D>
-        + DigitRowsComputeBackend<F>,
+    R: ComputeBackendSetup<F> + RuntimeRingSwitchProveBackend<F> + DigitRowsComputeBackend<F>,
 {
 }
 

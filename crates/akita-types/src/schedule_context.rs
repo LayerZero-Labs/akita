@@ -19,8 +19,188 @@
 //!   entry in `akita-prover`; this type only carries shape metadata.
 //! - It does **not** modify the schedule.  The wrapped schedule is unchanged.
 
-use crate::schedule::{FoldStep, Schedule, Step};
-use akita_field::AkitaError;
+use crate::proof::{AkitaExpandedSetup, AkitaSetupSeed};
+use crate::schedule::{schedule_num_fold_levels, FoldStep, Schedule, Step};
+use crate::setup_geometry::{setup_active_ring_elems_at, SetupRelationShape};
+use akita_field::{AkitaError, FieldCore};
+
+/// Upper bound on fold levels accepted by [`RingDimPlan`].
+pub const MAX_FOLD_LEVELS: usize = 16;
+
+/// Ring dimensions supported by runtime dispatch.
+pub const SUPPORTED_RING_DIMS: [usize; 4] = [32, 64, 128, 256];
+
+/// Per-fold ring dimensions by protocol role.
+///
+/// Invariant when nested: `opening | outer | inner` (`d_d | d_b | d_a`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommitmentRingDims {
+    /// Fold / ring-switch / inner-commitment ring (`d_a`).
+    pub inner: usize,
+    /// Outer-commitment ring (`d_b`).
+    pub outer: usize,
+    /// Opening-commitment ring (`d_d`).
+    pub opening: usize,
+}
+
+impl CommitmentRingDims {
+    #[must_use]
+    pub const fn uniform(d: usize) -> Self {
+        Self {
+            inner: d,
+            outer: d,
+            opening: d,
+        }
+    }
+
+    #[must_use]
+    pub fn nests(self) -> bool {
+        self.inner.is_multiple_of(self.outer) && self.outer.is_multiple_of(self.opening)
+    }
+}
+
+/// Per-level runtime ring geometry for prove / verify orchestration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RingLevelContext {
+    pub role_dims: CommitmentRingDims,
+    /// Fold ring `d_a` (= `role_dims.inner`).
+    pub ring_d: usize,
+    /// Shape-only setup-product row count at `d_a`.
+    pub setup_active_ring_elems: usize,
+}
+
+/// Derived view of validated per-level ring dimensions from a schedule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RingDimPlan {
+    role_dims: [CommitmentRingDims; MAX_FOLD_LEVELS],
+    num_folds: usize,
+}
+
+impl RingDimPlan {
+    /// Build a validated plan from the effective schedule and setup seed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when any catalog check fails.
+    pub fn from_schedule(schedule: &Schedule, seed: &AkitaSetupSeed) -> Result<Self, AkitaError> {
+        let num_folds = schedule_num_fold_levels(schedule);
+        if num_folds > MAX_FOLD_LEVELS {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule has {num_folds} fold levels, max supported is {MAX_FOLD_LEVELS}"
+            )));
+        }
+        let mut role_dims = [CommitmentRingDims::uniform(0); MAX_FOLD_LEVELS];
+        for (level, slot) in role_dims.iter_mut().take(num_folds).enumerate() {
+            let Some(Step::Fold(step)) = schedule.steps.get(level) else {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "schedule is missing fold step at level {level}"
+                )));
+            };
+            let lp = &step.params;
+            let dims = CommitmentRingDims::uniform(lp.ring_dimension);
+            validate_role_dims(dims)?;
+            if !seed.gen_ring_dim.is_multiple_of(dims.inner) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "setup gen_ring_dim={} is not divisible by fold ring d_a={}",
+                    seed.gen_ring_dim, dims.inner
+                )));
+            }
+            if !step.current_w_len.is_multiple_of(dims.inner) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "witness length {} is not divisible by fold ring d_a={}",
+                    step.current_w_len, dims.inner
+                )));
+            }
+            if let Some(Step::Fold(next)) = schedule.steps.get(level + 1) {
+                let next_ring_d = next.params.ring_dimension;
+                if next_ring_d == 0 || !step.next_w_len.is_multiple_of(next_ring_d) {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "next witness length {} is not divisible by next ring dimension {next_ring_d}",
+                        step.next_w_len,
+                    )));
+                }
+            }
+            *slot = dims;
+        }
+        Ok(Self {
+            role_dims,
+            num_folds,
+        })
+    }
+
+    /// Number of fold levels covered by this plan.
+    #[must_use]
+    pub fn num_folds(&self) -> usize {
+        self.num_folds
+    }
+
+    /// Per-role ring dimensions at fold level `level`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `level` is out of range.
+    pub fn dims_at(&self, level: usize) -> Result<CommitmentRingDims, AkitaError> {
+        if level >= self.num_folds {
+            return Err(AkitaError::InvalidSetup(format!(
+                "ring dim plan has no fold level {level}"
+            )));
+        }
+        let dims = self.role_dims[level];
+        validate_role_dims(dims)?;
+        Ok(dims)
+    }
+
+    /// Fold ring `d_a` at level `level`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `level` is out of range or dims fail validation.
+    pub fn dim_at(&self, level: usize) -> Result<usize, AkitaError> {
+        Ok(self.dims_at(level)?.inner)
+    }
+
+    /// Distinct ring dimensions across all roles and fold levels.
+    #[must_use]
+    pub fn unique_dims(&self) -> Vec<usize> {
+        let mut dims = std::collections::BTreeSet::new();
+        for level in 0..self.num_folds {
+            if let Ok(role) = self.dims_at(level) {
+                dims.insert(role.inner);
+                dims.insert(role.outer);
+                dims.insert(role.opening);
+            }
+        }
+        dims.into_iter().collect()
+    }
+
+    /// Per-level geometry using the live relation shape at `level`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when level bounds, role nesting, or setup envelope checks fail.
+    pub fn context_at<F: FieldCore>(
+        &self,
+        level: usize,
+        schedule: &Schedule,
+        expanded: &AkitaExpandedSetup<F>,
+        relation_shape: &SetupRelationShape,
+    ) -> Result<RingLevelContext, AkitaError> {
+        let role_dims = self.dims_at(level)?;
+        let exec = schedule.get_execution_schedule(level)?;
+        if role_dims.inner != exec.params.ring_dimension {
+            return Err(AkitaError::InvalidSetup(
+                "ring dim plan disagrees with schedule ring_dimension at level".into(),
+            ));
+        }
+        let setup_active_ring_elems =
+            setup_active_ring_elems_at(level, schedule, expanded, relation_shape)?;
+        Ok(RingLevelContext {
+            role_dims,
+            ring_d: role_dims.inner,
+            setup_active_ring_elems,
+        })
+    }
+}
 
 /// Derived shape for one fold level, validated against `gen_ring_dim`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +272,8 @@ pub struct ValidatedScheduleContext<'s> {
     schedule: &'s Schedule,
     /// Setup generation ring dimension.
     gen_ring_dim: usize,
+    /// Validated role-ring plan derived from the effective schedule.
+    ring_plan: RingDimPlan,
     /// Per-level shape data, one entry per `Step::Fold` in `schedule.steps`.
     shapes: Vec<LevelShape>,
 }
@@ -113,6 +295,29 @@ impl<'s> ValidatedScheduleContext<'s> {
                 "gen_ring_dim must be non-zero".to_string(),
             ));
         }
+        let seed = AkitaSetupSeed {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            gen_ring_dim,
+            max_setup_len: 0,
+            public_matrix_seed: [0u8; 32],
+        };
+        Self::validate(schedule, &seed)
+    }
+
+    /// Validate `schedule` against a concrete setup seed.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::new`], with the seed becoming the source of truth for
+    /// the setup generation ring dimension.
+    pub fn validate(schedule: &'s Schedule, seed: &AkitaSetupSeed) -> Result<Self, AkitaError> {
+        if seed.gen_ring_dim == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "gen_ring_dim must be non-zero".to_string(),
+            ));
+        }
+        let ring_plan = RingDimPlan::from_schedule(schedule, seed)?;
         let mut shapes = Vec::new();
         let mut fold_index = 0usize;
         for step in &schedule.steps {
@@ -120,15 +325,11 @@ impl<'s> ValidatedScheduleContext<'s> {
                 continue;
             };
             let ring_dimension = fold_step.params.ring_dimension;
-            if ring_dimension == 0 {
+            let planned = ring_plan.dim_at(fold_index)?;
+            if planned != ring_dimension {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "fold level {fold_index}: ring_dimension must be non-zero",
-                )));
-            }
-            if !gen_ring_dim.is_multiple_of(ring_dimension) {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "fold level {fold_index}: ring_dimension={ring_dimension} \
-                     does not divide gen_ring_dim={gen_ring_dim}",
+                    "fold level {fold_index}: planned ring_dimension={planned} \
+                     disagrees with schedule ring_dimension={ring_dimension}",
                 )));
             }
             shapes.push(LevelShape::from_fold_step(fold_index, fold_step)?);
@@ -136,7 +337,8 @@ impl<'s> ValidatedScheduleContext<'s> {
         }
         Ok(ValidatedScheduleContext {
             schedule,
-            gen_ring_dim,
+            gen_ring_dim: seed.gen_ring_dim,
+            ring_plan,
             shapes,
         })
     }
@@ -157,6 +359,12 @@ impl<'s> ValidatedScheduleContext<'s> {
     #[inline]
     pub fn level_shapes(&self) -> &[LevelShape] {
         &self.shapes
+    }
+
+    /// Validated role-ring plan for this schedule.
+    #[inline]
+    pub fn ring_plan(&self) -> &RingDimPlan {
+        &self.ring_plan
     }
 
     /// Number of fold levels.
@@ -180,11 +388,35 @@ impl<'s> ValidatedScheduleContext<'s> {
     }
 }
 
+fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
+    for d in [dims.inner, dims.outer, dims.opening] {
+        if !SUPPORTED_RING_DIMS.contains(&d) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported ring dimension {d}"
+            )));
+        }
+    }
+    if !dims.nests() {
+        return Err(AkitaError::InvalidSetup(
+            "per-role ring dims must satisfy d_d | d_b | d_a".into(),
+        ));
+    }
+    // Per-block distinct role execution is intentionally not active yet. The
+    // plan carries role dimensions now so that later slices can relax this
+    // check in one place when the kernels honor distinct d_a / d_b / d_d.
+    if dims.inner != dims.outer || dims.outer != dims.opening {
+        return Err(AkitaError::InvalidSetup(
+            "per-block execution is not enabled: d_a, d_b, d_d must be equal".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::schedule::{DirectStep, FoldStep, Schedule, Step};
-    use crate::{AkitaScheduleLookupKey, CleartextWitnessShape, LevelParams};
+    use crate::{CleartextWitnessShape, LevelParams};
     use akita_field::AkitaError;
 
     /// Build a minimal [`FoldStep`] with the given ring dimension.

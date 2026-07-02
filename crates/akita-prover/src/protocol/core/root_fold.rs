@@ -1,8 +1,8 @@
 use super::*;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    OpeningProveBackendFor, ProverComputeStack, RingSwitchProveBackend, RootPolyMeta,
-    RootProvePoly, SuffixRingSwitchProveBackend, TensorBackendFor,
+    OpeningProveBackendFor, ProverComputeStack, RootPolyMeta, RootProvePoly,
+    RuntimeRingSwitchProveBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -172,10 +172,7 @@ where
         + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
         + ComputeBackendSetup<F>
         + 'stack,
-    R: RingSwitchProveBackend<F, D>
-        + SuffixRingSwitchProveBackend<F>
-        + ComputeBackendSetup<F>
-        + 'stack,
+    R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
@@ -283,10 +280,7 @@ where
         + TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
         + ComputeBackendSetup<F>
         + 'stack,
-    R: RingSwitchProveBackend<F, D>
-        + SuffixRingSwitchProveBackend<F>
-        + ComputeBackendSetup<F>
-        + 'stack,
+    R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,

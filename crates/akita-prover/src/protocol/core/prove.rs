@@ -2,9 +2,9 @@ use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
-    DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
-    RingSwitchProveBackend, RootPolyMeta, RootPolyShape, RootProvePoly, SuffixOpeningProveBackend,
-    SuffixRingSwitchProveBackend, SuffixTensorProveBackend, TensorBackendFor,
+    DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor, RootPolyMeta,
+    RootPolyShape, RootProvePoly, RuntimeRingSwitchProveBackend, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
@@ -138,8 +138,7 @@ where
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
-        + SuffixRingSwitchProveBackend<Cfg::Field>
-        + RingSwitchProveBackend<Cfg::Field, D>
+        + RuntimeRingSwitchProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
@@ -289,8 +288,7 @@ where
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
-        + SuffixRingSwitchProveBackend<Cfg::Field>
-        + RingSwitchProveBackend<Cfg::Field, D>
+        + RuntimeRingSwitchProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     (): ProveStackFor<Cfg::Field, P, Cfg::ExtField, D, C, O, TS, R>,
@@ -299,16 +297,17 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    let root_ring_d = schedule_ctx.level_shape(0)?.ring_dimension;
+    let root_ring_d = schedule_ctx.ring_plan().dim_at(0)?;
     if root_ring_d != D {
         return Err(AkitaError::InvalidSetup(format!(
             "scheme compile-time D={D} disagrees with schedule root ring_dimension {root_ring_d}"
         )));
     }
-    for shape in schedule_ctx.level_shapes() {
+    for level in 0..schedule_ctx.ring_plan().num_folds() {
+        let ring_d = schedule_ctx.ring_plan().dim_at(level)?;
         stacks
-            .prove_stack_at_level(shape.level)
-            .ensure_fold_level_envelope_ntt(expanded.as_ref(), shape.ring_dimension)?;
+            .prove_stack_at_level(level)
+            .ensure_fold_level_envelope_ntt(expanded.as_ref(), ring_d)?;
     }
 
     let root_scheduled = schedule.get_execution_schedule(0)?;

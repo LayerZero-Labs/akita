@@ -20,4 +20,4 @@ pub use fold_grind::ProverTranscriptGrind;
 pub use fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
 pub use ring_relation::{compute_relation_quotient, generate_y, RingRelationProver};
 pub use ring_relation_witness::RingRelationWitness;
-pub use ring_switch::{commit_next_w, RingSwitchOutput};
+pub use ring_switch::{commit_next_witness, RingSwitchOutput};

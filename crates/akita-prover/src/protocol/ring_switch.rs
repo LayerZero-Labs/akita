@@ -39,10 +39,12 @@ mod finalize;
 mod tests;
 
 pub use coeffs::RingSwitchTerminalArtifacts;
-pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
-pub use commit::{commit_next_w, commit_w, NextWitnessCommitment};
+pub use coeffs::{
+    build_w_coeffs, ring_switch_build_w, ring_switch_build_witness, RingSwitchBuildOutput,
+};
+pub use commit::{commit_next_witness, commit_w, NextWitnessCommitment};
 pub use evals::{build_w_evals_compact, compute_m_evals_x};
-pub use finalize::ring_switch_finalize;
+pub use finalize::{ring_switch_finalize, ring_switch_finalize_level};
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.

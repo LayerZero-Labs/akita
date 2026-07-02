@@ -129,7 +129,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
 pub(crate) type RingSwitchSegmentLayout = RingRelationSegmentLayout;
 
 /// Fixed public relation inputs for verifier ring-switch replay.
-pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
+pub struct RingSwitchReplay<'a, F: FieldCore, E> {
     pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
     pub lp: &'a LevelParams,
@@ -148,7 +148,7 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
+    replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     w_commitment: &RingVec<F>,
     transcript: &mut T,
@@ -181,7 +181,7 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_terminal")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
+    replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
     terminal_parts: &TerminalWitnessTranscriptParts,
@@ -199,7 +199,7 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
 #[inline(never)]
 fn ring_switch_verifier_core<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
+    replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
     m_row_layout: MRowLayout,
@@ -289,7 +289,7 @@ where
 /// challenge evaluation fails.
 #[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
 pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
+    replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>

@@ -141,13 +141,86 @@ Transcript:
 - Absorption must not reconstruct `RingCommitment<F, D>` as the protocol
   authority.
 
-Kernel dispatch:
+Kernel dispatch (normative contract — read this before writing any cutover
+code; every prior failure of this migration traces to leaving this boundary
+implicit):
 
-- Dispatch to const-generic `D` is allowed when entering a concrete arithmetic
-  operation.
-- Dispatch should be coarse enough to avoid per-row or per-coefficient dynamic
-  overhead.
-- Dispatch must be local enough that high-level PCS orchestration is D-free.
+Every function on the prove/verify path belongs to exactly one of two roles.
+
+- **Orchestration**: reads schedule types (`ExecutionSchedule`, `LevelParams`,
+  `ValidatedScheduleContext`, `RingDimPlan`), drives transcript flow between
+  operations, moves D-free storage (`RingVec<F>`, `Commitment<F>`, flat digit
+  blocks). Orchestration functions MUST NOT have `const D` in their signature
+  or trait bounds.
+- **Kernel**: performs ring/field arithmetic or checked shape conversion on
+  already-validated buffers. Kernels MAY be const-generic over `D`. Kernels
+  receive dimensions and sizes as plain values or const parameters; they MUST
+  NOT read any schedule type.
+
+**Discriminator rule (decidable — apply it mechanically, no judgment
+required): if a function reads a schedule type, it is orchestration and must
+be D-free. If a function needs `const D`, it must receive extracted numbers,
+never schedule types. A function that today needs both must be split into an
+orchestration half and a kernel half.**
+
+The bridge between the roles is the **operation adapter**: a D-free function
+that
+
+1. accepts schedule-derived inputs (`LevelParams`, dims from `RingDimPlan`),
+2. extracts the ring dimension of the specific data this one operation
+   touches,
+3. invokes `akita_types::dispatch_ring_dim_result!(ring_d, |D| kernel::<D>(…))`
+   exactly once,
+4. converts any D-typed kernel output back to D-free storage inside the
+   dispatch arm,
+5. returns a D-free type.
+
+Correct in-tree examples: `commit_next_witness`, `ring_switch_build_witness`,
+`ring_switch_finalize_level` (crates/akita-prover/src/protocol/ring_switch/).
+Copy their shape.
+
+**The dispatch unit is the operation — not the fold level, and not the
+proof.** Rationale: the planned per-role ring-dimension work (see Mixed-D
+below) requires two different ring dimensions to be live within ONE fold
+level. Any dispatch coarser than one operation makes that impossible without
+restructuring. Dispatch happens O(operations per level) times per proof —
+tens of dispatches total, which is noise. It must never happen per row or per
+coefficient; that granularity belongs inside the monomorphized kernel.
+
+Forbidden patterns — each one has already been built, reviewed, and reverted
+at least once in this migration. If the code you are about to write matches
+either sketch, stop; you are reproducing a known failure, not making
+progress:
+
+```rust
+// F1: THE FACADE (killed PR #227). A "D-free" entry that recovers D and
+// forwards to a typed orchestration function. The typed spine survives; the
+// cutover is cosmetic. Detection: the dispatch arm calls a function that
+// reads schedule types (i.e. orchestration), not a kernel.
+pub fn batched_prove(...) -> ... {
+    dispatch_ring_dim_result!(root_d, |D| typed_batched_prove::<..., D>(...))
+}
+
+// F2: LEVEL MONOMORPHIZATION (added and reverted in commits 7ec52460 /
+// 247b6e7d). Dispatching once per fold level around the whole fold body.
+// Looks clean, satisfies every API grep, and is a dead end: it compiles the
+// ~250-line fold body 4x, forces every schedule-aware helper below it to
+// carry const D or re-dispatch (double dispatch plus `ring_dim == D`
+// consistency gates), and cannot express per-role dims within one level.
+dispatch_ring_dim_result!(level_d, |D| prove_fold::<..., D>(...))
+```
+
+A function is a kernel — and may sit inside a dispatch arm — only if it
+satisfies the discriminator rule above. "It does a lot of arithmetic" does
+not make `prove_fold` a kernel; it reads the schedule, so it is
+orchestration.
+
+Progress on this contract is measured by
+`scripts/ring-cutover-progress.sh`: the number of `const D` functions in the
+orchestration spine files must decrease monotonically and reach zero at
+merge (`--merge-gate`). A slice that adds a D-free path is complete only
+when the typed path it replaces is DELETED — "a D-free way exists" is the
+#227 failure restated.
 
 Setup:
 
@@ -165,14 +238,32 @@ Mixed-D:
   schedule provides them and they are valid under the setup envelope.
 - It is acceptable for initial generated schedules to remain uniform-D, but the
   protocol/storage/API shape must not prevent mixed-D schedules.
-- General per-role dimensions inside one fold, such as separate `d_a`, `d_b`,
-  and `d_d`, are out of scope.
+- Per-role dimension *execution* inside one fold (separate `d_a`, `d_b`,
+  `d_d`) is out of scope for this PR, but it is the motivating end state of
+  this cutover (see `specs/mixed-row-ring-dimensions.md`, proposed, on branch
+  `quang/mixed-row-ring-dimensions`): per-matrix ring dimension shrinks
+  matrix descriptions toward module rank 1, speeds up the matvec, sparsifies
+  the challenge set, and shortens setup offloading. This cutover exists to
+  make that work possible.
+- **Shape requirement (litmus test — normative).** The dispatch architecture
+  must admit `d_a != d_b` within one fold level by changing ONLY the ring
+  dimensions fed to individual operation adapters, with no restructuring of
+  orchestration. Any design that monomorphizes an entire fold level (or the
+  whole proof) on one `D` fails this test and is wrong **even if every
+  acceptance grep passes**. When evaluating a design, ask: "could this level
+  run its A-row operations at D=128 and its B/D-row operations at D=32 by
+  passing different dims to different adapters?" If the answer requires
+  restructuring, the dispatch boundary is in the wrong place.
 
 ### Non-Goals
 
 - Do not redesign cyclotomic arithmetic or remove `CyclotomicRing<F, D>`.
 - Do not require arbitrary dimensions unrelated to the setup envelope.
-- Do not introduce per-role ring dimensions inside one fold.
+- Do not *implement* per-role ring dimensions inside one fold — but the
+  dispatch architecture must satisfy the per-role shape requirement in
+  §Invariants/Mixed-D. Reading this non-goal as "one D per level is the
+  final model" is the mistake that keeps regenerating level-monomorphized
+  designs (forbidden pattern F2).
 - Do not solve all planner optimization work for choosing mixed-D schedules.
 - Do not split this into a new PR stack.
 
@@ -202,6 +293,28 @@ Mixed-D:
       public PCS API, not a special test-only typed path.
 - [ ] `rg "AkitaCommitmentScheme<.*const D|CommitmentProver<.*,.*D|CommitmentVerifier<.*,.*D|AkitaProverSetup<.*,.*D|AkitaCommitmentHint<.*,.*D|ProverOpeningBatch<.*,.*D" crates`
       has no protocol-facing hits at merge time.
+- [ ] `scripts/ring-cutover-progress.sh --merge-gate` passes: zero `const D`
+      in the prover orchestration spine
+      (`crates/akita-prover/src/protocol/core.rs` and
+      `crates/akita-prover/src/protocol/core/{prove,fold,root_fold,suffix}.rs`)
+      and zero hits for the banned #227 bridge names.
+- [ ] No function reads a schedule type (`ExecutionSchedule`, `LevelParams`,
+      `ValidatedScheduleContext`, `RingDimPlan`) and also has `const D`
+      (discriminator rule; enforced by review over the spine diff).
+- [ ] Every dispatch arm in orchestration calls a kernel or an operation
+      adapter, never another orchestration function (no F1/F2 patterns).
+- [ ] For each D-free replacement added during the cutover, the typed path it
+      replaced is deleted in the same slice — the API-surface greps above are
+      satisfiable by a facade; these structural criteria are the ones that
+      cannot be gamed.
+
+The verifier spine (`verify_fold`, `verify_root_inner`, `prepare_fold_data`)
+is per-level monomorphized today. That is accepted as *transitional* for this
+PR — its entry is D-free and uniform-D behavior is correct — but it is
+forbidden pattern F2 as an end state and must be decomposed to operation
+adapters when per-role dims land (tracked in
+`specs/mixed-row-ring-dimensions.md`). Do not copy the verifier spine's shape
+into the prover.
 
 ### Testing Strategy
 
@@ -371,6 +484,40 @@ the high-level batch to carry `D`.
 
 Root polynomial implementations may still have typed storage initially, but
 their D must be consumed at a root operation boundary, not at the PCS API.
+See "Root Polynomial Inputs" below — typed poly storage is the single
+structural reason the prover entry cannot lose its `const D`, and it has its
+own cutover step.
+
+#### Root Polynomial Inputs
+
+This is the load-bearing blocker for a D-free `batched_prove`, and the reason
+both prior attempts stalled at the entry signature. Today callers construct
+`DensePoly<F, D>`, `OneHotPoly<F, D>`, `SparseRingPoly<F, D>` — `D` is baked
+into the *type constructor of the input data*. `batched_prove` is generic
+over `P: RootProvePoly<F, D>`, so as long as inputs carry `D` in their type,
+any "D-free" entry can only be a facade that reads `D` back out of the type
+(forbidden pattern F1). **You cannot cut the entry before cutting the input
+representation. Do not try.**
+
+The cutover:
+
+- A polynomial is flat field coefficients plus arity metadata. `num_vars` is
+  already stored on the poly independent of `D` (that is what the
+  `RootPolyMeta<F>` / `RootPolyShape<F, D>` split established). Make the
+  storage types D-free: `DensePoly<F>`, `OneHotPoly<F, I>`,
+  `SparseRingPoly<F>`.
+- `RootPolyShape<F, D>` and the view traits (`RootCommitSource`,
+  `RootOpeningSource`, `RootTensorSource`, `DirectRootWitnessSource`) become
+  kernel-entry view constructors reached through operation adapters that
+  dispatch on the schedule's dimension for that operation.
+- Orchestration bounds use `RootPolyMeta<F>` only. The
+  `RootProvePoly<F, D>`-style bounds on orchestration collapse into
+  runtime-supported bundles following the pattern already proven in-tree by
+  `RuntimeRingSwitchProveBackend<F>` (a supertrait over all supported
+  dimensions).
+- This is the same thesis the rest of the cutover applies to commitments:
+  the protocol object is a field-coefficient vector; `D` is a view selected
+  at the operation, not a property of the data.
 
 #### Verifier Claims
 
@@ -427,6 +574,21 @@ have different dimensions. This is the conceptual source of the old failure.
 Rejected. It hides incomplete work and creates two contracts to maintain. This
 repo does not need backward compatibility for this migration.
 
+#### Dispatch once per fold level (monomorphized `prove_fold`)
+
+Rejected as an end state — this is forbidden pattern F2, and it is the design
+agents repeatedly converge on because it looks like a clean compromise: one
+dispatch site, kernels compose typed inside, matches the current verifier.
+It fails three ways: (1) it monomorphizes the entire fold body 4x for no
+benefit — the orchestration between kernels is bookkeeping; (2) it forces
+every schedule-aware helper below it to either carry `const D` or re-dispatch
+at runtime, producing double dispatch plus `ring_dimension == D` consistency
+gates (the state the prover was in mid-2026-07); (3) it is structurally
+incapable of per-role dimensions within one level, which is the motivating
+end state of this whole cutover. If a proposed design contains
+`dispatch_ring_dim_result!(level_d, |D| <any function that reads schedule
+types>::<D>(…))`, it is this alternative and must not be built.
+
 #### Split into stacked PRs
 
 Rejected for this attempt. The old stack grew without a clear completion signal.
@@ -474,9 +636,18 @@ This list is an implementation order inside the single PR, not a PR split.
    `CommitmentVerifier<F, D>` from the high-level API.
 9. Convert top-level prover orchestration to D-free schedule-owned dispatch.
 10. Convert top-level verifier orchestration to D-free schedule-owned dispatch.
-11. Push remaining root polynomial D exposure downward to operation boundaries.
+11. Cut over root polynomial storage to D-free types and collapse
+    `RootProvePoly<F, D>`-style orchestration bounds into runtime-supported
+    bundles (see "Root Polynomial Inputs"). Only after this can steps that
+    remove `const D` from `prepare_root`/`prove_root`/`prove`/`batched_prove`
+    succeed without a facade.
 12. Add mixed-D-per-level normal-API E2E coverage.
-13. Run full format, clippy, tests, doc guardrails, and final grep audits.
+13. Run full format, clippy, tests, doc guardrails,
+    `scripts/ring-cutover-progress.sh --merge-gate`, and final grep audits.
+
+Live sequencing, per-slice burn-down state, and the concrete remaining-work
+inventory are maintained in the branch worklog
+(`RUNTIME-RING-CUTOVER-PLAN-NEVER-COMMIT.md`, never committed).
 
 Likely risk areas:
 
@@ -491,6 +662,10 @@ Likely risk areas:
 
 - PR #227: collapsed incomplete runtime-ring attempt, historical only.
 - Closed child PR stack from the previous attempt, historical only.
+- `specs/mixed-row-ring-dimensions.md` (proposed, branch
+  `quang/mixed-row-ring-dimensions`): per-role ring dimensions inside one
+  fold — the motivating end state this cutover must not preclude. Its shape
+  requirement is normative here (§Invariants/Mixed-D).
 - `docs/documentation.md`
 - `book/src/how/architecture.md`
 - `docs/verifier-contract.md`

@@ -2,8 +2,8 @@ use super::*;
 use crate::compute::{
     tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, OpeningProveBackendFor,
-    ProverComputeStack, RingSwitchProveBackend, RootOpeningSource, RootPolyMeta, RootProvePoly,
-    TensorBackendFor,
+    ProverComputeStack, RootOpeningSource, RootPolyMeta, RootProvePoly,
+    RuntimeRingSwitchProveBackend, TensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -629,7 +629,7 @@ where
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
-    R: RingSwitchProveBackend<F, D> + ComputeBackendSetup<F> + 'stack,
+    R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
@@ -647,7 +647,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let commitment_u = prepared_fold.commitment.try_to_vec::<D>()?;
-    let build_output = ring_switch_build_w::<F, R, D>(
+    let build_output = ring_switch_build_witness::<F, R>(
         &prepared_fold.instance,
         prepared_fold.witness,
         stack.ring_switch(),
@@ -660,7 +660,7 @@ where
         None
     } else {
         let _span = tracing::info_span!("commit_w_level", level).entered();
-        Some(crate::commit_next_w::<Cfg, C, D>(
+        Some(crate::commit_next_witness::<Cfg, C>(
             &scheduled.next_params,
             expanded,
             stack.commit(),
@@ -685,7 +685,7 @@ where
     } else {
         MRowLayout::WithDBlock
     };
-    let rs = ring_switch_finalize::<F, E, T, D>(
+    let rs = ring_switch_finalize_level::<F, E, T>(
         &prepared_fold.instance,
         expanded.as_ref(),
         transcript,

@@ -137,3 +137,41 @@ where
         alpha,
     })
 }
+
+/// Complete ring switching using the schedule-owned level ring dimension.
+///
+/// This is the D-free adapter for prover orchestration. It dispatches locally on
+/// `lp.ring_dimension`, then calls the typed [`ring_switch_finalize`] kernel.
+///
+/// # Errors
+///
+/// Returns an error if `lp.ring_dimension` is unsupported or if finalization
+/// rejects the supplied relation/witness data.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_level<F, E, T>(
+    instance: &RingRelationInstance<F>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    lp: &LevelParams,
+    gamma: Option<&[E]>,
+    m_row_layout: MRowLayout,
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: FpExtEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    dispatch_ring_dim_result!(lp.ring_dimension, |D_LEVEL| {
+        ring_switch_finalize::<F, E, T, { D_LEVEL }>(
+            instance,
+            setup,
+            transcript,
+            w,
+            lp,
+            gamma,
+            m_row_layout,
+        )
+    })
+}
