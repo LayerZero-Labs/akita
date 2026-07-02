@@ -12,9 +12,10 @@ use akita_serialization::{
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
-    golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,
-    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
-    tail_z_planner_bits_per_coord, ZFoldEncodingStats,
+    golomb_rice_flat_admit_terminal_wire, golomb_rice_max_quotient_for_cap,
+    golomb_rice_total_wire_bits,
+    golomb_rice_values_within_cap, golomb_rice_zigzag_width, tail_z_planner_bits_per_coord,
+    ZFoldEncodingStats,
 };
 use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::layout::field_bytes;
@@ -754,13 +755,23 @@ pub(crate) fn encode_z_segment_from_centered<const D: usize>(
             "z_folded length does not match layout".to_string(),
         ));
     }
-    let mut values = Vec::with_capacity(centered.len() * D);
-    for z_j in centered {
-        for &coeff in z_j.iter() {
-            values.push(i64::from(coeff));
-        }
-    }
-    golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w_z)
+    let values = centered_rows_to_i64(centered);
+    encode_z_segment_from_centered_flat(&values, rice_low_bits, zigzag_w_z)
+}
+
+fn centered_rows_to_i64<const D: usize>(rows: &[[i32; D]]) -> Vec<i64> {
+    rows.iter()
+        .flat_map(|row| row.iter().map(|&n| i64::from(n)))
+        .collect()
+}
+
+/// Build Golomb-Rice `z` payload from a flat centered coefficient stream.
+fn encode_z_segment_from_centered_flat(
+    centered_flat: &[i64],
+    rice_low_bits: u32,
+    zigzag_w_z: u32,
+) -> Result<Vec<u8>, AkitaError> {
+    golomb_rice_encode_vec(centered_flat, rice_low_bits, zigzag_w_z)
 }
 
 /// Construct a segment-typed terminal witness from ring-switch outputs.
@@ -769,11 +780,12 @@ pub(crate) fn encode_z_segment_from_centered<const D: usize>(
 ///
 /// Returns an error when layout counts do not match the supplied witness parts.
 #[allow(clippy::too_many_arguments)]
-pub fn build_segment_typed_witness<const D: usize, F>(
-    e_folded: &[CyclotomicRing<F, D>],
-    recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
-    z_folded_centered: &[[i32; D]],
-    r: &[CyclotomicRing<F, D>],
+pub fn build_segment_typed_witness<F>(
+    ring_d: usize,
+    e_folded: &RingVec<F>,
+    recomposed_inner_rows: &[RingVec<F>],
+    z_folded_centered_flat: &[i32],
+    r: &RingVec<F>,
     lp: &LevelParams,
     num_w_vectors: usize,
     num_t_vectors: usize,
@@ -783,6 +795,26 @@ pub fn build_segment_typed_witness<const D: usize, F>(
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
 {
+    if ring_d == 0 || lp.ring_dimension != ring_d {
+        return Err(AkitaError::InvalidInput(
+            "segment-typed witness ring dimension mismatch".to_string(),
+        ));
+    }
+    if !e_folded.can_decode_vec(ring_d) {
+        return Err(AkitaError::InvalidInput(
+            "segment-typed e segment ring layout mismatch".to_string(),
+        ));
+    }
+    if !r.can_decode_vec(ring_d) {
+        return Err(AkitaError::InvalidInput(
+            "segment-typed r segment ring layout mismatch".to_string(),
+        ));
+    }
+    if !z_folded_centered_flat.len().is_multiple_of(ring_d) {
+        return Err(AkitaError::InvalidInput(
+            "segment-typed z segment ring layout mismatch".to_string(),
+        ));
+    }
     let field_bits = F::modulus_bits();
     let layout = tail_segment_layout(
         lp,
@@ -794,32 +826,46 @@ where
     )?;
     let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(lp, num_t_vectors)?;
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    golomb_rice_rows_admit_terminal_wire(z_folded_centered, cap)?;
+    let z_centered_i64: Vec<i64> = z_folded_centered_flat
+        .iter()
+        .map(|&coeff| i64::from(coeff))
+        .collect();
+    golomb_rice_flat_admit_terminal_wire(&z_centered_i64, cap)?;
     let depth_commit = lp.num_digits_commit;
-    let z_payload = encode_z_segment_from_centered(
-        z_folded_centered,
-        lp.block_len,
-        depth_commit,
+    let inner_width = lp.block_len * depth_commit;
+    let row_count = z_folded_centered_flat.len() / ring_d;
+    if inner_width == 0 || !row_count.is_multiple_of(inner_width) {
+        return Err(AkitaError::InvalidInput(
+            "z_folded length does not match layout".to_string(),
+        ));
+    }
+    let z_payload = encode_z_segment_from_centered_flat(
+        &z_centered_i64,
         rice_low_bits,
         zigzag_w_z,
     )?;
-    let e_fields = RingVec::from_ring_elems(e_folded).into_compact();
+    let e_fields = e_folded.clone().into_compact();
     if e_fields.coeff_len() != layout.e_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed e segment length mismatch".to_string(),
         ));
     }
-    let mut t_rings = Vec::new();
+    let mut t_coeffs = Vec::new();
     for block in recomposed_inner_rows {
-        t_rings.extend_from_slice(block);
+        if !block.can_decode_vec(ring_d) {
+            return Err(AkitaError::InvalidInput(
+                "segment-typed t segment ring layout mismatch".to_string(),
+            ));
+        }
+        t_coeffs.extend_from_slice(block.coeffs());
     }
-    let t_fields = RingVec::from_ring_elems(&t_rings).into_compact();
+    let t_fields = RingVec::from_coeffs(t_coeffs);
     if t_fields.coeff_len() != layout.t_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed t segment length mismatch".to_string(),
         ));
     }
-    let r_fields = RingVec::from_ring_elems(r).into_compact();
+    let r_fields = r.clone().into_compact();
     if r_fields.coeff_len() != layout.r_field_elems {
         return Err(AkitaError::InvalidInput(
             "segment-typed r segment length mismatch".to_string(),

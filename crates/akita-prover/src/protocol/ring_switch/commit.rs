@@ -11,107 +11,11 @@ pub struct NextWitnessCommitment<F: FieldCore> {
     pub hint: RecursiveCommitmentHintCache<F>,
 }
 
-/// Commit the D-agnostic ring-switch witness `w` at the caller-selected ring
-/// dimension.
-///
-/// This is the D-boundary in the protocol: ring switching produces a flat
-/// witness using the current level's ring dimension, then this function
-/// re-chunks that witness into `D`-sized ring elements and commits it with the
-/// recursive commitment layout supplied by the root scheduler.
-///
-/// # Errors
-///
-/// Returns an error if the witness length is not divisible by `D` or if the
-/// recursive inner commitment fails.
-#[tracing::instrument(skip_all, name = "commit_w")]
-#[inline(never)]
-pub fn commit_w<F, B, const D: usize>(
-    w: &RecursiveWitnessFlat,
-    expanded: &AkitaExpandedSetup<F>,
-    commit_ctx: &OperationCtx<'_, F, B>,
-    commit_layout: &LevelParams,
-) -> Result<(RingVec<F>, AkitaCommitmentHint<F>), AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    B: CommitmentComputeBackend<F>,
-{
-    let backend = commit_ctx.backend();
-    let prepared = commit_ctx.prepared();
-    if commit_layout.ring_dimension != D {
-        return Err(AkitaError::InvalidInput(format!(
-            "commit_w layout D={} does not match target D={D}",
-            commit_layout.ring_dimension
-        )));
-    }
-    if !w.len().is_multiple_of(D) {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: w.len(),
-        });
-    }
-    backend.validate_prepared_setup(prepared, expanded)?;
-    validate_commit_level_params::<F, D>(commit_layout, expanded)?;
-
-    let num_ring_elems = w.len() / D;
-    tracing::debug!(
-        num_ring_elems,
-        num_blocks = commit_layout.num_blocks,
-        block_len = commit_layout.block_len,
-        depth_commit = commit_layout.num_digits_commit,
-        depth_open = commit_layout.num_digits_open,
-        m_vars = commit_layout.m_vars,
-        r_vars = commit_layout.r_vars,
-        inner_width = commit_layout.inner_width(),
-        pow2_block = 1usize << commit_layout.m_vars,
-        "commit_w layout"
-    );
-
-    let w_view = w.view::<F, D>()?;
-    let plan = CommitInnerPlan::from_level(commit_layout);
-    let inner = w_view.commit_inner(backend, prepared, plan)?;
-    validate_commit_inner_shape::<F, D>(
-        &inner,
-        commit_layout.num_blocks,
-        commit_layout.a_key.row_len(),
-        commit_layout.num_digits_open,
-        commit_layout.log_basis,
-    )?;
-
-    let typed_digits = inner.decomposed_inner_rows_trusted::<D>()?;
-    let outer_input = typed_digits.flat_digits().to_vec();
-    validate_commit_outer_input_nonempty(outer_input.len())?;
-    let u: Vec<CyclotomicRing<F, D>> = if commit_layout.f_key.is_some() {
-        // Tiered: u_final = F·decompose(blockdiag(B')·t̂). ZK blinding of the F
-        // tier is a non-goal; tiered proofs are exercised non-zk.
-        crate::api::commitment::tiered_commit_u_final::<F, D, B>(
-            backend,
-            prepared,
-            commit_layout,
-            &outer_input,
-        )?
-    } else {
-        let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-            prepared,
-            commit_layout.b_key.row_len(),
-            &outer_input,
-            commit_layout.log_basis,
-        )?;
-        if u.len() != commit_layout.b_key.row_len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        u
-    };
-    // Protocol storage is D-free: the typed digit planes flatten into a
-    // `DigitBlocks` hint; recomposed rows are recomputed on demand downstream.
-    let hint = AkitaCommitmentHint::singleton(inner.decomposed_inner_rows.clone());
-    Ok((RingVec::from_ring_elems(&u), hint))
-}
-
 /// Commit the next recursive witness under config `Cfg`.
 ///
 /// The commitment ring dimension is schedule-owned (`commit_params.ring_dimension`).
-/// This adapter warms the target NTT slot on the caller's D-free prepared setup,
-/// dispatches locally to the typed `commit_w` kernel, and returns D-free protocol
+/// This function warms the target NTT slot on the caller's D-free prepared setup,
+/// dispatches locally to the typed commit kernel, and returns D-free protocol
 /// storage.
 ///
 /// # Errors
@@ -119,7 +23,7 @@ where
 /// Returns an error if layout selection, commitment, cache preparation, or
 /// D-erased hint construction fails.
 #[inline(never)]
-pub fn commit_next_witness<Cfg, B>(
+pub fn commit_w<Cfg, B>(
     commit_params: &LevelParams,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
@@ -132,37 +36,82 @@ where
 {
     let commit_d = commit_params.ring_dimension;
     commit_ctx.ensure_envelope_ntt(expanded.as_ref(), commit_d)?;
-    dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
-        if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
-            let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
-                logical_w,
-                expanded.as_ref(),
-                commit_ctx,
-                commit_params,
-            )?;
-            Ok(NextWitnessCommitment {
-                witness: None,
-                commitment: wc,
-                hint: RecursiveCommitmentHintCache::from_hint(wh),
-            })
+    dispatch_ring_dim_result!(commit_d, |D| {
+        let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+            None
         } else {
-            // The tensor pack is length-preserving, so the committed witness
-            // fits the schedule's recursive commit params directly.
-            let committed_w =
-                tensor_pack_recursive_witness::<Cfg::Field, Cfg::ExtField, { D_COMMIT }>(
-                    logical_w,
-                )?;
-            let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
-                &committed_w,
-                expanded.as_ref(),
-                commit_ctx,
-                commit_params,
-            )?;
-            Ok(NextWitnessCommitment {
-                witness: Some(committed_w),
-                commitment: wc,
-                hint: RecursiveCommitmentHintCache::from_hint(wh),
-            })
+            Some(tensor_pack_recursive_witness::<Cfg::Field, Cfg::ExtField, D>(logical_w)?)
+        };
+        let w = packed_witness.as_ref().unwrap_or(logical_w);
+        let backend = commit_ctx.backend();
+        let prepared = commit_ctx.prepared();
+        if commit_params.ring_dimension != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "commit_w layout D={} does not match target D={D}",
+                commit_params.ring_dimension
+            )));
         }
+        if !w.len().is_multiple_of(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: w.len(),
+            });
+        }
+        backend.validate_prepared_setup(prepared, expanded.as_ref())?;
+        validate_commit_level_params::<Cfg::Field, D>(commit_params, expanded.as_ref())?;
+
+        let num_ring_elems = w.len() / D;
+        tracing::debug!(
+            num_ring_elems,
+            num_blocks = commit_params.num_blocks,
+            block_len = commit_params.block_len,
+            depth_commit = commit_params.num_digits_commit,
+            depth_open = commit_params.num_digits_open,
+            m_vars = commit_params.m_vars,
+            r_vars = commit_params.r_vars,
+            inner_width = commit_params.inner_width(),
+            pow2_block = 1usize << commit_params.m_vars,
+            "commit_w layout"
+        );
+
+        let w_view = w.view::<Cfg::Field, D>()?;
+        let plan = CommitInnerPlan::from_level(commit_params);
+        let inner = w_view.commit_inner(backend, prepared, plan)?;
+        validate_commit_inner_shape::<Cfg::Field, D>(
+            &inner,
+            commit_params.num_blocks,
+            commit_params.a_key.row_len(),
+            commit_params.num_digits_open,
+            commit_params.log_basis,
+        )?;
+
+        let typed_digits = inner.decomposed_inner_rows_trusted::<D>()?;
+        let outer_input = typed_digits.flat_digits().to_vec();
+        validate_commit_outer_input_nonempty(outer_input.len())?;
+        let u: Vec<CyclotomicRing<Cfg::Field, D>> = if commit_params.f_key.is_some() {
+            crate::api::commitment::tiered_commit_u_final::<Cfg::Field, D, B>(
+                backend,
+                prepared,
+                commit_params,
+                &outer_input,
+            )?
+        } else {
+            let u: Vec<CyclotomicRing<Cfg::Field, D>> = backend.digit_rows::<D>(
+                prepared,
+                commit_params.b_key.row_len(),
+                &outer_input,
+                commit_params.log_basis,
+            )?;
+            if u.len() != commit_params.b_key.row_len() {
+                return Err(AkitaError::InvalidProof);
+            }
+            u
+        };
+        let hint = AkitaCommitmentHint::singleton(inner.decomposed_inner_rows.clone());
+        Ok(NextWitnessCommitment {
+            witness: packed_witness,
+            commitment: RingVec::from_ring_elems(&u),
+            hint: RecursiveCommitmentHintCache::from_hint(hint),
+        })
     })
 }

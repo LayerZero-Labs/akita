@@ -205,7 +205,7 @@ where
         basis,
     )?;
 
-    prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
+    prove_fold::<F, E, T, C, O, TS, R, Cfg>(
         expanded,
         prefix_slots,
         stack,
@@ -317,7 +317,7 @@ where
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg, D>(
+    let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg>(
         expanded,
         &prefix_slots,
         stack,

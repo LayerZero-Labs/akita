@@ -11,7 +11,7 @@ use akita_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::build_segment_typed_witness;
-use akita_types::validate_level_dispatch;
+use akita_types::dispatch_ring_dim_result;
 use akita_types::validate_segment_typed_z_payload;
 use akita_types::CleartextWitnessShape;
 
@@ -29,7 +29,7 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_recursive_stage2_trace_table<F, E, const D: usize>(
+fn build_recursive_stage2_trace_table<F, E>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F>,
     prepared: &PreparedOpeningPoint<F, E>,
@@ -43,13 +43,17 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let (_, layout) = trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
-    let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
-    build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
+    let ring_d = lp.ring_dimension;
+    dispatch_ring_dim_result!(ring_d, |D| {
+        let (_, layout) =
+            trace_layout_for_instance(lp, instance, col_bits, ring_bits, lp.num_blocks)?;
+        let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
+        build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_root_stage2_trace_table<F, E, const D: usize>(
+fn build_root_stage2_trace_table<F, E>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F>,
     prepared_point: &PreparedOpeningPoint<F, E>,
@@ -64,21 +68,24 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let num_trace_blocks = instance
-        .opening_batch()
-        .num_polynomials()
-        .checked_mul(lp.num_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
-    let (_, layout) =
-        trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
-    let public_weights = trace_public_weights_root_terms::<F, E, D>(
-        lp,
-        instance.opening_batch(),
-        prepared_point,
-        row_coefficients,
-        trace_claim_scales,
-    )?;
-    build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
+    let ring_d = lp.ring_dimension;
+    dispatch_ring_dim_result!(ring_d, |D| {
+        let num_trace_blocks = instance
+            .opening_batch()
+            .num_polynomials()
+            .checked_mul(lp.num_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+        let (_, layout) =
+            trace_layout_for_instance(lp, instance, col_bits, ring_bits, num_trace_blocks)?;
+        let public_weights = trace_public_weights_root_terms::<F, E, D>(
+            lp,
+            instance.opening_batch(),
+            prepared_point,
+            row_coefficients,
+            trace_claim_scales,
+        )?;
+        build_trace_table_scaled(&layout, &public_weights, live_x_cols, output_scale)
+    })
 }
 
 pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
@@ -598,7 +605,7 @@ type BoundNextWitness<F> = (
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg, const D: usize>(
+pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     stack: &'stack ProverComputeStack<'stack, F, C, O, TS, R>,
@@ -635,19 +642,9 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let lp = &scheduled.params;
-    validate_level_dispatch::<D>(lp)?;
+    let ring_d = lp.ring_dimension;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
-    // §6 invariant — commitment vector length == num_rings · ring_dim. The
-    // prepared-fold commitment is the D-free flat `RingVec`; reinterpret it as
-    // typed ring rows at this fold's `D` at the kernel-entry boundary.
-    // `try_to_vec::<D>` is the no-panic gate (returns `InvalidProof` when the
-    // buffer is not an exact multiple of `D`), replacing the former typed
-    // `as_ring_slice::<D>` bridge.
-    if !prepared_fold.commitment.can_decode_vec(lp.ring_dimension) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let commitment_u = prepared_fold.commitment.try_to_vec::<D>()?;
-    let build_output = ring_switch_build_witness::<F, R>(
+    let build_output = ring_switch_build_w::<F, R>(
         &prepared_fold.instance,
         prepared_fold.witness,
         stack.ring_switch(),
@@ -660,14 +657,14 @@ where
         None
     } else {
         let _span = tracing::info_span!("commit_w_level", level).entered();
-        Some(crate::commit_next_witness::<Cfg, C>(
+        Some(crate::commit_w::<Cfg, C>(
             &scheduled.next_params,
             expanded,
             stack.commit(),
             &logical_w,
         )?)
     };
-    let (next_commitment, final_witness) = bind_next_witness_for_ring_switch::<F, T, D>(
+    let (next_commitment, final_witness) = bind_next_witness_for_ring_switch::<F, T>(
         transcript,
         is_terminal_fold,
         lp,
@@ -685,7 +682,7 @@ where
     } else {
         MRowLayout::WithDBlock
     };
-    let rs = ring_switch_finalize_level::<F, E, T>(
+    let rs = ring_switch_finalize::<F, E, T>(
         &prepared_fold.instance,
         expanded.as_ref(),
         transcript,
@@ -695,17 +692,23 @@ where
         m_row_layout,
     )?;
 
-    let relation_rows = if is_terminal_fold {
-        &[][..]
-    } else {
-        prepared_fold.instance.v_trusted::<D>()?
-    };
-    let relation_claim = relation_claim_from_rows_extension::<F, E, D>(
-        &rs.tau1,
-        rs.alpha,
-        relation_rows,
-        &commitment_u,
-    )?;
+    let relation_claim = dispatch_ring_dim_result!(ring_d, |D| {
+        if !prepared_fold.commitment.can_decode_vec(ring_d) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let commitment_u = prepared_fold.commitment.try_to_vec::<D>()?;
+        let relation_rows = if is_terminal_fold {
+            &[][..]
+        } else {
+            prepared_fold.instance.v_trusted::<D>()?
+        };
+        relation_claim_from_rows_extension::<F, E, D>(
+            &rs.tau1,
+            rs.alpha,
+            relation_rows,
+            &commitment_u,
+        )
+    })?;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
         (None, vec![E::zero(); rs.col_bits + rs.ring_bits], E::zero())
     } else {
@@ -729,7 +732,7 @@ where
     let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
-        Some(build_root_stage2_trace_table::<F, E, D>(
+        Some(build_root_stage2_trace_table::<F, E>(
             lp,
             &prepared_fold.instance,
             prepared_fold
@@ -744,7 +747,7 @@ where
             rs.live_x_cols,
         )?)
     } else if let Some(prepared) = prepared_fold.trace_prepared_point.as_ref() {
-        Some(build_recursive_stage2_trace_table::<F, E, D>(
+        Some(build_recursive_stage2_trace_table::<F, E>(
             lp,
             &prepared_fold.instance,
             prepared,
@@ -790,7 +793,7 @@ where
         };
         let proof_w_eval = w_eval;
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
-        let stage3_sumcheck_proof = prove_stage3::<F, E, T, D>(
+        let stage3_sumcheck_proof = prove_stage3::<F, E, T>(
             setup_contribution_mode,
             expanded.as_ref(),
             prefix_slots,
@@ -858,7 +861,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T, const D: usize>(
+pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T>(
     transcript: &mut T,
     is_terminal_fold: bool,
     lp: &LevelParams,
@@ -894,17 +897,12 @@ where
             };
             let (num_w_vectors, num_t_vectors, num_public_rows) =
                 akita_types::tail_segment_multiplicities_from_layout(lp, &scheduled_shape.layout)?;
-            artifacts.ensure_ring_dim::<D>()?;
-            let recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>> = artifacts
-                .recomposed_inner_rows
-                .iter()
-                .map(|block| block.try_to_vec::<D>())
-                .collect::<Result<_, _>>()?;
-            let segment = build_segment_typed_witness::<D, F>(
-                artifacts.e_folded.as_ring_slice_trusted::<D>(),
-                &recomposed_inner_rows,
-                artifacts.z_folded_centered_trusted::<D>()?,
-                artifacts.r.as_ring_slice_trusted::<D>(),
+            let segment = build_segment_typed_witness::<F>(
+                artifacts.ring_dim(),
+                &artifacts.e_folded,
+                &artifacts.recomposed_inner_rows,
+                artifacts.z_folded_centered_flat(),
+                &artifacts.r,
                 lp,
                 num_w_vectors,
                 num_t_vectors,
@@ -1006,7 +1004,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_stage3<F, E, T, const D: usize>(
+pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
@@ -1031,7 +1029,7 @@ where
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
             let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            let mut stage3_prover = AkitaStage3Prover::new::<F, T, D>(
+            let mut stage3_prover = AkitaStage3Prover::new::<F, T>(
                 expanded,
                 prefix_slots,
                 lp,

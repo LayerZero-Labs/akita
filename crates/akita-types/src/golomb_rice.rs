@@ -443,9 +443,21 @@ pub fn golomb_rice_rows_admit_terminal_wire<const D: usize>(
     cap: u128,
 ) -> Result<(), AkitaError> {
     golomb_rice_rows_encodable_at_wire_low_bits(rows, cap)?;
-    let values = centered_rows_to_i64(rows);
+    golomb_rice_flat_admit_terminal_wire(&centered_rows_to_i64(rows), cap)
+}
+
+/// Whether every centered coefficient is admissible at wire low bits and fits the planner bit budget.
+pub fn golomb_rice_flat_admit_terminal_wire(values: &[i64], cap: u128) -> Result<(), AkitaError> {
+    if cap == 0 && values.iter().any(|&n| n != 0) {
+        return Err(AkitaError::InvalidInput(
+            "golomb-rice encodability check at zero cap".to_string(),
+        ));
+    }
+    golomb_rice_values_within_cap(values, cap).map_err(|_| {
+        AkitaError::InvalidInput(format!("centered coefficient exceeds fold cap {cap}"))
+    })?;
     let (rice_low_bits, zigzag_w) = terminal_z_wire_rice_params(cap)?;
-    golomb_rice_values_fit_planner_wire_budget(&values, cap, rice_low_bits, zigzag_w)
+    golomb_rice_values_fit_planner_wire_budget(values, cap, rice_low_bits, zigzag_w)
 }
 
 fn golomb_rice_encode_one_into(

@@ -140,22 +140,13 @@ where
         } else {
             None
         };
-        let out = {
+        let prepared_fold = {
             let stack = stacks.prove_stack_at_level(level);
             stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), level_d)?;
             use akita_types::dispatch_ring_dim_result;
 
             dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                let prepared_fold = prepare_suffix::<
-                    Cfg::Field,
-                    Cfg::ExtField,
-                    T,
-                    C,
-                    O,
-                    TS,
-                    R,
-                    { D_LEVEL },
-                >(
+                prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, { D_LEVEL }>(
                     stack,
                     transcript,
                     current_state,
@@ -163,30 +154,30 @@ where
                     level_params,
                     m_row_layout,
                     tail_t_vectors,
-                )?;
-                super::fold::prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg, { D_LEVEL }>(
-                    expanded,
-                    prefix_slots,
-                    stack,
-                    transcript,
-                    level,
-                    &scheduled,
-                    prepared_fold,
-                    setup_contribution_mode,
-                    is_terminal_level,
-                    if is_terminal_level {
-                        Some(terminal_direct_witness_shape)
-                    } else {
-                        None
-                    },
                 )
             })
             .map_err(|err| {
                 AkitaError::InvalidInput(format!(
-                    "suffix fold level {level} D{level_d} failed: {err:?}"
+                    "suffix prepare level {level} D{level_d} failed: {err:?}"
                 ))
             })?
         };
+        let out = super::fold::prove_fold::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R, Cfg>(
+            expanded,
+            prefix_slots,
+            stacks.prove_stack_at_level(level),
+            transcript,
+            level,
+            &scheduled,
+            prepared_fold,
+            setup_contribution_mode,
+            is_terminal_level,
+            if is_terminal_level {
+                Some(terminal_direct_witness_shape)
+            } else {
+                None
+            },
+        )?;
         if is_terminal_level {
             break out.get_terminal()?;
         }

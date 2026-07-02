@@ -360,7 +360,7 @@ mod tests {
             .expect("ring relation");
 
         let build_output =
-            ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &lp, false)
+            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
@@ -499,7 +499,7 @@ mod tests {
             .expect("ring relation");
 
         let build_output =
-            ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &lp, false)
+            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
@@ -671,7 +671,7 @@ mod tests {
             )
             .expect("ring relation");
 
-        ring_switch_build_w::<F, CpuBackend, D>(&instance, witness, &op_ctx, &level_params, false)
+        ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &level_params, false)
             .expect("ring-switch witness");
 
         let alpha = F::from_u64(42);
@@ -822,32 +822,20 @@ mod tests {
             )
             .expect("ring relation");
 
-        let build_output = ring_switch_build_w::<F, CpuBackend, D>(
-            &instance,
-            witness,
-            &op_ctx,
-            &level_params,
-            true,
-        )
-        .expect("ring-switch witness");
+        let build_output =
+            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &level_params, true)
+                .expect("ring-switch witness");
         let logical_digits = build_output.w.as_i8_digits();
         let artifacts = build_output
             .terminal_artifacts
             .expect("terminal artifacts retained");
         artifacts.ensure_ring_dim::<D>().expect("ring dim");
-        let recomposed_inner_rows: Vec<Vec<akita_algebra::CyclotomicRing<F, D>>> = artifacts
-            .recomposed_inner_rows
-            .iter()
-            .map(|block| block.try_to_vec::<D>())
-            .collect::<Result<_, _>>()
-            .expect("recomposed blocks");
-        let segment = build_segment_typed_witness::<D, F>(
-            artifacts.e_folded.as_ring_slice_trusted::<D>(),
-            &recomposed_inner_rows,
-            artifacts
-                .z_folded_centered_trusted::<D>()
-                .expect("z centered"),
-            artifacts.r.as_ring_slice_trusted::<D>(),
+        let segment = build_segment_typed_witness::<F>(
+            artifacts.ring_dim(),
+            &artifacts.e_folded,
+            &artifacts.recomposed_inner_rows,
+            artifacts.z_folded_centered_flat(),
+            &artifacts.r,
             &level_params,
             1,
             1,

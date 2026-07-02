@@ -9,7 +9,7 @@
 //!
 //! 2. **Per-cluster context** (inside one stack): commit, opening, tensor, and
 //!    ring-switch each hold a validated [`OperationCtx`]. Protocol internals route
-//!    kernels to the matching cluster (for example `commit_next_witness` uses
+//!    kernels to the matching cluster (for example `commit_w` uses
 //!    `stack.commit()`, `ring_switch_build_w` uses `stack.ring_switch()`).
 //!
 //! Commit entry points call `stack.commit()` and `stack.tensor()` directly.

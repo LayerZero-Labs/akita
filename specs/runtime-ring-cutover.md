@@ -175,8 +175,8 @@ that
    dispatch arm,
 5. returns a D-free type.
 
-Correct in-tree examples: `commit_next_witness`, `ring_switch_build_witness`,
-`ring_switch_finalize_level` (crates/akita-prover/src/protocol/ring_switch/).
+Correct in-tree examples: `commit_w`, `ring_switch_build_w`,
+`ring_switch_finalize` (crates/akita-prover/src/protocol/ring_switch/).
 Copy their shape.
 
 **The dispatch unit is the operation — not the fold level, and not the

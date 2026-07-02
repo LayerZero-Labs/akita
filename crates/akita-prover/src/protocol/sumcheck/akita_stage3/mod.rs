@@ -17,9 +17,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    dispatch_ring_dim_result, gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup,
+    FpExtEncoding, LevelParams, RingRelationInstance, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -64,7 +65,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
     /// point that is a prefix/projection of the same batched challenge vector used
     /// by the setup-product opening.
     #[allow(clippy::too_many_arguments)]
-    pub fn new<F, T, const D: usize>(
+    pub fn new<F, T>(
         expanded: &AkitaExpandedSetup<F>,
         prefix_slots: &SetupPrefixProverRegistry<F>,
         lp: &LevelParams,
@@ -86,45 +87,48 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
     {
-        let setup_term = build_setup_product_term::<F, E, T, D>(
-            expanded,
-            prefix_slots,
-            lp,
-            next_fold_level_params,
-            relation,
-            tau1,
-            alpha,
-            &stage2_challenges[ring_bits..],
-            transcript,
-        )?;
-        let setup_product_claim = setup_term.input_claim();
-        let witness_digits = Arc::<[i8]>::from(logical_w);
-        let witness_term = build_witness_carry_term::<E>(
-            Arc::clone(&witness_digits),
-            live_x_cols,
-            col_bits,
-            ring_bits,
-            stage2_challenges,
-            stage2_next_w_eval,
-        )?;
-        let setup_rounds = setup_term.num_rounds();
-        let witness_rounds = witness_term.num_rounds();
-        let total_rounds = setup_rounds.max(witness_rounds);
-        Ok(Self {
-            setup: BatchedStage3Term {
-                current_claim: setup_term.input_claim(),
-                native_rounds: setup_rounds,
-                term: setup_term,
-            },
-            witness: BatchedStage3Term {
-                current_claim: witness_term.input_claim(),
-                native_rounds: witness_rounds,
-                term: witness_term,
-            },
-            eta,
-            total_rounds,
-            setup_product_claim,
-            pending_round: None,
+        let ring_d = lp.ring_dimension;
+        dispatch_ring_dim_result!(ring_d, |D| {
+            let setup_term = build_setup_product_term::<F, E, T, D>(
+                expanded,
+                prefix_slots,
+                lp,
+                next_fold_level_params,
+                relation,
+                tau1,
+                alpha,
+                &stage2_challenges[ring_bits..],
+                transcript,
+            )?;
+            let setup_product_claim = setup_term.input_claim();
+            let witness_digits = Arc::<[i8]>::from(logical_w);
+            let witness_term = build_witness_carry_term::<E>(
+                Arc::clone(&witness_digits),
+                live_x_cols,
+                col_bits,
+                ring_bits,
+                stage2_challenges,
+                stage2_next_w_eval,
+            )?;
+            let setup_rounds = setup_term.num_rounds();
+            let witness_rounds = witness_term.num_rounds();
+            let total_rounds = setup_rounds.max(witness_rounds);
+            Ok(Self {
+                setup: BatchedStage3Term {
+                    current_claim: setup_term.input_claim(),
+                    native_rounds: setup_rounds,
+                    term: setup_term,
+                },
+                witness: BatchedStage3Term {
+                    current_claim: witness_term.input_claim(),
+                    native_rounds: witness_rounds,
+                    term: witness_term,
+                },
+                eta,
+                total_rounds,
+                setup_product_claim,
+                pending_round: None,
+            })
         })
     }
 

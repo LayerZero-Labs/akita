@@ -1,5 +1,5 @@
 use super::*;
-use crate::compute::{OperationCtx, RingSwitchProveBackend, RuntimeRingSwitchProveBackend};
+use crate::compute::{OperationCtx, RuntimeRingSwitchProveBackend};
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
@@ -47,6 +47,11 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
     /// Stored ring dimension (coefficients per ring element).
     pub fn ring_dim(&self) -> usize {
         self.ring_dim
+    }
+
+    /// Flat centered fold-response coefficients (`ring_dim` field elements per row).
+    pub fn z_folded_centered_flat(&self) -> &[i32] {
+        &self.z_folded_centered_flat
     }
 
     /// # Errors
@@ -143,105 +148,7 @@ pub struct RingSwitchBuildOutput<F: FieldCore> {
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_build_w<F, B, const D: usize>(
-    instance: &RingRelationInstance<F>,
-    witness: RingRelationWitness<F>,
-    ring_switch_ctx: &OperationCtx<'_, F, B>,
-    lp: &LevelParams,
-    retain_terminal_artifacts: bool,
-) -> Result<RingSwitchBuildOutput<F>, AkitaError>
-where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + AkitaSerialize,
-    B: RingSwitchProveBackend<F, D>,
-{
-    let num_claims = instance.opening_batch().num_polynomials();
-    let RingRelationWitness {
-        z_folded_rings,
-        fold_grind_nonce: _,
-        e_hat,
-        e_folded,
-        hint,
-        ..
-    } = witness;
-    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-    let e_hat = FlatDigitBlocks::<D>::from_digit_blocks(&e_hat)?;
-    let e_folded = e_folded.as_ring_slice_trusted::<D>();
-    // Recompose the inner rows on demand from the D-free decomposed digit stream
-    // (S5 re-home); the flattened decomposed view feeds the relation quotient.
-    let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
-        &hint,
-        lp.num_digits_open,
-        lp.log_basis,
-    )?;
-    let decomposed_inner_rows = FlatDigitBlocks::<D>::from_digit_blocks(&hint.into_flat_parts()?)?;
-    let opening_batch = instance.opening_batch();
-
-    instance.ensure_ring_dim::<D>()?;
-    let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
-        ring_switch_ctx,
-        lp,
-        &instance.challenges,
-        e_hat.flat_digits(),
-        &decomposed_inner_rows,
-        &recomposed_inner_rows,
-        e_folded,
-        instance.ring_multiplier_point(),
-        instance.row_coefficient_rings_trusted::<D>()?,
-        z_folded_rings.centered_coeffs_trusted::<D>(),
-        z_folded_rings.centered_inf_norm,
-        instance.y_trusted::<D>()?,
-        opening_batch.num_polynomials(),
-        lp.num_blocks,
-        lp.inner_width(),
-        instance.m_row_layout(),
-    )?;
-    let z_centered = z_folded_rings.centered_coeffs_owned::<D>();
-    let w = {
-        let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(
-            &e_hat,
-            &decomposed_inner_rows,
-            &u_concat_digits,
-            z_folded_rings.centered_coeffs_trusted::<D>(),
-            &r,
-            lp,
-            num_claims,
-        )
-    };
-    let terminal_artifacts = if retain_terminal_artifacts {
-        Some(RingSwitchTerminalArtifacts::from_parts::<D>(
-            e_folded.to_vec(),
-            recomposed_inner_rows,
-            z_centered,
-            r,
-            u_concat_digits.len(),
-        ))
-    } else {
-        None
-    };
-    Ok(RingSwitchBuildOutput {
-        w,
-        terminal_artifacts,
-    })
-}
-
-/// Build the ring-switch witness using the schedule-owned level ring dimension.
-///
-/// This is the D-free adapter for prover orchestration. It dispatches locally on
-/// `lp.ring_dimension`, then calls the typed [`ring_switch_build_w`] kernel.
-///
-/// # Errors
-///
-/// Returns an error if `lp.ring_dimension` is unsupported or if the typed
-/// ring-switch build kernel rejects the witness.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub fn ring_switch_build_witness<F, B>(
+pub fn ring_switch_build_w<F, B>(
     instance: &RingRelationInstance<F>,
     witness: RingRelationWitness<F>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
@@ -257,14 +164,76 @@ where
         + AkitaSerialize,
     B: RuntimeRingSwitchProveBackend<F>,
 {
-    dispatch_ring_dim_result!(lp.ring_dimension, |D_LEVEL| {
-        ring_switch_build_w::<F, B, { D_LEVEL }>(
-            instance,
-            witness,
+    let ring_d = lp.ring_dimension;
+    dispatch_ring_dim_result!(ring_d, |D| {
+        let num_claims = instance.opening_batch().num_polynomials();
+        let RingRelationWitness {
+            z_folded_rings,
+            fold_grind_nonce: _,
+            e_hat,
+            e_folded,
+            hint,
+            ..
+        } = witness;
+        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+        let e_hat = FlatDigitBlocks::<D>::from_digit_blocks(&e_hat)?;
+        let e_folded = e_folded.as_ring_slice_trusted::<D>();
+        let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
+            &hint,
+            lp.num_digits_open,
+            lp.log_basis,
+        )?;
+        let decomposed_inner_rows =
+            FlatDigitBlocks::<D>::from_digit_blocks(&hint.into_flat_parts()?)?;
+        let opening_batch = instance.opening_batch();
+
+        instance.ensure_ring_dim::<D>()?;
+        let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
             ring_switch_ctx,
             lp,
-            retain_terminal_artifacts,
-        )
+            &instance.challenges,
+            e_hat.flat_digits(),
+            &decomposed_inner_rows,
+            &recomposed_inner_rows,
+            e_folded,
+            instance.ring_multiplier_point(),
+            instance.row_coefficient_rings_trusted::<D>()?,
+            z_folded_rings.centered_coeffs_trusted::<D>(),
+            z_folded_rings.centered_inf_norm,
+            instance.y_trusted::<D>()?,
+            opening_batch.num_polynomials(),
+            lp.num_blocks,
+            lp.inner_width(),
+            instance.m_row_layout(),
+        )?;
+        let z_centered = z_folded_rings.centered_coeffs_owned::<D>();
+        let w = {
+            let _span = tracing::info_span!("build_w_coeffs").entered();
+            build_w_coeffs::<F, D>(
+                &e_hat,
+                &decomposed_inner_rows,
+                &u_concat_digits,
+                z_folded_rings.centered_coeffs_trusted::<D>(),
+                &r,
+                lp,
+                num_claims,
+            )
+        };
+        let terminal_artifacts = if retain_terminal_artifacts {
+            Some(RingSwitchTerminalArtifacts::from_parts::<D>(
+                e_folded.to_vec(),
+                recomposed_inner_rows,
+                z_centered,
+                r,
+                u_concat_digits.len(),
+            ))
+        } else {
+            None
+        };
+        Ok(RingSwitchBuildOutput {
+            w,
+            terminal_artifacts,
+        })
     })
 }
 

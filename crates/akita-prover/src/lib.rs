@@ -53,7 +53,7 @@ pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
-    batched_prove, commit_next_witness, prove, prove_root, prove_root_direct, prove_suffix,
+    batched_prove, commit_w, prove, prove_root, prove_root_direct, prove_suffix,
     prove_terminal_root_fold_with_params, ProveLevelOutput, RecursiveSuffixOutcome,
     RingSwitchOutput, SuffixProverState,
 };
