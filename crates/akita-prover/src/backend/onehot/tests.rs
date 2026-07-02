@@ -2,6 +2,7 @@ use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
 use crate::compute::RootPolyShape;
 use crate::DensePoly;
+use akita_challenges::TensorChallenges;
 use akita_field::RandomSampling;
 use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
 use akita_types::FlatMatrix;
@@ -56,6 +57,50 @@ where
         coeffs[ring_idx].coeffs[coeff_idx] += F::one();
     }
     DensePoly::<F, D>::from_ring_coeffs(coeffs)
+}
+
+fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
+    TensorChallenges {
+        left: vec![
+            SparseChallenge {
+                positions: vec![0],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![(D - 1) as u32],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![2],
+                coeffs: vec![-1],
+            },
+            SparseChallenge {
+                positions: vec![5],
+                coeffs: vec![1],
+            },
+        ],
+        right: vec![
+            SparseChallenge {
+                positions: vec![1],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![3],
+                coeffs: vec![-1],
+            },
+            SparseChallenge {
+                positions: vec![0],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![4],
+                coeffs: vec![1],
+            },
+        ],
+        left_len: 2,
+        right_len: 2,
+        num_claims: 2,
+    }
 }
 
 fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>
@@ -841,6 +886,146 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
     let got = OneHotPoly::<F, D>::decompose_fold_batched(&poly_refs, &challenges, block_len, 1, 0)
         .expect("onehot batched path should apply");
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn single_chunk_onehot_tensor_decompose_fold_matches_expanded_reference() {
+    type F = Prime24Offset3;
+    const D: usize = 8;
+
+    let block_len = 2;
+    let num_digits = 1;
+    let tensor = tensor_oracle_challenges::<D>();
+    let polys = [
+        OneHotPoly::<F, D>::new(
+            8,
+            vec![
+                Some(1usize),
+                None,
+                Some(3usize),
+                Some(7usize),
+                None,
+                Some(2usize),
+                Some(6usize),
+                None,
+            ],
+        )
+        .unwrap(),
+        OneHotPoly::<F, D>::new(
+            8,
+            vec![
+                None,
+                Some(0usize),
+                Some(5usize),
+                None,
+                Some(4usize),
+                Some(7usize),
+                None,
+                Some(1usize),
+            ],
+        )
+        .unwrap(),
+    ];
+    let expanded = tensor
+        .expand_integer::<D>()
+        .unwrap()
+        .into_iter()
+        .map(|challenge| challenge.try_to_sparse_i8().unwrap())
+        .collect::<Vec<_>>();
+
+    let expected = aggregate_witnesses(
+        &polys
+            .iter()
+            .zip(expanded.chunks(4))
+            .map(|(poly, challenges)| poly.decompose_fold(challenges, block_len, num_digits, 0))
+            .collect::<Vec<_>>(),
+    );
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let got = OneHotPoly::<F, D>::decompose_fold_tensor_batched(
+        &poly_refs, &tensor, block_len, num_digits, 0,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn multi_chunk_onehot_tensor_decompose_fold_matches_expanded_reference() {
+    type F = Prime24Offset3;
+    const D: usize = 8;
+
+    let block_len = 2;
+    let num_digits = 1;
+    let tensor = tensor_oracle_challenges::<D>();
+    let polys = [
+        OneHotPoly::<F, D>::new(
+            4,
+            vec![
+                Some(1usize),
+                None,
+                Some(3usize),
+                Some(0usize),
+                None,
+                Some(2usize),
+                Some(1usize),
+                None,
+                Some(0usize),
+                Some(3usize),
+                None,
+                Some(2usize),
+                Some(1usize),
+                None,
+                Some(3usize),
+                Some(0usize),
+            ],
+        )
+        .unwrap(),
+        OneHotPoly::<F, D>::new(
+            4,
+            vec![
+                None,
+                Some(0usize),
+                Some(2usize),
+                None,
+                Some(1usize),
+                Some(3usize),
+                None,
+                Some(2usize),
+                Some(0usize),
+                None,
+                Some(1usize),
+                Some(3usize),
+                None,
+                Some(2usize),
+                Some(0usize),
+                None,
+            ],
+        )
+        .unwrap(),
+    ];
+    let expanded = tensor
+        .expand_integer::<D>()
+        .unwrap()
+        .into_iter()
+        .map(|challenge| challenge.try_to_sparse_i8().unwrap())
+        .collect::<Vec<_>>();
+
+    let expected = aggregate_witnesses(
+        &polys
+            .iter()
+            .zip(expanded.chunks(4))
+            .map(|(poly, challenges)| poly.decompose_fold(challenges, block_len, num_digits, 0))
+            .collect::<Vec<_>>(),
+    );
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let got = OneHotPoly::<F, D>::decompose_fold_tensor_batched(
+        &poly_refs, &tensor, block_len, num_digits, 0,
+    )
+    .unwrap()
+    .unwrap();
 
     assert_eq!(got, expected);
 }

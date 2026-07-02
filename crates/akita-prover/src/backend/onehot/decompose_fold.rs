@@ -160,6 +160,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             .checked_mul(tensor.right_len)
             .and_then(|blocks| blocks.checked_mul(tensor.num_claims))
             .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".into()))?;
+        validate_tensor_blocks::<D>(tensor, expected_blocks)?;
         let modulus = (-F::one()).to_canonical_u128() + 1;
 
         let witness = match first_blocks {

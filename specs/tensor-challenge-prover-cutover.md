@@ -96,10 +96,10 @@ The affected surfaces are:
       by `profile-ci`.
 - [x] `scripts/check_profile_ci_features.sh` knows that
       `onehot_fp128_d64_tensor` requires the tensor schedule feature.
-- [ ] The folded-witness prover path for tensor challenges computes the same
+- [x] The folded-witness prover path for tensor challenges computes the same
       output as the expanded `IntegerChallenge` reference without materializing
       one logical challenge per `(claim, block)`.
-- [ ] The one-hot tensor folded-witness path does not recompute the same rotated
+- [x] The one-hot tensor folded-witness path does not recompute the same rotated
       tensor product for every worker chunk.
 - [ ] The relation quotient tensor path avoids allocating the full logical
       challenge vector and has a reference test against the current expanded

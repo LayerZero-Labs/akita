@@ -187,6 +187,7 @@ pub fn fold_witness_linf_tail_bound_sq(
 ///
 /// Here `N = num_fold_coeffs`, `s2_factor = max ||factor||_2²`, and
 /// `k_factor` is the factor support bound.
+#[allow(clippy::too_many_arguments)]
 pub fn fold_witness_linf_tensor_tail_bound_sq(
     num_claims: u128,
     left_len: u128,

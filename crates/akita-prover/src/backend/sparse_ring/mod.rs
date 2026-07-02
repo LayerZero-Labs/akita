@@ -807,8 +807,86 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DecomposeFoldWitness;
     use crate::DensePoly;
+    use akita_challenges::{SparseChallenge, TensorChallenges};
     use akita_field::Prime128OffsetA7F7 as F;
+
+    fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
+        TensorChallenges {
+            left: vec![
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![(D - 1) as u32],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![2],
+                    coeffs: vec![-1],
+                },
+                SparseChallenge {
+                    positions: vec![5],
+                    coeffs: vec![1],
+                },
+            ],
+            right: vec![
+                SparseChallenge {
+                    positions: vec![1],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![3],
+                    coeffs: vec![-1],
+                },
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![4],
+                    coeffs: vec![1],
+                },
+            ],
+            left_len: 2,
+            right_len: 2,
+            num_claims: 2,
+        }
+    }
+
+    fn aggregate_witnesses<Fp: FieldCore, const D: usize>(
+        witnesses: &[DecomposeFoldWitness<Fp, D>],
+    ) -> DecomposeFoldWitness<Fp, D> {
+        let mut acc = witnesses[0].clone();
+        for witness in &witnesses[1..] {
+            for (dst, src) in acc
+                .z_folded_rings
+                .iter_mut()
+                .zip(witness.z_folded_rings.iter())
+            {
+                *dst += *src;
+            }
+            for (dst, src) in acc
+                .centered_coeffs
+                .iter_mut()
+                .zip(witness.centered_coeffs.iter())
+            {
+                for k in 0..D {
+                    dst[k] += src[k];
+                }
+            }
+        }
+        acc.centered_inf_norm = acc
+            .centered_coeffs
+            .iter()
+            .flat_map(|coeffs| coeffs.iter())
+            .map(|coeff| coeff.unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        acc
+    }
 
     #[test]
     fn sparse_ring_fold_matches_dense_reference() {
@@ -835,6 +913,50 @@ mod tests {
             sparse.fold_blocks_ring(&scalars, 2),
             dense.fold_blocks_ring(&scalars, 2)
         );
+    }
+
+    #[test]
+    fn sparse_ring_tensor_decompose_fold_matches_expanded_reference() {
+        const D: usize = 8;
+        let block_len = 2;
+        let num_digits = 1;
+        let tensor = tensor_oracle_challenges::<D>();
+        let polys = [
+            SparseRingPoly::<F, D>::from_signed_coeffs(
+                6,
+                8,
+                vec![(0, 1, 1), (1, 3, -1), (3, 2, 1), (6, 5, -1)],
+            )
+            .unwrap(),
+            SparseRingPoly::<F, D>::from_signed_coeffs(
+                6,
+                8,
+                vec![(0, 0, -1), (2, 4, 1), (5, 7, 1), (7, 2, -1)],
+            )
+            .unwrap(),
+        ];
+        let expanded = tensor
+            .expand_integer::<D>()
+            .unwrap()
+            .into_iter()
+            .map(|challenge| challenge.try_to_sparse_i8().unwrap())
+            .collect::<Vec<_>>();
+
+        let expected = aggregate_witnesses(
+            &polys
+                .iter()
+                .zip(expanded.chunks(4))
+                .map(|(poly, challenges)| poly.decompose_fold(challenges, block_len, num_digits, 0))
+                .collect::<Vec<_>>(),
+        );
+        let poly_refs = polys.iter().collect::<Vec<_>>();
+        let got = SparseRingPoly::<F, D>::decompose_fold_tensor_batched(
+            &poly_refs, &tensor, block_len, num_digits, 0,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(got, expected);
     }
 
     #[test]
