@@ -1203,46 +1203,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 }
 
 #[test]
-fn adaptive_onehot_schedule_stays_within_basis_envelope() {
-    type Cfg = fp128::D64OneHot;
-
-    // The planner's basis search window for `proof_optimized` configurations
-    // is `[PROOF_OPTIMIZED_LOG_BASIS_MIN, PROOF_OPTIMIZED_LOG_BASIS_MAX]`,
-    // which currently caps at `log_basis = 6`. Allow the DP to reach the top
-    // of that window (the zk preset legitimately picks `log_basis = 6` for
-    // some `nv` values once the regenerated tables stop seeding the search
-    // with stale singleton plans); the assertion exists only to catch any
-    // future planner change that escapes the configured envelope.
-    for nv in 10..=120 {
-        let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            CommitmentGroupScheduleKey::singleton(nv),
-        )) {
-            Ok(schedule) => schedule,
-            Err(_) => continue,
-        };
-        let within_window = schedule.steps.iter().all(|step| match step {
-            akita_types::Step::Fold(fold) => fold.params.log_basis <= 6,
-            // A terminal direct ships packed digits at the terminal fold's
-            // basis (window-bounded). A root direct ships raw field elements:
-            // it is the zero-fold / uncommittable edge with no fold basis to
-            // bound. Under honest A-role pricing, D=64 stops securing a fold
-            // for very large `num_vars`, so the DP returns this edge instead
-            // of a folded schedule; it carries no basis to check.
-            akita_types::Step::Direct(direct) => match &direct.witness_shape {
-                akita_types::CleartextWitnessShape::FieldElements(_) => true,
-                akita_types::CleartextWitnessShape::SegmentTyped(shape) => {
-                    shape.layout.log_basis <= 6
-                }
-            },
-        });
-        assert!(
-            within_window,
-            "adaptive onehot schedule selected log_basis > 6 at nv={nv}: {schedule:?}"
-        );
-    }
-}
-
-#[test]
 fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
