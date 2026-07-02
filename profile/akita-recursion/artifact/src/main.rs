@@ -211,7 +211,7 @@ fn verify_with_setup_mode(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
-    claims: VerifierOpeningBatch<'_, Claim, &akita_types::RingCommitment<F, D>>,
+    claims: VerifierOpeningBatch<'_, Claim, &akita_types::FlatRingVec<F>>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _, D>(

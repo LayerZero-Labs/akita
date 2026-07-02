@@ -327,6 +327,12 @@ where
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
 pub struct RingRelationProver;
 
+type RingRelationProverOutput<F, const D: usize> = (
+    RingRelationInstance<F, D>,
+    RingRelationWitness<F, D>,
+    Option<Vec<CyclotomicRing<F, D>>>,
+);
+
 impl RingRelationProver {
     /// Root-level constructor for one shared opening point with one or more
     /// polynomial slots.
@@ -364,14 +370,7 @@ impl RingRelationProver {
         m_row_layout: MRowLayout,
         terminal_tail_t_vectors: Option<usize>,
         compute_hidden_v: bool,
-    ) -> Result<
-        (
-            RingRelationInstance<F, D>,
-            RingRelationWitness<F, D>,
-            Option<Vec<CyclotomicRing<F, D>>>,
-        ),
-        AkitaError,
-    >
+    ) -> Result<RingRelationProverOutput<F, D>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         PointF: Clone,

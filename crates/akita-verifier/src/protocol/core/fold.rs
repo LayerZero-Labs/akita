@@ -227,7 +227,7 @@ fn compression_suffix_offset(
 ) -> Result<usize, AkitaError> {
     physical_w_len
         .checked_sub(plan.padded_suffix_len)
-        .ok_or_else(|| AkitaError::InvalidProof)
+        .ok_or(AkitaError::InvalidProof)
 }
 
 #[allow(clippy::too_many_arguments)]

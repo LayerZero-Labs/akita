@@ -227,6 +227,7 @@ where
 /// `suffix_offset` is the flat witness offset where this commitment's hidden
 /// suffix begins. The first layer's input digits start there, and each
 /// non-final layer's output decomposition digits immediately follow.
+#[allow(clippy::too_many_arguments)]
 pub fn linearize_compression_chain<F, E>(
     setup_fields: &[F],
     plan: &CommitmentCompressionPlan,

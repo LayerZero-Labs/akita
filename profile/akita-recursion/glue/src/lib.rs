@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, RingCommitment, SetupContributionMode,
-    SetupPrefixVerifierRegistry, VerifierOpeningBatch,
+    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, FlatRingVec, RingCommitment,
+    SetupContributionMode, SetupPrefixVerifierRegistry, VerifierOpeningBatch,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
@@ -86,8 +86,8 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     pub opening_point: Vec<F>,
     /// Claimed opening value at `opening_point`.
     pub opening: F,
-    /// Single committed-poly group: one ring commitment per (poly, point) pair.
-    pub commitment: RingCommitment<F, D>,
+    /// Single committed-poly group: one flat commitment payload per (poly, point) pair.
+    pub commitment: FlatRingVec<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
     /// Proof shape descriptor; needed to deserialize `proof` without
@@ -107,7 +107,7 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> VerifierOpeningBatch<'static, F, &'a RingCommitment<F, D>> {
+    ) -> VerifierOpeningBatch<'static, F, &'a FlatRingVec<F>> {
         VerifierOpeningBatch::from_groups(
             self.opening_point.clone(),
             vec![CommitmentGroup {
@@ -401,6 +401,7 @@ where
             BLOB_VALIDATE,
             &(),
         )?;
+        let commitment = FlatRingVec::from_commitment(&commitment);
         let verifier_setup = decode_setup(&mut rest)?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
             &mut rest,
