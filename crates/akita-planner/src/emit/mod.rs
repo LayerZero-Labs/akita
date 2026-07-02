@@ -460,8 +460,6 @@ fn table_fn_name(module_name: &str) -> String {
 fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
     writeln!(out, "#[cfg(feature = \"fp128-d64-onehot-tiered\")]").map_err(|e| e.to_string())?;
     writeln!(out, "pub mod fp128_d64_onehot_tiered;").map_err(|e| e.to_string())?;
-    writeln!(out, "#[cfg(feature = \"fp128-d64-onehot-tiered\")]").map_err(|e| e.to_string())?;
-    writeln!(out, "pub mod fp128_d64_onehot_tiered_group_batch;").map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -475,7 +473,7 @@ fn emit_tiered_table_accessor() -> String {
         "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
         "    GeneratedScheduleTable {\n",
         "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
-        "        group_batch_entries: fp128_d64_onehot_tiered_group_batch::FP128_D64_ONEHOT_TIERED_GROUP_BATCH_SCHEDULES,\n",
+        "        group_batch_entries: &[],\n",
         "        identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,\n",
         "    }\n",
         "}\n",

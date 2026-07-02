@@ -289,7 +289,6 @@ pub fn emit_spec_for_family(
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
-        group_batch,
         "fp128_d128_full",
         "FP128_D128_FULL_SCHEDULES",
         "fp128-d128-full",
@@ -316,7 +315,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64OneHot
     ),
     family_row!(
-        group_batch,
         "fp128_d64_full",
         "FP128_D64_FULL_SCHEDULES",
         "fp128-d64-full",
@@ -335,7 +333,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     ),
     // Tiered companion of `fp128_d64_onehot`
     family_row!(
-        group_batch,
         "fp128_d64_onehot_tiered",
         "FP128_D64_ONEHOT_TIERED_SCHEDULES",
         "fp128-d64-onehot-tiered",

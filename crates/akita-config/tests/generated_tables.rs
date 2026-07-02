@@ -52,6 +52,19 @@ use akita_planner::{
     validate_generated_schedule_table,
 };
 
+#[test]
+fn group_batch_emission_matches_supported_policy_shape() {
+    for family in ALL_GENERATED_FAMILIES {
+        let policy = (family.policy)();
+        assert!(
+            !family.emit_group_batch
+                || (policy.decomposition.log_commit_bound == 1 && !policy.tiered),
+            "family {} must not emit grouped companions for unsupported grouped-root policies",
+            family.module_name
+        );
+    }
+}
+
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_d128_full" => fp128::D128Full::schedule_catalog().is_some(),

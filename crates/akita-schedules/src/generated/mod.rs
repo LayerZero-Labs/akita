@@ -11,16 +11,12 @@ pub use akita_planner::{DecompositionParams, TensorChallengeShape};
 // @generated schedule module wiring begin
 #[cfg(feature = "fp128-d128-full")]
 pub mod fp128_d128_full;
-#[cfg(feature = "fp128-d128-full")]
-pub mod fp128_d128_full_group_batch;
 #[cfg(feature = "fp128-d128-onehot")]
 pub mod fp128_d128_onehot;
 #[cfg(feature = "fp128-d128-onehot")]
 pub mod fp128_d128_onehot_group_batch;
 #[cfg(feature = "fp128-d64-full")]
 pub mod fp128_d64_full;
-#[cfg(feature = "fp128-d64-full")]
-pub mod fp128_d64_full_group_batch;
 #[cfg(feature = "fp128-d64-onehot")]
 pub mod fp128_d64_onehot;
 #[cfg(feature = "fp128-d64-onehot")]
@@ -31,8 +27,6 @@ pub mod fp128_d64_onehot_tensor;
 pub mod fp128_d64_onehot_tensor_group_batch;
 #[cfg(feature = "fp128-d64-onehot-tiered")]
 pub mod fp128_d64_onehot_tiered;
-#[cfg(feature = "fp128-d64-onehot-tiered")]
-pub mod fp128_d64_onehot_tiered_group_batch;
 #[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot;
 #[cfg(feature = "fp32-d256-onehot")]
@@ -48,7 +42,7 @@ pub mod fp64_d256_onehot;
 pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d128_full::FP128_D128_FULL_SCHEDULES,
-        group_batch_entries: fp128_d128_full_group_batch::FP128_D128_FULL_GROUP_BATCH_SCHEDULES,
+        group_batch_entries: &[],
         identity: fp128_d128_full::CATALOG_IDENTITY,
     }
 }
@@ -66,7 +60,7 @@ pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
 pub fn fp128_d64_full_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_full::FP128_D64_FULL_SCHEDULES,
-        group_batch_entries: fp128_d64_full_group_batch::FP128_D64_FULL_GROUP_BATCH_SCHEDULES,
+        group_batch_entries: &[],
         identity: fp128_d64_full::CATALOG_IDENTITY,
     }
 }
@@ -98,8 +92,7 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
 pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,
-        group_batch_entries:
-            fp128_d64_onehot_tiered_group_batch::FP128_D64_ONEHOT_TIERED_GROUP_BATCH_SCHEDULES,
+        group_batch_entries: &[],
         identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,
     }
 }
