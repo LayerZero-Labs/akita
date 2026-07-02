@@ -58,10 +58,10 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    // Terminal layout drops the D-block (`v = D · ŵ`) from M entirely;
-    // `v` never travels on the wire, so the absorb must be skipped on
-    // both prover and verifier to keep the Fiat-Shamir transcript in
-    // sync. Intermediate layouts still bind the prover's `v` rows.
+    // Layouts without a raw D-block do not carry `v = D · ŵ` on the wire, so
+    // the absorb must be skipped on both prover and verifier to keep the
+    // Fiat-Shamir transcript in sync. Stage-1 itself is controlled by the
+    // caller; nonterminal compressed-`v` folds can still sample challenges.
     if matches!(m_row_layout, MRowLayout::WithDBlock) {
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
     }

@@ -665,6 +665,7 @@ where
         lp,
         prepared_fold.row_coefficients.as_deref(),
         m_row_layout,
+        !is_terminal_fold,
     )?;
 
     let relation_rows = if is_terminal_fold {

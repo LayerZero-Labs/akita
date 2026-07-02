@@ -156,8 +156,14 @@ where
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
     transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
-    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
-        .into_intermediate()
+    ring_switch_verifier_core::<F, E, T, D>(
+        replay,
+        w_len,
+        transcript,
+        replay.relation.m_row_layout(),
+        true,
+    )?
+    .into_intermediate()
 }
 
 /// Terminal variant of [`ring_switch_verifier`].
@@ -184,8 +190,14 @@ where
     T: Transcript<F>,
 {
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
-    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithoutDBlock)?
-        .into_terminal_as_output()
+    ring_switch_verifier_core::<F, E, T, D>(
+        replay,
+        w_len,
+        transcript,
+        replay.relation.m_row_layout(),
+        false,
+    )?
+    .into_terminal_as_output()
 }
 
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
@@ -195,6 +207,7 @@ fn ring_switch_verifier_core<F, E, T, const D: usize>(
     w_len: usize,
     transcript: &mut T,
     m_row_layout: MRowLayout,
+    run_stage1: bool,
 ) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -240,13 +253,14 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0 = match m_row_layout {
-        MRowLayout::WithDBlock => Some(
+    let tau0 = if run_stage1 {
+        Some(
             (0..num_sc_vars)
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
                 .collect(),
-        ),
-        MRowLayout::WithoutDBlock => None,
+        )
+    } else {
+        None
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
