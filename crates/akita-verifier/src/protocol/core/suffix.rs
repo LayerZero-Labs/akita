@@ -44,7 +44,7 @@ where
     let lp = &scheduled.params;
     let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
-    let m_row_layout = proof.m_row_layout();
+    let m_row_layout = scheduled_m_row_layout(scheduled);
     let v_typed = proof.v_as_ring_slice::<D>()?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
     if current_state.opening_point.len() < alpha_bits {

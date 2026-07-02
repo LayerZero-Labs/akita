@@ -203,6 +203,16 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
     pub(in crate::protocol::core) trace_basis: BasisMode,
 }
 
+pub(in crate::protocol::core) fn scheduled_m_row_layout(
+    scheduled: &ExecutionSchedule,
+) -> MRowLayout {
+    if scheduled.is_terminal || scheduled.compression.v.is_some() {
+        MRowLayout::WithoutDBlock
+    } else {
+        MRowLayout::WithDBlock
+    }
+}
+
 struct Stage1Replay<E: FieldCore> {
     batching_coeff: E,
     s_claim: E,

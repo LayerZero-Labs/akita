@@ -198,7 +198,7 @@ where
         transcript,
         claims,
         root_params,
-        MRowLayout::WithDBlock,
+        scheduled_m_row_layout(scheduled),
         None,
         basis,
     )?;

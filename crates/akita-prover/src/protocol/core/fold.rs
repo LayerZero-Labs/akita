@@ -98,6 +98,16 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::core) row_coefficients: Option<Vec<L>>,
 }
 
+pub(in crate::protocol::core) fn scheduled_m_row_layout(
+    scheduled: &ExecutionSchedule,
+) -> MRowLayout {
+    if scheduled.is_terminal || scheduled.compression.v.is_some() {
+        MRowLayout::WithoutDBlock
+    } else {
+        MRowLayout::WithDBlock
+    }
+}
+
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
     point: &RingMultiplierOpeningPoint<F, D>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
@@ -652,11 +662,7 @@ where
         build_output.terminal_artifacts,
         terminal_direct_witness_shape,
     )?;
-    let m_row_layout = if is_terminal_fold {
-        MRowLayout::WithoutDBlock
-    } else {
-        MRowLayout::WithDBlock
-    };
+    let m_row_layout = prepared_fold.instance.m_row_layout();
     let rs = ring_switch_finalize::<F, L, T, D>(
         &prepared_fold.instance,
         expanded.as_ref(),
@@ -668,10 +674,9 @@ where
         !is_terminal_fold,
     )?;
 
-    let relation_rows = if is_terminal_fold {
-        &[][..]
-    } else {
-        prepared_fold.instance.v.as_slice()
+    let relation_rows = match m_row_layout {
+        MRowLayout::WithDBlock => prepared_fold.instance.v.as_slice(),
+        MRowLayout::WithoutDBlock => &[][..],
     };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,

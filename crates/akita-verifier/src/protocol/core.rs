@@ -58,7 +58,7 @@ use root_fold::verify_root;
 pub use verify::batched_verify;
 
 pub(in crate::protocol::core) use fold::{
-    verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldReplay,
+    scheduled_m_row_layout, verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldReplay,
 };
 
 fn prepare_terminal_witness_replay<F, T>(

@@ -134,11 +134,7 @@ where
         let level_params = &scheduled.params;
         let level_d = level_params.ring_dimension;
         let is_terminal_level = scheduled.is_terminal;
-        let m_row_layout = if is_terminal_level {
-            MRowLayout::WithoutDBlock
-        } else {
-            MRowLayout::WithDBlock
-        };
+        let m_row_layout = scheduled_m_row_layout(&scheduled);
         let tail_t_vectors = if is_terminal_level {
             terminal_tail_t_vectors
         } else {

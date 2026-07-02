@@ -526,7 +526,9 @@ where
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         return Err(AkitaError::InvalidProof);
     };
-    let root_lp = &root_step.params;
+    let root_scheduled = schedule
+        .get_execution_schedule(0)
+        .map_err(|_| AkitaError::InvalidProof)?;
     let total_fold_levels = schedule_num_fold_levels(schedule);
     let terminal_direct = schedule
         .steps
@@ -560,7 +562,7 @@ where
                 transcript,
                 &claims,
                 basis,
-                root_lp,
+                &root_scheduled,
                 setup_contribution_mode,
                 None,
                 root_step.next_w_len,
@@ -605,7 +607,7 @@ where
                 transcript,
                 &claims,
                 basis,
-                root_lp,
+                &root_scheduled,
                 setup_contribution_mode,
                 Some(&first_recursive_params),
                 root_step.next_w_len,

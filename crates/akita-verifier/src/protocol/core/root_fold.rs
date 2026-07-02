@@ -21,7 +21,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     transcript: &mut T,
     claims: &VerifierOpeningBatch<'_, E, &FlatRingVec<F>>,
     basis: BasisMode,
-    root_lp: &LevelParams,
+    scheduled: &ExecutionSchedule,
     setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
@@ -31,8 +31,12 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    let root_lp = &scheduled.params;
     validate_level_dispatch::<D>(root_lp)?;
-    let m_row_layout = proof.fold_m_row_layout().ok_or(AkitaError::InvalidProof)?;
+    if proof.fold_m_row_layout().is_none() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let m_row_layout = scheduled_m_row_layout(scheduled);
     let extension_opening_reduction = proof.fold_extension_opening_reduction();
     let v_typed = proof.fold_v::<D>()?;
     let next_fold_level_params = match proof {
