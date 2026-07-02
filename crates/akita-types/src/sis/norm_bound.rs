@@ -194,6 +194,15 @@ fn fold_witness_pre_snap_linf_cap(
     }
 }
 
+/// Integer retain floor `⌊retain_num/retain_den · t*⌋`, clamped to at least 1.
+#[must_use]
+pub fn snap_min_tstar_retain_floor(t_star: u128, retain_num: u128, retain_den: u128) -> u128 {
+    if t_star == 0 || retain_den == 0 {
+        return 1;
+    }
+    (t_star.saturating_mul(retain_num) / retain_den).max(1)
+}
+
 /// Walk `δ_fold` downward while the verifier digit envelope at `δ-1` still clears
 /// `retain_num/retain_den · t*`.
 #[must_use]
@@ -208,7 +217,7 @@ pub fn snap_num_digits_fold_down(
     if delta_base <= 1 || t_star == 0 || retain_den == 0 {
         return (delta_base, pre_snap_cap);
     }
-    let floor = (t_star.saturating_mul(retain_num) / retain_den).max(1);
+    let floor = snap_min_tstar_retain_floor(t_star, retain_num, retain_den);
     let mut delta = delta_base;
     let mut grind_cap = pre_snap_cap;
     while delta > 1 {
@@ -727,6 +736,12 @@ mod tests {
             digit_priced > cap_priced,
             "digit-priced {digit_priced} must exceed honest-cap-priced {cap_priced}",
         );
+    }
+
+    #[test]
+    fn snap_min_tstar_retain_floor_uses_integer_division() {
+        assert_eq!(snap_min_tstar_retain_floor(739, 1, 2), 369);
+        assert_eq!(snap_min_tstar_retain_floor(739, 5_000, 10_000), 369);
     }
 
     #[test]

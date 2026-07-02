@@ -1,7 +1,9 @@
 //! Aggregate fold-linf observations across repeated prove runs.
 
 use akita_prover::FoldGrindObservation;
-use akita_types::sis::{fold_witness_verifier_linf_bound, FoldWitnessLinfCapPolicy};
+use akita_types::sis::{
+    fold_witness_verifier_linf_bound, snap_min_tstar_retain_floor, FoldWitnessLinfCapPolicy,
+};
 
 #[derive(Clone, Debug)]
 pub struct FoldLinfLevelSample {
@@ -56,12 +58,11 @@ fn tstar_reduction_fraction(t_star: u128, cap: u128) -> f64 {
     }
 }
 
-fn snap_cap_floor_from_tstar(t_star: u128, max_reduction_fraction: f64) -> u128 {
-    if t_star == 0 {
-        return 1;
-    }
+fn snap_retain_rational(max_reduction_fraction: f64) -> (u128, u128) {
     let retain = (1.0 - max_reduction_fraction).clamp(0.0, 1.0);
-    ((t_star as f64) * retain).ceil().max(1.0) as u128
+    const DEN: u128 = 10_000;
+    let num = (retain * DEN as f64).round() as u128;
+    (num.max(1), DEN)
 }
 
 /// Tightest downward digit snap with `z_ver(δ') >= floor` and observed quantiles inside cap.
@@ -76,7 +77,8 @@ pub fn best_snap_below_tstar(
     if current_delta <= 1 || t_star == 0 {
         return None;
     }
-    let floor = snap_cap_floor_from_tstar(t_star, max_tstar_reduction_fraction);
+    let (retain_num, retain_den) = snap_retain_rational(max_tstar_reduction_fraction);
+    let floor = snap_min_tstar_retain_floor(t_star, retain_num, retain_den);
     for delta in (1..current_delta).rev() {
         let cap = fold_witness_verifier_linf_bound(log_basis, delta);
         if cap < floor {
@@ -165,18 +167,26 @@ pub fn print_fold_linf_aggregate_report(
     );
 
     for agg in &aggregates {
-        let t_star = agg.t_star.unwrap_or(agg.honest_cap);
-        let snap = best_snap_below_tstar(
-            agg.log_basis,
-            agg.delta_fold,
-            t_star,
-            agg.observed_max,
-            agg.observed_p90,
-            max_tstar_reduction_fraction,
-        );
+        let snap = match (agg.policy, agg.t_star) {
+            (FoldWitnessLinfCapPolicy::TailBoundWithGrind, Some(t_star)) => best_snap_below_tstar(
+                agg.log_basis,
+                agg.delta_fold,
+                t_star,
+                agg.observed_max,
+                agg.observed_p90,
+                max_tstar_reduction_fraction,
+            ),
+            _ => None,
+        };
 
         let snap_line = snap.as_ref().map_or_else(
-            || "none".to_string(),
+            || {
+                if agg.t_star.is_some() {
+                    "none".to_string()
+                } else {
+                    "n/a (no tail t*)".to_string()
+                }
+            },
             |s| {
                 format!(
                     "δ'={} cap={} Δt*={:.1}% max_ok={}",
@@ -188,17 +198,25 @@ pub fn print_fold_linf_aggregate_report(
             },
         );
 
+        let t_star_display = agg
+            .t_star
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "n/a".to_string());
+        let obs_over_tstar = agg.t_star.map_or(0.0, |t_star| {
+            if t_star > 0 {
+                agg.observed_max as f64 / t_star as f64
+            } else {
+                0.0
+            }
+        });
+
         eprintln!(
             "L{} | r={} {:?} | β={} t*={} cap={} δ={} z_ver={} | obs max={} p90={} mean={:.1} | obs/β={:.4} obs/t*={:.4} | grind mean={:.2} | {snap_line}",
             agg.level_index,
             agg.r_vars,
             agg.policy,
             agg.beta_inf,
-            if agg.t_star.is_some() {
-                t_star.to_string()
-            } else {
-                "n/a".to_string()
-            },
+            t_star_display,
             agg.honest_cap,
             agg.delta_fold,
             agg.verifier_linf_bound,
@@ -206,11 +224,7 @@ pub fn print_fold_linf_aggregate_report(
             agg.observed_p90,
             agg.observed_sum as f64 / agg.samples as f64,
             agg.observed_max as f64 / agg.beta_inf as f64,
-            if t_star > 0 {
-                agg.observed_max as f64 / t_star as f64
-            } else {
-                0.0
-            },
+            obs_over_tstar,
             agg.grind_probe_sum as f64 / agg.samples as f64,
         );
     }
@@ -218,7 +232,17 @@ pub fn print_fold_linf_aggregate_report(
     eprintln!("--- per-iteration raw rows ---");
     for sample in samples {
         let o = &sample.observation;
-        let t_star = o.t_star.unwrap_or(o.honest_cap);
+        let t_star_display = o
+            .t_star
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "n/a".to_string());
+        let obs_over_tstar = o.t_star.map_or(0.0, |t_star| {
+            if t_star > 0 {
+                o.observed_linf as f64 / t_star as f64
+            } else {
+                0.0
+            }
+        });
         eprintln!(
             "iter={} L{} r={} obs={} β={} t*={} cap={} δ={} obs/β={:.4} obs/t*={:.4} grind={} nonce={}",
             sample.iteration,
@@ -226,19 +250,11 @@ pub fn print_fold_linf_aggregate_report(
             o.r_vars,
             o.observed_linf,
             o.beta_inf,
-            if o.t_star.is_some() {
-                t_star.to_string()
-            } else {
-                "n/a".to_string()
-            },
+            t_star_display,
             o.honest_cap,
             o.delta_fold,
             o.observed_linf as f64 / o.beta_inf as f64,
-            if t_star > 0 {
-                o.observed_linf as f64 / t_star as f64
-            } else {
-                0.0
-            },
+            obs_over_tstar,
             o.grind_probe_count,
             o.grind_nonce,
         );
