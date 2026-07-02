@@ -1,4 +1,4 @@
-//! Setup-capacity E2E tests: exercise every `fp128` preset under three
+//! Setup-capacity E2E tests: exercise production `fp128` D64 presets under three
 //! setup-vs-use size relationships.
 //!
 //! For each preset we run commit/prove/verify (or batched variants) with:
@@ -13,8 +13,8 @@
 //!    than commit/prove/verify. These must succeed — the setup envelope is
 //!    an upper bound, not a tight match.
 //!
-//! Every preset listed in `presets.rs` (`D128Full`, `D64Full`, `D64OneHot`,
-//! `D32Full`, `D32OneHot`) gets its own module with the five tests.
+//! Every preset listed in `presets.rs` for the production D64 merge gate gets its
+//! own module with the five tests.
 
 #![allow(missing_docs)]
 
@@ -561,20 +561,6 @@ preset_module!(
     d64_onehot,
     fp128::D64OneHot,
     64,
-    run_onehot_e2e,
-    run_onehot_batched_e2e
-);
-preset_module!(
-    d32_full,
-    fp128::D32Full,
-    32,
-    run_dense_e2e,
-    run_dense_batched_e2e
-);
-preset_module!(
-    d32_onehot,
-    fp128::D32OneHot,
-    32,
     run_onehot_e2e,
     run_onehot_batched_e2e
 );

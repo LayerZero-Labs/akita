@@ -18,7 +18,7 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
-`key: AkitaScheduleLookupKey` describes the supported scalar same-point root
+`key: CommitmentGroupScheduleKey` describes the supported scalar same-point root
 opening shape with two fields:
 
 - `num_vars`: the number of Boolean variables in the opened polynomial domain

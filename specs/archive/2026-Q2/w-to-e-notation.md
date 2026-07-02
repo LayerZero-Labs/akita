@@ -156,7 +156,7 @@ doc/comment mentions are **not** compiler-checked and need explicit grep.
 - `build_w_coeffs`, `w_ring_element_count`, `planned_w_ring_element_count`
   (size/build of full packed $\mathbf{w}$).
 - `num_w_vectors` (count of root relation $\mathbf{w}$ vectors; a public
-  `AkitaScheduleLookupKey` field and the ABI-stable `GeneratedScheduleKey`
+  `CommitmentGroupScheduleKey` field and the ABI-stable `GeneratedCommitmentGroupScheduleKey`
   field; the multiplicand of `w_ring_element_count` at
   `crates/akita-types/src/schedule.rs:261-264`).
 - `next_w_commitment`, `next_w_eval` (commitment/MLE of full $\mathbf{w}$).

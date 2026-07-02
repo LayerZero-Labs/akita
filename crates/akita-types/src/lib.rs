@@ -113,8 +113,8 @@ pub use schedule::{
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
     schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, DirectStep,
-    ExecutionSchedule, FoldStep, GroupBatchAkitaScheduleLookupKey, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
+    DirectStep, ExecutionSchedule, FoldStep, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS};

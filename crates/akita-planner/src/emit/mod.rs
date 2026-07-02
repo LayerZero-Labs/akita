@@ -12,13 +12,15 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
+    DirectStep, FoldStep, LevelParams, Schedule, Step,
 };
 
 use crate::catalog_identity::expected_catalog_identity;
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
-    GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
+    GeneratedCommitmentGroupLayout, GeneratedCommitmentGroupScheduleKey, GeneratedDirectStep,
+    GeneratedFoldStep, GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleLookupKey, GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
 };
 use crate::{generated_schedule_lookup_key, PlannerPolicy};
 
@@ -30,9 +32,12 @@ pub struct EmitSpec {
     pub family_name: &'static str,
     pub schedule_feature: &'static str,
     pub policy: PlannerPolicy,
-    pub keys: Vec<AkitaScheduleLookupKey>,
+    pub keys: Vec<CommitmentGroupScheduleKey>,
+    pub group_batch_keys: Vec<AkitaScheduleLookupKey>,
+    pub emit_group_batch: bool,
     pub output_dir: PathBuf,
-    pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub regen: fn(CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError>,
+    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
     pub generator_command: &'static str,
@@ -72,10 +77,60 @@ fn schedule_to_generated_steps(schedule: &Schedule) -> Vec<GeneratedStep> {
         .collect()
 }
 
-fn emit_key(key: GeneratedScheduleKey) -> String {
+fn emit_key(key: GeneratedCommitmentGroupScheduleKey) -> String {
     format!(
-        "GeneratedScheduleKey {{ num_vars: {}, num_polynomials: {} }}",
+        "GeneratedCommitmentGroupScheduleKey {{ num_vars: {}, num_polynomials: {} }}",
         key.num_vars, key.num_polynomials,
+    )
+}
+
+fn generated_precommitted_group_key(
+    layout: &CommitmentGroupLayout,
+) -> GeneratedCommitmentGroupLayout {
+    GeneratedCommitmentGroupLayout {
+        key: generated_schedule_lookup_key(layout.key),
+        m_vars: layout.m_vars,
+        r_vars: layout.r_vars,
+        log_basis: layout.log_basis,
+        n_a: layout.n_a,
+        conservative_n_b: layout.conservative_n_b,
+    }
+}
+
+fn generated_group_batch_schedule_key(
+    key: &AkitaScheduleLookupKey,
+    precommitteds: &'static [GeneratedCommitmentGroupLayout],
+) -> GeneratedScheduleLookupKey {
+    GeneratedScheduleLookupKey {
+        final_group: generated_schedule_lookup_key(key.final_group),
+        precommitteds,
+    }
+}
+
+fn emit_precommitted_group_key(layout: &CommitmentGroupLayout) -> String {
+    let key = generated_precommitted_group_key(layout);
+    format!(
+        "GeneratedCommitmentGroupLayout {{ key: {}, m_vars: {}, r_vars: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        emit_key(key.key),
+        key.m_vars,
+        key.r_vars,
+        key.log_basis,
+        key.n_a,
+        key.conservative_n_b,
+    )
+}
+
+fn emit_group_batch_key(key: &AkitaScheduleLookupKey) -> String {
+    let precommitteds = key
+        .precommitteds
+        .iter()
+        .map(emit_precommitted_group_key)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "GeneratedScheduleLookupKey {{ final_group: {}, precommitteds: &[{}] }}",
+        emit_key(generated_schedule_lookup_key(key.final_group)),
+        precommitteds,
     )
 }
 
@@ -124,6 +179,31 @@ fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> 
     writeln!(
         out,
         "    GeneratedScheduleTableEntry {{ key: {key_str}, steps: &[",
+    )
+    .map_err(|e| e.to_string())?;
+
+    for step in &schedule.steps {
+        match step {
+            Step::Fold(fold) => {
+                writeln!(out, "{}", emit_fold(fold)).map_err(|e| e.to_string())?;
+            }
+            Step::Direct(direct) => {
+                writeln!(out, "{}", emit_direct(direct)).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    writeln!(out, "    ] }},").map_err(|e| e.to_string())
+}
+
+fn emit_group_batch_schedule_entry(
+    out: &mut String,
+    key_str: &str,
+    schedule: &Schedule,
+) -> Result<(), String> {
+    writeln!(
+        out,
+        "    GeneratedGroupBatchScheduleTableEntry {{ key: {key_str}, steps: &[",
     )
     .map_err(|e| e.to_string())?;
 
@@ -225,8 +305,56 @@ fn output_module_name(spec: &EmitSpec) -> String {
     spec.module_name.to_string()
 }
 
+fn output_group_batch_module_name(spec: &EmitSpec) -> String {
+    format!("{}_group_batch", spec.module_name)
+}
+
 fn output_const_name(spec: &EmitSpec) -> String {
     spec.const_name.to_string()
+}
+
+fn output_group_batch_const_name(spec: &EmitSpec) -> String {
+    spec.const_name.strip_suffix("_SCHEDULES").map_or_else(
+        || format!("{}_GROUP_BATCH_SCHEDULES", spec.const_name),
+        |base| format!("{base}_GROUP_BATCH_SCHEDULES"),
+    )
+}
+
+fn sorted_group_batch_keys(spec: &EmitSpec) -> Vec<AkitaScheduleLookupKey> {
+    let mut keys = spec.group_batch_keys.clone();
+    keys.sort_by(crate::generated::runtime_group_batch_key_cmp);
+    keys
+}
+
+fn memory_group_batch_entries(
+    spec: &EmitSpec,
+) -> Result<Vec<GeneratedGroupBatchScheduleTableEntry>, String> {
+    let mut memory_group_batch_entries = Vec::new();
+    for key in sorted_group_batch_keys(spec) {
+        let schedule = (spec.regen_group_batch)(key.clone())
+            .map_err(|e| format!("{}: regen grouped {key:?}: {e}", spec.module_name))?;
+        let steps = schedule_to_generated_steps(&schedule);
+        let steps_ref = Box::leak(steps.into_boxed_slice());
+        let precommitteds = key
+            .precommitteds
+            .iter()
+            .map(generated_precommitted_group_key)
+            .collect::<Vec<_>>();
+        let precommitteds_ref = Box::leak(precommitteds.into_boxed_slice());
+        memory_group_batch_entries.push(GeneratedGroupBatchScheduleTableEntry {
+            key: generated_group_batch_schedule_key(&key, precommitteds_ref),
+            steps: steps_ref,
+        });
+    }
+    memory_group_batch_entries.sort_by(|left, right| {
+        crate::generated::generated_group_batch_key_cmp(&left.key, &right.key)
+    });
+    debug_assert!(
+        crate::generated::catalog_group_batch_entries_sorted_for_lookup(
+            &memory_group_batch_entries
+        )
+    );
+    Ok(memory_group_batch_entries)
 }
 
 /// Emit one family module (entries + embedded catalog identity).
@@ -238,7 +366,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     writeln!(
         out,
         "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, \
-         GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, \
+         GeneratedCommitmentGroupScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, \
          SisModulusFamily, TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;
@@ -275,16 +403,51 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     writeln!(out, "];").map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;
 
+    let memory_group_batch_entries = memory_group_batch_entries(spec)?;
     let identity = expected_catalog_identity(
         spec.family_name,
         &spec.policy,
         &memory_entries,
+        &memory_group_batch_entries,
         spec.ring_challenge_config,
         spec.fold_challenge_shape_at_level,
     )
     .map_err(|e| format!("{}: catalog identity: {e}", spec.module_name))?;
     out.push_str(&emit_identity_const(&identity));
 
+    Ok(out)
+}
+
+/// Emit one grouped-batch companion module.
+pub fn emit_group_batch_family_module(spec: &EmitSpec) -> Result<String, String> {
+    let mut out = String::new();
+    let group_batch_const_name = output_group_batch_const_name(spec);
+    writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
+    writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleLookupKey, \
+         GeneratedGroupBatchScheduleTableEntry, GeneratedCommitmentGroupLayout, \
+         GeneratedCommitmentGroupScheduleKey, GeneratedStep,\n}};"
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(out).map_err(|e| e.to_string())?;
+
+    writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "pub(crate) static {group_batch_const_name}: &[GeneratedGroupBatchScheduleTableEntry] = &["
+    )
+    .map_err(|e| e.to_string())?;
+
+    for key in sorted_group_batch_keys(spec) {
+        let schedule = (spec.regen_group_batch)(key.clone())
+            .map_err(|e| format!("{}: regen grouped {key:?}: {e}", spec.module_name))?;
+        let key_str = emit_group_batch_key(&key);
+        emit_group_batch_schedule_entry(&mut out, &key_str, &schedule)?;
+    }
+
+    writeln!(out, "];").map_err(|e| e.to_string())?;
     Ok(out)
 }
 
@@ -312,6 +475,7 @@ fn emit_tiered_table_accessor() -> String {
         "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
         "    GeneratedScheduleTable {\n",
         "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
+        "        group_batch_entries: &[],\n",
         "        identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,\n",
         "    }\n",
         "}\n",
@@ -336,6 +500,11 @@ fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
         }
         writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
+        if spec.emit_group_batch {
+            writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
+            writeln!(out, "pub mod {};", output_group_batch_module_name(spec))
+                .map_err(|e| e.to_string())?;
+        }
     }
     if !tiered_wired {
         emit_tiered_module_declaration(&mut out)?;
@@ -351,10 +520,17 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
     let fn_name = table_fn_name(spec.module_name);
     let feat = spec.schedule_feature;
     let module_name = spec.module_name;
+    let group_batch_module_name = output_group_batch_module_name(spec);
     let const_name = spec.const_name;
+    let group_batch_const_name = output_group_batch_const_name(spec);
+    let group_batch_entries = if spec.emit_group_batch {
+        format!("{group_batch_module_name}::{group_batch_const_name}")
+    } else {
+        "&[]".to_string()
+    };
     Ok(format!(
         "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
+         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        group_batch_entries: {group_batch_entries},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
 }
 
@@ -436,6 +612,16 @@ pub fn write_family_module(spec: &EmitSpec) -> Result<PathBuf, String> {
     let dest = spec
         .output_dir
         .join(format!("{}.rs", output_module_name(spec)));
+    fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
+    Ok(dest)
+}
+
+/// Write one grouped-batch companion module to `spec.output_dir` and return its path.
+pub fn write_group_batch_family_module(spec: &EmitSpec) -> Result<PathBuf, String> {
+    let body = emit_group_batch_family_module(spec)?;
+    let dest = spec
+        .output_dir
+        .join(format!("{}.rs", output_group_batch_module_name(spec)));
     fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;
     Ok(dest)
 }

@@ -2,7 +2,7 @@
 
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::schedule::AkitaScheduleLookupKey;
+use crate::schedule::CommitmentGroupScheduleKey;
 use crate::sis::compute_num_digits_full_field;
 use crate::{CleartextWitnessShape, LevelParams, MRowLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
 
@@ -100,7 +100,7 @@ pub fn extension_opening_reduction_level_bytes(
     challenge_field_bits: u32,
     extension_opening_width: usize,
     fold_level: usize,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     current_w_len: usize,
 ) -> Result<usize, AkitaError> {
     if extension_opening_width <= 1 {

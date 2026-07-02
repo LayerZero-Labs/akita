@@ -279,7 +279,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
   identities, and updates family feature wiring (not `akita-planner`). The binary
   itself stays in `akita-config` (only crate that can name presets).
 - [ ] Table **types** (`GeneratedScheduleTable`, `GeneratedStep`, `GeneratedFoldStep`,
-  `GeneratedScheduleKey`, `table_entry`, `expand`, `schedule_from_entry`) stay in
+  `GeneratedCommitmentGroupScheduleKey`, `table_entry`, `expand`, `schedule_from_entry`) stay in
   `akita-planner`; `akita-schedules` is data-only and depends on `akita-planner` for
   them. No dependency cycle (`akita-schedules → akita-planner`; `akita-config →
   akita-schedules`).
@@ -328,7 +328,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 #### Same-point keys only
 
 - [ ] Schedule lookup for production prove/verify paths uses
-  `AkitaScheduleLookupKey::new_from_opening_batch` / `OpeningBatch::new`.
+  `CommitmentGroupScheduleKey::new_from_opening_batch` / `OpeningBatch::new`.
 - [ ] `GeneratedFamily` replaces the current hardcoded `[1, 4]` enumeration with a
   per-family `num_polys: &'static [usize]` list. Akita defaults use `[1, 4]`; Jolt can
   emit `[1, 38]` without changing Akita core.
@@ -474,7 +474,7 @@ Downstream (Jolt):
 
 ```rust
 pub fn resolve_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -574,7 +574,7 @@ fn schedule_catalog() -> Option<GeneratedScheduleTable> {
     None
 }
 
-fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+fn runtime_schedule(key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
     akita_planner::resolve_schedule(
         key,
         &policy_of::<Self>(),
@@ -643,7 +643,7 @@ num_z_vectors = 1                (one commitment group)
 num_commitment_groups = 1        (in generated key shape)
 ```
 
-`AkitaScheduleLookupKey::new_from_opening_batch` is the canonical projection.
+`CommitmentGroupScheduleKey::new_from_opening_batch` is the canonical projection.
 
 **Generated table enumeration** (`family_keys` in emitter) crosses:
 
@@ -802,7 +802,7 @@ pub struct EmitSpec {
     pub const_name: &'static str,
     pub family_name: &'static str,
     pub policy: PlannerPolicy,
-    pub keys: Vec<AkitaScheduleLookupKey>,
+    pub keys: Vec<CommitmentGroupScheduleKey>,
     pub output_dir: PathBuf,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
