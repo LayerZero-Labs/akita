@@ -411,7 +411,14 @@ fn setup_envelope_endpoint_poly_scan_full_manual() {
                 }
             }
         }
-        SetupMatrixEnvelope { max_setup_len }
+        let mut envelope = SetupMatrixEnvelope { max_setup_len };
+        if Cfg::decomposition().log_commit_bound == 1 && !Cfg::TIERED_COMMITMENT {
+            crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<
+                Cfg,
+            >(max_num_vars, max_num_batched_polys, &mut envelope)
+            .expect("conservative setup envelope inflation");
+        }
+        envelope
     }
 
     for max_nv in [16usize, 24, 30] {
