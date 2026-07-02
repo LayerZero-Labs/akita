@@ -21,8 +21,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
-    ChunkedWitnessCfg, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, MRowLayout, Schedule, Step,
+    ChunkedWitnessCfg, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams,
+    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
