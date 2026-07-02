@@ -33,7 +33,8 @@ pub struct ExecutionSchedule {
     /// Compression plan for the public `u` commitment opened by this fold.
     ///
     /// This is `Schedule::root_compression` at level 0 and the previous
-    /// fold's emitted `next_u` compression at recursive levels.
+    /// fold's emitted `next_u` compression at recursive levels. Terminal
+    /// folds must leave this unset because their current `u` is sent raw.
     pub current_u_compression: Option<CommitmentCompressionPlan>,
     /// Commitment compression plan active at this fold.
     pub compression: FoldCompressionPlan,
@@ -588,6 +589,7 @@ impl Schedule {
                 "schedule is missing fold step at level {level}"
             )));
         };
+        let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
         let current_u_compression = if level == 0 {
             self.root_compression.clone()
         } else {
@@ -596,7 +598,11 @@ impl Schedule {
                 Some(Step::Direct(_)) | None => None,
             }
         };
-        let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
+        if is_terminal && current_u_compression.is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "terminal fold current u commitment must be sent raw".to_string(),
+            ));
+        }
         let next_level_params = scheduled_next_level_params(self, level + 1)?;
         Ok(ExecutionSchedule {
             level,
@@ -935,6 +941,92 @@ mod tests {
         let suffix_exec = schedule.get_execution_schedule(1).expect("suffix exec");
         assert_eq!(suffix_exec.current_u_compression, Some(emitted_next_u));
         assert!(suffix_exec.compression.next_u.is_none());
+    }
+
+    #[test]
+    fn execution_schedule_rejects_terminal_current_u_compression() {
+        let params = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            64,
+            3,
+            1,
+            1,
+            1,
+            akita_challenges::SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        );
+        let root_plan = sample_compression_plan(CompressionMapRole::RootF, 0);
+        let schedule = Schedule {
+            root_compression: Some(root_plan),
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: params.clone(),
+                    current_w_len: 64,
+                    next_w_len: 16,
+                    level_bytes: 1,
+                    compression: Default::default(),
+                }),
+                Step::Direct(DirectStep {
+                    current_w_len: 16,
+                    witness_shape: CleartextWitnessShape::FieldElements(16),
+                    direct_bytes: 1,
+                    params: None,
+                }),
+            ],
+            total_bytes: 2,
+        };
+
+        assert!(schedule.get_execution_schedule(0).is_err());
+    }
+
+    #[test]
+    fn execution_schedule_rejects_next_u_compression_into_terminal_fold() {
+        let params = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            64,
+            3,
+            1,
+            1,
+            1,
+            akita_challenges::SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        );
+        let emitted_next_u = sample_compression_plan(CompressionMapRole::F, 32);
+        let schedule = Schedule {
+            root_compression: None,
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: params.clone(),
+                    current_w_len: 64,
+                    next_w_len: 32,
+                    level_bytes: 1,
+                    compression: FoldCompressionPlan {
+                        v: None,
+                        next_u: Some(emitted_next_u),
+                    },
+                }),
+                Step::Fold(FoldStep {
+                    params: params.clone(),
+                    current_w_len: 32,
+                    next_w_len: 16,
+                    level_bytes: 1,
+                    compression: Default::default(),
+                }),
+                Step::Direct(DirectStep {
+                    current_w_len: 16,
+                    witness_shape: CleartextWitnessShape::FieldElements(16),
+                    direct_bytes: 1,
+                    params: None,
+                }),
+            ],
+            total_bytes: 3,
+        };
+
+        assert!(schedule.get_execution_schedule(1).is_err());
     }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {

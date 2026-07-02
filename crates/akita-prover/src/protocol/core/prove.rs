@@ -291,14 +291,19 @@ where
     reject_active_b_side_compression(&root_scheduled)?;
     {
         let commitments = claims.commitments();
-        let expected_root_commitment_len = root_scheduled
-            .params
-            .b_key
-            .row_len()
-            .checked_mul(D)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("root commitment length overflow".to_string())
-            })?;
+        let expected_root_commitment_len =
+            if let Some(plan) = root_scheduled.current_u_compression.as_ref() {
+                plan.public_len
+            } else {
+                root_scheduled
+                    .params
+                    .b_key
+                    .row_len()
+                    .checked_mul(D)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root commitment length overflow".to_string())
+                    })?
+            };
         if commitments
             .iter()
             .any(|commitment| commitment.coeff_len() != expected_root_commitment_len)
