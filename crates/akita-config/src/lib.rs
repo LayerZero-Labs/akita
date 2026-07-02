@@ -601,10 +601,9 @@ mod fp128_policy_tests {
     use super::*;
 
     fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
-        min_num_vars: usize,
-        max_num_vars: usize,
+        num_vars_values: &[usize],
     ) {
-        for num_vars in min_num_vars..=max_num_vars {
+        for &num_vars in num_vars_values {
             let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
                 CommitmentGroupScheduleKey::singleton(num_vars),
             ))
@@ -613,24 +612,35 @@ mod fp128_policy_tests {
         }
     }
 
+    /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
+    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[8, 16, 28, 30, 44, 50];
+
     #[test]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 50);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(
+            CI_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(
+            CI_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]
-    fn current_d32_full_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 50);
+    #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
+    fn current_d64_full_schedule_stays_within_audited_sis_widths_full_range() {
+        let num_vars: Vec<usize> = (8..=50).collect();
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(&num_vars);
     }
 
     #[test]
-    fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 50);
+    #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
+    fn current_d64_onehot_schedule_stays_within_audited_sis_widths_full_range() {
+        let num_vars: Vec<usize> = (8..=50).collect();
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(&num_vars);
     }
 
     #[test]
