@@ -628,7 +628,11 @@ pub fn find_group_batch_schedule(
                 "main grouped root is not committable".to_string(),
             ));
         };
-        return Ok(Schedule { steps, total_bytes });
+        return Ok(Schedule {
+            steps,
+            root_compression: None,
+            total_bytes,
+        });
     }
 
     let (precommitted_groups, precommitted_d_width) =
@@ -745,6 +749,7 @@ pub fn find_group_batch_schedule(
                         current_w_len: root_current_w_len,
                         next_w_len,
                         level_bytes: root_proof_size,
+                        compression: Default::default(),
                     }));
                     steps.extend(suffix_fold.steps.iter().cloned());
                     best = Some((total, steps));
@@ -758,7 +763,11 @@ pub fn find_group_batch_schedule(
             "main grouped root is not committable".to_string(),
         ));
     };
-    Ok(Schedule { steps, total_bytes })
+    Ok(Schedule {
+        steps,
+        root_compression: None,
+        total_bytes,
+    })
 }
 
 #[cfg(test)]

@@ -200,6 +200,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                     current_w_len: akita_types::root_current_w_len(&lp),
                     next_w_len,
                     level_bytes: 0,
+                    compression: Default::default(),
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
@@ -210,6 +211,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                     params: Some(lp.clone()),
                 }),
             ],
+            root_compression: None,
             total_bytes: 0,
         })
     }
@@ -295,6 +297,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     current_w_len: akita_types::root_current_w_len(&lp),
                     next_w_len,
                     level_bytes: 0,
+                    compression: Default::default(),
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
@@ -305,6 +308,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     params: Some(lp.clone()),
                 }),
             ],
+            root_compression: None,
             total_bytes: 0,
         })
     }

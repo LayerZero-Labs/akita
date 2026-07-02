@@ -418,6 +418,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     current_w_len: current_witness_len,
                     next_w_len: next_witness_len_terminal,
                     level_bytes: level_proof_size,
+                    compression: Default::default(),
                 }),
                 Step::Direct(direct_step),
             ];
@@ -441,6 +442,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 current_w_len: current_witness_len,
                 next_w_len: next_witness_len,
                 level_bytes: level_proof_size,
+                compression: Default::default(),
             }));
             steps.extend(suffix_fold.steps.iter().cloned());
             try_update(total, steps, &mut best_for_this_lb);
@@ -723,6 +725,7 @@ fn find_schedule_inner(
     if reduced_vars == 0 {
         return Ok(Schedule {
             steps: best_steps,
+            root_compression: None,
             total_bytes: best_cost,
         });
     }
@@ -906,6 +909,7 @@ fn find_schedule_inner(
                             current_w_len: witness_len,
                             next_w_len: next_w_len_terminal,
                             level_bytes: root_proof_size,
+                            compression: Default::default(),
                         }),
                         Step::Direct(direct_step),
                     ];
@@ -931,6 +935,7 @@ fn find_schedule_inner(
                         current_w_len: witness_len,
                         next_w_len,
                         level_bytes: root_proof_size,
+                        compression: Default::default(),
                     }));
                     steps.extend(suffix_fold.steps.iter().cloned());
                     best_steps = steps;
@@ -941,6 +946,7 @@ fn find_schedule_inner(
 
     Ok(Schedule {
         steps: best_steps,
+        root_compression: None,
         total_bytes: best_cost,
     })
 }

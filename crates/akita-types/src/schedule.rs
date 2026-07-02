@@ -30,6 +30,8 @@ pub struct ExecutionSchedule {
     /// Witness length expected after this fold's ring-switch relation builds
     /// the next `w`.
     pub next_w_len: usize,
+    /// Commitment compression plan active at this fold.
+    pub compression: FoldCompressionPlan,
     /// Whether this fold hands off to the terminal direct witness.
     pub is_terminal: bool,
 }
@@ -300,6 +302,120 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
     (-F::one()).to_canonical_u128() + 1
 }
 
+/// Compression map role for a scalar commitment-compression layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CompressionMapRole {
+    /// `H_i` map on the D-side opening commitment `v`.
+    H,
+    /// `F_i` map on a recursive B-side next-witness commitment `u`.
+    F,
+    /// `F_i` map on the root B-side user commitment.
+    RootF,
+}
+
+impl CompressionMapRole {
+    pub(crate) fn descriptor_tag(self) -> u8 {
+        match self {
+            Self::H => 0,
+            Self::F => 1,
+            Self::RootF => 2,
+        }
+    }
+}
+
+/// One scalar compression map layer.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CompressionLayerPlan {
+    /// Logical role of the matrix view.
+    pub role: CompressionMapRole,
+    /// Layer index inside this role, e.g. `0` for `H0`.
+    pub layer: usize,
+    /// Input digit length in scalar field elements.
+    pub input_len: usize,
+    /// Output length in scalar field elements.
+    pub output_len: usize,
+    /// Offset into the shared scalar compression setup prefix.
+    pub setup_offset: usize,
+}
+
+impl CompressionLayerPlan {
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(self.role.descriptor_tag());
+        push_usize(bytes, self.layer);
+        push_usize(bytes, self.input_len);
+        push_usize(bytes, self.output_len);
+        push_usize(bytes, self.setup_offset);
+    }
+}
+
+/// Compression plan for one public commitment payload.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CommitmentCompressionPlan {
+    /// Raw uncompressed public payload length in scalar field elements.
+    pub raw_len: usize,
+    /// Final compressed public payload length in scalar field elements.
+    pub public_len: usize,
+    /// Logical hidden suffix length needed by this commitment.
+    pub suffix_len: usize,
+    /// Physical hidden suffix length after padding.
+    pub padded_suffix_len: usize,
+    /// Active scalar compression map layers.
+    pub layers: Vec<CompressionLayerPlan>,
+}
+
+impl CommitmentCompressionPlan {
+    /// Return whether this plan has no active compression.
+    pub fn is_empty(&self) -> bool {
+        self.layers.is_empty()
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        push_usize(bytes, self.raw_len);
+        push_usize(bytes, self.public_len);
+        push_usize(bytes, self.suffix_len);
+        push_usize(bytes, self.padded_suffix_len);
+        push_usize(bytes, self.layers.len());
+        for layer in &self.layers {
+            layer.append_descriptor_bytes(bytes);
+        }
+    }
+}
+
+/// Fold-local compression plan.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct FoldCompressionPlan {
+    /// D-side `v` compression for this fold.
+    pub v: Option<CommitmentCompressionPlan>,
+    /// B-side next-witness `u` compression for this fold. `None` on the
+    /// penultimate fold in PR2.
+    pub next_u: Option<CommitmentCompressionPlan>,
+}
+
+impl FoldCompressionPlan {
+    /// Return true when neither `v` nor next `u` is compressed.
+    pub fn is_empty(&self) -> bool {
+        self.v.is_none() && self.next_u.is_none()
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        append_optional_compression_plan(bytes, self.v.as_ref());
+        append_optional_compression_plan(bytes, self.next_u.as_ref());
+    }
+}
+
+pub(crate) fn append_optional_compression_plan(
+    bytes: &mut Vec<u8>,
+    plan: Option<&CommitmentCompressionPlan>,
+) {
+    match plan {
+        Some(plan) => {
+            bytes.push(1);
+            plan.append_descriptor_bytes(bytes);
+        }
+        None => bytes.push(0),
+    }
+}
+
 /// Total ring elements in a recursive witness polynomial for an explicit
 /// M-row layout. The terminal layout drops the D-block from the M-matrix,
 /// which shrinks the per-row `r` quotients by `n_d * r_decomp_levels` ring
@@ -373,6 +489,8 @@ pub struct FoldStep {
     pub next_w_len: usize,
     /// Proof bytes for this level.
     pub level_bytes: usize,
+    /// Commitment compression plan active at this fold.
+    pub compression: FoldCompressionPlan,
 }
 
 /// Terminal direct-send step.
@@ -433,6 +551,8 @@ pub enum Step {
 pub struct Schedule {
     /// Ordered proof schedule steps.
     pub steps: Vec<Step>,
+    /// Root B-side commitment compression plan.
+    pub root_compression: Option<CommitmentCompressionPlan>,
     /// Exact total proof bytes for the schedule.
     pub total_bytes: usize,
 }
@@ -471,6 +591,7 @@ impl Schedule {
             params: step.params.clone(),
             next_params: next_level_params,
             next_w_len: step.next_w_len,
+            compression: step.compression.clone(),
             is_terminal,
         })
     }
@@ -490,6 +611,7 @@ impl Schedule {
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_usize(bytes, self.steps.len());
+        append_optional_compression_plan(bytes, self.root_compression.as_ref());
         for step in &self.steps {
             match step {
                 Step::Fold(fold) => {
@@ -498,6 +620,7 @@ impl Schedule {
                     push_usize(bytes, fold.current_w_len);
                     push_usize(bytes, fold.next_w_len);
                     push_usize(bytes, fold.level_bytes);
+                    fold.compression.append_descriptor_bytes(bytes);
                 }
                 Step::Direct(direct) => {
                     bytes.push(1);
@@ -570,6 +693,7 @@ pub fn root_direct_schedule(
             // Root-direct: stores the root commit layout.
             params: Some(commit_params),
         })],
+        root_compression: None,
         total_bytes: 0,
     })
 }

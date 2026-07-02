@@ -155,6 +155,7 @@ pub(crate) fn walk_generated_schedule_entry(
                     current_w_len,
                     next_w_len,
                     level_bytes,
+                    compression: Default::default(),
                 }));
                 last_fold_lp = Some(lp);
                 fold_level += 1;
@@ -233,7 +234,11 @@ pub(crate) fn walk_generated_schedule_entry(
         ));
     }
 
-    let schedule = Schedule { steps, total_bytes };
+    let schedule = Schedule {
+        steps,
+        root_compression: None,
+        total_bytes,
+    };
 
     Ok(GeneratedEntryWalkOutput {
         total_bytes,
@@ -406,6 +411,7 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
                     current_w_len,
                     next_w_len,
                     level_bytes,
+                    compression: Default::default(),
                 }));
                 fold_level += 1;
                 current_w_len = next_w_len;
@@ -486,7 +492,11 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
         ));
     }
 
-    let schedule = Schedule { steps, total_bytes };
+    let schedule = Schedule {
+        steps,
+        root_compression: None,
+        total_bytes,
+    };
 
     Ok(GeneratedEntryWalkOutput {
         total_bytes,
