@@ -30,6 +30,11 @@ pub struct ExecutionSchedule {
     /// Witness length expected after this fold's ring-switch relation builds
     /// the next `w`.
     pub next_w_len: usize,
+    /// Compression plan for the public `u` commitment opened by this fold.
+    ///
+    /// This is `Schedule::root_compression` at level 0 and the previous
+    /// fold's emitted `next_u` compression at recursive levels.
+    pub current_u_compression: Option<CommitmentCompressionPlan>,
     /// Commitment compression plan active at this fold.
     pub compression: FoldCompressionPlan,
     /// Whether this fold hands off to the terminal direct witness.
@@ -583,6 +588,14 @@ impl Schedule {
                 "schedule is missing fold step at level {level}"
             )));
         };
+        let current_u_compression = if level == 0 {
+            self.root_compression.clone()
+        } else {
+            match self.steps.get(level - 1) {
+                Some(Step::Fold(previous)) => previous.compression.next_u.clone(),
+                Some(Step::Direct(_)) | None => None,
+            }
+        };
         let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
         let next_level_params = scheduled_next_level_params(self, level + 1)?;
         Ok(ExecutionSchedule {
@@ -591,6 +604,7 @@ impl Schedule {
             params: step.params.clone(),
             next_params: next_level_params,
             next_w_len: step.next_w_len,
+            current_u_compression,
             compression: step.compression.clone(),
             is_terminal,
         })
@@ -848,6 +862,79 @@ mod tests {
         assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
         assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
+    }
+
+    fn sample_compression_plan(
+        role: CompressionMapRole,
+        setup_offset: usize,
+    ) -> CommitmentCompressionPlan {
+        CommitmentCompressionPlan {
+            raw_len: 4,
+            public_len: 2,
+            suffix_len: 8,
+            padded_suffix_len: 8,
+            layers: vec![CompressionLayerPlan {
+                role,
+                layer: 0,
+                input_len: 8,
+                output_len: 2,
+                setup_offset,
+            }],
+        }
+    }
+
+    #[test]
+    fn execution_schedule_derives_current_u_compression_from_root_and_previous_fold() {
+        let params = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            64,
+            3,
+            1,
+            1,
+            1,
+            akita_challenges::SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        );
+        let root_plan = sample_compression_plan(CompressionMapRole::RootF, 0);
+        let emitted_next_u = sample_compression_plan(CompressionMapRole::F, 32);
+        let schedule = Schedule {
+            root_compression: Some(root_plan.clone()),
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: params.clone(),
+                    current_w_len: 64,
+                    next_w_len: 64,
+                    level_bytes: 1,
+                    compression: FoldCompressionPlan {
+                        v: None,
+                        next_u: Some(emitted_next_u.clone()),
+                    },
+                }),
+                Step::Fold(FoldStep {
+                    params: params.clone(),
+                    current_w_len: 64,
+                    next_w_len: 32,
+                    level_bytes: 1,
+                    compression: Default::default(),
+                }),
+                Step::Fold(FoldStep {
+                    params: params.clone(),
+                    current_w_len: 32,
+                    next_w_len: 16,
+                    level_bytes: 1,
+                    compression: Default::default(),
+                }),
+            ],
+            total_bytes: 3,
+        };
+
+        let root_exec = schedule.get_execution_schedule(0).expect("root exec");
+        assert_eq!(root_exec.current_u_compression, Some(root_plan));
+        let suffix_exec = schedule.get_execution_schedule(1).expect("suffix exec");
+        assert_eq!(suffix_exec.current_u_compression, Some(emitted_next_u));
+        assert!(suffix_exec.compression.next_u.is_none());
     }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
