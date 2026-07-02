@@ -98,7 +98,7 @@ fn prove_onehot_with_setup_mode(
 
     let poly = make_onehot_poly(&layout, 0xdead_beef_0000 + nv as u64);
     let point = random_point(nv, 0xcafe_0000 + nv as u64);
-    let opening = opening_from_poly(&poly, &point, &layout);
+    let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
     let setup = match setup_mode {
         SetupContributionMode::Direct => AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1),
@@ -114,12 +114,13 @@ fn prove_onehot_with_setup_mode(
     let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
     let commit_input = std::slice::from_ref(&poly);
     let (commitment, hint) =
-        AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack).expect("commit");
+        AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _, ONEHOT_D>(&setup, commit_input, &stack)
+            .expect("commit");
 
-    let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
+    let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
+    let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _, ONEHOT_D>(
         &setup,
         prove_input(&point[..], &poly_refs[..], &commitment, hint),
         &stack,

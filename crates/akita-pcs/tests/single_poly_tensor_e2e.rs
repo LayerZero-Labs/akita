@@ -35,7 +35,7 @@ fn run_single_onehot_tensor(nv: usize) {
         let indices: Vec<Option<u8>> = (0..total_ring)
             .map(|_| Some(rng.gen_range(0..TENSOR_K) as u8))
             .collect();
-        let poly = OneHotPoly::<F, TENSOR_D, u8>::new(TENSOR_K, indices).expect("onehot poly");
+        let poly = OneHotPoly::<F, u8>::new(TENSOR_K, TENSOR_D, indices).expect("onehot poly");
 
         let pt = random_point(nv, 0xc0ff_ee00 + nv as u64);
         let expected_opening = opening_from_poly::<TENSOR_D, _>(&poly, &pt, &layout);
@@ -59,7 +59,7 @@ fn run_single_onehot_tensor(nv: usize) {
             )
             .expect("commit");
 
-        let poly_refs: [&OneHotPoly<F, TENSOR_D, u8>; 1] = [&poly];
+        let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];

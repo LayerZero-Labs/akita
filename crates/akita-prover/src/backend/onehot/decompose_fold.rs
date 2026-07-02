@@ -50,8 +50,8 @@ where
     finish_decompose_fold(compressed_accum, num_digits)
 }
 
-impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
-    pub(super) fn decompose_fold_onehot<E>(
+impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+    pub(super) fn decompose_fold_onehot<E, const D: usize>(
         &self,
         blocks: &FlatBlocks<E>,
         challenges: &[SparseChallenge],
@@ -73,7 +73,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         )
     }
 
-    pub(super) fn decompose_fold_batched_single_chunk_onehot(
+    pub(super) fn decompose_fold_batched_single_chunk_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -106,7 +106,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         ))
     }
 
-    pub(super) fn decompose_fold_batched_multi_chunk_onehot(
+    pub(super) fn decompose_fold_batched_multi_chunk_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -140,7 +140,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     }
 
     /// Tensor-shaped batched decompose-fold for one-hot polynomials.
-    pub(super) fn decompose_fold_batched_tensor_onehot(
+    pub(super) fn decompose_fold_batched_tensor_onehot<const D: usize>(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
         block_len: usize,
@@ -150,7 +150,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         F: CanonicalField,
     {
         for poly in polys {
-            poly.blocks_for(block_len).expect(
+            poly.blocks_for(D, block_len).expect(
                 "OneHotPoly::decompose_fold_batched_tensor_onehot: invalid block_len for one polynomial",
             );
         }

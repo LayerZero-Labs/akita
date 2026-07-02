@@ -306,7 +306,7 @@ where
     layer[0]
 }
 
-fn onehot_lagrange_opening<FF, E, I, const D: usize>(poly: &OneHotPoly<FF, D, I>, point: &[E]) -> E
+fn onehot_lagrange_opening<FF, E, I>(poly: &OneHotPoly<FF, I>, point: &[E]) -> E
 where
     FF: FieldCore,
     E: ExtField<FF>,
@@ -648,17 +648,17 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    let onehot_poly = OneHotPoly::<FF, D, u8>::new(onehot_k, indices).unwrap();
+    let onehot_poly = OneHotPoly::<FF, u8>::new(onehot_k, D, indices).unwrap();
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let opening = if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&pt) {
-        Cfg::ExtField::lift_base(opening_from_poly(
+        Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
             &onehot_poly,
             &base_pt,
             layout,
             BasisMode::Lagrange,
         ))
     } else {
-        onehot_lagrange_opening::<FF, Cfg::ExtField, u8, D>(&onehot_poly, &pt)
+        onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt)
     };
     let t0 = Instant::now();
     let setup = match profile_setup_contribution_mode() {
@@ -691,7 +691,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .expect("prepared setup CRT profile"),
     );
 
-    run_prove::<FF, D, Cfg, OneHotPoly<FF, D, u8>>(
+    run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>>(
         label,
         &setup,
         &stack,
@@ -737,13 +737,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         "onehot K must divide total field size"
     );
 
-    let polys: Vec<OneHotPoly<FF, D, u8>> = (0..num_polys)
+    let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32));
             let indices: Vec<Option<u8>> = (0..total_chunks)
                 .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
                 .collect();
-            OneHotPoly::<FF, D, u8>::new(onehot_k, indices).unwrap()
+            OneHotPoly::<FF, u8>::new(onehot_k, D, indices).unwrap()
         })
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
@@ -753,7 +753,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             polys
                 .iter()
                 .map(|poly| {
-                    Cfg::ExtField::lift_base(opening_from_poly(
+                    Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
                         poly,
                         &base_pt,
                         layout,
@@ -764,10 +764,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         } else {
             polys
                 .iter()
-                .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8, D>(poly, &pt))
+                .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &pt))
                 .collect()
         };
-    let poly_refs: Vec<&OneHotPoly<FF, D, u8>> = polys.iter().collect();
+    let poly_refs: Vec<&OneHotPoly<FF, u8>> = polys.iter().collect();
 
     let t0 = Instant::now();
     let setup_contribution_mode = profile_setup_contribution_mode();
@@ -802,7 +802,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     );
 
     let t0 = Instant::now();
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).unwrap();
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -816,7 +817,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
     let _grind_observer = FoldGrindObserverGuard::install();
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _, D>(
         &setup,
         prover_claims(
             &pt[..],

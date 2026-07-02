@@ -165,7 +165,8 @@ where
                         }
                     });
                 };
-                let onehot_view = OneHotPoly::<F, D, I>::opening_batch(&onehot_polys)?;
+                let onehot_view =
+                    <OneHotPoly<F, I> as RootOpeningSource<F, D>>::opening_batch(&onehot_polys)?;
                 OpeningBatchKernel::<OneHotBatchView<'_, F, D, I>, F, D>::decompose_fold_batch(
                     self,
                     prepared,
@@ -300,7 +301,8 @@ where
                 let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
                     return source.column_partials_per_poly(self, prepared, logical_point);
                 };
-                let onehot_view = OneHotPoly::<F, D, I>::tensor_batch(&onehot_polys)?;
+                let onehot_view =
+                    <OneHotPoly<F, I> as RootTensorSource<F, D>>::tensor_batch(&onehot_polys)?;
                 TensorProjectionBatchKernel::<OneHotBatchView<'_, F, D, I>, F, E, D>::column_partials_batch(
                     self,
                     prepared,
@@ -338,7 +340,8 @@ where
                 let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
                     return Ok(None);
                 };
-                let onehot_view = OneHotPoly::<F, D, I>::tensor_batch(&onehot_polys)?;
+                let onehot_view =
+                    <OneHotPoly<F, I> as RootTensorSource<F, D>>::tensor_batch(&onehot_polys)?;
                 TensorProjectionBatchKernel::<OneHotBatchView<'_, F, D, I>, F, E, D>::sparse_linear_combination(
                     self,
                     prepared,

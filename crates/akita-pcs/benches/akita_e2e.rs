@@ -256,7 +256,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         .map(|_| Some(rng.gen_range(0..onehot_k)))
         .collect();
 
-    let onehot_poly = OneHotPoly::<F, D>::new(onehot_k, indices.clone()).unwrap();
+    let onehot_poly = OneHotPoly::<F>::new(onehot_k, D, indices.clone()).unwrap();
 
     let dense_evals: Vec<F> = {
         let mut evals = vec![F::from_u64(0); total_ring * onehot_k];
@@ -299,7 +299,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     )
     .unwrap();
 
-    let poly_refs: [&OneHotPoly<F, D>; 1] = [&onehot_poly];
+    let poly_refs: [&OneHotPoly<F>; 1] = [&onehot_poly];
     let commitments = [commitment];
     let openings = [opening];
 

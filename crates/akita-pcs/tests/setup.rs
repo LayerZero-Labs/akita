@@ -204,7 +204,7 @@ where
     let indices: Vec<Option<usize>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..k)))
         .collect();
-    let poly = OneHotPoly::<F, D, usize>::new(k, indices.clone()).expect("onehot poly");
+    let poly = OneHotPoly::<F, usize>::new(k, D, indices.clone()).expect("onehot poly");
 
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
@@ -223,7 +223,7 @@ where
     )
     .expect("commit");
 
-    let poly_refs: [&OneHotPoly<F, D, usize>; 1] = [&poly];
+    let poly_refs: [&OneHotPoly<F, usize>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
@@ -375,7 +375,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             let indices: Vec<Option<usize>> = (0..total_chunks)
                 .map(|_| Some(rng.gen_range(0..k)))
                 .collect();
-            let poly = OneHotPoly::<F, D, usize>::new(k, indices.clone()).expect("onehot poly");
+            let poly = OneHotPoly::<F, usize>::new(k, D, indices.clone()).expect("onehot poly");
             (poly, indices)
         })
         .unzip();
@@ -394,7 +394,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             .expect("stack");
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
 
-    let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
+    let poly_refs: Vec<&OneHotPoly<F, usize>> = polys.iter().collect();
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack)
             .expect("batched onehot commit");

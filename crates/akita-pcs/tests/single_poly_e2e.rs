@@ -40,10 +40,10 @@ fn run_single_onehot(nv: usize) {
         let indices: Vec<Option<u8>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
-        let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly");
+        let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly");
 
         let pt = random_point(nv, 0xcafe_0000 + nv as u64);
-        let expected_opening = opening_from_poly(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -55,18 +55,21 @@ fn run_single_onehot(nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack)
-                .expect("commit");
+        let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _, ONEHOT_D>(
+            &setup,
+            commit_input,
+            &stack,
+        )
+        .expect("commit");
 
-        let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
+        let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _, ONEHOT_D>(
             &setup,
             prove_input(
                 &pt[..],
@@ -265,10 +268,10 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let indices: Vec<Option<u8>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
-        let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly");
+        let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly");
 
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-        let expected_opening = opening_from_poly(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -280,18 +283,21 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         .expect("stack");
         let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, commit_input, &stack)
-                .expect("commit with oversized setup");
+        let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _, ONEHOT_D>(
+            &setup,
+            commit_input,
+            &stack,
+        )
+        .expect("commit with oversized setup");
 
-        let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
+        let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _, ONEHOT_D>(
             &setup,
             prove_input(
                 &pt[..],

@@ -32,13 +32,13 @@ use common::*;
 
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
-fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, DENSE_D, u8> {
+fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_ring)
         .map(|_| Some(rng.gen_range(0..DENSE_ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, DENSE_D, u8>::new(DENSE_ONEHOT_K, indices)
+    OneHotPoly::<F, u8>::new(DENSE_ONEHOT_K, DENSE_D, indices)
         .expect("onehot poly under dense config")
 }
 
@@ -53,7 +53,7 @@ mod non_zk_aggregated_cases {
             let layout =
                 OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-            let polys: Vec<OneHotPoly<F, ONEHOT_D, u8>> = (0..batch_size)
+            let polys: Vec<OneHotPoly<F, u8>> = (0..batch_size)
                 .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
                 .collect();
 
@@ -73,9 +73,10 @@ mod non_zk_aggregated_cases {
             .expect("stack");
             let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
 
-            let (commitment, hint) =
-                AkitaCommitmentScheme::<OneHotCfg>::commit(&setup, &polys, &stack)
-                    .expect("grouped commit");
+            let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _, ONEHOT_D>(
+                &setup, &polys, &stack,
+            )
+            .expect("grouped commit");
             let commitments = [commitment];
             let hints = vec![hint];
 
@@ -86,7 +87,7 @@ mod non_zk_aggregated_cases {
             );
 
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
-            let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
+            let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _, ONEHOT_D>(
                 &setup,
                 prove_input(
                     &pt[..],

@@ -1,6 +1,6 @@
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
-use crate::compute::RootPolyShape;
+use crate::compute::RootPolyMeta;
 use crate::DensePoly;
 use akita_field::RandomSampling;
 use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
@@ -38,7 +38,7 @@ fn aggregate_witnesses<F: FieldCore, const D: usize>(
     DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
 }
 
-fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, D, I>) -> DensePoly<F>
+fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, I>) -> DensePoly<F>
 where
     F: FieldCore + CanonicalField,
     I: OneHotIndex,
@@ -202,7 +202,7 @@ fn onehot_poly_rejects_non_divisible_k_d() {
     // it.
     type F = Prime24Offset3;
     const D: usize = 4;
-    let result = OneHotPoly::<F, D>::new(3, vec![Some(0usize), Some(1)]);
+    let result = OneHotPoly::<F>::new(3, D, vec![Some(0usize), Some(1)]);
     assert!(result.is_err());
 }
 
@@ -212,8 +212,9 @@ fn tensor_column_partials_match_dense_reference() {
     type E = FpExt4<F>;
     const D: usize = 16;
 
-    let poly = OneHotPoly::<F, D>::new(
+    let poly = OneHotPoly::<F>::new(
         8,
+        D,
         vec![
             Some(0usize),
             Some(7),
@@ -226,7 +227,7 @@ fn tensor_column_partials_match_dense_reference() {
         ],
     )
     .unwrap();
-    let dense = materialize_onehot_as_dense(&poly);
+    let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
     let point = (0..poly.num_vars())
         .map(|idx| {
             E::from_base_slice(&[
@@ -252,8 +253,9 @@ fn batched_tensor_column_partials_match_individual() {
     const D: usize = 16;
 
     let polys = [
-        OneHotPoly::<F, D>::new(
+        OneHotPoly::<F>::new(
             8,
+            D,
             vec![
                 Some(0usize),
                 Some(7),
@@ -266,8 +268,9 @@ fn batched_tensor_column_partials_match_individual() {
             ],
         )
         .unwrap(),
-        OneHotPoly::<F, D>::new(
+        OneHotPoly::<F>::new(
             8,
+            D,
             vec![
                 Some(4usize),
                 Some(2),
@@ -296,8 +299,8 @@ fn batched_tensor_column_partials_match_individual() {
         .map(|poly| poly.tensor_extension_column_partials::<E>(&point).unwrap())
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
-    let got = OneHotPoly::<F, D>::tensor_extension_column_partials_batch::<E>(&poly_refs, &point)
-        .unwrap();
+    let got =
+        OneHotPoly::<F>::tensor_extension_column_partials_batch::<E>(&poly_refs, &point).unwrap();
 
     assert_eq!(got, expected);
 }
@@ -333,9 +336,9 @@ fn batched_tensor_column_partials_multi_block_match_dense() {
             .collect::<Vec<Option<usize>>>()
     };
     let polys = [
-        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(1)).unwrap(),
-        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(2)).unwrap(),
-        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(3)).unwrap(),
+        OneHotPoly::<F>::new(ONEHOT_K, D, make_indices(1)).unwrap(),
+        OneHotPoly::<F>::new(ONEHOT_K, D, make_indices(2)).unwrap(),
+        OneHotPoly::<F>::new(ONEHOT_K, D, make_indices(3)).unwrap(),
     ];
     let point = (0..NUM_VARS)
         .map(|idx| {
@@ -351,7 +354,7 @@ fn batched_tensor_column_partials_multi_block_match_dense() {
     let dense_expected = polys
         .iter()
         .map(|poly| {
-            materialize_onehot_as_dense(poly)
+            materialize_onehot_as_dense::<F, D, _>(poly)
                 .tensor_extension_column_partials::<E, D>(&point)
                 .unwrap()
         })
@@ -362,8 +365,7 @@ fn batched_tensor_column_partials_multi_block_match_dense() {
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let batched =
-        OneHotPoly::<F, D>::tensor_extension_column_partials_batch::<E>(&poly_refs, &point)
-            .unwrap();
+        OneHotPoly::<F>::tensor_extension_column_partials_batch::<E>(&poly_refs, &point).unwrap();
 
     assert_eq!(batched, dense_expected);
     assert_eq!(batched, individual);
@@ -393,9 +395,9 @@ fn batched_tensor_column_partials_match_dense_for_fp_ext4() {
             .collect::<Vec<Option<usize>>>()
     };
     let polys = [
-        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(1)).unwrap(),
-        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(2)).unwrap(),
-        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(3)).unwrap(),
+        OneHotPoly::<F>::new(ONEHOT_K, D, make_indices(1)).unwrap(),
+        OneHotPoly::<F>::new(ONEHOT_K, D, make_indices(2)).unwrap(),
+        OneHotPoly::<F>::new(ONEHOT_K, D, make_indices(3)).unwrap(),
     ];
     let point = (0..NUM_VARS)
         .map(|idx| {
@@ -411,15 +413,14 @@ fn batched_tensor_column_partials_match_dense_for_fp_ext4() {
     let dense_expected = polys
         .iter()
         .map(|poly| {
-            materialize_onehot_as_dense(poly)
+            materialize_onehot_as_dense::<F, D, _>(poly)
                 .tensor_extension_column_partials::<E, D>(&point)
                 .unwrap()
         })
         .collect::<Vec<_>>();
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let batched =
-        OneHotPoly::<F, D>::tensor_extension_column_partials_batch::<E>(&poly_refs, &point)
-            .unwrap();
+        OneHotPoly::<F>::tensor_extension_column_partials_batch::<E>(&poly_refs, &point).unwrap();
 
     assert_eq!(batched, dense_expected);
 }
@@ -431,8 +432,9 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
     const D: usize = 16;
 
     let polys = [
-        OneHotPoly::<F, D>::new(
+        OneHotPoly::<F>::new(
             8,
+            D,
             vec![
                 Some(0usize),
                 Some(7),
@@ -445,8 +447,9 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
             ],
         )
         .unwrap(),
-        OneHotPoly::<F, D>::new(
+        OneHotPoly::<F>::new(
             8,
+            D,
             vec![
                 Some(4usize),
                 Some(2),
@@ -486,7 +489,7 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
         SparseExtensionOpeningWitness::linear_combination(coeffs.iter().copied().zip(&witnesses))
             .unwrap();
     let poly_refs = polys.iter().collect::<Vec<_>>();
-    let got = OneHotPoly::<F, D>::tensor_packed_extension_sparse_linear_combination::<E>(
+    let got = OneHotPoly::<F>::tensor_packed_extension_sparse_linear_combination::<E>(
         &poly_refs, &coeffs,
     )
     .unwrap()
@@ -529,7 +532,7 @@ fn np1_offset_distribution_and_plateau() {
     let indices: Vec<Option<usize>> = (0..num_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k)))
         .collect();
-    let poly = OneHotPoly::<F, D>::new(onehot_k, indices).unwrap();
+    let poly = OneHotPoly::<F>::new(onehot_k, D, indices).unwrap();
 
     let witness = poly.tensor_packed_sparse_witness::<E>().unwrap();
 
@@ -809,8 +812,8 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     indices1[64] = Some(19usize);
     indices1[100] = Some(21usize);
     let polys = [
-        OneHotPoly::<F, D>::new(block_len, indices0).unwrap(),
-        OneHotPoly::<F, D>::new(block_len, indices1).unwrap(),
+        OneHotPoly::<F>::new(block_len, D, indices0).unwrap(),
+        OneHotPoly::<F>::new(block_len, D, indices1).unwrap(),
     ];
     let challenges = vec![
         SparseChallenge {
@@ -835,12 +838,15 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
         &polys
             .iter()
             .zip(challenges.chunks(2))
-            .map(|(poly, poly_challenges)| poly.decompose_fold(poly_challenges, block_len, 1, 0))
+            .map(|(poly, poly_challenges)| {
+                poly.decompose_fold::<D>(poly_challenges, block_len, 1, 0)
+            })
             .collect::<Vec<_>>(),
     );
-    let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
-    let got = OneHotPoly::<F, D>::decompose_fold_batched(&poly_refs, &challenges, block_len, 1, 0)
-        .expect("onehot batched path should apply");
+    let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
+    let got =
+        OneHotPoly::<F>::decompose_fold_batched::<D>(&poly_refs, &challenges, block_len, 1, 0)
+            .expect("onehot batched path should apply");
 
     assert_eq!(got, expected);
 }
@@ -851,20 +857,20 @@ fn single_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
     const D: usize = 64;
 
     let poly =
-        OneHotPoly::<F, D>::new(64, vec![Some(1usize), None, Some(9usize), Some(17usize)]).unwrap();
+        OneHotPoly::<F>::new(64, D, vec![Some(1usize), None, Some(9usize), Some(17usize)]).unwrap();
     let block_len = 2usize;
     let fold_scalars = vec![F::from_u64(3), F::from_u64(5)];
     let eval_outer_scalars = vec![F::from_u64(7), F::from_u64(11)];
 
-    let (eval, folded) = poly.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, block_len);
-    let expected_folded = poly.fold_blocks(&fold_scalars, block_len);
+    let (eval, folded) = poly.evaluate_and_fold::<D>(&eval_outer_scalars, &fold_scalars, block_len);
+    let expected_folded = poly.fold_blocks::<D>(&fold_scalars, block_len);
     assert_eq!(folded, expected_folded);
 
     let full_scalars: Vec<F> = eval_outer_scalars
         .iter()
         .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
         .collect();
-    let expected_eval = super::test_helpers::evaluate_ring_onehot(&poly, &full_scalars);
+    let expected_eval = super::test_helpers::evaluate_ring_onehot::<F, D, _>(&poly, &full_scalars);
     assert_eq!(eval, expected_eval);
 }
 
@@ -874,8 +880,8 @@ fn single_chunk_onehot_ring_fold_matches_dense_materialization() {
     const D: usize = 8;
 
     let poly =
-        OneHotPoly::<F, D>::new(16, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
-    let dense = materialize_onehot_as_dense(&poly);
+        OneHotPoly::<F>::new(16, D, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
+    let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
     let block_len = 4usize;
     let fold_scalars = vec![
         test_ring_scalar::<F, D>(10),
@@ -895,8 +901,9 @@ fn multi_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
     type F = Prime24Offset3;
     const D: usize = 64;
 
-    let poly = OneHotPoly::<F, D>::new(
+    let poly = OneHotPoly::<F>::new(
         32,
+        D,
         vec![
             Some(1usize),
             None,
@@ -913,15 +920,15 @@ fn multi_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
     let fold_scalars = vec![F::from_u64(2), F::from_u64(4)];
     let eval_outer_scalars = vec![F::from_u64(3), F::from_u64(5)];
 
-    let (eval, folded) = poly.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, block_len);
-    let expected_folded = poly.fold_blocks(&fold_scalars, block_len);
+    let (eval, folded) = poly.evaluate_and_fold::<D>(&eval_outer_scalars, &fold_scalars, block_len);
+    let expected_folded = poly.fold_blocks::<D>(&fold_scalars, block_len);
     assert_eq!(folded, expected_folded);
 
     let full_scalars: Vec<F> = eval_outer_scalars
         .iter()
         .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
         .collect();
-    let expected_eval = super::test_helpers::evaluate_ring_onehot(&poly, &full_scalars);
+    let expected_eval = super::test_helpers::evaluate_ring_onehot::<F, D, _>(&poly, &full_scalars);
     assert_eq!(eval, expected_eval);
 }
 
@@ -930,8 +937,9 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
     type F = Prime24Offset3;
     const D: usize = 16;
 
-    let poly = OneHotPoly::<F, D>::new(
+    let poly = OneHotPoly::<F>::new(
         4,
+        D,
         vec![
             Some(0usize),
             Some(3usize),
@@ -952,7 +960,7 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
         ],
     )
     .unwrap();
-    let dense = materialize_onehot_as_dense(&poly);
+    let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
     let block_len = 2usize;
     let fold_scalars = vec![test_ring_scalar::<F, D>(7), test_ring_scalar::<F, D>(80)];
 

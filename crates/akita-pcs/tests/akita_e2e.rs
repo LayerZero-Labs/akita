@@ -540,16 +540,16 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
 
-        let polys: Vec<OneHotPoly<F, D>> = (0..2)
+        let polys: Vec<OneHotPoly<F>> = (0..2)
             .map(|poly_idx| {
                 let mut rng = StdRng::seed_from_u64(0x3141_5926 + poly_idx as u64);
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
+                OneHotPoly::<F>::new(ONEHOT_K, D, indices).unwrap()
             })
             .collect();
-        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
         let point = random_point(NV);
         let openings: Vec<F> = polys
             .iter()
@@ -949,9 +949,9 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let indices: Vec<Option<usize>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
             .collect();
-        let onehot_poly = OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap();
+        let onehot_poly = OneHotPoly::<F>::new(ONEHOT_K, D, indices).unwrap();
         let pt = random_point::<F>(nv);
-        let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
+        let expected_opening = opening_from_poly::<D, _>(&onehot_poly, &pt, &layout);
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
@@ -972,7 +972,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         )
         .unwrap();
 
-        let poly_refs: [&OneHotPoly<F, D>; 1] = [&onehot_poly];
+        let poly_refs: [&OneHotPoly<F>; 1] = [&onehot_poly];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
@@ -1116,8 +1116,8 @@ fn batched_onehot_same_point_round_trip() {
         let indices_b: Vec<Option<usize>> = (0..total_chunks)
             .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
             .collect();
-        let poly_a = OneHotPoly::<F, D>::new(ONEHOT_K, indices_a).unwrap();
-        let poly_b = OneHotPoly::<F, D>::new(ONEHOT_K, indices_b).unwrap();
+        let poly_a = OneHotPoly::<F>::new(ONEHOT_K, D, indices_a).unwrap();
+        let poly_b = OneHotPoly::<F>::new(ONEHOT_K, D, indices_b).unwrap();
         let poly_group = [&poly_a, &poly_b];
         let pt = random_point(nv);
         let openings = [
@@ -1223,16 +1223,16 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
 
-        let polys: Vec<OneHotPoly<F, D>> = (0..SAME_POINT_ONEHOT_BATCH_SIZE)
+        let polys: Vec<OneHotPoly<F>> = (0..SAME_POINT_ONEHOT_BATCH_SIZE)
             .map(|poly_idx| {
                 let mut rng = StdRng::seed_from_u64(0x8765_4321 + poly_idx as u64);
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
+                OneHotPoly::<F>::new(ONEHOT_K, D, indices).unwrap()
             })
             .collect();
-        let poly_group: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let poly_group: Vec<&OneHotPoly<F>> = polys.iter().collect();
         let pt = random_point(nv);
         let openings: Vec<F> = polys
             .iter()

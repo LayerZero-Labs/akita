@@ -26,7 +26,9 @@
 //!   - [`OneHotBlocks`]: a two-variant enum that wraps the built
 //!     `FlatBlocks<E>` so [`OneHotPoly`]'s ops can dispatch to the right
 //!     kernel based on the actual layout in use.
-//!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
+//!   - [`OneHotPoly<F, I>`]: the caller-facing polynomial. Storage is
+//!     D-free; ring-shaped ops take the kernel dispatch dimension as a
+//!     method-level const generic.
 
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;

@@ -26,7 +26,7 @@ pub enum MultilinearPolynomial<F: FieldCore, const D: usize, I: OneHotIndex = us
     /// Dense multilinear polynomial.
     Dense(DensePoly<F>),
     /// One-hot multilinear polynomial.
-    OneHot(OneHotPoly<F, D, I>),
+    OneHot(OneHotPoly<F, I>),
 }
 
 impl<F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<F, D, I> {
@@ -36,7 +36,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<F, D, I
     }
 
     /// Wrap a one-hot polynomial.
-    pub fn onehot(poly: OneHotPoly<F, D, I>) -> Self {
+    pub fn onehot(poly: OneHotPoly<F, I>) -> Self {
         Self::OneHot(poly)
     }
 }
@@ -62,7 +62,7 @@ where
     pub(super) fn dispatch<T>(
         self,
         dense: impl FnOnce(&DensePoly<F>) -> Result<T, AkitaError>,
-        onehot: impl FnOnce(&OneHotPoly<F, D, I>) -> Result<T, AkitaError>,
+        onehot: impl FnOnce(&OneHotPoly<F, I>) -> Result<T, AkitaError>,
     ) -> Result<T, AkitaError> {
         match self.poly {
             MultilinearPolynomial::Dense(poly) => dense(poly),
@@ -91,7 +91,7 @@ where
         Some(dense)
     }
 
-    pub(super) fn homogeneous_onehot_polys(self) -> Option<Vec<&'a OneHotPoly<F, D, I>>> {
+    pub(super) fn homogeneous_onehot_polys(self) -> Option<Vec<&'a OneHotPoly<F, I>>> {
         let mut onehot = Vec::with_capacity(self.polys.len());
         for poly in self.polys {
             match poly {
@@ -161,21 +161,21 @@ where
     fn num_ring_elems(&self) -> usize {
         match self {
             Self::Dense(poly) => RootPolyShape::<F, D>::num_ring_elems(poly),
-            Self::OneHot(poly) => RootPolyShape::num_ring_elems(poly),
+            Self::OneHot(poly) => RootPolyShape::<F, D>::num_ring_elems(poly),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
             Self::Dense(poly) => RootPolyShape::<F, D>::num_vars(poly),
-            Self::OneHot(poly) => RootPolyShape::num_vars(poly),
+            Self::OneHot(poly) => RootPolyShape::<F, D>::num_vars(poly),
         }
     }
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         match self {
             Self::Dense(_) => None,
-            Self::OneHot(poly) => RootPolyShape::onehot_chunk_size(poly),
+            Self::OneHot(poly) => RootPolyShape::<F, D>::onehot_chunk_size(poly),
         }
     }
 }
@@ -255,7 +255,7 @@ where
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         match self {
             Self::Dense(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
-            Self::OneHot(poly) => poly.direct_root_witness(),
+            Self::OneHot(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
         }
     }
 }

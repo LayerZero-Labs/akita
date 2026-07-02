@@ -70,7 +70,7 @@ fn make_onehot_indices(num_vars: usize, num_polys: usize) -> Vec<Vec<Option<u8>>
 fn build_onehot_polys<F, const D: usize>(
     num_vars: usize,
     indices: &[Vec<Option<u8>>],
-) -> Vec<OneHotPoly<F, D, u8>>
+) -> Vec<OneHotPoly<F, u8>>
 where
     F: FieldCore,
 {
@@ -78,7 +78,7 @@ where
     indices
         .iter()
         .map(|poly_indices| {
-            OneHotPoly::<F, D, u8>::new(onehot_k, poly_indices.clone())
+            OneHotPoly::<F, u8>::new(onehot_k, D, poly_indices.clone())
                 .expect("benchmark onehot poly")
         })
         .collect()
@@ -189,8 +189,9 @@ where
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed = AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack)
-                    .expect("benchmark scheme commitment");
+                let committed =
+                    AkitaCommitmentScheme::<Cfg>::commit::<_, _, D>(&setup, &polys, &stack)
+                        .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

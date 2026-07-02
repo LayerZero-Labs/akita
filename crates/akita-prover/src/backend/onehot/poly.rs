@@ -1,34 +1,53 @@
 use super::*;
 
+/// Cache slot for the tensor-projected sparse root polynomial: the
+/// `(ring_d, width)` key it was built at plus the shared polynomial.
+pub(crate) type TensorRootCacheSlot<F> = ((usize, usize), Arc<SparseRingPoly<F>>);
+
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
 /// The polynomial is stored layout-agnostically as the flat list of hot
 /// indices supplied at construction. Each op takes `block_len` at call time
 /// and the per-block bucketing is materialized lazily on the first call and
-/// cached for subsequent calls (as a `(block_len, OneHotBlocks)` pair inside
-/// a `OnceLock`). That mirrors how [`DensePoly`](crate::DensePoly) accepts `block_len` per op,
+/// cached for subsequent calls (as a `((ring_d, block_len), OneHotBlocks)`
+/// pair inside a `OnceLock`). That mirrors how [`DensePoly`](crate::DensePoly) accepts `block_len` per op,
 /// and keeps `OneHotPoly` free of the commit-layout parameters it used to
 /// bake in at construction.
+///
+/// Storage is D-free: the per-chunk hot indices are flat logical data, and
+/// the ring dimension is a view selected at kernel entry (each ring-shaped
+/// method takes it as a const generic).
 ///
 /// Generic over `I`: the index type accepted and stored per chunk. Use `u8`
 /// when `onehot_k <= 256` to reduce index storage footprint.
 #[derive(Debug, Clone)]
-pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
     pub(crate) num_vars: usize,
     pub(crate) onehot_k: usize,
     /// Per-chunk hot-position indices. `None` denotes an all-zero chunk.
     pub(crate) indices: Vec<Option<I>>,
+    /// Ring-element count at the CONSTRUCTION dimension; metadata, not
+    /// authority — kernels validate at their own dimension.
     pub(crate) total_ring_elems: usize,
-    pub(crate) block_cache: OnceLock<(usize, OneHotBlocks)>,
-    pub(crate) tensor_root_cache: OnceLock<(usize, Arc<SparseRingPoly<F>>)>,
+    /// Cached per-block layout, keyed by the `(ring_d, block_len)` pair it was
+    /// built for.
+    pub(crate) block_cache: OnceLock<((usize, usize), OneHotBlocks)>,
+    /// Cached tensor-projected sparse root polynomial, keyed by the
+    /// `(ring_d, width)` pair it was built at.
+    pub(crate) tensor_root_cache: OnceLock<TensorRootCacheSlot<F>>,
     pub(crate) _marker: PhantomData<(F, I)>,
 }
 
-impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
+impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     /// Build a one-hot polynomial from chunk size and hot-position indices.
     ///
     /// `indices[c]` is the hot position in chunk `c` (`None` for all-zero chunks).
+    ///
+    /// `ring_d` is the caller's configured ring dimension. It is recorded as
+    /// construction metadata (the [`crate::compute::RootPolyMeta`] ring-element
+    /// count) only; the storage itself is D-free and kernels select their view
+    /// dimension at entry.
     ///
     /// The commit-layout split (how blocks are tiled within the polynomial)
     /// is no longer baked in at construction. Each op receives `block_len`
@@ -38,16 +57,25 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     /// # Errors
     ///
     /// Returns an error if dimensions are inconsistent, any index is out of
-    /// range, or `onehot_k` and `D` are not nicely matched.
-    pub fn new(onehot_k: usize, indices: Vec<Option<I>>) -> Result<Self, AkitaError> {
+    /// range, or `onehot_k` and `ring_d` are not nicely matched.
+    pub fn new(
+        onehot_k: usize,
+        ring_d: usize,
+        indices: Vec<Option<I>>,
+    ) -> Result<Self, AkitaError> {
         if onehot_k == 0 {
             return Err(AkitaError::InvalidInput(
                 "onehot_k must be nonzero".to_string(),
             ));
         }
-        if !(onehot_k.is_multiple_of(D) || D.is_multiple_of(onehot_k)) {
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidInput(
+                "ring_d must be nonzero".to_string(),
+            ));
+        }
+        if !(onehot_k.is_multiple_of(ring_d) || ring_d.is_multiple_of(onehot_k)) {
             return Err(AkitaError::InvalidInput(format!(
-                "onehot_k={onehot_k} and D={D} must be nicely matched (one divides the other)"
+                "onehot_k={onehot_k} and D={ring_d} must be nicely matched (one divides the other)"
             )));
         }
         let total_field_elems = indices.len().checked_mul(onehot_k).ok_or_else(|| {
@@ -58,12 +86,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 "onehot total field elements {total_field_elems} is not a power of two"
             )));
         }
-        if !total_field_elems.is_multiple_of(D) {
+        if !total_field_elems.is_multiple_of(ring_d) {
             return Err(AkitaError::InvalidInput(format!(
-                "total field elements {total_field_elems} is not divisible by D={D}"
+                "total field elements {total_field_elems} is not divisible by D={ring_d}"
             )));
         }
-        let total_ring_elems = total_field_elems / D;
+        let total_ring_elems = total_field_elems / ring_d;
         for (chunk_idx, opt) in indices.iter().copied().enumerate() {
             if let Some(raw) = opt {
                 let idx = raw.as_usize();
@@ -97,54 +125,110 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         &self.indices
     }
 
-    /// Return cached per-block storage, building it on first call for
-    /// `block_len`.
+    /// Materialize the dense field-evaluation table directly from the flat
+    /// hot-index positions.
     ///
-    /// Subsequent calls must pass the same `block_len`; differing `block_len`
-    /// is rejected rather than silently rebuilt because it indicates a
-    /// layout mismatch between ops on the same polynomial.
-    pub(super) fn blocks_for(&self, block_len: usize) -> Result<&OneHotBlocks, AkitaError> {
-        // Fast path: cache already built for this `block_len`.
-        if let Some((cached_len, blocks)) = self.block_cache.get() {
-            if *cached_len == block_len {
+    /// This is the D-free field-materialization shared by the tensor helpers
+    /// and the [`crate::compute::DirectRootWitnessSource`] impl (which wraps
+    /// it in a [`akita_types::CleartextWitnessProof::FieldElements`] payload).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the evaluation-table length overflows `usize` or
+    /// a hot position falls outside the table.
+    pub(crate) fn direct_field_evals(&self) -> Result<Vec<F>, AkitaError> {
+        let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        let mut evals = vec![F::zero(); total_evals];
+        for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
+            let Some(raw) = opt else {
+                continue;
+            };
+            let field_pos = chunk_idx
+                .checked_mul(self.onehot_k)
+                .and_then(|base| base.checked_add(raw.as_usize()))
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("onehot direct witness index overflow".to_string())
+                })?;
+            if field_pos >= evals.len() {
+                return Err(AkitaError::InvalidInput(format!(
+                    "onehot direct witness index {field_pos} out of range for {} evals",
+                    evals.len()
+                )));
+            }
+            evals[field_pos] = F::one();
+        }
+        Ok(evals)
+    }
+
+    /// Return cached per-block storage, building it on first call for
+    /// `(ring_d, block_len)`.
+    ///
+    /// Subsequent calls must pass the same `(ring_d, block_len)` pair;
+    /// differing keys are rejected rather than silently rebuilt because they
+    /// indicate a layout mismatch between ops on the same polynomial.
+    pub(super) fn blocks_for(
+        &self,
+        ring_d: usize,
+        block_len: usize,
+    ) -> Result<&OneHotBlocks, AkitaError> {
+        // Fast path: cache already built for this `(ring_d, block_len)`.
+        if let Some((cached_key, blocks)) = self.block_cache.get() {
+            if *cached_key == (ring_d, block_len) {
                 return Ok(blocks);
             }
+            let (cached_ring_d, cached_len) = *cached_key;
             return Err(AkitaError::InvalidInput(format!(
-                "OneHotPoly was first used with block_len={cached_len} but is now being \
-                 used with block_len={block_len}; all ops on the same \
-                 polynomial must share a single layout"
+                "OneHotPoly was first used with ring_d={cached_ring_d}, block_len={cached_len} \
+                 but is now being used with ring_d={ring_d}, block_len={block_len}; all ops on \
+                 the same polynomial must share a single layout"
             )));
         }
-        // Slow path: build blocks and install them. Validate `block_len`
-        // *before* building so the error path is cheap.
+        // Slow path: build blocks and install them. Validate `ring_d` and
+        // `block_len` *before* building so the error path is cheap.
         if block_len == 0 || !block_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
                 "block_len={block_len} must be a nonzero power of two"
             )));
         }
-        if !self.total_ring_elems.is_multiple_of(block_len) {
+        let ring_elems_at_d = 1usize
+            .checked_shl(self.num_vars as u32)
+            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?
+            .checked_div(ring_d)
+            .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
+        if !ring_elems_at_d.is_multiple_of(block_len) {
             return Err(AkitaError::InvalidSize {
-                expected: self.total_ring_elems,
+                expected: ring_elems_at_d,
                 actual: block_len,
             });
         }
-        let (cached_len, blocks) = {
-            let _span = tracing::debug_span!("OneHotPoly::build_blocks", block_len).entered();
-            self.block_cache.get_or_init(|| {
-                let blocks = self
-                    .build_blocks_inner(block_len)
-                    .expect("block_len validated above");
-                (block_len, blocks)
-            })
-        };
-        if *cached_len != block_len {
-            // A concurrent caller installed a different `block_len` before
-            // our closure ran. Report the mismatch instead of silently
-            // accepting the mismatched cache.
+        // Kernel-entry view validation: the layout invariants `OneHotPoly::new`
+        // pinned at the construction dimension must also hold at the view
+        // dimension the blocks are built for.
+        if !(self.onehot_k.is_multiple_of(ring_d) || ring_d.is_multiple_of(self.onehot_k)) {
             return Err(AkitaError::InvalidInput(format!(
-                "OneHotPoly was first used with block_len={cached_len} but is now being \
-                 used with block_len={block_len}; all ops on the same \
-                 polynomial must share a single layout"
+                "onehot_k={} and D={ring_d} must be nicely matched (one divides the other)",
+                self.onehot_k
+            )));
+        }
+        let built = {
+            let _span =
+                tracing::debug_span!("OneHotPoly::build_blocks", ring_d, block_len).entered();
+            self.build_blocks_inner(ring_d, block_len, ring_elems_at_d)?
+        };
+        let (cached_key, blocks) = self
+            .block_cache
+            .get_or_init(|| ((ring_d, block_len), built));
+        if *cached_key != (ring_d, block_len) {
+            // A concurrent caller installed a different key before our
+            // closure ran. Report the mismatch instead of silently accepting
+            // the mismatched cache.
+            let (cached_ring_d, cached_len) = *cached_key;
+            return Err(AkitaError::InvalidInput(format!(
+                "OneHotPoly was first used with ring_d={cached_ring_d}, block_len={cached_len} \
+                 but is now being used with ring_d={ring_d}, block_len={block_len}; all ops on \
+                 the same polynomial must share a single layout"
             )));
         }
         Ok(blocks)
@@ -289,7 +373,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         SparseExtensionOpeningWitness::new(table_len, entries)
     }
 
-    pub(super) fn tensor_packed_sparse_ring_poly<E>(
+    pub(super) fn tensor_packed_sparse_ring_poly<E, const D: usize>(
         &self,
     ) -> Result<Arc<SparseRingPoly<F>>, AkitaError>
     where
@@ -323,8 +407,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         let half = D / double_width;
         let step = D / double_width;
         let total_ring_elems = total_evals / D;
-        if let Some((cached_width, poly)) = self.tensor_root_cache.get() {
-            if *cached_width == width {
+        if let Some((cached_key, poly)) = self.tensor_root_cache.get() {
+            if *cached_key == (D, width) {
                 return Ok(Arc::clone(poly));
             }
         }
@@ -391,9 +475,9 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             SparseRingPoly::<F>::from_packed_coeffs(self.num_vars, D, total_ring_elems, coeffs)
         }?;
         let poly = Arc::new(poly);
-        let _ = self.tensor_root_cache.set((width, Arc::clone(&poly)));
-        if let Some((cached_width, cached_poly)) = self.tensor_root_cache.get() {
-            if *cached_width == width {
+        let _ = self.tensor_root_cache.set(((D, width), Arc::clone(&poly)));
+        if let Some((cached_key, cached_poly)) = self.tensor_root_cache.get() {
+            if *cached_key == (D, width) {
                 return Ok(Arc::clone(cached_poly));
             }
         }
@@ -446,39 +530,44 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         Ok(None)
     }
 
-    pub(super) fn build_blocks_inner(&self, block_len: usize) -> Result<OneHotBlocks, AkitaError> {
+    pub(super) fn build_blocks_inner(
+        &self,
+        ring_d: usize,
+        block_len: usize,
+        ring_elems_at_d: usize,
+    ) -> Result<OneHotBlocks, AkitaError> {
         // `blocks_for` has already validated that `block_len` is a nonzero
-        // power of two and that `total_ring_elems % block_len == 0`, and
-        // `OneHotPoly::new` has validated that K, D, and every per-chunk
-        // index are in range. Here we only need to compute `num_blocks`
-        // for the flat-layout offsets array and check that `block_len`
-        // and `D` fit in the packed entry field widths.
+        // power of two, that `ring_elems_at_d % block_len == 0`, and that
+        // K and `ring_d` are nicely matched; `OneHotPoly::new` has validated
+        // that every per-chunk index is in range. Here we only need to
+        // compute `num_blocks` for the flat-layout offsets array and check
+        // that `block_len` and `ring_d` fit in the packed entry field widths.
         if u32::try_from(block_len).is_err() {
             return Err(AkitaError::InvalidInput(format!(
                 "block_len={block_len} exceeds u32::MAX and cannot be packed into an entry"
             )));
         }
-        // Coefficient indices inside a ring element are `< D` and get
+        // Coefficient indices inside a ring element are `< ring_d` and get
         // packed as `u16` in the entry types below (see
         // `SingleChunkEntry::coeff_idx` and `MultiChunkEntry::nonzero_coeffs`).
-        // Reject out-of-range `D` here rather than silently truncating below.
-        if D > usize::from(u16::MAX) + 1 {
+        // Reject out-of-range `ring_d` here rather than silently truncating below.
+        if ring_d > usize::from(u16::MAX) + 1 {
             return Err(AkitaError::InvalidInput(format!(
-                "D={D} exceeds 65536 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u16`)"
+                "D={ring_d} exceeds 65536 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u16`)"
             )));
         }
-        let num_blocks = self.total_ring_elems / block_len;
+        let num_blocks = ring_elems_at_d / block_len;
 
         // The single-chunk (one-hot-chunk-per-ring-element) layout
         // applies when K >= D && D | K; otherwise fall back to the
         // multi-chunk layout.
-        if self.onehot_k >= D && self.onehot_k.is_multiple_of(D) {
+        if self.onehot_k >= ring_d && self.onehot_k.is_multiple_of(ring_d) {
             Ok(OneHotBlocks::SingleChunk(
                 FlatBlocks::<SingleChunkEntry>::from_indices(
                     self.onehot_k,
                     &self.indices,
                     block_len,
-                    D,
+                    ring_d,
                     num_blocks,
                 )?,
             ))
@@ -488,7 +577,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                     self.onehot_k,
                     &self.indices,
                     block_len,
-                    D,
+                    ring_d,
                     num_blocks,
                 )?,
             ))

@@ -155,7 +155,7 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {
+pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_blocks · block_len) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
     let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
@@ -164,7 +164,7 @@ pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F,
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly")
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {

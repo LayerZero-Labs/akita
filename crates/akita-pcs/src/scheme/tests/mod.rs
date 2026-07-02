@@ -340,7 +340,7 @@ fn debug_random_point(nv: usize) -> Vec<OneHotF> {
         .collect()
 }
 
-fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF, ONEHOT_D, u8> {
+fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let num_vars = layout.m_vars + layout.r_vars + ONEHOT_D.trailing_zeros() as usize;
     // `total_ring` ring elements of degree D cover `2^num_vars` field elements,
@@ -354,7 +354,7 @@ fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF
         .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
         .collect();
 
-    OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
+    OneHotPoly::<OneHotF, u8>::new(BENCH_ONEHOT_K, ONEHOT_D, indices).expect("debug onehot poly")
 }
 
 fn opening_from_poly<'a, P>(poly: &'a P, point: &[OneHotF], layout: &LevelParams) -> OneHotF

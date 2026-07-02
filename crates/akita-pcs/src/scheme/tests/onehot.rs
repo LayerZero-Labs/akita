@@ -18,7 +18,8 @@ fn commit_group_returns_frozen_conservative_layout() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let handle = OneHotScheme::commit_group(&setup, &polys, &stack).expect("commit group");
+    let handle =
+        OneHotScheme::commit_group::<_, _, ONEHOT_D>(&setup, &polys, &stack).expect("commit group");
 
     assert_eq!(handle.schedule.layout.key, key);
     assert_eq!(handle.schedule.layout.m_vars, layout.m_vars);
@@ -52,10 +53,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let total_chunks = total_field / BENCH_ONEHOT_K;
     assert_eq!(total_chunks * BENCH_ONEHOT_K, total_field);
 
-    let polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
+    let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
         .map(|poly_idx| debug_make_onehot_poly(&layout, 0x0bee_fcaf_e000_1500 + poly_idx as u64))
         .collect();
-    let poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> = polys.iter().collect();
+    let poly_refs: Vec<&OneHotPoly<OneHotF, u8>> = polys.iter().collect();
     let point = debug_random_point(NV);
     let openings: Vec<OneHotF> = polys
         .iter()
@@ -68,13 +69,13 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = OneHotScheme::setup_verifier(&setup);
-    let (commitment, hint) =
-        OneHotScheme::commit(&setup, &polys, &stack).expect("batched onehot commit");
+    let (commitment, hint) = OneHotScheme::commit::<_, _, ONEHOT_D>(&setup, &polys, &stack)
+        .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-    let proof = OneHotScheme::batched_prove(
+    let proof = OneHotScheme::batched_prove::<_, _, _, ONEHOT_D>(
         &setup,
         prover_claims(
             &point[..],

@@ -941,8 +941,8 @@ mod tests {
             },
         )
         .with_onehot_chunk_size(256);
-        let wrong = OneHotPoly::<F, D, u16>::new(64, vec![Some(1), None]).unwrap();
-        let ok = OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap();
+        let wrong = OneHotPoly::<F, u16>::new(64, D, vec![Some(1), None]).unwrap();
+        let ok = OneHotPoly::<F, u16>::new(256, D, vec![Some(1), None]).unwrap();
 
         assert!(matches!(
             validate_onehot_chunk_size_for_params::<F, _>(&[wrong], &params),
@@ -967,11 +967,11 @@ mod tests {
             },
         )
         .with_onehot_chunk_size(256);
-        let wrong_wrapped = MultilinearPolynomial::onehot(
-            OneHotPoly::<F, D, u16>::new(64, vec![Some(1), None]).unwrap(),
+        let wrong_wrapped = MultilinearPolynomial::<F, D, u16>::onehot(
+            OneHotPoly::<F, u16>::new(64, D, vec![Some(1), None]).unwrap(),
         );
-        let ok_wrapped = MultilinearPolynomial::onehot(
-            OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap(),
+        let ok_wrapped = MultilinearPolynomial::<F, D, u16>::onehot(
+            OneHotPoly::<F, u16>::new(256, D, vec![Some(1), None]).unwrap(),
         );
 
         assert!(matches!(

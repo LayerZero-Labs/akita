@@ -16,9 +16,10 @@ fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
     DensePoly::from_field_evals(num_vars, D, &evals).unwrap()
 }
 
-fn sample_onehot<const D: usize>() -> OneHotPoly<Prime24Offset3, D> {
-    OneHotPoly::<Prime24Offset3, D>::new(
+fn sample_onehot<const D: usize>() -> OneHotPoly<Prime24Offset3> {
+    OneHotPoly::<Prime24Offset3>::new(
         8,
+        D,
         vec![
             Some(0usize),
             Some(7),
@@ -49,10 +50,12 @@ fn sample_point<E: ExtField<Prime24Offset3>>(num_vars: usize) -> Vec<E> {
 #[test]
 fn multilinear_polynomial_forwards_onehot_chunk_size_from_inner() {
     const D: usize = 16;
-    let onehot = OneHotPoly::<Prime24Offset3, D>::new(256, vec![Some(1), None]).unwrap();
+    let onehot = OneHotPoly::<Prime24Offset3>::new(256, D, vec![Some(1), None]).unwrap();
     let dense = sample_dense::<D>();
     assert_eq!(
-        RootPolyShape::onehot_chunk_size(&MultilinearPolynomial::onehot(onehot)),
+        RootPolyShape::onehot_chunk_size(
+            &MultilinearPolynomial::<Prime24Offset3, D, usize>::onehot(onehot)
+        ),
         Some(256)
     );
     assert_eq!(
@@ -112,7 +115,7 @@ fn multilinear_kernel_homogeneous_onehot_tensor_batch_matches_inner() {
 
     let onehot0 = sample_onehot::<D>();
     let onehot1 = sample_onehot::<D>();
-    let num_vars = RootPolyShape::num_vars(&onehot0);
+    let num_vars = RootPolyShape::<F, D>::num_vars(&onehot0);
     let wrapped = [
         MultilinearPolynomial::onehot(onehot0),
         MultilinearPolynomial::onehot(onehot1),
@@ -121,14 +124,14 @@ fn multilinear_kernel_homogeneous_onehot_tensor_batch_matches_inner() {
     let point = sample_point::<E>(num_vars);
     let backend = CpuBackend;
 
-    let inner_refs: Vec<&OneHotPoly<F, D>> = wrapped
+    let inner_refs: Vec<&OneHotPoly<F>> = wrapped
         .iter()
         .map(|poly| match poly {
             MultilinearPolynomial::OneHot(onehot) => onehot,
             MultilinearPolynomial::Dense(_) => unreachable!(),
         })
         .collect();
-    let onehot_view = OneHotPoly::<F, D>::tensor_batch(&inner_refs).unwrap();
+    let onehot_view = <OneHotPoly<F> as RootTensorSource<F, D>>::tensor_batch(&inner_refs).unwrap();
     let expected =
         TensorProjectionBatchKernel::<OneHotBatchView<'_, F, D>, F, E, D>::column_partials_batch(
             &backend,
@@ -155,7 +158,7 @@ fn multilinear_kernel_mixed_batch_column_partials_falls_back_per_poly() {
     const D: usize = 16;
 
     let onehot = sample_onehot::<D>();
-    let num_vars = RootPolyShape::num_vars(&onehot);
+    let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
@@ -196,7 +199,7 @@ fn multilinear_kernel_mixed_batch_sparse_linear_combination_returns_none() {
     const D: usize = 16;
 
     let onehot = sample_onehot::<D>();
-    let num_vars = RootPolyShape::num_vars(&onehot);
+    let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
@@ -226,7 +229,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
     const D: usize = 16;
 
     let onehot = sample_onehot::<D>();
-    let num_vars = RootPolyShape::num_vars(&onehot);
+    let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
