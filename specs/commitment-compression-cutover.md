@@ -455,7 +455,7 @@ clear semantic effect and leaves the code in a coherent state.
 
 | PR | Branch | Worktree | Semantic change |
 | -- | ------ | -------- | --------------- |
-| 1 | `quang/remove-tiered-commitment` | `../akita-remove-tiered-commitment` | Delete current tiered commitment completely. |
+| 1 | `quang/remove-tiered-commitment` | `../akita-remove-tiered-commitment` | Delete tiered commitment; collapse M layout to `consistency \| D \| B \| A`; remove dead M public-block scaffolding; rename witness `num_public_rows` → `num_z_segments`. |
 | 2 | `quang/commitment-compression` | `../akita-commitment-compression` | Add compressed commitments: compressed `v` on every fold, compressed `u` on every non-penultimate fold, raw final `u` preserved temporarily. |
 | 3 | `quang/terminal-t-no-final-u` | `../akita-terminal-t-no-final-u` | Remove the final recursive `u`; bind terminal `t`; rename/update terminal M-row layout to drop both D and COMMIT/B. |
 
@@ -480,10 +480,23 @@ These milestones are review checkpoints, not merge points. PR2 should not merge
 with only payload plumbing or only `v` compression unless we deliberately decide
 to split the stack.
 
-### PR1: Remove tiered commitment
+### PR1: Remove tiered commitment + M layout / naming cutover
 
 Purpose: remove the old `B' -> F` tiered protocol so compression does not have
-to compose with it.
+to compose with it, and finish the y-ring trace-internalization cleanup so M-row
+layout and witness naming are unambiguous before compression lands.
+
+PR1 is intentionally broader than tiered deletion alone. It also removes stale
+M-matrix "public output row" scaffolding (openings already bind through the fused
+trace term in stage-2 sumcheck, not through `M` rows) and renames the witness
+`z_folded` width parameter from `num_public_rows` to `num_z_segments`.
+
+**Locked M-row layout after PR1:** `consistency (1) | D | B | A`. There is no
+public block in `M`. Public openings bind via the fused trace term in stage-2
+sumcheck ([`specs/y-ring-trace-internalization.md`](y-ring-trace-internalization.md)).
+
+**Witness naming:** `num_z_segments` counts `z_folded` witness segments (planner
+sets `1` for ordinary folds, `G` for grouped roots). It is not an M-row count.
 
 Expected implementation surface:
 
@@ -495,27 +508,39 @@ Expected implementation surface:
   - delete the tiered planner policy bit;
   - delete tiered schedule table selection;
   - delete generated `fp128_d64_onehot_tiered` schedules;
-  - remove tiered generated-row fields such as `tier_split` / `n_f`.
+  - remove tiered generated-row fields such as `tier_split` / `n_f`;
+  - planner walk uses `num_z_segments` for witness `z_folded` width.
 - `akita-types`:
   - remove `LevelParams::tier_split` and `f_key`;
-  - make `effective_commit_rows()` collapse to `b_key.row_len()` or delete it
-    if direct `b_key.row_len()` reads are clearer;
-  - remove `b_inner_rows_per_group()` and `u_concat_ring_len_per_group()`;
-  - simplify `m_row_count_for` and row-offset helpers back to
-    `consistency | public | D | COMMIT/B | A`;
-  - remove tiered SIS norm helpers and descriptor bindings.
+  - delete `effective_commit_rows()`, `b_inner_rows_per_group()`,
+    `u_concat_ring_len_per_group()`; use `b_key.row_len()` at call sites;
+  - simplify `m_row_count_for` and row-offset helpers to
+    `consistency | D | B | A` (drop `num_public_outputs` parameter);
+  - rename witness-sizing `num_public_rows` → `num_z_segments` in schedule,
+    tail, and terminal witness helpers;
+  - delete `SetupContributionPlanInputs.num_public_rows`; `d_start = 1`;
+  - delete `RingRelationSegmentLayout.offset_u` and tiered `u_len`;
+  - remove tiered SIS norm helpers and descriptor bindings;
+  - fix `layout/proof_size.rs` `r_count` to use the simplified `m_row_count_for`
+    (drops the spurious extra row still priced today).
 - `akita-prover`:
   - delete `tiered_commit_u_final`;
   - delete tiered `u_concat` witness emission from ring-switch coeff assembly;
   - delete tiered branches in ring relation quotient/setup contribution paths;
-  - delete terminal rejection paths that exist only for tiered `u_concat`.
+  - delete terminal rejection paths that exist only for tiered `u_concat`;
+  - remove dead M public-row eval paths (`public_weights`, `NUM_PUBLIC_M_ROWS`,
+    `num_public_m_rows` locals).
 - `akita-verifier`:
-  - remove tiered row-shape handling and cross-config tiered checks.
+  - remove tiered row-shape handling and cross-config tiered checks;
+  - remove setup-contribution / row-eval `num_public_rows` threading;
+  - simplify setup-contribution fixtures away from tiered and M-public layouts.
 - Tests/benches/docs:
   - delete `tiered_e2e`;
-  - remove `onehot_fp128_d64_tiered` profile mode and profile-ci exclusions;
-  - update/remove `specs/tiered-commitment.md` so it is no longer live support
-    documentation, or move it to archive.
+  - remove `onehot_fp128_d64_tiered` profile mode;
+  - archive `specs/tiered-commitment.md` to `specs/archive/2026-Q2/`;
+  - update live specs that still describe `consistency | public | D | …` M layout
+    or witness `num_public_rows` (for example `tail-wire-encoding.md`,
+    `multi-group-batching.md`).
 
 Acceptance tests:
 
@@ -525,6 +550,10 @@ Acceptance tests:
 - `./scripts/check-doc-guardrails.sh`
 - targeted grep: no live `tiered`, `f_key`, `tier_split`, or `u_concat` code
   remains outside archived specs or historical notes.
+- targeted grep: no `num_public_outputs`, `NUM_PUBLIC_M_ROWS`, or
+  `num_public_m_rows` outside archive.
+- targeted grep: no `num_public_rows` in crates/specs/book outside
+  `trace_weight/` and archive (witness param is `num_z_segments`).
 
 ### PR2: Add commitment compression
 
