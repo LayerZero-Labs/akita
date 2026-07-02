@@ -120,7 +120,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
-
     }
 }
 

@@ -259,7 +259,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    basis_range: ({basis_min}, {basis_max}),\n",
             "    onehot_chunk_size: {onehot_chunk_size},\n",
             "    witness_chunk: {witness_chunk},\n",
-
             "    root_fold_shape: {root_fold_shape},\n",
             "    ring_dimensions: CATALOG_RING_DIMENSIONS,\n",
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
@@ -279,7 +278,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         basis_max = identity.basis_range.1,
         onehot_chunk_size = identity.onehot_chunk_size,
         witness_chunk = emit_witness_chunk(identity.witness_chunk),
-
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
         key_count = identity.key_count,

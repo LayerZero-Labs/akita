@@ -421,15 +421,6 @@ pub fn w_ring_element_count_for_chunks(
             lp.num_blocks
         )));
     }
-    // Multi-chunk + tiered is unsupported (the chunked closed form assumes a
-    // non-tiered, empty û segment). Reject rather than silently misprice.
-    if lp.f_key.is_some() || lp.tier_split != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "w_ring_element_count_for_chunks: multi-chunk layout does not support tiered commitments"
-                .to_string(),
-        ));
-    }
-
     let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
     let blocks_per_chunk = lp.num_blocks / num_chunks;
     // ê / t̂: partitioned over the per-chunk block window.
@@ -460,7 +451,7 @@ pub fn w_ring_element_count_for_chunks(
     // single-chunk layout); only the replicated ẑ grows. Pricing it with
     // `num_chunks` here would over-count the tail and break the prover's
     // `emitted == next_w_len` and the verifier's single-machine `r_len`.
-    let r_rows = lp.m_row_count_for(1, 0, layout)?;
+    let r_rows = lp.m_row_count_for(1, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,

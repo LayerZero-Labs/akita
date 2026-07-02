@@ -204,7 +204,6 @@ mod tests {
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             witness_chunk: ChunkedWitnessCfg::default(),
-
         }
     }
 

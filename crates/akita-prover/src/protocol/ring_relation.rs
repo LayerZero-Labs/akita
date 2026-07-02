@@ -332,11 +332,6 @@ pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), Akita
                 "witness chunk block window must be a power of two".to_string(),
             ));
         }
-        if lp.tier_split > 1 {
-            return Err(AkitaError::InvalidSetup(
-                "multi-chunk witness layout for tiered commitments is not supported".to_string(),
-            ));
-        }
     }
     Ok(())
 }

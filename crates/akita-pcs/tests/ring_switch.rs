@@ -853,7 +853,6 @@ mod tests {
                 &tau1,
                 1,
                 &[F::one()],
-                0,
                 MRowLayout::WithDBlock,
             )
             .expect("chunked m evals (prover)");

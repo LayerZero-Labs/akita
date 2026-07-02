@@ -305,11 +305,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             let after_t = offset_t
                 .checked_add(t_len_j)
                 .ok_or_else(|| AkitaError::InvalidSetup("chunk r offset overflow".to_string()))?;
-            let offset_r = if is_last {
-                Some(after_t)
-            } else {
-                None
-            };
+            let offset_r = if is_last { Some(after_t) } else { None };
             let global_block_base = j.checked_mul(blocks_per_chunk).ok_or_else(|| {
                 AkitaError::InvalidSetup("global block base overflow".to_string())
             })?;

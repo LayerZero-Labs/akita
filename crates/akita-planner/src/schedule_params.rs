@@ -29,24 +29,17 @@ use crate::PlannerPolicy;
 
 /// Validate the policy's multi-chunk witness settings at a planner entry point.
 ///
-/// Layout-only rules live on [`ChunkedWitnessCfg::validate`]; the tiered guard
-/// and the recursion-depth bound (which needs the planner-private
-/// [`MAX_RECURSION_DEPTH`]) are enforced here so `akita-types` stays free of
-/// planner internals.
+/// Layout-only rules live on [`ChunkedWitnessCfg::validate`]; the recursion-depth
+/// bound (which needs the planner-private [`MAX_RECURSION_DEPTH`]) is enforced
+/// here so `akita-types` stays free of planner internals.
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] for an invalid `ChunkedWitnessCfg`, a
-/// tiered + multi-chunk combination, or `num_activated_levels` beyond the
-/// planner recursion cap. Verifier-reachable: never panics.
+/// Returns [`AkitaError::InvalidSetup`] for an invalid `ChunkedWitnessCfg`, or
+/// `num_activated_levels` beyond the planner recursion cap. Verifier-reachable: never panics.
 pub(crate) fn validate_policy_witness_chunk(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     let mc = policy.witness_chunk;
     mc.validate()?;
-    if policy.tiered && mc.uses_multi_chunk() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-chunk witness layout is unsupported with tiered commitments".to_string(),
-        ));
-    }
     if mc.num_activated_levels > MAX_RECURSION_DEPTH {
         return Err(AkitaError::InvalidSetup(format!(
             "num_activated_levels={} exceeds the planner recursion cap {MAX_RECURSION_DEPTH}",
