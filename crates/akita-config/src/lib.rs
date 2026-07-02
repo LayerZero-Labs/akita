@@ -13,7 +13,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
+use akita_types::sis::{
+    min_secure_rank, rounded_up_collision_linf_t, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
+};
 use akita_types::{
     AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg,
     CommitmentGroupScheduleKey, DecompositionParams, LevelParams, OpeningBatchShape, Schedule,
@@ -115,6 +117,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_family: Cfg::sis_modulus_family(),
+        min_sis_security_bits: akita_types::DEFAULT_SIS_SECURITY_BITS,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
@@ -416,17 +419,24 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             ));
         }
 
-        let conservative_norm =
-            rounded_up_collision_norm_t(Self::sis_modulus_family(), Self::D, max_basis)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "no conservative B-role norm for standalone commitment group".to_string(),
-                    )
-                })?;
-        let conservative_n_b = min_secure_rank(
+        let conservative_norm = rounded_up_collision_linf_t(
+            DEFAULT_SIS_SECURITY_BITS,
             Self::sis_modulus_family(),
-            Self::D as u32,
-            conservative_norm,
+            Self::D,
+            max_basis,
+        )
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "no conservative B-role norm for standalone commitment group".to_string(),
+            )
+        })?;
+        let conservative_n_b = min_secure_rank(
+            SisTableKey {
+                min_security_bits: DEFAULT_SIS_SECURITY_BITS,
+                family: Self::sis_modulus_family(),
+                ring_dimension: Self::D as u32,
+                coeff_linf_bound: conservative_norm,
+            },
             params.b_key.col_len() as u64,
         )
         .ok_or_else(|| {
@@ -435,6 +445,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             )
         })?;
         params.b_key = AjtaiKeyParams::try_new(
+            DEFAULT_SIS_SECURITY_BITS,
             Self::sis_modulus_family(),
             conservative_n_b,
             params.b_key.col_len(),
@@ -601,13 +612,9 @@ mod sis_schedule_width_audit {
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
             let d = u32::try_from(lp.ring_dimension).expect("ring dimension fits in u32");
-            let family = lp.a_key.sis_family();
 
-            let a_collision = lp.a_key.collision_l2_sq();
             let a_rank = min_secure_rank(
-                family,
-                d,
-                a_collision,
+                lp.a_key.sis_table_key(),
                 u64::try_from(lp.inner_width()).expect("inner width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -625,11 +632,8 @@ mod sis_schedule_width_audit {
                 lp.a_key.row_len(),
             );
 
-            let b_collision = lp.b_key.collision_l2_sq();
             let b_rank = min_secure_rank(
-                family,
-                d,
-                b_collision,
+                lp.b_key.sis_table_key(),
                 u64::try_from(lp.outer_width()).expect("outer width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -647,11 +651,8 @@ mod sis_schedule_width_audit {
                 lp.b_key.row_len(),
             );
 
-            let d_collision = lp.d_key.collision_l2_sq();
             let d_rank = min_secure_rank(
-                family,
-                d,
-                d_collision,
+                lp.d_key.sis_table_key(),
                 u64::try_from(lp.d_matrix_width()).expect("d-matrix width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -742,8 +743,8 @@ mod fp128_policy_tests {
             panic!("small-field schedule should start with a root fold");
         };
         assert!(
-            root.params.a_key.collision_l2_sq() >= root.params.b_key.collision_l2_sq() * 2,
-            "A-role collision should include the psi norm bound"
+            root.params.a_key.coeff_linf_bound() >= root.params.b_key.coeff_linf_bound() * 2,
+            "A-role L-infinity bound should include the psi norm bound"
         );
     }
 

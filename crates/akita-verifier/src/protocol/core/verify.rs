@@ -665,7 +665,7 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily};
+    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -717,7 +717,14 @@ mod tests {
             LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
                 .with_decomp(1, 0, 2, 1, 0)
                 .expect("valid direct layout");
-        params.b_key = AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, 1, 128, 0, D);
+        params.b_key = AjtaiKeyParams::new_unchecked(
+            DEFAULT_SIS_SECURITY_BITS,
+            SisModulusFamily::Q32,
+            1,
+            128,
+            0,
+            D,
+        );
         let setup_seed = setup_seed(128);
         let witnesses = vec![CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(vec![F::zero(); 32]),
