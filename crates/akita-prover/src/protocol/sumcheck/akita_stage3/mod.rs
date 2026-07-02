@@ -384,19 +384,9 @@ where
         lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
         lp.log_basis,
     );
-    let layout = relation.segment_layout(lp)?;
-    let plan = SetupContributionPlan::prepare(
-        &inputs,
-        x_challenges,
-        None,
-        None,
-        &fold_gadget,
-        layout.offset_e,
-        layout.offset_t,
-        layout.offset_z,
-        None,
-        None,
-    )?;
+    let layout = relation.segment_layout(lp, None)?;
+    let plan =
+        SetupContributionPlan::prepare(&inputs, x_challenges, None, None, &fold_gadget, &layout)?;
     let required = plan.required();
     let bar_omega = plan.materialize_bar_omega();
     Ok((required, bar_omega, alpha_pows.to_vec()))

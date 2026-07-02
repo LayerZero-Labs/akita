@@ -1,5 +1,6 @@
 use super::*;
 use crate::compute::{OperationCtx, RingSwitchProveBackend};
+use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_serialization::AkitaSerialize;
 
@@ -48,6 +49,7 @@ where
     let num_claims = instance.opening_batch().num_polynomials();
     let RingRelationWitness {
         z_folded_rings,
+        z_folded_centered_per_chunk,
         fold_grind_nonce: _,
         e_hat,
         e_folded,
@@ -85,11 +87,11 @@ where
         build_w_coeffs::<F, D>(
             &e_hat,
             &decomposed_inner_rows,
-            &z_folded_rings.centered_coeffs,
+            &z_folded_centered_per_chunk,
             &r,
             lp,
             num_claims,
-        )
+        )?
     };
     let terminal_artifacts = if retain_terminal_artifacts {
         Some(RingSwitchTerminalArtifacts {
@@ -133,6 +135,34 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
             let balanced = if d >= half_b { d - b } else { d };
             c = (c - balanced) >> log_basis;
             plane[coeff_idx] = balanced as i8;
+        }
+    }
+}
+
+/// Emit one chunk's window of a block-major digit segment (`ê` or `t̂`),
+/// digit-major with the block index innermost, restricted to the global block
+/// window `[block_lo, block_lo + blocks_per_chunk)`.
+///
+/// `flat` is indexed `flat[(outer · num_blocks + block) · planes_per_block +
+/// compound_dig]`, where `outer` is the claim (for `ê`) or `t`-vector (for `t̂`)
+/// axis. With `block_lo = 0` and `blocks_per_chunk = num_blocks` (the
+/// single-chunk case) this reproduces [`akita_types::emit_witness_planes_block_inner`]
+/// exactly.
+fn emit_witness_planes_block_window<const D: usize>(
+    out: &mut Vec<i8>,
+    flat: &[[i8; D]],
+    num_outer: usize,
+    num_blocks: usize,
+    planes_per_block: usize,
+    block_lo: usize,
+    blocks_per_chunk: usize,
+) {
+    for compound_dig in 0..planes_per_block {
+        for outer in 0..num_outer {
+            for bl in 0..blocks_per_chunk {
+                let blk = outer * num_blocks + (block_lo + bl);
+                out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
+            }
         }
     }
 }
@@ -185,6 +215,11 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// and recomposition. This function transposes opening digits to digit-major at
 /// the ring-to-field boundary.
 ///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `lp.witness_chunk` fails
+/// `akita_types::ChunkedWitnessCfg::validate`.
+///
 /// # Panics
 ///
 /// Panics if the caller supplies digit blocks whose plane counts do not match
@@ -193,29 +228,37 @@ fn emit_z_folded_block_inner<const D: usize>(
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     e_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
-    z_folded_centered: &[[i32; D]],
+    z_folded_centered_per_chunk: &[Vec<[i32; D]>],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
     num_claims: usize,
-) -> RecursiveWitnessFlat {
+) -> Result<RecursiveWitnessFlat, AkitaError> {
     let log_basis = lp.log_basis;
-    let num_digits_fold = lp
-        .num_digits_fold(num_claims, F::modulus_bits())
-        .expect("build_w_coeffs: degenerate fold bound in validated level params");
+    let num_digits_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
     let depth_open = lp.num_digits_open;
     let depth_commit = lp.num_digits_commit;
     let block_len = lp.block_len;
+    let num_blocks = lp.num_blocks;
     let levels = r_decomp_levels::<F>(log_basis);
+
+    // Chunk geometry: `num_chunks = 1` is the single-chunk (historical) layout.
+    validate_chunked_witness_cfg(lp)?;
+    let num_chunks = lp.witness_chunk.num_chunks;
+    let blocks_per_chunk = num_blocks / num_chunks;
 
     let e_hat_planes = e_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
-    let z_count = e_hat_planes + t_hat_planes + z_folded_centered.len() * num_digits_fold;
+    let z_planes_total: usize = z_folded_centered_per_chunk
+        .iter()
+        .map(|z| z.len() * num_digits_fold)
+        .sum();
+    let z_count = e_hat_planes + t_hat_planes + z_planes_total;
     let r_hat_count = r.len() * levels;
     tracing::debug!(
+        num_chunks,
         e_hat_planes,
         t_hat_planes,
-        z_folded_elems = z_folded_centered.len(),
-        z_folded_planes = z_folded_centered.len() * num_digits_fold,
+        z_folded_planes = z_planes_total,
         r_elems = r.len(),
         r_planes = r_hat_count,
         total_ring = z_count + r_hat_count,
@@ -233,6 +276,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         w_block_count * depth_open,
         "build_w_coeffs: e_hat block layout does not match open digit depth"
     );
+    let e_num_outer = w_block_count.checked_div(num_blocks).unwrap_or(0);
     let t_block_count = t_hat.block_count();
     let t_planes_per_block = if t_block_count == 0 {
         0
@@ -244,27 +288,46 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         );
         t_hat_planes / t_block_count
     };
+    let t_num_outer = t_block_count.checked_div(num_blocks).unwrap_or(0);
+    assert_eq!(
+        z_folded_centered_per_chunk.len(),
+        num_chunks,
+        "build_w_coeffs: per-chunk fold count must equal num_chunks"
+    );
 
-    emit_z_folded_block_inner(
-        &mut out,
-        z_folded_centered,
-        block_len,
-        depth_commit,
-        num_digits_fold,
-        log_basis,
-    );
-    akita_types::emit_witness_planes_block_inner(
-        &mut out,
-        e_hat.flat_digits(),
-        w_block_count,
-        depth_open,
-    );
-    akita_types::emit_witness_planes_block_inner(
-        &mut out,
-        t_hat.flat_digits(),
-        t_block_count,
-        t_planes_per_block,
-    );
+    // Per window: z_i (replicated full fold), ê_i / t̂_i (partitioned block
+    // windows). The single shared `r̂` tail follows the last window. With
+    // `num_chunks = 1` this is byte-identical to the legacy `z ‖ e ‖ t ‖ r`
+    // emission.
+    for (chunk, z_i) in z_folded_centered_per_chunk.iter().enumerate() {
+        emit_z_folded_block_inner(
+            &mut out,
+            z_i,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
+        let block_lo = chunk * blocks_per_chunk;
+        emit_witness_planes_block_window(
+            &mut out,
+            e_hat.flat_digits(),
+            e_num_outer,
+            num_blocks,
+            depth_open,
+            block_lo,
+            blocks_per_chunk,
+        );
+        emit_witness_planes_block_window(
+            &mut out,
+            t_hat.flat_digits(),
+            t_num_outer,
+            num_blocks,
+            t_planes_per_block,
+            block_lo,
+            blocks_per_chunk,
+        );
+    }
 
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;
@@ -276,5 +339,5 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             out.extend_from_slice(plane);
         }
     }
-    RecursiveWitnessFlat::from_i8_digits(out)
+    Ok(RecursiveWitnessFlat::from_i8_digits(out))
 }

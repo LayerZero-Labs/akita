@@ -1,7 +1,9 @@
 #[cfg(test)]
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_types::{AkitaExpandedSetup, SetupContributionPlan, SetupContributionPlanInputs};
+use akita_types::{
+    AkitaExpandedSetup, SetupContributionPlan, SetupContributionPlanInputs, WitnessLayout,
+};
 
 pub(crate) enum SetupEvaluatorMode<'a, F: FieldCore> {
     Direct {
@@ -26,11 +28,7 @@ pub(crate) struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
     z_block_low_eq: Option<&'a [E]>,
     alpha_pows: &'a [E],
     fold_gadget: &'a [F],
-    offset_e: usize,
-    offset_t: usize,
-    offset_z: usize,
-    eq_hi_e: Option<&'a [E]>,
-    eq_hi_t: Option<&'a [E]>,
+    chunk_layout: &'a WitnessLayout,
 }
 
 impl<'a, F, E> SetupEvaluator<'a, F, E>
@@ -46,11 +44,7 @@ where
         z_block_low_eq: Option<&'a [E]>,
         alpha_pows: &'a [E],
         fold_gadget: &'a [F],
-        offset_e: usize,
-        offset_t: usize,
-        offset_z: usize,
-        eq_hi_e: Option<&'a [E]>,
-        eq_hi_t: Option<&'a [E]>,
+        chunk_layout: &'a WitnessLayout,
     ) -> Self {
         Self {
             inputs,
@@ -59,11 +53,7 @@ where
             z_block_low_eq,
             alpha_pows,
             fold_gadget,
-            offset_e,
-            offset_t,
-            offset_z,
-            eq_hi_e,
-            eq_hi_t,
+            chunk_layout,
         }
     }
 
@@ -98,11 +88,7 @@ where
             self.eq_low,
             self.z_block_low_eq,
             self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            self.eq_hi_e,
-            self.eq_hi_t,
+            self.chunk_layout,
         )
     }
 }

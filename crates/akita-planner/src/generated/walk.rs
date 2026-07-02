@@ -11,9 +11,10 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentGroupScheduleKey,
-    DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout, Schedule, Step,
+    segment_typed_witness_shape, w_ring_element_count_for_chunks,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, CommitmentGroupScheduleKey, DirectStep, FoldStep, GroupRootParams,
+    LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::generated::{
@@ -74,7 +75,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 } else {
                     1
                 };
-                let lp = expand_validated_fold_level(
+                let mut lp = expand_validated_fold_level(
                     level,
                     key,
                     policy,
@@ -84,29 +85,34 @@ pub(crate) fn walk_generated_schedule_entry(
                     current_w_len,
                     num_claims,
                 )?;
-                let (num_polynomials, num_z_segments) = if fold_level == 0 {
-                    (key.num_polynomials, 1)
+                // Stamp the per-level chunk layout (the expander defaults it to
+                // single-chunk); the pricing below uses the same count.
+                lp.witness_chunk = policy.witness_chunk_for_level(fold_level);
+                let num_polynomials = if fold_level == 0 {
+                    key.num_polynomials
                 } else {
-                    (1, 1)
+                    1
                 };
+                // Chunk count of the witness this level commits/produces.
+                let num_chunks = policy.chunks_at_level(fold_level);
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let ring_len = w_ring_element_count_with_counts_for_layout_bits(
+                    let ring_len = w_ring_element_count_for_chunks(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        num_z_segments,
                         MRowLayout::WithoutDBlock,
+                        num_chunks,
                     )?;
                     let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
                     terminal_witness_field_len = Some(len);
                     (len, None, MRowLayout::WithoutDBlock)
                 } else {
-                    let ring_len = w_ring_element_count_with_counts_for_layout_bits(
+                    let ring_len = w_ring_element_count_for_chunks(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        num_z_segments,
                         MRowLayout::WithDBlock,
+                        num_chunks,
                     )?;
                     let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
                     let GeneratedStep::Fold(next_level) = next else {
@@ -114,7 +120,7 @@ pub(crate) fn walk_generated_schedule_entry(
                             "generated non-terminal successor must be a fold step".to_string(),
                         ));
                     };
-                    let next_lp = expand_validated_fold_level(
+                    let mut next_lp = expand_validated_fold_level(
                         next_level,
                         key,
                         policy,
@@ -124,6 +130,7 @@ pub(crate) fn walk_generated_schedule_entry(
                         len,
                         1,
                     )?;
+                    next_lp.witness_chunk = policy.witness_chunk_for_level(fold_level + 1);
                     (len, Some(next_lp), MRowLayout::WithDBlock)
                 };
 
@@ -198,6 +205,18 @@ pub(crate) fn walk_generated_schedule_entry(
                     } else {
                         1
                     };
+                    // The terminal-direct (cleartext) witness is single-chunk by
+                    // construction: the prover emits the global folded response
+                    // and one shared `r̂` tail (`num_segments = 1`). Chunking the
+                    // cleartext tail is unsupported, so the last fold level must be
+                    // single-chunk; reject loudly here instead of letting the
+                    // prover hit a cryptic layout mismatch at prove time.
+                    if terminal_lp.witness_chunk.num_chunks > 1 {
+                        return Err(AkitaError::InvalidSetup(
+                            "terminal-direct witness does not support a multi-chunk last fold level"
+                                .to_string(),
+                        ));
+                    }
                     let witness_shape = segment_typed_witness_shape(
                         terminal_lp,
                         field_bits,

@@ -80,6 +80,11 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
     pub onehot_chunk_size: usize,
+    /// Multi-chunk witness layout this table was emitted under. A chunked policy
+    /// never aliases a single-chunk table (and vice versa), even when row keys
+    /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
+    pub witness_chunk: akita_types::ChunkedWitnessCfg,
+
     pub root_fold_shape: akita_challenges::TensorChallengeShape,
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,

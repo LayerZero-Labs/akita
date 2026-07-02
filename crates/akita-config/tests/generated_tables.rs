@@ -73,6 +73,14 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
         "fp128_d64_onehot_tensor" => {
             tensor_verifier::fp128::D64OneHotTensor::schedule_catalog().is_some()
         }
+        "fp128_d64_onehot_multi_chunk" => fp128::D64OneHotMultiChunk::schedule_catalog().is_some(),
+        "fp128_d64_onehot_multi_chunk_w2r2" => {
+            fp128::D64OneHotMultiChunkW2R2::schedule_catalog().is_some()
+        }
+        "fp128_d64_onehot_multi_chunk_w4r2" => {
+            fp128::D64OneHotMultiChunkW4R2::schedule_catalog().is_some()
+        }
+        "fp128_d64_full_multi_chunk" => fp128::D64FullMultiChunk::schedule_catalog().is_some(),
         "fp64_d128" => fp64::D128Full::schedule_catalog().is_some(),
         "fp64_d128_onehot" => fp64::D128OneHot::schedule_catalog().is_some(),
         "fp64_d256_onehot" => fp64::D256OneHot::schedule_catalog().is_some(),
@@ -137,6 +145,18 @@ fn family_catalog(
         "fp128_d64_onehot_tensor" => prepare_family_catalog::<
             tensor_verifier::fp128::D64OneHotTensor,
         >(family.module_name, keys),
+        "fp128_d64_onehot_multi_chunk" => {
+            prepare_family_catalog::<fp128::D64OneHotMultiChunk>(family.module_name, keys)
+        }
+        "fp128_d64_onehot_multi_chunk_w2r2" => {
+            prepare_family_catalog::<fp128::D64OneHotMultiChunkW2R2>(family.module_name, keys)
+        }
+        "fp128_d64_onehot_multi_chunk_w4r2" => {
+            prepare_family_catalog::<fp128::D64OneHotMultiChunkW4R2>(family.module_name, keys)
+        }
+        "fp128_d64_full_multi_chunk" => {
+            prepare_family_catalog::<fp128::D64FullMultiChunk>(family.module_name, keys)
+        }
         "fp64_d128" => prepare_family_catalog::<fp64::D128Full>(family.module_name, keys),
         "fp64_d128_onehot" => prepare_family_catalog::<fp64::D128OneHot>(family.module_name, keys),
         "fp64_d256_onehot" => prepare_family_catalog::<fp64::D256OneHot>(family.module_name, keys),
@@ -543,7 +563,9 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
         )
     });
 
-    assert_family_group_batch_table_hit(family, &group_batch_keys);
+    if family.emit_group_batch {
+        assert_family_group_batch_table_hit(family, &group_batch_keys);
+    }
 
     #[cfg(feature = "all-schedules")]
     {
@@ -553,7 +575,9 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     #[cfg(not(feature = "all-schedules"))]
     check_scalar_keys(family, &keys, into);
 
-    check_group_batch_keys(family, &group_batch_keys, into);
+    if family.emit_group_batch {
+        check_group_batch_keys(family, &group_batch_keys, into);
+    }
 }
 
 fn regen_hint() -> &'static str {

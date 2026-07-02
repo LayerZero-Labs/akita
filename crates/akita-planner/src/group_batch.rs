@@ -482,6 +482,9 @@ fn grouped_root_main_level_params_candidate(
         field_bits_hint: 0,
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
+        // Grouped root-direct ships raw witnesses; chunked layout is orthogonal
+        // and not used by the grouped precommit path.
+        witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: ctx.precommitted_groups.to_vec(),
     }
     .with_fold_linf_cap_config(decomp.field_bits(), main_num_polys)?;
@@ -783,6 +786,8 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
+
         }
     }
 
