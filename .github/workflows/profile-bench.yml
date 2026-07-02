@@ -47,9 +47,8 @@ jobs:
   # Cases are split across parallel jobs. Each job builds BOTH the PR and
   # merge-base binaries and benchmarks them interleaved (PR, base, ...) to cancel
   # drift; the build is paid per job, but the jobs run concurrently. The split
-  # isolates the slowest case (fp128 dense nv24, ~26s commit) in its own job; the
-  # fp128 tensor root-fold cell runs in a second job; flat one-hot coverage in a
-  # third; distributed multi-chunk coverage runs as a fourth parallel group.
+  # keeps fp128 dense/tensor root-fold tracking in one job, flat one-hot coverage
+  # in the second, and distributed multi-chunk coverage in a third parallel group.
   # `report` then concatenates per-job summaries.
   bench:
     name: Bench (${{ matrix.group.name }})
@@ -70,20 +69,18 @@ jobs:
         # through multiple recursive levels. The fp128 cells fold aggressively enough
         # to stay at nv=32.
         group:
-          - name: 1-slowest
+          - name: 1-fp128-dense-tensor
             cases: |
               dense_fp128_d64:24:1
-          - name: 2-fp128-tensor
-            cases: |
               onehot_fp128_d64_tensor:32:1
-          - name: 3-flat-onehot
+          - name: 2-flat-onehot-suite
             cases: |
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
               onehot_fp128_d64:32:1
               onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
-          - name: 4-distributed
+          - name: 3-distributed
             # Keep this in its own group so the first PR that introduces the
             # profile mode can still benchmark the PR side even though its
             # merge-base binary cannot run the new mode. Once merged, future
