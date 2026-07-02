@@ -75,18 +75,26 @@ impl ChallengeShape {
         }
     }
 
-    /// Effective per-logical-block `max ‖c‖_2²` for this fold-challenge shape.
+    /// Effective per-logical-block deterministic `max ‖c‖_2²` for this
+    /// fold-challenge shape.
     ///
-    /// Flat folds use [`SparseChallengeConfig::challenge_l2_sq_max`]; tensor folds
-    /// use the product bound for future descriptor binding. The first fold-linf digit-count
-    /// cutover sizes only flat certified families from the flat value directly.
+    /// Flat folds use [`SparseChallengeConfig::challenge_l2_sq_max`] directly.
+    /// Tensor folds materialize the negacyclic product `α_p · β_q`, whose
+    /// deterministic L2 envelope is bounded by
+    /// `||α||_1² · ||β||_2²` for the symmetric factor families used by Akita.
+    ///
+    /// This is not the tensor fold-grind chaos scale. The tensor tail formula
+    /// uses the product of factor L2 variances as a proof artifact, but that
+    /// quantity is not a deterministic L2 bound for the materialized product.
     #[inline]
     #[must_use]
     pub fn effective_l2_sq_max(&self, cfg: &SparseChallengeConfig) -> u128 {
         let challenge_l2_sq_max = cfg.challenge_l2_sq_max();
         match self {
             Self::Flat => challenge_l2_sq_max,
-            Self::Tensor => challenge_l2_sq_max.saturating_mul(challenge_l2_sq_max),
+            Self::Tensor => (cfg.l1_norm() as u128)
+                .saturating_mul(cfg.l1_norm() as u128)
+                .saturating_mul(challenge_l2_sq_max),
         }
     }
 }

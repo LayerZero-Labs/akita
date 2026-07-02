@@ -446,6 +446,45 @@ fn tensor_sampling_uses_two_vectors() {
 }
 
 #[test]
+fn tensor_effective_l2_sq_max_is_deterministic_product_envelope() {
+    let d64 = SparseChallengeConfig::ExactShell {
+        count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+        count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+    };
+    assert_eq!(d64.l1_norm(), 51);
+    assert_eq!(d64.challenge_l2_sq_max(), 71);
+    assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d64), 71);
+    assert_eq!(
+        ChallengeShape::Tensor.effective_l2_sq_max(&d64),
+        51u128 * 51 * 71
+    );
+
+    let d128 = SparseChallengeConfig::Uniform {
+        weight: 31,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    assert_eq!(d128.l1_norm(), 31);
+    assert_eq!(d128.challenge_l2_sq_max(), 31);
+    assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d128), 31);
+    assert_eq!(
+        ChallengeShape::Tensor.effective_l2_sq_max(&d128),
+        31u128 * 31 * 31
+    );
+
+    let d256 = SparseChallengeConfig::Uniform {
+        weight: 23,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    assert_eq!(d256.l1_norm(), 23);
+    assert_eq!(d256.challenge_l2_sq_max(), 23);
+    assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d256), 23);
+    assert_eq!(
+        ChallengeShape::Tensor.effective_l2_sq_max(&d256),
+        23u128 * 23 * 23
+    );
+}
+
+#[test]
 fn tensor_sampling_absorbs_left_digest_before_right() {
     const TD: usize = 8;
     let cfg = SparseChallengeConfig::Uniform {
