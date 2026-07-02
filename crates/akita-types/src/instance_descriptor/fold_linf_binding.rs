@@ -22,7 +22,7 @@ pub const FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE: u8 = 1;
 /// Fold-l∞ rejection protocol identity bound into every transcript preamble.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoldLinfProtocolBinding {
-    /// Tail-bound formula tag (`2` = integer `t*` with explicit grind accept target).
+    /// Tail-bound formula tag (`3` = flat integer `t*` plus tensor-chaos `t*`).
     pub formula_tag: u8,
     /// Per-challenge grind acceptance target `p_grind = NUM / DEN` in the union bound.
     pub grind_target_accept_prob_num: u32,
@@ -46,7 +46,7 @@ pub struct FoldLinfProtocolBinding {
 impl FoldLinfProtocolBinding {
     /// Active fold-l∞ rejection cutover parameters.
     pub const CURRENT: Self = Self {
-        formula_tag: 2,
+        formula_tag: 3,
         grind_target_accept_prob_num: FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
         grind_target_accept_prob_den: FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
         max_grind_attempts: MAX_FOLD_GRIND_ATTEMPTS,

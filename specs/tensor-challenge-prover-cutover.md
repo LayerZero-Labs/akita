@@ -106,7 +106,7 @@ The affected surfaces are:
       product path.
 - [ ] Previewed tensor challenges and live sampled tensor challenges match for
       the same transcript state and nonce.
-- [ ] Tensor fold grind uses a distinct tensor-chaos `t_star` formula, with a
+- [x] Tensor fold grind uses a distinct tensor-chaos `t_star` formula, with a
       descriptor-bound formula tag and tests against the current
       `WorstCaseBetaOnly` fallback.
 - [ ] The old ignored tensor end-to-end tests are either made active at a small

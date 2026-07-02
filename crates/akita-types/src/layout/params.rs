@@ -434,7 +434,8 @@ impl LevelParams {
         let policy = self.fold_witness_linf_cap_policy();
         let max_nonce_exclusive = match policy {
             crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
-            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => max_grind_attempts,
+            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
+            | crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => max_grind_attempts,
         };
         let witness_linf_cap = self.fold_witness_linf_cap_for_claims(num_claims)?;
         Ok(crate::sis::FoldWitnessGrindContract {
@@ -460,7 +461,7 @@ impl LevelParams {
 
     pub fn fold_witness_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let cap_config = self.fold_linf_cap_config;
-        if cap_config.policy != crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind {
+        if !cap_config.policy.allows_grind() {
             return Err(AkitaError::InvalidSetup(
                 "fold_witness_linf_tail_bound_sq: deterministic policy has no tail bound"
                     .to_string(),
@@ -471,19 +472,13 @@ impl LevelParams {
                 "fold_witness_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
             ));
         }
-        let num_fold_blocks = self.num_fold_blocks(num_claims)?;
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        let ln_term = crate::sis::fold_witness_linf_ln_term(
-            cap_config.num_fold_coeffs,
-            cap_config.grind_target_accept_num,
-            cap_config.grind_target_accept_den,
-        )?;
-        crate::sis::fold_witness_linf_tail_bound_sq(
-            num_fold_blocks,
-            cap_config.challenge_l2_sq_max,
+        crate::sis::fold_witness_linf_tail_bound_for_config_sq(
+            self.r_vars,
+            num_claims,
             witness_linf_sq,
-            ln_term,
+            &cap_config,
         )
     }
 
@@ -529,12 +524,17 @@ impl LevelParams {
         self
     }
 
-    /// Replace the fold-round challenge shape, returning the updated params.
+    /// Replace the fold-round challenge shape, rebuilding derived fold-linf
+    /// digit/cache state for the new shape.
     #[inline]
-    #[must_use]
-    pub fn with_fold_challenge_shape(mut self, shape: TensorChallengeShape) -> Self {
+    pub fn with_fold_challenge_shape(
+        mut self,
+        shape: TensorChallengeShape,
+    ) -> Result<Self, AkitaError> {
         self.fold_challenge_shape = shape;
-        self
+        let field_bits = self.field_bits_for_cache();
+        let root_num_claims = self.cached_num_digits_fold_claims;
+        self.with_fold_linf_cap_config(field_bits, root_num_claims)
     }
 
     /// Block-select variable count (the `r_vars` of the legacy layout).
@@ -971,6 +971,7 @@ fn append_fold_linf_policy_descriptor_bytes(
     bytes.push(match policy {
         crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => 0,
         crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
+        crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => 2,
     });
 }
 
