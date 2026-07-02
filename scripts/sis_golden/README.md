@@ -30,15 +30,189 @@ sage -python scripts/sis_golden/check.py
 
 ## Full table regen
 
-Regenerate and stitch every SIS table row with the pinned
-`third_party/lattice-estimator` checkout:
+Regenerate and stitch every SIS table row with the Rust Euclidean estimator:
 
 ```bash
-sage -python scripts/stitch_generated_sis_table.py --jobs 6
+cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --format rust-split
 ```
 
-The stitcher uses `--max-rank 20`, passes `--estimator-path
-third_party/lattice-estimator` to every shard, and rejects any estimator checkout
-whose `HEAD` does not match `metadata.json`.
+The generator uses `--max-rank 20`, the current 128-bit BDGL16 Euclidean
+profile, and the same power-of-two plus derived `d * B^2` collision-key set as
+the legacy Sage stitcher.
 
-Manual workflow only. Rust CI does not require Sage or an initialized submodule.
+For a row-oriented comparison artifact:
+
+```bash
+cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --output /tmp/euclidean_width_table_rust.csv --format csv
+```
+
+The full comparison CSV is a local audit artifact, not a committed source file.
+Manual workflow only. Rust CI does not require Sage or an initialized submodule
+for the Rust table generator.
+
+## Infinity-norm goldens
+
+Infinity-norm goldens use the same pinned `third_party/lattice-estimator`
+checkout as the Euclidean table generator:
+
+```text
+c667a48546f140c3a5454c7503c3ca44a264cce2
+```
+
+(malb/lattice-estimator#217; strict descendant of malb#213 @ 27a581b)
+
+Profile:
+
+```text
+norm = infinity
+red_cost_model = ADPS16
+red_shape_model = LGSA
+zeta = full optimizer
+target_bits = 138
+```
+
+Refresh:
+
+```bash
+sage -python scripts/sis_golden/refresh_infinity_golden.py
+```
+
+Replay:
+
+```bash
+sage -python scripts/sis_golden/check_infinity.py
+```
+
+For quick local smoke tests, use the same script with filters such as
+`--families q32 --dims 32 --ranks 1 --limit 2`.
+
+Profile flags (shared by refresh and replay):
+
+```bash
+--red-cost-model adps16|bdgl16|matzov|gj21|kyber
+--red-shape-model lgsa|gsa|zgsa|cn11|cn11_nq
+--adps16-mode classical|quantum|paranoid
+--nearest-neighbor classical|quantum|paranoid
+```
+
+Non-default profiles write `infinity_golden_<slug>.csv` and matching metadata
+unless `--output` is set explicitly.
+
+## Fixed infinity-cost goldens
+
+Slice 3 uses a smaller fixed-beta, fixed-zeta fixture. These cells exercise
+`SISLattice.cost_infinity(...)` directly and are separate from the full
+optimizer CSV above.
+
+Refresh:
+
+```bash
+sage -python scripts/sis_golden/refresh_fixed_infinity_golden.py
+```
+
+Replay:
+
+```bash
+sage -python scripts/sis_golden/check_fixed_infinity.py
+```
+
+Benchmark the Rust fixed-cell estimator:
+
+```bash
+cargo bench -p akita-sis-estimator --bench fixed_infinity
+```
+
+By default the bench runs a representative subset of fixed infinity cells. To
+bench a custom fixed-cell grid, point `AKITA_SIS_FIXED_INFINITY_BENCH_CSV` at a
+CSV with the fixed golden columns `family`, `d`, `rank`, `width`,
+`coeff_linf_bound`, `beta_input`, and `zeta_input`. The committed fixture works
+as a full trusted-cell input:
+
+```bash
+AKITA_SIS_FIXED_INFINITY_BENCH_CSV=scripts/sis_golden/fixed_infinity_golden.csv \
+  cargo bench -p akita-sis-estimator --bench fixed_infinity
+```
+
+Benchmark the Rust optimizer paths with Criterion:
+
+```bash
+cargo bench -p akita-sis-estimator --bench infinity_optimizer
+```
+
+By default the optimizer bench uses an explicit representative trusted-row
+ladder from `scripts/sis_golden/infinity_golden.csv`: one small q32 row, one
+q128 row, and two q64 rows that cover medium and larger exhaustive searches.
+It runs the serial local-minimum and serial exhaustive profiles. With
+`--features parallel`, it also runs the parallel exhaustive profile in the same
+Criterion group:
+
+```bash
+cargo bench -p akita-sis-estimator --features parallel --bench infinity_optimizer
+```
+
+The durable benchmark controls are environment variables:
+
+| Variable | Values | Default |
+|---|---|---|
+| `AKITA_SIS_INFINITY_BENCH_SET` | `representative`, `exhaustive-ci`, `all-trusted` | `representative` |
+| `AKITA_SIS_INFINITY_BENCH_PROFILES` | comma-separated `local-minimum`, `exhaustive-serial`, `exhaustive-parallel` | serial profiles, plus parallel when the feature is enabled |
+| `AKITA_SIS_INFINITY_BENCH_CSV` | CSV with `family`, `d`, `rank`, `width`, `coeff_linf_bound` columns | committed infinity golden CSV |
+| `AKITA_SIS_INFINITY_BENCH_SAMPLE_SIZE` | Criterion sample size, minimum 10 | Criterion default |
+| `AKITA_SIS_INFINITY_BENCH_WARM_UP_MS` | Criterion warm-up milliseconds | Criterion default |
+| `AKITA_SIS_INFINITY_BENCH_MEASUREMENT_MS` | Criterion measurement milliseconds | Criterion default |
+
+The committed fixture works as a full trusted-cell input:
+
+```bash
+AKITA_SIS_INFINITY_BENCH_SET=all-trusted \
+  cargo bench -p akita-sis-estimator --features parallel --bench infinity_optimizer
+```
+
+## Infinity Width Table Comparison
+
+Slice 5 generates comparison-only max-width rows for the planner-shaped
+infinity key:
+
+```text
+(family, ring_dimension, coeff_linf_bound) -> max widths by rank
+```
+
+This is deliberately outside the production `generated_sis_table/` modules.
+Those modules still use the Euclidean key `(family, d, collision_l2_sq)` until
+the production cutover slice.
+
+Run a small smoke table:
+
+```bash
+cargo run -p akita-sis-estimator --example infinity_width_table -- \
+  --families q32 --dims 32 --bounds 15 --max-rank 2 --search-cap 8
+```
+
+Regenerate the committed smoke artifact:
+
+```bash
+cargo run -p akita-sis-estimator --example infinity_width_table -- \
+  --output scripts/sis_golden/infinity_width_table_smoke.csv \
+  --families q32,q64,q128 --dims 32 --bounds 15,255 --max-rank 3 --search-cap 8
+```
+
+Run the planner keyspace as a CSV artifact:
+
+```bash
+cargo run -p akita-sis-estimator --example infinity_width_table --release -- \
+  --output scripts/sis_golden/infinity_width_table.csv
+```
+
+The current Rust estimator stores explicit scalar `m` as `u32`, so each row is
+capped at `floor(u32::MAX / d)` unless `--search-cap` is smaller. Rows with
+`hit_cap=true` are lower bounds, not tight cutoffs.
+
+For Rust-vs-Sage single-shot timing, run:
+
+```bash
+sage -python scripts/sis_golden/bench_infinity.py \
+  --estimator-path /path/to/lattice-estimator-pr217
+```
+
+Add `--case label:family:d:rank:width:coeff_linf_bound` to benchmark specific
+trusted golden rows without Criterion's repeated sampling loop.

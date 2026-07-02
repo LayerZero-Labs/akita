@@ -20,3 +20,4 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q2/akita-zk-commitment-hiding.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
 | `2026-Q2/akita-zk-sumcheck-hiding-plain.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
 | `2026-Q2/akita-zk-v-hiding.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
+| `2026-Q2/l2-msis-opnorm-folded-witness.md` | historical | _(cancelled; no book fold)_ | 2026-Q2 |

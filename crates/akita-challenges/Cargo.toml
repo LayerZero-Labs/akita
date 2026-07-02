@@ -38,10 +38,6 @@ harness = false
 name = "jl_mle"
 harness = false
 
-[[bench]]
-name = "op_norm_rejection"
-harness = false
-
 [features]
 default = []
 parallel = ["akita-field/parallel"]

@@ -63,9 +63,9 @@
       "consider_updating": [
         "book/src/how/security.md",
         "book/src/foundations/lattices-sis.md",
-        "book/src/foundations/operator-norm-certification.md",
         "specs/akita-sis-*.md",
-        "specs/l2-msis-*.md",
+        "specs/sis-euclidean-estimator.md",
+        "specs/fold-linf-rejection.md",
         "specs/bounded-l1-sparse-challenge.md",
         "docs/security-posture.md"
       ]

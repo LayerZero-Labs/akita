@@ -42,7 +42,6 @@
   - [Equality-factored sum-check](./foundations/eq-factored-sumcheck.md)
   - [Extension-opening reduction](./foundations/extension-opening-reduction.md)
   - [Polynomial commitments and binding](./foundations/pcs-and-binding.md)
-  - [Operator-norm certification](./foundations/operator-norm-certification.md)
   - [Zero-knowledge background](./foundations/zero-knowledge.md)
   - [Glossary and notation](./foundations/glossary.md)
   - [Spec index](./foundations/spec-index.md)
@@ -51,7 +50,6 @@
 # Roadmap
 
 - [Roadmap](./roadmap/roadmap.md)
-  - [Euclidean security model](./roadmap/euclidean-security.md)
   - [Verifier offloading](./roadmap/verifier-offloading.md)
   - [Modulus switching](./roadmap/modulus-switching.md)
   - [Zero-knowledge](./roadmap/zero-knowledge.md)

@@ -75,27 +75,10 @@ impl ChallengeShape {
         }
     }
 
-    /// Effective per-logical-block operator-norm cap `Gamma` for this shape.
-    ///
-    /// Flat folds use [`SparseChallengeConfig::operator_norm_cap`]; tensor folds
-    /// use the submultiplicative product `Gamma^2`. A-role committed-fold
-    /// collision sizing reads this cap; fold-digit `beta_inf` still uses
-    /// [`Self::effective_l1_mass`].
-    #[inline]
-    #[must_use]
-    pub fn effective_operator_norm_cap(&self, cfg: &SparseChallengeConfig) -> u64 {
-        let cap = u64::from(cfg.operator_norm_cap());
-        match self {
-            Self::Flat => cap,
-            Self::Tensor => cap.saturating_mul(cap),
-        }
-    }
-
     /// Effective per-logical-block `max ‖c‖_2²` for this fold-challenge shape.
     ///
-    /// Mirrors [`Self::effective_operator_norm_cap`]: flat folds use
-    /// [`SparseChallengeConfig::challenge_l2_sq_max`]; tensor folds use the
-    /// product bound for future descriptor binding. The first fold-linf digit-count
+    /// Flat folds use [`SparseChallengeConfig::challenge_l2_sq_max`]; tensor folds
+    /// use the product bound for future descriptor binding. The first fold-linf digit-count
     /// cutover sizes only flat certified families from the flat value directly.
     #[inline]
     #[must_use]

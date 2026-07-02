@@ -60,8 +60,9 @@ pub use jl::{
 };
 pub use layout::{
     basis_weights, block_rings_at_opening, direct_witness_bytes,
-    extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
-    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
+    extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
+    gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
+    padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, GroupRootParams, LevelParams, MRowLayout,
     RingMatrixView, RingOpeningPoint,
@@ -118,8 +119,8 @@ pub use schedule::{
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
     schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, DirectStep,
-    ExecutionSchedule, FoldStep, GroupBatchAkitaScheduleLookupKey, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
+    DirectStep, ExecutionSchedule, FoldStep, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{AjtaiKeyParams, SisModulusFamily};

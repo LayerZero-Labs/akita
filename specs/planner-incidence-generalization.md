@@ -49,10 +49,10 @@ It already records the canonical public routing:
 - `point_group_counts[point_idx]`: number of distinct groups touched by each point.
 
 After the scheduler cleanup, the main schedule-facing projection is
-`AkitaScheduleLookupKey` in `crates/akita-types/src/schedule.rs`:
+`CommitmentGroupScheduleKey` in `crates/akita-types/src/schedule.rs`:
 
 ```rust
-pub struct AkitaScheduleLookupKey {
+pub struct CommitmentGroupScheduleKey {
     pub num_vars: usize,
     pub num_t_vectors: usize,
     pub num_w_vectors: usize,
@@ -218,7 +218,7 @@ result is deterministic.
 
 Current interim status:
 
-- `AkitaScheduleLookupKey::new_from_incidence` already derives
+- `CommitmentGroupScheduleKey::new_from_incidence` already derives
   `num_t_vectors` from `group_poly_counts`.
 - It already derives `num_z_vectors` from distinct commitment-group point sets.
 - It still derives `num_w_vectors` from `num_claims`; this should change to
@@ -270,7 +270,7 @@ blinding = num_commitment_groups * blinding_cols(...)
 
 The main current shape carriers are:
 
-- `AkitaScheduleLookupKey` and `GeneratedScheduleKey`.
+- `CommitmentGroupScheduleKey` and `GeneratedCommitmentGroupScheduleKey`.
 - `w_ring_element_count_with_counts_for_layout`.
 - `root_w_ring_element_count` in `crates/akita-planner/src/schedule_params.rs`.
 - `find_optimal_schedule`.
@@ -289,7 +289,7 @@ The long-term direction should be:
    lookup.
 5. Keep `ClaimIncidenceSummary` as the canonical protocol routing object.
 
-`AkitaScheduleLookupKey` can either evolve into `RootPlannerProfile` or become a
+`CommitmentGroupScheduleKey` can either evolve into `RootPlannerProfile` or become a
 thin wrapper around it. It should not regain setup-capacity fields.
 
 ## Generated Schedule Entries
@@ -300,7 +300,7 @@ cheaply derivable at runtime.
 The generated key is profile-shaped:
 
 ```rust
-pub struct GeneratedScheduleKey {
+pub struct GeneratedCommitmentGroupScheduleKey {
     pub num_vars: usize,
     pub num_t_vectors: usize,
     pub num_w_vectors: usize,

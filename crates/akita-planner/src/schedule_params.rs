@@ -13,15 +13,15 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
-    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
     rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
     rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams,
     DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
@@ -187,7 +187,7 @@ fn derive_candidate_level_params(
         let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
             continue;
         };
-        let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
+        let Some((norm_s, n_a)) = committed_fold_a_role_rank(
             family,
             d,
             decomp,
@@ -244,7 +244,6 @@ fn derive_candidate_level_params(
             m_vars: reduced_vars - r,
             r_vars: r,
             stage1_config: ring_challenge_cfg.clone(),
-            op_norm_rejection,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: delta_commit,
             num_digits_open: delta_open,
@@ -306,54 +305,24 @@ fn derive_candidate_level_params(
     )))
 }
 
-fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
-    let padded = len
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
-    Ok(padded.trailing_zeros() as usize)
-}
-
-fn extension_opening_reduction_level_bytes(
-    policy: &PlannerPolicy,
-    key: AkitaScheduleLookupKey,
-    fold_level: usize,
-    current_w_len: usize,
-) -> Result<usize, AkitaError> {
-    let width = policy.claim_ext_degree;
-    if width <= 1 {
-        return Ok(0);
-    }
-    let (partials, opening_vars) = if fold_level == 0 {
-        (width.saturating_mul(key.num_polynomials), key.num_vars)
-    } else {
-        (width, padded_boolean_vars(current_w_len)?)
-    };
-    extension_opening_reduction_proof_bytes(
-        policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-        partials,
-        opening_vars,
-        width,
-    )
-}
-
 /// A `Step::Fold`-first suffix schedule.
 ///
 /// The parent's proof-size formula needs the child's first fold params
 /// (`first_fold_params`), so the suffix carries it directly instead of
 /// re-matching `steps[0]`.
 #[derive(Clone)]
-struct FoldSuffix {
-    total_bytes: usize,
-    first_fold_params: LevelParams,
-    steps: Vec<Step>,
+pub(crate) struct FoldSuffix {
+    pub(crate) total_bytes: usize,
+    pub(crate) first_fold_params: LevelParams,
+    pub(crate) steps: Vec<Step>,
 }
 
 /// Best direct suffix at one DP state: witness length only. The terminal
 /// `DirectStep` is materialized at stitch time from the predecessor fold's
 /// committed `LevelParams`.
 #[derive(Clone, Copy)]
-struct DirectSuffix {
-    current_w_len: usize,
+pub(crate) struct DirectSuffix {
+    pub(crate) current_w_len: usize,
 }
 
 /// Result of the suffix DP at one state. Both shape options are reported
@@ -365,13 +334,13 @@ struct DirectSuffix {
 /// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
 ///   `log_basis`.
 #[derive(Clone)]
-struct SuffixResult {
-    best_direct: Option<DirectSuffix>,
-    best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
+pub(crate) struct SuffixResult {
+    pub(crate) best_direct: Option<DirectSuffix>,
+    pub(crate) best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
 }
 
 impl SuffixResult {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.best_direct.is_none() && self.best_fold_per_lb.is_empty()
     }
 }
@@ -399,11 +368,11 @@ fn make_terminal_direct_step(
     })
 }
 
-fn terminal_direct_suffix_cost(
+pub(crate) fn terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     terminal_fold_level: usize,
 ) -> Result<(DirectStep, usize), AkitaError> {
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
@@ -418,7 +387,7 @@ fn terminal_direct_suffix_cost(
     Ok((direct, direct_bytes))
 }
 
-type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
+pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 
 /// DP-invariant inputs for the suffix search.
 ///
@@ -426,11 +395,11 @@ type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 /// recursion, so they are carried in one context value rather than as
 /// per-call arguments (keeps the recursive signature small).
 #[derive(Clone, Copy)]
-struct SuffixCtx<'a> {
-    policy: &'a PlannerPolicy,
-    ring_challenge_config: RingChallengeConfigFn<'a>,
-    num_vars: usize,
-    key: AkitaScheduleLookupKey,
+pub(crate) struct SuffixCtx<'a> {
+    pub(crate) policy: &'a PlannerPolicy,
+    pub(crate) ring_challenge_config: RingChallengeConfigFn<'a>,
+    pub(crate) num_vars: usize,
+    pub(crate) key: CommitmentGroupScheduleKey,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -445,7 +414,7 @@ struct SuffixCtx<'a> {
 /// At each state: `best_direct` ships the witness directly (Terminal, no
 /// SIS audit, always present); `best_fold` keeps one fold candidate per
 /// `log_basis` (from [`derive_candidate_level_params`]).
-fn derive_optimal_suffix_schedule(
+pub(crate) fn derive_optimal_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     level: usize,
@@ -518,9 +487,10 @@ fn derive_optimal_suffix_schedule(
             depth + 1,
         )?;
         let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-            policy,
-            AkitaScheduleLookupKey::singleton(num_vars),
+            policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+            policy.claim_ext_degree,
             level,
+            CommitmentGroupScheduleKey::singleton(num_vars),
             current_witness_len,
         ) else {
             continue;
@@ -707,7 +677,7 @@ fn compute_root_direct_level_params(
     let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
         return Ok(None);
     };
-    let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
+    let Some((norm_s, n_a)) = committed_fold_a_role_rank(
         sis_family,
         d,
         level_decomp,
@@ -773,7 +743,6 @@ fn compute_root_direct_level_params(
         m_vars,
         r_vars,
         stage1_config: ring_challenge_cfg,
-        op_norm_rejection,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
@@ -805,7 +774,7 @@ fn compute_root_direct_level_params(
 /// overflows. The function never panics on malformed input — it is
 /// verifier-reachable and audited under the no-panic contract.
 pub fn find_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -819,7 +788,7 @@ pub fn find_schedule(
 }
 
 fn find_schedule_inner(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -909,7 +878,7 @@ fn find_schedule_inner(
             let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
                 continue;
             };
-            let Some((op_norm_rejection, norm_s, n_a)) = choose_op_norm_rejection_for_a_role(
+            let Some((norm_s, n_a)) = committed_fold_a_role_rank(
                 family,
                 d,
                 level_decomp,
@@ -980,7 +949,6 @@ fn find_schedule_inner(
                 m_vars,
                 r_vars,
                 stage1_config: ring_challenge_cfg.clone(),
-                op_norm_rejection,
                 fold_challenge_shape,
                 num_digits_commit,
                 num_digits_open,
@@ -1039,9 +1007,13 @@ fn find_schedule_inner(
             if suffix.is_empty() {
                 continue;
             }
-            let Ok(eor_bytes) =
-                extension_opening_reduction_level_bytes(policy, key, 0, witness_len)
-            else {
+            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
+                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                policy.claim_ext_degree,
+                0,
+                key,
+                witness_len,
+            ) else {
                 continue;
             };
 

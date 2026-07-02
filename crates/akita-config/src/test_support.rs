@@ -10,7 +10,9 @@
 //! directly and never need this module.
 
 use akita_field::AkitaError;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, OpeningBatchShape};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, OpeningBatchShape,
+};
 
 use crate::CommitmentConfig;
 
@@ -40,8 +42,8 @@ pub fn akita_batched_root_layout<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_polynomials);
-    let schedule = Cfg::runtime_schedule(lookup_key)?;
+    let lookup_key = CommitmentGroupScheduleKey::new(num_vars, num_polynomials);
+    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(lookup_key))?;
     if let Some(root) = akita_types::schedule_root_fold_step(&schedule) {
         let layout = root.params.clone();
         tracing::info!(

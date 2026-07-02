@@ -231,15 +231,6 @@ fn tiered_onehot_batch_nv14() {
     run_tiered_batch(14, 16, SetupContributionMode::Direct);
 }
 
-#[test]
-fn tiered_onehot_singleton_nv29() {
-    // Smallest singleton whose root fold both tiers (f_key present) and folds
-    // (so the recursive variant exercises the tiered stage-3 setup sumcheck)
-    // under the witness-scored op-norm schedules. Tiering vs nv is non-monotonic;
-    // after the D64 witness-cost gate, nv=27/28 no longer tier at the root.
-    run_tiered_singleton(29, SetupContributionMode::Direct);
-}
-
 /// Same tiered instances under [`SetupContributionMode::Recursive`]: the root
 /// fold level is tiered (`f_key`), so the stage-3 setup-product sumcheck runs on
 /// the tiered level and exercises the prover-side `create_setup_contribution_inputs`
@@ -251,7 +242,10 @@ fn tiered_onehot_batch_nv14_recursive() {
     run_tiered_batch(14, 16, SetupContributionMode::Recursive);
 }
 
+/// Smallest singleton whose root fold both tiers (`f_key` present) and folds,
+/// so recursive setup exercises the tiered stage-3 setup sumcheck. Tiering vs
+/// nv is non-monotonic (e.g. nv=28..=30 do not tier at the root).
 #[test]
-fn tiered_onehot_singleton_nv29_recursive() {
-    run_tiered_singleton(29, SetupContributionMode::Recursive);
+fn tiered_onehot_singleton_nv27_recursive() {
+    run_tiered_singleton(27, SetupContributionMode::Recursive);
 }

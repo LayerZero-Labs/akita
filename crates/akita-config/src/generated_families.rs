@@ -15,14 +15,21 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_planner::{find_schedule, EmitSpec, PlannerPolicy};
-use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningBatchShape, Schedule};
+use akita_planner::{find_group_batch_schedule, find_schedule, EmitSpec, PlannerPolicy};
+use akita_types::{
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
+    OpeningBatchShape, Schedule,
+};
 
+use crate::conservative_commitment::conservative_commit_params;
 use crate::proof_optimized::{fp128, fp32, fp64};
 use crate::{policy_of, tensor_verifier, CommitmentConfig};
 
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
+
+/// Maximum number of precommitted groups emitted for grouped-root generated tables.
+pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
 
 /// One generated schedule-table family.
 ///
@@ -47,11 +54,17 @@ pub struct GeneratedFamily {
     pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any shipped table
     /// (`find_schedule(key, &policy_of::<Cfg>(), …)`).
-    pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub regen: fn(CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError>,
+    /// Pure grouped DP regeneration that ignores any shipped table.
+    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    /// Whether this family ships grouped-root generated tables.
+    pub emit_group_batch: bool,
+    /// Grouped-root keys enumerated for this generated family.
+    pub group_batch_keys: fn(&GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError>,
     /// `Cfg::runtime_schedule(key)` — the table fast path when an entry
     /// exists, falling through to the DP otherwise. Used by diagnostic
     /// comparisons against the shipped table.
-    pub table_backed: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub table_backed: fn(CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError>,
     pub policy: fn() -> PlannerPolicy,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -70,7 +83,9 @@ pub struct GeneratedFamily {
 /// Returns an error if the synthetic opening batch fails to build
 /// or the lookup-key derivation fails (both indicate a malformed
 /// `(min_num_vars, max_num_vars)` range).
-pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+pub fn family_keys(
+    family: &GeneratedFamily,
+) -> Result<Vec<CommitmentGroupScheduleKey>, AkitaError> {
     let mut keys = Vec::with_capacity(
         family
             .num_polys
@@ -80,7 +95,7 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKe
     for &num_polys in family.num_polys {
         for nv in family.min_num_vars..=family.max_num_vars {
             let opening_batch = OpeningBatchShape::new(nv, num_polys)?;
-            keys.push(AkitaScheduleLookupKey::new_from_opening_batch(
+            keys.push(CommitmentGroupScheduleKey::new_from_opening_batch(
                 &opening_batch,
             )?);
         }
@@ -89,9 +104,21 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKe
 }
 
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
-fn regen<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+fn regen<Cfg: CommitmentConfig>(key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
     find_schedule(
         key,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )
+}
+
+/// Pure grouped DP regeneration for `Cfg` — never consults the shipped table.
+fn regen_group_batch<Cfg: CommitmentConfig>(
+    key: AkitaScheduleLookupKey,
+) -> Result<Schedule, AkitaError> {
+    find_group_batch_schedule(
+        &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -101,12 +128,95 @@ fn regen<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> Result<Schedule,
 /// Table-backed resolution for `Cfg` — table hit when present, otherwise
 /// the DP fallback baked into `runtime_schedule`.
 fn table_backed<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
 ) -> Result<Schedule, AkitaError> {
-    Cfg::runtime_schedule(key)
+    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
+}
+
+fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
+    policy_of::<Cfg>()
+}
+
+fn group_batch_keys<Cfg: CommitmentConfig>(
+    family: &GeneratedFamily,
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    if !family.emit_group_batch {
+        return Ok(Vec::new());
+    }
+    if Cfg::TIERED_COMMITMENT || Cfg::decomposition().log_commit_bound != 1 {
+        return Ok(Vec::new());
+    }
+
+    let min_precommitted_num_vars = family
+        .min_num_vars
+        .max(policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize + 1);
+    let mut keys = Vec::new();
+    for main in family_keys(family)? {
+        let pre_num_vars = main.num_vars / 2;
+        if pre_num_vars < min_precommitted_num_vars {
+            continue;
+        }
+        let patterns = precommitted_group_patterns(main.num_polynomials);
+        for pattern in patterns {
+            let mut precommitteds = Vec::with_capacity(pattern.len());
+            let mut supported = true;
+            for &num_polys in &pattern {
+                let pre_key = CommitmentGroupScheduleKey::new(pre_num_vars, num_polys);
+                let params = match conservative_commit_params::<Cfg>(&pre_key) {
+                    Ok(params) => params,
+                    Err(_) => {
+                        supported = false;
+                        break;
+                    }
+                };
+                precommitteds.push(CommitmentGroupLayout::from_params(pre_key, &params));
+            }
+            if !supported {
+                continue;
+            }
+            let candidate = AkitaScheduleLookupKey {
+                final_group: main,
+                precommitteds,
+            };
+            if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
+                keys.push(candidate);
+            }
+        }
+    }
+    keys.sort_by(akita_planner::runtime_group_batch_key_cmp);
+    Ok(keys)
+}
+
+fn precommitted_group_patterns(main_num_polynomials: usize) -> Vec<Vec<usize>> {
+    let first_group = 1usize;
+    let second_group = (main_num_polynomials / 2).max(1);
+    let mut patterns = vec![vec![first_group]];
+    if DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS >= 2 {
+        patterns.push(vec![first_group, second_group]);
+    }
+    patterns
 }
 
 macro_rules! family_row {
+    (group_batch, $module:literal, $const:literal, $feat:literal, $min:expr, $max:expr, $cfg:ty) => {
+        GeneratedFamily {
+            module_name: $module,
+            const_name: $const,
+            schedule_feature: $feat,
+            min_num_vars: $min,
+            max_num_vars: $max,
+            num_polys: DEFAULT_NUM_POLYS,
+            regen: regen::<$cfg>,
+            regen_group_batch: regen_group_batch::<$cfg>,
+            emit_group_batch: true,
+            group_batch_keys: group_batch_keys::<$cfg>,
+            table_backed: table_backed::<$cfg>,
+            policy: family_policy::<$cfg>,
+            ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
+            fold_challenge_shape_at_level:
+                <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,
+        }
+    };
     ($module:literal, $const:literal, $feat:literal, $min:expr, $max:expr, $cfg:ty) => {
         GeneratedFamily {
             module_name: $module,
@@ -116,8 +226,11 @@ macro_rules! family_row {
             max_num_vars: $max,
             num_polys: DEFAULT_NUM_POLYS,
             regen: regen::<$cfg>,
+            regen_group_batch: regen_group_batch::<$cfg>,
+            emit_group_batch: false,
+            group_batch_keys: group_batch_keys::<$cfg>,
             table_backed: table_backed::<$cfg>,
-            policy: policy_of::<$cfg>,
+            policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             fold_challenge_shape_at_level:
                 <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,
@@ -134,8 +247,11 @@ pub fn wiring_emit_spec(family: &GeneratedFamily, output_dir: std::path::PathBuf
         schedule_feature: family.schedule_feature,
         policy: (family.policy)(),
         keys: Vec::new(),
+        group_batch_keys: Vec::new(),
+        emit_group_batch: family.emit_group_batch,
         output_dir,
         regen: family.regen,
+        regen_group_batch: family.regen_group_batch,
         ring_challenge_config: family.ring_challenge_config,
         fold_challenge_shape_at_level: family.fold_challenge_shape_at_level,
         generator_command: "",
@@ -155,8 +271,11 @@ pub fn emit_spec_for_family(
         schedule_feature: family.schedule_feature,
         policy: (family.policy)(),
         keys: family_keys(family)?,
+        group_batch_keys: (family.group_batch_keys)(family)?,
+        emit_group_batch: family.emit_group_batch,
         output_dir,
         regen: family.regen,
+        regen_group_batch: family.regen_group_batch,
         ring_challenge_config: family.ring_challenge_config,
         fold_challenge_shape_at_level: family.fold_challenge_shape_at_level,
         generator_command,
@@ -178,6 +297,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D128Full
     ),
     family_row!(
+        group_batch,
         "fp128_d128_onehot",
         "FP128_D128_ONEHOT_SCHEDULES",
         "fp128-d128-onehot",
@@ -186,6 +306,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D128OneHot
     ),
     family_row!(
+        group_batch,
         "fp128_d64_onehot",
         "FP128_D64_ONEHOT_SCHEDULES",
         "fp128-d64-onehot",
@@ -202,6 +323,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64Full
     ),
     family_row!(
+        group_batch,
         "fp128_d64_onehot_tensor",
         "FP128_D64_ONEHOT_TENSOR_SCHEDULES",
         "fp128-d64-onehot-tensor",

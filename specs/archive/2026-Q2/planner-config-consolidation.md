@@ -144,7 +144,7 @@ New tests to add:
 
 - `crates/akita-pcs/tests/no_panic_verifier_cfg.rs`: feeds adversarial `Schedule`/`LevelParams`/incidence to `verify_batched::<Cfg>` and confirms `Result::Err(AkitaError::...)` rather than panic. Run under both `--release` and `--debug`.
 - `crates/akita-cfg/tests/cfg_planner_free_overrides.rs`: defines a minimal `Cfg` impl that hard-codes a tiny `Schedule` and overrides every `Cfg` default. Builds with `--no-default-features` (planner feature off) and runs a round-trip prove/verify against a small claim. This is the contract test for the "planner-free Cfg" path.
-- `crates/akita-cfg/tests/cfg_blanket_presets.rs`: one assertion per preset that `Cfg::sis_modulus_family()`, `Cfg::decomposition()`, and `Cfg::get_params_for_prove(...)` succeed for a small known `AkitaScheduleLookupKey`.
+- `crates/akita-cfg/tests/cfg_blanket_presets.rs`: one assertion per preset that `Cfg::sis_modulus_family()`, `Cfg::decomposition()`, and `Cfg::get_params_for_prove(...)` succeed for a small known `CommitmentGroupScheduleKey`.
 - A `LoggingTranscript` golden test, comparing event streams pre/post refactor under the `logging-transcript` feature, to catch any reorderings introduced by collapsing the closure layer.
 
 Required CI matrix:
@@ -160,7 +160,7 @@ Required CI matrix:
 
 This refactor must not change:
 
-- **Proof bytes** for any preset on any `AkitaScheduleLookupKey`. Verified by `gen_schedule_tables` byte-diff (modulo header comments) and by reading `schedule.total_bytes` from a small fixture set in the transcript-schedule example.
+- **Proof bytes** for any preset on any `CommitmentGroupScheduleKey`. Verified by `gen_schedule_tables` byte-diff (modulo header comments) and by reading `schedule.total_bytes` from a small fixture set in the transcript-schedule example.
 - **Verifier hot path latency.** Today's closure-based `verify_batched_with_policy` and tomorrow's `verify_batched::<Cfg>` are both monomorphized per `Cfg`, so inlining is preserved. Verifier wallclock on the standard fp128 profile example stays within ±5% noise. (Tighter targets are infeasible without dedicated hardware; ±5% is the project's current measurement floor.)
 - **Prover wallclock** for `AKITA_MODE=onehot AKITA_NUM_VARS=32 cargo run --release --example profile`. Same ±5% noise band.
 - **Schedule planner DP wallclock** for `find_optimal_schedule_from_scratch` on the standard fixture set. The DP itself is byte-for-byte identical; only its trait surface changes.
@@ -189,8 +189,8 @@ If `gen_schedule_tables` produces a non-cosmetic diff, or if `schedule.total_byt
 `akita-types` continues to be the wire-data crate. After the refactor it owns:
 
 - Layout primitives: [`LevelParams`](crates/akita-types/src/layout/params.rs), `AjtaiKeyParams`, `MRowLayout`, `RingOpeningPoint<F>`, `BasisMode`, `BlockOrder`.
-- Runtime schedule types: `Schedule`, `Step`, `FoldStep`, `DirectStep`, `AkitaSchedulePlan` and the `AkitaPlanned*` sub-structs, `AkitaScheduleInputs`, `AkitaScheduleLookupKey`.
-- Generated schedule table types: `GeneratedScheduleTable`, `GeneratedScheduleTableEntry`, `GeneratedScheduleKey`, `GeneratedStep`, `GeneratedFoldStep`, `GeneratedDirectStep`.
+- Runtime schedule types: `Schedule`, `Step`, `FoldStep`, `DirectStep`, `AkitaSchedulePlan` and the `AkitaPlanned*` sub-structs, `AkitaScheduleInputs`, `CommitmentGroupScheduleKey`.
+- Generated schedule table types: `GeneratedScheduleTable`, `GeneratedScheduleTableEntry`, `GeneratedCommitmentGroupScheduleKey`, `GeneratedStep`, `GeneratedFoldStep`, `GeneratedDirectStep`.
 - **Generated schedule table data** (`crates/akita-types/src/generated/fp*.rs`) stays in `akita-types`. The data is small, pure, and does not bring search code with it. The `gen_schedule_tables` binary in `akita-planner` writes its output back into `crates/akita-types/src/generated/`. We pick this over moving the data files because (a) presets get to keep their `Cfg::schedule_table()` returning a static table without crossing crates, and (b) `akita-types` is already the canonical home for verifier-reachable static data.
 - SIS floor tables: [`SisModulusFamily`](crates/akita-types/src/generated/sis_floor.rs), `sis_max_widths`, `min_rank_for_secure_width`, `ceil_supported_collision`.
 - Decomposition / envelope: `DecompositionParams`, `CommitmentEnvelope`, `AjtaiRole`.
@@ -240,7 +240,7 @@ The production `find_optimal_schedule` takes a value-typed `SearchOptions`:
 
 ```rust
 pub struct SearchOptions {
-    pub key: AkitaScheduleLookupKey,
+    pub key: CommitmentGroupScheduleKey,
     pub decomposition: DecompositionParams,
     pub sis_modulus_family: SisModulusFamily,
     pub challenge_field_bits: u32,
@@ -293,7 +293,7 @@ pub struct PlanPolicy {
 
 pub fn schedule_plan_from_table(
     table: &GeneratedScheduleTable,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlanPolicy,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
 ```
@@ -336,7 +336,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_planner::{PlanPolicy, SearchOptions};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    AjtaiRole, AkitaScheduleInputs, CommitmentGroupScheduleKey, AkitaSchedulePlan,
     ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, GeneratedScheduleTable,
     LevelParams, Schedule, SisModulusFamily,
 };
@@ -367,7 +367,7 @@ pub trait Cfg: Clone + Send + Sync + 'static {
     }
 
     fn schedule_table() -> Option<GeneratedScheduleTable> { None }
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String;
+    fn schedule_key(key: CommitmentGroupScheduleKey) -> String;
 
     // -------- layout hooks (verifier-reachable; all return Result) --------
     fn level_params_with_log_basis(
@@ -396,10 +396,10 @@ pub trait Cfg: Clone + Send + Sync + 'static {
     #[cfg(feature = "planner")]
     fn plan_policy() -> PlanPolicy;
     #[cfg(feature = "planner")]
-    fn search_options(key: AkitaScheduleLookupKey) -> SearchOptions;
+    fn search_options(key: CommitmentGroupScheduleKey) -> SearchOptions;
 
     fn schedule_plan(
-        key: AkitaScheduleLookupKey,
+        key: CommitmentGroupScheduleKey,
     ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
         let Some(table) = Self::schedule_table() else {
             return Ok(None);
@@ -437,7 +437,7 @@ pub trait Cfg: Clone + Send + Sync + 'static {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<Schedule, AkitaError> {
-        let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
+        let key = CommitmentGroupScheduleKey::new_from_incidence(incidence)?;
 
         // 1. Fast path: generated table.
         if let Some(plan) = Self::schedule_plan(key)? {
@@ -526,7 +526,7 @@ impl<const D: usize, C: Cfg> Cfg for WCfg<D, C> {
     }
 
     fn schedule_table() -> Option<GeneratedScheduleTable> { C::schedule_table() }
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String { C::schedule_key(key) }
+    fn schedule_key(key: CommitmentGroupScheduleKey) -> String { C::schedule_key(key) }
 
     fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32)
         -> Result<LevelParams, AkitaError>
@@ -553,7 +553,7 @@ impl<const D: usize, C: Cfg> Cfg for WCfg<D, C> {
     #[cfg(feature = "planner")]
     fn plan_policy() -> PlanPolicy { C::plan_policy() }
     #[cfg(feature = "planner")]
-    fn search_options(key: AkitaScheduleLookupKey) -> SearchOptions { C::search_options(key) }
+    fn search_options(key: CommitmentGroupScheduleKey) -> SearchOptions { C::search_options(key) }
 
     fn commitment_layout(_: usize) -> Result<LevelParams, AkitaError> {
         Err(AkitaError::InvalidSetup(
@@ -595,7 +595,7 @@ impl Cfg for fp128::D64OneHot {
     fn schedule_table() -> Option<GeneratedScheduleTable> {
         Some(akita_types::generated::fp128_d64_onehot::table())
     }
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String { format!("fp128_d64_onehot::{key:?}") }
+    fn schedule_key(key: CommitmentGroupScheduleKey) -> String { format!("fp128_d64_onehot::{key:?}") }
 
     fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32)
         -> Result<LevelParams, AkitaError> { /* ... */ }
@@ -611,7 +611,7 @@ impl Cfg for fp128::D64OneHot {
     #[cfg(feature = "planner")]
     fn plan_policy() -> PlanPolicy { fp128_plan_policy::<Self>() }
     #[cfg(feature = "planner")]
-    fn search_options(key: AkitaScheduleLookupKey) -> SearchOptions {
+    fn search_options(key: CommitmentGroupScheduleKey) -> SearchOptions {
         fp128_search_options::<Self>(key)
     }
 }
@@ -824,7 +824,7 @@ pub use sis_floor::{
 
 pub struct GeneratedFoldStep { /* unchanged */ }
 pub enum GeneratedStep { /* unchanged */ }
-pub struct GeneratedScheduleKey { /* unchanged */ }
+pub struct GeneratedCommitmentGroupScheduleKey { /* unchanged */ }
 pub struct GeneratedScheduleTableEntry { /* unchanged */ }
 pub struct GeneratedScheduleTable { /* unchanged */ }
 
@@ -837,7 +837,7 @@ pub mod fp128_d32_onehot;
 
 pub fn table_entry(
     table: &GeneratedScheduleTable,
-    key: GeneratedScheduleKey,
+    key: GeneratedCommitmentGroupScheduleKey,
 ) -> Option<&'static GeneratedScheduleTableEntry> { /* unchanged */ }
 ```
 
@@ -897,7 +897,7 @@ Risks to resolve early:
 - Original three-trait map (this PR's research output): inline in this spec's Design section.
 - AGENTS.md — "Crate Structure", "Key Abstractions", "Verifier No-Panic Contract".
 - `specs/akita-pcs-crate-decomposition.md` — the previous decomposition that established the current crate boundaries; this spec is the natural follow-up that consolidates the over-split planner/config triad.
-- `specs/planner-incidence-generalization.md` — relevant for the `AkitaScheduleLookupKey` shape used throughout the new `SearchOptions` / `PlanPolicy` APIs.
+- `specs/planner-incidence-generalization.md` — relevant for the `CommitmentGroupScheduleKey` shape used throughout the new `SearchOptions` / `PlanPolicy` APIs.
 - `specs/transcript-hardening.md` — relevant for the `AkitaInstanceDescriptor` binding contract preserved across the refactor.
 - Profiling command: `AKITA_MODE=onehot AKITA_NUM_VARS=32 cargo run --release --example profile` (per AGENTS.md).
 - CLI: `cargo run --release -p akita-planner --bin akita-planner -- --validate` for baseline regression after step 3.
