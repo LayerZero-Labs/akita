@@ -20,7 +20,10 @@ use std::path::PathBuf;
 use akita_config::generated_families::{
     emit_spec_for_family, wiring_emit_spec, ALL_GENERATED_FAMILIES,
 };
-use akita_planner::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
+use akita_planner::{
+    refresh_generated_wiring, run_regen_fmt, write_family_module, write_group_batch_family_module,
+    EmitSpec,
+};
 
 fn generator_command() -> &'static str {
     "cargo run --release -p akita-config --bin gen_schedule_tables -- <output-dir>"
@@ -70,6 +73,10 @@ fn main() -> Result<(), String> {
                 .map_err(|e| format!("{}: emit spec: {e}", family.module_name))?;
             let dest = write_family_module(&spec)?;
             println!("wrote {}", dest.display());
+            if spec.emit_group_batch {
+                let dest = write_group_batch_family_module(&spec)?;
+                println!("wrote {}", dest.display());
+            }
         }
     }
 

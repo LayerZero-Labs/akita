@@ -21,8 +21,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, ChunkedWitnessCfg, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    ChunkedWitnessCfg, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams, DirectStep, FoldStep,
+    LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -345,22 +345,24 @@ fn derive_candidate_level_params(
     )))
 }
 
+/// A `Step::Fold`-first suffix schedule.
+///
 /// The parent's proof-size formula needs the child's first fold params
 /// (`first_fold_params`), so the suffix carries it directly instead of
 /// re-matching `steps[0]`.
 #[derive(Clone)]
-struct FoldSuffix {
-    total_bytes: usize,
-    first_fold_params: LevelParams,
-    steps: Vec<Step>,
+pub(crate) struct FoldSuffix {
+    pub(crate) total_bytes: usize,
+    pub(crate) first_fold_params: LevelParams,
+    pub(crate) steps: Vec<Step>,
 }
 
 /// Best direct suffix at one DP state: witness length only. The terminal
 /// `DirectStep` is materialized at stitch time from the predecessor fold's
 /// committed `LevelParams`.
 #[derive(Clone, Copy)]
-struct DirectSuffix {
-    current_w_len: usize,
+pub(crate) struct DirectSuffix {
+    pub(crate) current_w_len: usize,
 }
 
 /// Result of the suffix DP at one state. Both shape options are reported
@@ -372,13 +374,13 @@ struct DirectSuffix {
 /// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
 ///   `log_basis`.
 #[derive(Clone)]
-struct SuffixResult {
-    best_direct: Option<DirectSuffix>,
-    best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
+pub(crate) struct SuffixResult {
+    pub(crate) best_direct: Option<DirectSuffix>,
+    pub(crate) best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
 }
 
 impl SuffixResult {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.best_direct.is_none() && self.best_fold_per_lb.is_empty()
     }
 }
@@ -423,7 +425,7 @@ fn try_terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     terminal_fold_level: usize,
 ) -> Result<Option<(DirectStep, usize)>, AkitaError> {
     if terminal_lp.witness_chunk.num_chunks > 1 {
@@ -439,11 +441,11 @@ fn try_terminal_direct_suffix_cost(
     Ok(Some((direct, direct_bytes)))
 }
 
-fn terminal_direct_suffix_cost(
+pub(crate) fn terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     terminal_fold_level: usize,
 ) -> Result<(DirectStep, usize), AkitaError> {
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
@@ -458,7 +460,7 @@ fn terminal_direct_suffix_cost(
     Ok((direct, direct_bytes))
 }
 
-type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
+pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 
 /// DP-invariant inputs for the suffix search.
 ///
@@ -466,11 +468,11 @@ type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 /// recursion, so they are carried in one context value rather than as
 /// per-call arguments (keeps the recursive signature small).
 #[derive(Clone, Copy)]
-struct SuffixCtx<'a> {
-    policy: &'a PlannerPolicy,
-    ring_challenge_config: RingChallengeConfigFn<'a>,
-    num_vars: usize,
-    key: AkitaScheduleLookupKey,
+pub(crate) struct SuffixCtx<'a> {
+    pub(crate) policy: &'a PlannerPolicy,
+    pub(crate) ring_challenge_config: RingChallengeConfigFn<'a>,
+    pub(crate) num_vars: usize,
+    pub(crate) key: CommitmentGroupScheduleKey,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -485,7 +487,7 @@ struct SuffixCtx<'a> {
 /// At each state: `best_direct` ships the witness directly (Terminal, no
 /// SIS audit, always present); `best_fold` keeps one fold candidate per
 /// `log_basis` (from [`derive_candidate_level_params`]).
-fn derive_optimal_suffix_schedule(
+pub(crate) fn derive_optimal_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     level: usize,
@@ -568,7 +570,7 @@ fn derive_optimal_suffix_schedule(
             policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
             policy.claim_ext_degree,
             level,
-            AkitaScheduleLookupKey::singleton(num_vars),
+            CommitmentGroupScheduleKey::singleton(num_vars),
             current_witness_len,
         ) else {
             continue;
@@ -855,7 +857,7 @@ fn compute_root_direct_level_params(
 /// overflows. The function never panics on malformed input — it is
 /// verifier-reachable and audited under the no-panic contract.
 pub fn find_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -869,7 +871,7 @@ pub fn find_schedule(
 }
 
 fn find_schedule_inner(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,

@@ -9,13 +9,16 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, GroupBatchAkitaScheduleLookupKey, Schedule,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupScheduleKey, Schedule,
 };
 
 use crate::catalog_identity::validate_catalog_identity;
-use crate::generated::walk::walk_generated_schedule_entry;
+use crate::generated::walk::{
+    walk_generated_group_batch_schedule_entry, walk_generated_schedule_entry,
+};
 use crate::generated::{
-    table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
+    group_batch_table_entry, table_entry, GeneratedCommitmentGroupScheduleKey,
+    GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleTable, GeneratedScheduleTableEntry,
 };
 use crate::schedule_params::validate_policy_witness_chunk;
 use crate::PlannerPolicy;
@@ -23,8 +26,10 @@ use crate::{find_group_batch_schedule, find_schedule};
 
 ///
 /// Convert the public runtime lookup key into a generated-table lookup key.
-pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
-    GeneratedScheduleKey {
+pub const fn generated_schedule_lookup_key(
+    key: CommitmentGroupScheduleKey,
+) -> GeneratedCommitmentGroupScheduleKey {
+    GeneratedCommitmentGroupScheduleKey {
         num_vars: key.num_vars,
         num_polynomials: key.num_polynomials,
     }
@@ -32,7 +37,7 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 
 /// Resolve the runtime [`Schedule`] using an explicit optional catalog.
 pub fn resolve_schedule(
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -72,16 +77,23 @@ pub fn resolve_schedule(
 }
 
 /// Resolve a grouped-root schedule without falling back to a scalar table key.
-///
-/// Phase 1 has no generated grouped entries yet, so catalog handling only
-/// validates identity before delegating to the grouped DP fallback.
 pub fn resolve_group_batch_schedule(
-    key: &GroupBatchAkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
+    key.validate()?;
+    if key.precommitteds.is_empty() {
+        return resolve_schedule(
+            key.final_group,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+            catalog,
+        );
+    }
     if let Some(table) = catalog {
         validate_catalog_identity(
             &table,
@@ -89,6 +101,15 @@ pub fn resolve_group_batch_schedule(
             &ring_challenge_config,
             &fold_challenge_shape_at_level,
         )?;
+        if let Some(entry) = group_batch_table_entry(table, key) {
+            return schedule_from_group_batch_entry(
+                entry,
+                key,
+                policy,
+                ring_challenge_config,
+                fold_challenge_shape_at_level,
+            );
+        }
     }
     find_group_batch_schedule(
         key,
@@ -98,10 +119,28 @@ pub fn resolve_group_batch_schedule(
     )
 }
 
+/// Build the runtime [`Schedule`] for a compact generated grouped-root entry.
+pub(crate) fn schedule_from_group_batch_entry(
+    entry: &GeneratedGroupBatchScheduleTableEntry,
+    key: &AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<Schedule, AkitaError> {
+    Ok(walk_generated_group_batch_schedule_entry(
+        entry,
+        key,
+        policy,
+        &ring_challenge_config,
+        &fold_challenge_shape_at_level,
+    )?
+    .schedule)
+}
+
 /// Build the runtime [`Schedule`] for a compact generated entry.
 pub fn schedule_from_entry(
     entry: &GeneratedScheduleTableEntry,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -118,7 +157,7 @@ pub fn schedule_from_entry(
 
 pub fn estimate_proof_bytes(
     entry: &GeneratedScheduleTableEntry,
-    key: AkitaScheduleLookupKey,
+    key: CommitmentGroupScheduleKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -138,12 +177,15 @@ mod tests {
     use super::*;
     use crate::catalog_identity::expected_catalog_identity;
     use crate::generated::{
-        validate_generated_schedule_entry, GeneratedDirectStep, GeneratedFoldStep,
-        GeneratedScheduleTable, GeneratedStep,
+        validate_generated_group_batch_schedule_entry, validate_generated_schedule_entry,
+        GeneratedDirectStep, GeneratedFoldStep, GeneratedGroupBatchScheduleTableEntry,
+        GeneratedScheduleLookupKey, GeneratedScheduleTable, GeneratedStep,
     };
+    use crate::{find_group_batch_schedule, find_schedule};
     use akita_types::{
-        ChunkedWitnessCfg, DecompositionParams, LevelParams, MultiChunkProfileId, SisModulusFamily,
-        Step,
+        AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentGroupLayout,
+        CommitmentGroupScheduleKey, DecompositionParams, LevelParams, MultiChunkProfileId,
+        SisModulusFamily, Step,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -208,7 +250,7 @@ mod tests {
     }
 
     fn generated_entry_from_steps(
-        key: AkitaScheduleLookupKey,
+        key: CommitmentGroupScheduleKey,
         steps: Vec<GeneratedStep>,
     ) -> GeneratedScheduleTableEntry {
         GeneratedScheduleTableEntry {
@@ -219,7 +261,7 @@ mod tests {
 
     #[test]
     fn resolve_schedule_none_matches_find_schedule() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let via_resolve = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
             .expect("resolve");
@@ -237,7 +279,7 @@ mod tests {
             num_chunks: 8,
             num_activated_levels: 2,
         };
-        let key = AkitaScheduleLookupKey::new(24, 1);
+        let key = CommitmentGroupScheduleKey::new(24, 1);
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("schedule");
         let last_fold = schedule
@@ -256,7 +298,7 @@ mod tests {
     fn multi_chunk_does_not_perturb_single_chunk_schedule() {
         // A policy with default (single-chunk) witness_chunk must reproduce the
         // exact schedule of today's planner for the same key.
-        let key = AkitaScheduleLookupKey::new(22, 1);
+        let key = CommitmentGroupScheduleKey::new(22, 1);
         let base = flat_policy();
         let mut explicit_default = flat_policy();
         explicit_default.witness_chunk = ChunkedWitnessCfg::default();
@@ -269,7 +311,7 @@ mod tests {
 
     #[test]
     fn all_multi_chunk_profiles_find_schedule_with_single_chunk_terminal() {
-        let key = AkitaScheduleLookupKey::new(24, 1);
+        let key = CommitmentGroupScheduleKey::new(24, 1);
         for profile in MultiChunkProfileId::ALL {
             let mut policy = flat_policy();
             policy.witness_chunk = profile.cfg();
@@ -298,7 +340,7 @@ mod tests {
             num_chunks: 6,
             num_activated_levels: 2,
         };
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
             .expect_err("non-power-of-two chunk count must be rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
@@ -309,15 +351,37 @@ mod tests {
         let mut policy = flat_policy();
         policy.tiered = true;
         policy.witness_chunk = ChunkedWitnessCfg::d64_production();
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
             .expect_err("tiered + multi-chunk must be rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
+    fn resolve_group_batch_schedule_delegates_single_group_to_scalar() {
+        let final_group = CommitmentGroupScheduleKey::new(20, 1);
+        let key = AkitaScheduleLookupKey::single(final_group);
+        let policy = flat_policy();
+
+        let via_grouped =
+            resolve_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape, None)
+                .expect("single-group grouped resolve should delegate to scalar path");
+        let via_scalar = resolve_schedule(
+            final_group,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+            None,
+        )
+        .expect("scalar resolve");
+
+        assert_eq!(via_grouped.total_bytes, via_scalar.total_bytes);
+        assert_eq!(via_grouped.steps.len(), via_scalar.steps.len());
+    }
+
+    #[test]
     fn resolve_schedule_rejects_zero_dimension_key() {
-        let key = AkitaScheduleLookupKey::new(0, 1);
+        let key = CommitmentGroupScheduleKey::new(0, 1);
         let policy = flat_policy();
 
         let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
@@ -328,7 +392,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_accepts_materialized_dp_schedule() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -346,7 +410,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_overstated_b_rank() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -378,7 +442,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_overstated_a_rank() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -410,7 +474,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_understated_a_rank() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -445,7 +509,7 @@ mod tests {
 
     #[test]
     fn resolve_schedule_rejects_corrupt_table_hit() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -461,10 +525,20 @@ mod tests {
         let entry = generated_entry_from_steps(key, steps);
         let entries: &'static [GeneratedScheduleTableEntry] =
             Box::leak(vec![entry].into_boxed_slice());
-        let identity =
-            expected_catalog_identity("test", &policy, entries, ring_challenge_config, fold_shape)
-                .expect("identity");
-        let table = GeneratedScheduleTable { entries, identity };
+        let identity = expected_catalog_identity(
+            "test",
+            &policy,
+            entries,
+            &[],
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("identity");
+        let table = GeneratedScheduleTable {
+            entries,
+            group_batch_entries: &[],
+            identity,
+        };
 
         let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, Some(table))
             .expect_err("corrupt table hit must be rejected");
@@ -477,7 +551,7 @@ mod tests {
 
     #[test]
     fn walk_validate_matches_materialize_total_bytes() {
-        let key = AkitaScheduleLookupKey::new(20, 1);
+        let key = CommitmentGroupScheduleKey::new(20, 1);
         let policy = flat_policy();
         let schedule =
             find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
@@ -491,5 +565,71 @@ mod tests {
                 .expect("materialize");
 
         assert_eq!(validated, materialized.total_bytes);
+    }
+
+    fn grouped_sample_key() -> AkitaScheduleLookupKey {
+        let pre_key = CommitmentGroupScheduleKey::new(10, 1);
+        let policy = flat_policy();
+        let pre = CommitmentGroupLayout::from_params(
+            pre_key,
+            find_schedule(pre_key, &policy, ring_challenge_config, fold_shape)
+                .expect("precommit schedule")
+                .steps
+                .first()
+                .and_then(|step| match step {
+                    Step::Direct(direct) => direct.params.as_ref(),
+                    Step::Fold(fold) => Some(&fold.params),
+                })
+                .expect("commit params"),
+        );
+        AkitaScheduleLookupKey {
+            final_group: CommitmentGroupScheduleKey::new(20, 2),
+            precommitteds: vec![pre],
+        }
+    }
+
+    fn generated_group_batch_entry_from_steps(
+        key: &AkitaScheduleLookupKey,
+        steps: Vec<GeneratedStep>,
+    ) -> GeneratedGroupBatchScheduleTableEntry {
+        GeneratedGroupBatchScheduleTableEntry {
+            key: GeneratedScheduleLookupKey {
+                final_group: generated_schedule_lookup_key(key.final_group),
+                precommitteds: Box::leak(
+                    key.precommitteds
+                        .iter()
+                        .map(|layout| crate::generated::GeneratedCommitmentGroupLayout {
+                            key: generated_schedule_lookup_key(layout.key),
+                            m_vars: layout.m_vars,
+                            r_vars: layout.r_vars,
+                            log_basis: layout.log_basis,
+                            n_a: layout.n_a,
+                            conservative_n_b: layout.conservative_n_b,
+                        })
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                ),
+            },
+            steps: Box::leak(steps.into_boxed_slice()),
+        }
+    }
+
+    #[test]
+    fn validate_generated_group_batch_entry_accepts_materialized_dp_schedule() {
+        let key = grouped_sample_key();
+        let policy = flat_policy();
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("grouped schedule");
+        let entry =
+            generated_group_batch_entry_from_steps(&key, generated_steps_from_schedule(&schedule));
+
+        validate_generated_group_batch_schedule_entry(
+            &entry,
+            &key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect("grouped generated entry should validate");
     }
 }
