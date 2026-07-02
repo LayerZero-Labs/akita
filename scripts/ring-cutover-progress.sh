@@ -13,6 +13,12 @@
 #      belong in compute/, backend/, or dedicated kernel modules, not here.
 #   2. Banned #227 bridge/facade names anywhere in crates/. These reintroduce
 #      the typed round-trip the cutover exists to delete.
+#   3. Discriminator violations REPO-WIDE: functions that are const-generic
+#      over D AND take a schedule type (LevelParams / ExecutionSchedule /
+#      ValidatedScheduleContext / RingDimPlan) as a parameter. The spine count
+#      alone can be gamed by pushing dispatch one layer down the call stack;
+#      this count cannot. Zero at merge in the prover; the verifier fold
+#      replay is transitional (tracked, must not grow).
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -97,8 +103,39 @@ else
   echo "  none"
 fi
 
+count_violations() {
+  # const-D fns whose parameter list mentions a schedule type. Multiline
+  # regex over fn signatures (up to the body brace / semicolon).
+  local dir="$1"
+  rg -U --multiline-dotall \
+    'fn \w+<[^>]*const D[^>]*>\s*\([^;{]*?(LevelParams|ExecutionSchedule|ValidatedScheduleContext|RingDimPlan)' \
+    "$dir" -g '*.rs' -o -r 'x' 2>/dev/null | wc -l | tr -d ' '
+}
+
+echo
+echo "== discriminator violations: const-D fn taking schedule types =="
+pv="$(count_violations crates/akita-prover/src)"
+vv="$(count_violations crates/akita-verifier/src)"
+echo "  akita-prover:   $pv   (target: 0 at merge)"
+echo "  akita-verifier: $vv   (transitional; must not grow; baseline 14 on 2026-07-02)"
+if [[ "$mode" == "report" && "$pv" -gt 0 ]]; then
+  echo "  -- prover violation sites --"
+  for f in $(rg -U --multiline-dotall \
+      'fn \w+<[^>]*const D[^>]*>\s*\([^;{]*?(LevelParams|ExecutionSchedule|ValidatedScheduleContext|RingDimPlan)' \
+      crates/akita-prover/src -g '*.rs' -l 2>/dev/null); do
+    rg -U --multiline-dotall -o \
+      'fn (\w+)<[^>]*const D[^>]*>\s*\([^;{]*?(?:LevelParams|ExecutionSchedule|ValidatedScheduleContext|RingDimPlan)' \
+      "$f" -r "  $f: fn \$1" 2>/dev/null | sort -u
+  done
+fi
+
 if [[ "$mode" == "gate" ]]; then
   fail=0
+  if [[ "$pv" -gt 0 ]]; then
+    echo
+    echo "MERGE GATE FAIL: $pv prover discriminator violation(s) (const-D fn taking schedule types)." >&2
+    fail=1
+  fi
   if [[ "$total" -gt 0 ]]; then
     echo
     echo "MERGE GATE FAIL: $total const D site(s) remain in the orchestration spine." >&2

@@ -57,6 +57,47 @@ impl CommitmentRingDims {
     pub fn nests(self) -> bool {
         self.inner.is_multiple_of(self.outer) && self.outer.is_multiple_of(self.opening)
     }
+
+    /// Ring dimension for A-role data: the folded witness `z`, A quotient
+    /// rows, the consistency row, and fold/ring-switch arithmetic.
+    #[must_use]
+    pub const fn d_a(self) -> usize {
+        self.inner
+    }
+
+    /// Ring dimension for B-role data: next-witness digit commitments
+    /// (`t_hat`, tiered `u_concat`), COMMIT and B_inner relation rows.
+    #[must_use]
+    pub const fn d_b(self) -> usize {
+        self.outer
+    }
+
+    /// Ring dimension for D-role data: opening digits (`e_hat`) and the
+    /// D-block relation rows (`v = D * e_hat`).
+    #[must_use]
+    pub const fn d_d(self) -> usize {
+        self.opening
+    }
+
+    /// The single dimension shared by all roles, or an error once per-role
+    /// dimensions diverge.
+    ///
+    /// Fused code paths that process several row groups under one ring
+    /// dimension must obtain it here — never from a bare
+    /// `LevelParams::ring_dimension` read — so that enabling per-role
+    /// dimensions turns every not-yet-split fused path into a loud error
+    /// instead of silently applying one role's dimension to another role's
+    /// rows.
+    pub fn uniform_dim(self) -> Result<usize, AkitaError> {
+        if self.inner == self.outer && self.outer == self.opening {
+            Ok(self.inner)
+        } else {
+            Err(AkitaError::InvalidSetup(format!(
+                "fused ring path requires uniform role dims, got d_a={} d_b={} d_d={}",
+                self.inner, self.outer, self.opening
+            )))
+        }
+    }
 }
 
 /// Per-level runtime ring geometry for prove / verify orchestration.
