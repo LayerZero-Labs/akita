@@ -169,6 +169,7 @@ mod tests {
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
         use akita_challenges::{D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2};
+        use crate::sis::fold_witness_linf_digit_plan;
         let stage1_config = SparseChallengeConfig::ExactShell {
             count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
             count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
@@ -194,15 +195,45 @@ mod tests {
                 .1,
         )
         .unwrap();
+        let snap_num = u128::from(crate::sis::FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM);
+        let snap_den = u128::from(crate::sis::FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN);
+        let singleton_plan = fold_witness_linf_digit_plan(
+            5,
+            1,
+            128,
+            3,
+            fold_challenge,
+            fold_witness,
+            &cap_config,
+            snap_num,
+            snap_den,
+        )
+        .expect("singleton fold plan");
+        let batched_plan = fold_witness_linf_digit_plan(
+            5,
+            4,
+            128,
+            3,
+            fold_challenge,
+            fold_witness,
+            &cap_config,
+            snap_num,
+            snap_den,
+        )
+        .expect("batched fold plan");
+        assert!(
+            batched_plan.pre_snap_cap > singleton_plan.pre_snap_cap,
+            "pre-snap fold witness cap must grow with batched num_claims"
+        );
         let singleton_fold_digits =
             num_digits_fold(5, 1, 128, 3, fold_challenge, fold_witness, cap_config)
                 .expect("singleton fold digits");
         let batched_fold_digits =
             num_digits_fold(5, 4, 128, 3, fold_challenge, fold_witness, cap_config)
                 .expect("batched fold digits");
-        assert_ne!(
-            singleton_fold_digits, batched_fold_digits,
-            "fold digit depth must grow with batched num_claims"
+        assert!(
+            batched_fold_digits >= singleton_fold_digits,
+            "snapped fold digit depth must not shrink with batched num_claims"
         );
     }
 }

@@ -1,14 +1,9 @@
-//! Compare Python-local-minimum and exhaustive search on a medium golden subset.
+//! Compare Python-local-minimum and exhaustive search on golden cells.
 //!
-//! Full-grid exhaustive search is excluded from CI: for large cells `m = width * d`
-//! can reach tens of thousands, making exhaustive zeta search prohibitively slow.
-//!
-//! Coverage policy:
-//! - All trusted cells with `m <= 512` (83 cells: every family, rank, bound).
-//! - For `512 < m <= 1024`, one representative bound per geometry (`255`).
-//!
-//! This yields ~89 cells covering all 3 families, ranks 1/5, ring dims
-//! 32–256, and all coeff-bound buckets on the fast tier.
+//! Default CI runs a small smoke grid. The medium trusted subset and rank-20
+//! geometries are `#[ignore]` manual gates before infinity table generation;
+//! use the same filter via `AKITA_SIS_INFINITY_BENCH_SET=exhaustive-ci` in
+//! `cargo bench -p akita-sis-estimator --bench infinity_optimizer`.
 
 use akita_sis_estimator::{
     estimate, scalar_sis_from_ring, AkitaModulusFamily, CostValue, EstimateConfig, NumericConfig,
@@ -24,6 +19,60 @@ const EXHAUSTIVE_SLOW_MAX_M: u32 = 1024;
 
 /// Representative coeff bound for slow-tier geometries (middle of the golden ladder).
 const EXHAUSTIVE_SLOW_REPRESENTATIVE_BOUND: u64 = 255;
+
+struct SmokeCase {
+    family: AkitaModulusFamily,
+    d: u32,
+    rank: u32,
+    width: u32,
+    coeff_linf_bound: u64,
+}
+
+/// Representative cells aligned with `benches/infinity_optimizer.rs`.
+const SMOKE_CASES: &[SmokeCase] = &[
+    SmokeCase {
+        family: AkitaModulusFamily::Q32,
+        d: 32,
+        rank: 1,
+        width: 2,
+        coeff_linf_bound: 15,
+    },
+    SmokeCase {
+        family: AkitaModulusFamily::Q128,
+        d: 32,
+        rank: 1,
+        width: 8,
+        coeff_linf_bound: 4095,
+    },
+    SmokeCase {
+        family: AkitaModulusFamily::Q64,
+        d: 64,
+        rank: 1,
+        width: 8,
+        coeff_linf_bound: 255,
+    },
+    SmokeCase {
+        family: AkitaModulusFamily::Q64,
+        d: 128,
+        rank: 1,
+        width: 8,
+        coeff_linf_bound: 15,
+    },
+    SmokeCase {
+        family: AkitaModulusFamily::Q64,
+        d: 32,
+        rank: 5,
+        width: 10,
+        coeff_linf_bound: 255,
+    },
+    SmokeCase {
+        family: AkitaModulusFamily::Q128,
+        d: 32,
+        rank: 1,
+        width: 2,
+        coeff_linf_bound: 2,
+    },
+];
 
 fn local_minimum_config() -> EstimateConfig {
     EstimateConfig::lattice_estimator_parity()
@@ -45,6 +94,59 @@ fn parallel_exhaustive_config() -> EstimateConfig {
 }
 
 #[test]
+fn exhaustive_search_smoke_grid_covers_families_and_rank5() {
+    let families: std::collections::HashSet<_> = SMOKE_CASES.iter().map(|row| row.family).collect();
+    assert_eq!(families.len(), 3, "expected all three modulus families");
+    assert!(
+        SMOKE_CASES.iter().any(|row| row.rank == 5),
+        "expected rank-5 coverage"
+    );
+}
+
+#[test]
+fn exhaustive_search_is_at_least_as_good_as_local_minimum_smoke() {
+    let tol = NumericConfig::default().sage_abs_tolerance;
+    let mut violations = Vec::new();
+    for row in smoke_rows() {
+        let params =
+            scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
+                .unwrap();
+        let local = estimate(&params, &local_minimum_config()).unwrap();
+        let exhaustive = estimate(&params, &exhaustive_config()).unwrap();
+        if !exhaustive_at_least_as_good(&exhaustive, &local, tol) {
+            violations.push(format!(
+                "exhaustive worse than local-minimum for {row:?}\n  local={local:?}\n  exhaustive={exhaustive:?}"
+            ));
+        }
+    }
+    if !violations.is_empty() {
+        panic!("{}", violations.join("\n\n"));
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_exhaustive_matches_serial_exhaustive_smoke() {
+    let mut mismatches = Vec::new();
+    for row in smoke_rows() {
+        let params =
+            scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
+                .unwrap();
+        let serial = estimate(&params, &exhaustive_config()).unwrap();
+        let parallel = estimate(&params, &parallel_exhaustive_config()).unwrap();
+        if serial != parallel {
+            mismatches.push(format!(
+                "parallel exhaustive mismatch for {row:?}\n  serial={serial:?}\n  parallel={parallel:?}"
+            ));
+        }
+    }
+    if !mismatches.is_empty() {
+        panic!("{}", mismatches.join("\n\n"));
+    }
+}
+
+#[test]
+#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
 fn exhaustive_search_covers_medium_trusted_grid() {
     let rows = exhaustive_subset_rows();
     assert!(
@@ -59,6 +161,7 @@ fn exhaustive_search_covers_medium_trusted_grid() {
 }
 
 #[test]
+#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
 fn exhaustive_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
     let tol = NumericConfig::default().sage_abs_tolerance;
     let mut violations = Vec::new();
@@ -81,6 +184,7 @@ fn exhaustive_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
 
 #[cfg(feature = "parallel")]
 #[test]
+#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
 fn parallel_exhaustive_matches_serial_exhaustive_on_medium_subset() {
     let mut mismatches = Vec::new();
     for row in exhaustive_subset_rows() {
@@ -137,6 +241,19 @@ impl Row {
     fn column_count(&self) -> u32 {
         self.width.saturating_mul(self.d)
     }
+}
+
+fn smoke_rows() -> Vec<Row> {
+    SMOKE_CASES
+        .iter()
+        .map(|case| Row {
+            family: case.family,
+            d: case.d,
+            rank: case.rank,
+            width: case.width,
+            coeff_linf_bound: case.coeff_linf_bound,
+        })
+        .collect()
 }
 
 fn exhaustive_subset_rows() -> Vec<Row> {
