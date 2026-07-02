@@ -189,6 +189,43 @@ PR2 the penultimate fold keeps the existing raw final `u` path so the
 compression cutover and terminal-tail cutover are not mixed. In PR3 that final
 raw `u` disappears completely.
 
+### Recognizing the penultimate fold
+
+Do not add a global schedule scan for this. The planner already learns the
+penultimate fact at the transition where it matters.
+
+A fold is penultimate exactly when the chosen suffix after that fold is
+`Direct`. In the suffix dynamic program this is the "current step is `Fold`,
+successor is `Direct`" branch. In the current planner this is also the branch
+that uses `next_witness_len_terminal`, computed under today's
+`MRowLayout::WithoutDBlock`.
+
+Use that local branch fact directly:
+
+```text
+if successor_is_direct {
+    // Penultimate fold.
+    v_plan = compress_v(...)
+    u_plan = None
+
+    // PR2: keep pricing/proving the existing raw final u.
+    // PR3: remove final u and use the no-D/no-COMMIT terminal layout.
+} else {
+    // Ordinary recursive fold.
+    v_plan = compress_v(...)
+    u_plan = compress_u(...)
+}
+```
+
+At runtime, use the same fact that already exists on the expanded schedule.
+`Schedule::level_schedule` sets `ExecutionSchedule::is_terminal` by checking
+whether `steps[level + 1]` is `Direct`. Prover/verifier code should consume that
+flag or the equivalent successor-is-`Direct` check, not recompute a separate
+notion of penultimate.
+
+This is O(1) at each planner transition and O(1) at each runtime fold. It adds
+no extra pass over the schedule and no repeated traversal inside scoring.
+
 ## Terminal Tail Optimization
 
 The final PR in the stack should implement the shelved terminal-tail
@@ -353,6 +390,8 @@ Minimal planner additions:
 4. When the DP branch suffix is terminal direct, price `u_plan = None`.
    In PR2, still price the existing raw final `u` bytes and rows. In PR3,
    drop those bytes and switch terminal sizing to the no-D/no-COMMIT layout.
+   This must be keyed off the DP successor-is-`Direct` branch, not a later
+   post-processing scan.
 
 The planner should not perform an expensive global scan to identify
 penultimate levels. The penultimate fact is already local in the DP transition
