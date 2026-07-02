@@ -16,7 +16,7 @@ use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::{validate_ring_subfield_role, BasisMode, FpExtEncoding, SetupContributionMode};
-use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, RingCommitment};
+use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, FlatRingVec};
 use akita_types::{AkitaVerifierSetup, VerifierOpeningBatch};
 use akita_verifier::CommitmentVerifier;
 use std::marker::PhantomData;
@@ -28,7 +28,7 @@ pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 
-type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F, D>);
+type CommitmentWithHint<F, const D: usize> = (FlatRingVec<F>, AkitaCommitmentHint<F, D>);
 
 impl<F, const D: usize, Cfg> CommitmentProver<F, D> for AkitaCommitmentScheme<D, Cfg>
 where
@@ -51,7 +51,7 @@ where
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
-    type Commitment = RingCommitment<F, D>;
+    type Commitment = FlatRingVec<F>;
     type ExtField = Cfg::ExtField;
     type CommitHint = AkitaCommitmentHint<F, D>;
     type BatchedProof = AkitaBatchedProof<F, Cfg::ExtField>;
@@ -184,7 +184,7 @@ where
     Cfg::ExtField: FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
-    type Commitment = RingCommitment<F, D>;
+    type Commitment = FlatRingVec<F>;
     type ExtField = Cfg::ExtField;
     type BatchedProof = AkitaBatchedProof<F, Cfg::ExtField>;
 

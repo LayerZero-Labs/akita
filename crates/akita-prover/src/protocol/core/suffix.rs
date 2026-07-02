@@ -11,6 +11,7 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
+use akita_types::AppendToTranscript;
 
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
@@ -324,7 +325,7 @@ where
     let typed_hint = hint.to_typed::<D>()?;
     let opening_point = &sumcheck_challenges;
 
-    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
@@ -333,13 +334,7 @@ where
     let eor_opening_batch =
         VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let commitment_u = commitment.as_ring_slice::<D>()?;
-    let suffix_commitment = (
-        RingCommitment {
-            u: commitment_u.to_vec(),
-        },
-        typed_hint,
-    );
+    let suffix_commitment = (commitment, typed_hint);
     let fold_claims = ProverOpeningBatch::new_suffix(
         opening_point,
         recursive_num_vars,

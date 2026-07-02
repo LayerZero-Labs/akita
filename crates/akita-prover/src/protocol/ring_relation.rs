@@ -373,12 +373,17 @@ impl RingRelationProver {
         let mut commitment_rows = Vec::new();
         for group in fold_claims.groups {
             let (group_commitment, group_hint) = group.commitment;
-            if group_commitment.u.len() != lp.b_key.row_len() {
+            let group_commitment_rows = group_commitment.try_to_vec::<D>().map_err(|_| {
+                AkitaError::InvalidInput(
+                    "batched prover received a non-ring root commitment payload before compression wiring".to_string(),
+                )
+            })?;
+            if group_commitment_rows.len() != lp.b_key.row_len() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
-            commitment_rows.extend_from_slice(&group_commitment.u);
+            commitment_rows.extend_from_slice(&group_commitment_rows);
             hints.push(group_hint.clone());
         }
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {

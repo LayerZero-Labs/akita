@@ -313,7 +313,7 @@ where
 pub(crate) fn verify_root_direct_commitments_with_params<F, E, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    claims: &VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: &VerifierOpeningBatch<'_, E, &FlatRingVec<F>>,
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
@@ -333,6 +333,7 @@ where
     )?;
 
     let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, params)?;
+    let recomputed = FlatRingVec::from_commitment(&recomputed);
     if &recomputed != commitment {
         return Err(AkitaError::InvalidProof);
     }
@@ -380,7 +381,7 @@ pub fn batched_verify<Cfg, T, const D: usize>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &FlatRingVec<Cfg::Field>>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -452,7 +453,7 @@ pub(crate) fn verify<Cfg, T, const D: usize>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &FlatRingVec<Cfg::Field>>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -512,7 +513,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     proof: &AkitaBatchedProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: VerifierOpeningBatch<'_, E, &FlatRingVec<F>>,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,

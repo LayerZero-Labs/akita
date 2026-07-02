@@ -232,7 +232,7 @@ fn expected_same_point_batched_shape(
 fn prover_claims<'a, E: Clone, P, CommitF: FieldCore, const D: usize>(
     point: &'a [E],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
+    commitment: &'a FlatRingVec<CommitF>,
     hint: AkitaCommitmentHint<CommitF, D>,
 ) -> ProverOpeningBatch<'a, E, P, CommitF, D> {
     ProverOpeningBatch {
@@ -275,7 +275,7 @@ fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> LevelParams {
 
 type VerifyFixture = (
     AkitaVerifierSetup<F>,
-    RingCommitment<F, D>,
+    FlatRingVec<F>,
     AkitaBatchedProof<F, F>,
     Vec<F>,
     F,

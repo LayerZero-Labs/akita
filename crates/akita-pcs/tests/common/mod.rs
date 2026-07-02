@@ -11,7 +11,7 @@ pub(super) use akita_prover::{ProverCommitmentGroup, ProverOpeningBatch};
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, BlockOrder, CommitmentGroup, PointVariableSelection, RingCommitment,
+    BasisMode, BlockOrder, CommitmentGroup, FlatRingVec, PointVariableSelection,
     VerifierOpeningBatch,
 };
 pub(super) use rand::rngs::StdRng;
@@ -65,7 +65,7 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, const D: usize>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
+    commitment: &'a FlatRingVec<CommitF>,
     hint: AkitaCommitmentHint<CommitF, D>,
 ) -> ProverOpeningBatch<'a, FF, P, CommitF, D> {
     ProverOpeningBatch {

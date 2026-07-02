@@ -1,4 +1,5 @@
 use super::*;
+use crate::AppendToTranscript;
 
 /// D-erased storage for a sequence of ring elements as raw field-element
 /// coefficients.
@@ -330,6 +331,15 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+impl<F> AppendToTranscript<F> for FlatRingVec<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn append_to_transcript<T: Transcript<F>>(&self, label: &[u8], transcript: &mut T) {
+        transcript.append_serde(label, self);
     }
 }
 

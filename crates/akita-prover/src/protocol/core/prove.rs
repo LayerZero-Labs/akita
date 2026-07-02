@@ -284,9 +284,17 @@ where
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
         let commitments = claims.commitments();
+        let expected_root_commitment_len = root_scheduled
+            .params
+            .b_key
+            .row_len()
+            .checked_mul(D)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("root commitment length overflow".to_string())
+            })?;
         if commitments
             .iter()
-            .any(|commitment| commitment.u.len() != root_scheduled.params.b_key.row_len())
+            .any(|commitment| commitment.coeff_len() != expected_root_commitment_len)
         {
             return Err(AkitaError::InvalidInput(
                 "root commitment row count does not match scheduled root params".to_string(),

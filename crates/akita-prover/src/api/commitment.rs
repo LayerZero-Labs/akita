@@ -15,15 +15,16 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, Rando
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
     AkitaExpandedSetup, CommitmentGroupLayout, CommitmentGroupScheduleKey, FlatDigitBlocks,
-    FpExtEncoding, LevelParams, OpeningBatchShape, RingCommitment, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    FlatRingVec, FpExtEncoding, LevelParams, OpeningBatchShape, RingCommitment,
+    GROUPED_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
-pub type CommitmentWithHint<F, const D: usize> = (RingCommitment<F, D>, AkitaCommitmentHint<F, D>);
+pub type CommitmentWithHint<F, const D: usize> = (FlatRingVec<F>, AkitaCommitmentHint<F, D>);
 
 /// Commitment group handle specialized to Akita's native commitment and hint types.
 pub type CommittedGroupWithHint<F, const D: usize> =
-    CommittedGroupHandle<RingCommitment<F, D>, AkitaCommitmentHint<F, D>>;
+    CommittedGroupHandle<FlatRingVec<F>, AkitaCommitmentHint<F, D>>;
 
 /// Schedule metadata returned by a standalone commitment-group precommit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -401,7 +402,7 @@ pub fn commit_with_params<F, const D: usize, P, B>(
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B, D>,
     params: &LevelParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+) -> Result<CommitmentWithHint<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: RootCommitSource<F, D>,
@@ -411,7 +412,8 @@ where
     prepare_commit_inputs::<F, D, P>(polys, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
     validate_onehot_chunk_size_for_params::<F, D, P>(polys, params)?;
-    commit_with_validated_params::<F, D, P, B>(polys, ctx, params)
+    let (commitment, hint) = commit_with_validated_params::<F, D, P, B>(polys, ctx, params)?;
+    Ok((FlatRingVec::from_commitment(&commitment), hint))
 }
 
 /// Decide whether a root commitment must be tensor-projected before commit.
@@ -463,13 +465,7 @@ pub fn commit<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B, D>,
-) -> Result<
-    (
-        RingCommitment<Cfg::Field, D>,
-        AkitaCommitmentHint<Cfg::Field, D>,
-    ),
-    AkitaError,
->
+) -> Result<(FlatRingVec<Cfg::Field>, AkitaCommitmentHint<Cfg::Field, D>), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -495,15 +491,18 @@ where
             })
             .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
         validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-        return commit_with_validated_params::<
+        let (commitment, hint) = commit_with_validated_params::<
             Cfg::Field,
             D,
             RootTensorProjectionPoly<Cfg::Field, D>,
             B,
-        >(&transformed, commit_ctx, &params);
+        >(&transformed, commit_ctx, &params)?;
+        return Ok((FlatRingVec::from_commitment(&commitment), hint));
     }
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-    commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)
+    let (commitment, hint) =
+        commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)?;
+    Ok((FlatRingVec::from_commitment(&commitment), hint))
 }
 
 /// Validate a batched commitment request and derive its `OpeningBatchShape`.
@@ -614,13 +613,17 @@ where
                 )
             })
             .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
-        commit_with_validated_params::<Cfg::Field, D, RootTensorProjectionPoly<Cfg::Field, D>, B>(
-            &transformed,
-            commit_ctx,
-            &params,
-        )?
+        let (commitment, hint) = commit_with_validated_params::<
+            Cfg::Field,
+            D,
+            RootTensorProjectionPoly<Cfg::Field, D>,
+            B,
+        >(&transformed, commit_ctx, &params)?;
+        (FlatRingVec::from_commitment(&commitment), hint)
     } else {
-        commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)?
+        let (commitment, hint) =
+            commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)?;
+        (FlatRingVec::from_commitment(&commitment), hint)
     };
     Ok(CommittedGroupHandle {
         schedule: CommittedGroupScheduleMeta {
@@ -671,15 +674,18 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-        return commit_with_validated_params::<
+        let (commitment, hint) = commit_with_validated_params::<
             Cfg::Field,
             D,
             RootTensorProjectionPoly<Cfg::Field, D>,
             B,
-        >(&transformed, commit_ctx, &params);
+        >(&transformed, commit_ctx, &params)?;
+        return Ok((FlatRingVec::from_commitment(&commitment), hint));
     }
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
-    commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)
+    let (commitment, hint) =
+        commit_with_validated_params::<Cfg::Field, D, P, B>(polys, commit_ctx, &params)?;
+    Ok((FlatRingVec::from_commitment(&commitment), hint))
 }
 
 /// Commit one polynomial bundle using already-selected level parameters.
@@ -707,7 +713,8 @@ where
     prepare_batched_commit_inputs::<F, D, P>(polys, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
     validate_batched_onehot_chunk_size_for_params::<F, D, P>(polys, params)?;
-    commit_with_validated_params::<F, D, P, B>(polys, ctx, params)
+    let (commitment, hint) = commit_with_validated_params::<F, D, P, B>(polys, ctx, params)?;
+    Ok((FlatRingVec::from_commitment(&commitment), hint))
 }
 
 #[cfg(test)]

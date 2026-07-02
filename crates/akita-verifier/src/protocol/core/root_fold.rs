@@ -19,7 +19,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: &VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: &VerifierOpeningBatch<'_, E, &FlatRingVec<F>>,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
@@ -52,7 +52,10 @@ where
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    if commitment.u.len() != root_lp.b_key.row_len() {
+    let commitment_rows = commitment
+        .as_ring_slice::<D>()
+        .map_err(|_| AkitaError::InvalidProof)?;
+    if commitment_rows.len() != root_lp.b_key.row_len() {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -162,7 +165,7 @@ where
         opening_batch.clone(),
         vec![CommitmentGroup {
             claims: openings,
-            commitment: commitment.u.as_slice(),
+            commitment: commitment_rows,
         }],
     )?;
     let prepared = PreparedFoldReplay {

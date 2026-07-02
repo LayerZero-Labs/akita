@@ -36,7 +36,10 @@ fn conservative_config_commit_returns_frozen_layout() {
     );
     assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
     assert_eq!(frozen_layout.conservative_n_b, layout.b_key.row_len());
-    assert_eq!(commitment.u.len(), frozen_layout.conservative_n_b);
+    assert_eq!(
+        commitment.coeff_len() / ONEHOT_D,
+        frozen_layout.conservative_n_b
+    );
 }
 
 fn grouped_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
@@ -96,8 +99,14 @@ fn conservative_config_allows_independent_precommitted_groups() {
 
         assert_eq!(pre_a_frozen.key, pre_a_key);
         assert_eq!(pre_b_frozen.key, pre_b_key);
-        assert_eq!(pre_a_commitment.u.len(), pre_a_frozen.conservative_n_b);
-        assert_eq!(pre_b_commitment.u.len(), pre_b_frozen.conservative_n_b);
+        assert_eq!(
+            pre_a_commitment.coeff_len() / ONEHOT_D,
+            pre_a_frozen.conservative_n_b
+        );
+        assert_eq!(
+            pre_b_commitment.coeff_len() / ONEHOT_D,
+            pre_b_frozen.conservative_n_b
+        );
         assert_ne!(pre_a_frozen.key, pre_b_frozen.key);
     });
 }
@@ -187,7 +196,7 @@ fn commit_group_returns_frozen_conservative_layout() {
         layout.b_key.row_len()
     );
     assert_eq!(
-        handle.commitment.u.len(),
+        handle.commitment.coeff_len() / ONEHOT_D,
         handle.schedule.layout.conservative_n_b
     );
 }

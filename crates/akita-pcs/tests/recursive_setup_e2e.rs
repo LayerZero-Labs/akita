@@ -74,7 +74,7 @@ struct OnehotProof {
     verifier_setup: akita_types::AkitaVerifierSetup<F>,
     point: Vec<F>,
     opening: F,
-    commitment: akita_types::RingCommitment<F, ONEHOT_D>,
+    commitment: akita_types::FlatRingVec<F>,
 }
 
 /// Commit + prove a single one-hot polynomial under the requested setup mode,

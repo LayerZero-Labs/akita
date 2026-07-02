@@ -24,7 +24,7 @@ use akita_types::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommitmentGroup,
-    PointVariableSelection, RingCommitment, VerifierOpeningBatch,
+    FlatRingVec, PointVariableSelection, VerifierOpeningBatch,
 };
 use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey};
 use akita_verifier::CommitmentVerifier;
@@ -155,7 +155,7 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, const D: usize>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
+    commitment: &'a FlatRingVec<CommitF>,
     hint: AkitaCommitmentHint<CommitF, D>,
 ) -> ProverOpeningBatch<'a, FF, P, CommitF, D> {
     ProverOpeningBatch {
@@ -186,7 +186,7 @@ fn verify_input<'a, FF: FieldCore, C>(
 
 type DenseFixture<FField, E, const D: usize> = (
     AkitaVerifierSetup<FField>,
-    RingCommitment<FField, D>,
+    FlatRingVec<FField>,
     AkitaBatchedProof<FField, E>,
     Vec<E>,
     E,
@@ -247,7 +247,7 @@ where
         ProverSetup = AkitaProverSetup<FField, D>,
         ExtField = Cfg::ExtField,
         VerifierSetup = AkitaVerifierSetup<FField>,
-        Commitment = RingCommitment<FField, D>,
+        Commitment = FlatRingVec<FField>,
         CommitHint = AkitaCommitmentHint<FField, D>,
         BatchedProof = AkitaBatchedProof<FField, Cfg::ExtField>,
     >,

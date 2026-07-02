@@ -41,7 +41,7 @@ use akita_types::{
     BasisMode, BlockOrder, CleartextWitnessProof, CommitmentGroup, ExecutionSchedule,
     ExtensionOpeningReductionProof, FlatRingVec, FoldLinfProtocolBinding, FpExtEncoding,
     LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RelationOnlyStage2Inputs,
-    RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, Schedule,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, Schedule,
     SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts, TraceClaim, VerifierOpeningBatch,
 };

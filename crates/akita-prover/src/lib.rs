@@ -17,7 +17,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AppendToTranscript,
     FlatDigitBlocks, FlatRingVec, OpeningBatchShape, OpeningGroupShape, OpeningPoints,
-    PointVariableSelection, RingCommitment,
+    PointVariableSelection,
 };
 
 pub use api::{
@@ -141,7 +141,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     }
 
     /// Commitments in commitment-group order.
-    pub fn commitments(&self) -> Vec<&RingCommitment<CommitF, D>> {
+    pub fn commitments(&self) -> Vec<&FlatRingVec<CommitF>> {
         self.groups
             .iter()
             .map(|group| &group.commitment.0)
@@ -192,7 +192,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         let group = self.single_group().ok_or_else(|| {
             AkitaError::InvalidInput("multi-group fold proving is not supported yet".to_string())
         })?;
-        Ok(FlatRingVec::from_ring_elems(&group.commitment.0.u))
+        Ok(group.commitment.0.clone())
     }
 
     /// Preserve this batch's grouping metadata while replacing its flat polynomial stream.
