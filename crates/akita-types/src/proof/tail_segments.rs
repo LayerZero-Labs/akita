@@ -13,9 +13,8 @@ use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
     golomb_rice_flat_admit_terminal_wire, golomb_rice_max_quotient_for_cap,
-    golomb_rice_total_wire_bits,
-    golomb_rice_values_within_cap, golomb_rice_zigzag_width, tail_z_planner_bits_per_coord,
-    ZFoldEncodingStats,
+    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
+    tail_z_planner_bits_per_coord, ZFoldEncodingStats,
 };
 use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::layout::field_bytes;
@@ -742,6 +741,7 @@ fn balanced_digits_from_i64(value: i64, num_digits: usize, log_basis: u32) -> Ve
 }
 
 /// Build Golomb-Rice `z` payload from centered fold-response ring coefficients.
+#[cfg(test)]
 pub(crate) fn encode_z_segment_from_centered<const D: usize>(
     centered: &[[i32; D]],
     block_len: usize,
@@ -759,6 +759,7 @@ pub(crate) fn encode_z_segment_from_centered<const D: usize>(
     encode_z_segment_from_centered_flat(&values, rice_low_bits, zigzag_w_z)
 }
 
+#[cfg(test)]
 fn centered_rows_to_i64<const D: usize>(rows: &[[i32; D]]) -> Vec<i64> {
     rows.iter()
         .flat_map(|row| row.iter().map(|&n| i64::from(n)))
@@ -839,11 +840,8 @@ where
             "z_folded length does not match layout".to_string(),
         ));
     }
-    let z_payload = encode_z_segment_from_centered_flat(
-        &z_centered_i64,
-        rice_low_bits,
-        zigzag_w_z,
-    )?;
+    let z_payload =
+        encode_z_segment_from_centered_flat(&z_centered_i64, rice_low_bits, zigzag_w_z)?;
     let e_fields = e_folded.clone().into_compact();
     if e_fields.coeff_len() != layout.e_field_elems {
         return Err(AkitaError::InvalidInput(

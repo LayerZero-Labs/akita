@@ -22,7 +22,7 @@ use akita_prover::{
     batched_commit_with_params, commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup,
     DensePoly,
 };
-use akita_types::OpeningBatchShape;
+use akita_types::{NttCacheKey, OpeningBatchShape};
 
 type Cfg = fp64::D32Full;
 type F = <Cfg as CommitmentConfig>::Field;
@@ -80,18 +80,35 @@ impl<F> ComputeBackendSetup<F> for ContractCommitBackend
 where
     F: FieldCore + CanonicalField,
 {
-    type PreparedSetup<const RING_D: usize> = CpuPreparedSetup<F, RING_D>;
+    type PreparedSetup = CpuPreparedSetup<F>;
 
     fn prepare_expanded<const RING_D: usize>(
         &self,
         expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
-    ) -> Result<Self::PreparedSetup<RING_D>, AkitaError> {
-        CpuBackend.prepare_expanded(expanded)
+    ) -> Result<Self::PreparedSetup, AkitaError> {
+        CpuBackend.prepare_expanded::<RING_D>(expanded)
     }
 
-    fn prepared_expanded_setup<'a, const RING_D: usize>(
+    fn ensure_ntt_slot(
         &self,
-        prepared: &'a Self::PreparedSetup<RING_D>,
+        prepared: &Self::PreparedSetup,
+        key: NttCacheKey,
+    ) -> Result<(), AkitaError> {
+        CpuBackend.ensure_ntt_slot(prepared, key)
+    }
+
+    fn with_ntt_slot<R>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        key: NttCacheKey,
+        f: impl FnOnce(&akita_prover::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
+        CpuBackend.with_ntt_slot(prepared, key, f)
+    }
+
+    fn prepared_expanded_setup<'a>(
+        &self,
+        prepared: &'a Self::PreparedSetup,
     ) -> &'a akita_types::AkitaExpandedSetup<F> {
         CpuBackend.prepared_expanded_setup(prepared)
     }
@@ -103,7 +120,7 @@ where
 {
     fn digit_rows<const RING_D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<RING_D>,
+        prepared: &Self::PreparedSetup,
         row_len: usize,
         digits: &[[i8; RING_D]],
         log_basis: u32,

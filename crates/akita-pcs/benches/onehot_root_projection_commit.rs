@@ -107,8 +107,6 @@ where
 {
     assert_eq!(D, Cfg::D);
 
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<Cfg>;
-
     let num_vars = env_usize("AKITA_ROOT_COMMIT_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_ROOT_COMMIT_NUM_POLYS", DEFAULT_NUM_POLYS);
     let indices = make_onehot_indices(num_vars, num_polys);
@@ -125,7 +123,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
-    let setup = Scheme::setup_prover(num_vars, num_polys).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -191,8 +189,8 @@ where
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed =
-                    Scheme::commit(&setup, &polys, &stack).expect("benchmark scheme commitment");
+                let committed = AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack)
+                    .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

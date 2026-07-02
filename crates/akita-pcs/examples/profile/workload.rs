@@ -591,7 +591,12 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         setup_ring_elements * D * std::mem::size_of::<FF>(),
         prepared.shared_ntt_cache_bytes(),
     );
-    report_crt_profile(label, prepared.shared_ntt_profile());
+    report_crt_profile(
+        label,
+        prepared
+            .shared_ntt_profile::<D>()
+            .expect("prepared setup CRT profile"),
+    );
 
     run_prove::<FF, D, Cfg, DensePoly<FF, D>>(
         label,
@@ -678,7 +683,12 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         setup_ring_elements * D * std::mem::size_of::<FF>(),
         prepared.shared_ntt_cache_bytes(),
     );
-    report_crt_profile(label, prepared.shared_ntt_profile());
+    report_crt_profile(
+        label,
+        prepared
+            .shared_ntt_profile::<D>()
+            .expect("prepared setup CRT profile"),
+    );
 
     run_prove::<FF, D, Cfg, OneHotPoly<FF, D, u8>>(
         label,
@@ -783,7 +793,12 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         setup_ring_elements * D * std::mem::size_of::<FF>(),
         prepared.shared_ntt_cache_bytes(),
     );
-    report_crt_profile(label, prepared.shared_ntt_profile());
+    report_crt_profile(
+        label,
+        prepared
+            .shared_ntt_profile::<D>()
+            .expect("prepared setup CRT profile"),
+    );
 
     let t0 = Instant::now();
     let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).unwrap();
