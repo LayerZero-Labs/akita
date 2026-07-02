@@ -91,10 +91,10 @@ The affected surfaces are:
 
 ### Acceptance Criteria
 
-- [ ] `onehot_fp128_d64_tensor` is included in the CI profile benchmark matrix
+- [x] `onehot_fp128_d64_tensor` is included in the CI profile benchmark matrix
       at `nv = 32`, `num_polys = 1`, with the tensor schedule feature enabled
       by `profile-ci`.
-- [ ] `scripts/check_profile_ci_features.sh` knows that
+- [x] `scripts/check_profile_ci_features.sh` knows that
       `onehot_fp128_d64_tensor` requires the tensor schedule feature.
 - [ ] The folded-witness prover path for tensor challenges computes the same
       output as the expanded `IntegerChallenge` reference without materializing

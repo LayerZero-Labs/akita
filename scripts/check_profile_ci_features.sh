@@ -21,6 +21,7 @@ MODE_FEATURE = {
     "onehot_fp64_d128": "schedules-fp64-d128-onehot",
     "dense_fp128_d64": "schedules-fp128-d64-full",
     "onehot_fp128_d64": "schedules-fp128-d64-onehot",
+    "onehot_fp128_d64_tensor": "schedules-fp128-d64-onehot-tensor",
 }
 MODE_NUM_POLYS = {mode: {1, 4} for mode in MODE_FEATURE}
 
