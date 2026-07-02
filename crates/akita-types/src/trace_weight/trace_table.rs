@@ -164,6 +164,39 @@ impl<E: FieldCore> TraceTable<E> {
         }
     }
 
+    /// Add another linear stage-2 table into this table.
+    ///
+    /// The result is materialized as `RingDense`, because the two inputs may
+    /// use different sparse structures. This is intended for low-cardinality
+    /// auxiliary addends such as commitment-compression checks that should
+    /// share the existing fused stage-2 witness scan.
+    pub fn add_assign_table(
+        &mut self,
+        other: &Self,
+        live_x_cols: usize,
+        y_len: usize,
+    ) -> Result<(), AkitaError> {
+        let witness_len = live_x_cols
+            .checked_mul(y_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("stage-2 table length overflow".to_string()))?;
+        self.validate_len(witness_len)?;
+        other.validate_len(witness_len)?;
+
+        let mut dense = self.materialize_dense(live_x_cols, y_len);
+        let other_dense = other.materialize_dense(live_x_cols, y_len);
+        if dense.len() != witness_len || other_dense.len() != witness_len {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_len,
+                actual: dense.len().max(other_dense.len()),
+            });
+        }
+        for (lhs, rhs) in dense.iter_mut().zip(other_dense) {
+            *lhs += rhs;
+        }
+        *self = Self::RingDense(dense);
+        Ok(())
+    }
+
     #[inline]
     pub fn get(&self, x: usize, y: usize, y_len: usize) -> E {
         match self {
@@ -341,5 +374,49 @@ mod tests {
                 fold_pair(F::from_u64((8 + y) as u64), F::zero(), r)
             );
         }
+    }
+
+    #[test]
+    fn add_assign_table_materializes_sparse_and_dense_sum() {
+        let live_x_cols = 3;
+        let y_len = 4;
+        let sparse = TraceTable::field_sparse(
+            vec![
+                TraceSparseColumn {
+                    col: 0,
+                    values: vec![
+                        F::from_u64(1),
+                        F::from_u64(2),
+                        F::from_u64(3),
+                        F::from_u64(4),
+                    ],
+                },
+                TraceSparseColumn {
+                    col: 2,
+                    values: vec![
+                        F::from_u64(5),
+                        F::from_u64(6),
+                        F::from_u64(7),
+                        F::from_u64(8),
+                    ],
+                },
+            ],
+            live_x_cols,
+            y_len,
+        );
+        let dense = TraceTable::ring_dense((10..22).map(F::from_u64).collect());
+        let mut got = sparse.clone();
+
+        got.add_assign_table(&dense, live_x_cols, y_len)
+            .expect("compatible tables");
+
+        let sparse_dense = sparse.materialize_dense(live_x_cols, y_len);
+        let dense_dense = dense.materialize_dense(live_x_cols, y_len);
+        let expected: Vec<_> = sparse_dense
+            .into_iter()
+            .zip(dense_dense)
+            .map(|(lhs, rhs)| lhs + rhs)
+            .collect();
+        assert_eq!(got, TraceTable::ring_dense(expected));
     }
 }
