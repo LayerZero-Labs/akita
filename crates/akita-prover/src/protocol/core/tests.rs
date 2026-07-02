@@ -3,7 +3,7 @@ use crate::RecursiveWitnessFlat;
 use akita_field::{AkitaError, Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentGroup, OpeningBatchShape, VerifierOpeningBatch,
+    CommitmentGroup, CommitmentGroupScheduleKey, OpeningBatchShape, VerifierOpeningBatch,
 };
 
 type F = Fp32<251>;
@@ -52,7 +52,7 @@ fn batched_prove_opening_batch_rejects_multi_group_shape() {
     let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
     assert_eq!(batch.num_commitment_groups(), 2);
     assert!(matches!(
-        AkitaScheduleLookupKey::new_from_opening_batch(&batch),
+        CommitmentGroupScheduleKey::new_from_opening_batch(&batch),
         Err(AkitaError::InvalidSetup(_))
     ));
 }

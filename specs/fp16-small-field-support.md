@@ -107,7 +107,7 @@ The result should let us answer, with implementation-backed numbers, whether fp1
    - Generated fp16 schedule modules are wired into `akita-types/src/generated`.
    - `akita-config` exposes fp16 presets comparable to fp32/fp64.
    - Singleton and batched schedule keys are generated for dense and one-hot shapes.
-   - fp16 schedule tables are generated against the current `AkitaScheduleLookupKey` shape. Regeneration after the `RootPlannerProfile` cutover in `specs/planner-incidence-generalization.md` is the same `gen_schedule_tables` invocation and is treated as expected churn, not a blocker for fp16.
+   - fp16 schedule tables are generated against the current `CommitmentGroupScheduleKey` shape. Regeneration after the `RootPlannerProfile` cutover in `specs/planner-incidence-generalization.md` is the same `gen_schedule_tables` invocation and is treated as expected churn, not a blocker for fp16.
    - The fp16 generator MUST NOT introduce any code path that derives `num_w_vectors` from `num_claims` or from the extension degree `K`. Singleton root keys continue to set `num_w_vectors = 1`.
    - D32 one-hot and dense profiles assert that real serialized proof bytes match the generated schedule plan exactly. Any divergence is documented as an intentional estimator/table change.
 
