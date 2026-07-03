@@ -28,8 +28,8 @@ mod tests;
 mod wire;
 
 pub use crate::opening_claims::{
-    grouped_root_rejection, sample_public_row_coefficients, GroupedRootRejection, OpeningClaims,
-    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    sample_public_row_coefficients, should_reject_grouped_root, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
     GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
     GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
 };

@@ -31,66 +31,29 @@ pub const GROUPED_ROOT_DENSE_UNSUPPORTED: &str =
 pub const GROUPED_ROOT_UNSUPPORTED: &str =
     "multi-group root batching is not supported yet; see specs/multi-group-batching.md";
 
-/// Why a multi-group root layout is rejected before schedule lookup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GroupedRootRejection {
-    /// Tiered commitment presets cannot open multi-group root batches yet.
-    Tiered,
-    /// Recursive setup contribution cannot open multi-group root batches yet.
-    RecursiveSetup,
-    /// Dense polynomials cannot open multi-group root batches yet.
-    DensePolynomial,
-    /// Grouped root prove/verify is not implemented yet.
-    Unsupported,
-}
-
-impl GroupedRootRejection {
-    /// Map to the prover-side error taxonomy.
-    pub fn into_prover_error(self) -> AkitaError {
-        match self {
-            Self::Tiered => AkitaError::InvalidSetup(GROUPED_ROOT_TIERED_UNSUPPORTED.to_string()),
-            Self::RecursiveSetup => {
-                AkitaError::InvalidSetup(GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string())
-            }
-            Self::DensePolynomial => {
-                AkitaError::InvalidInput(GROUPED_ROOT_DENSE_UNSUPPORTED.to_string())
-            }
-            Self::Unsupported => AkitaError::InvalidInput(GROUPED_ROOT_UNSUPPORTED.to_string()),
-        }
-    }
-
-    /// Map to the verifier-side error taxonomy.
-    pub fn into_verifier_error(self) -> AkitaError {
-        match self {
-            Self::Tiered | Self::RecursiveSetup => self.into_prover_error(),
-            Self::DensePolynomial | Self::Unsupported => AkitaError::InvalidProof,
-        }
-    }
-}
-
-/// Return the grouped-root rejection reason, if any.
+/// Return the grouped-root rejection message, if the layout should be rejected.
 ///
 /// `includes_dense_polynomial` is `Some(true)` when the prover knows the batch
 /// includes a dense polynomial; verifier callers pass `None` and skip the check.
-pub fn grouped_root_rejection(
+pub fn should_reject_grouped_root(
     layout: &OpeningClaimsLayout,
     tiered_commitment: bool,
     setup_contribution_mode: SetupContributionMode,
     includes_dense_polynomial: Option<bool>,
-) -> Option<GroupedRootRejection> {
+) -> Option<&'static str> {
     if layout.num_groups() <= 1 {
         return None;
     }
     if tiered_commitment {
-        return Some(GroupedRootRejection::Tiered);
+        return Some(GROUPED_ROOT_TIERED_UNSUPPORTED);
     }
     if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Some(GroupedRootRejection::RecursiveSetup);
+        return Some(GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED);
     }
     if includes_dense_polynomial == Some(true) {
-        return Some(GroupedRootRejection::DensePolynomial);
+        return Some(GROUPED_ROOT_DENSE_UNSUPPORTED);
     }
-    Some(GroupedRootRejection::Unsupported)
+    Some(GROUPED_ROOT_UNSUPPORTED)
 }
 
 /// Ordered coordinate selection into an opening batch's shared point.
@@ -710,18 +673,20 @@ mod tests {
     }
 
     #[test]
-    fn grouped_root_rejection_maps_prover_and_verifier_errors() {
+    fn should_reject_grouped_root_returns_canonical_messages() {
         let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
-        let reason = grouped_root_rejection(&layout, false, SetupContributionMode::Direct, None)
-            .expect("multi-group rejection");
-        assert_eq!(reason, GroupedRootRejection::Unsupported);
-        assert!(matches!(
-            reason.into_prover_error(),
-            AkitaError::InvalidInput(_)
-        ));
-        assert!(matches!(
-            reason.into_verifier_error(),
-            AkitaError::InvalidProof
-        ));
+        assert_eq!(
+            should_reject_grouped_root(&layout, false, SetupContributionMode::Direct, None),
+            Some(GROUPED_ROOT_UNSUPPORTED)
+        );
+        assert_eq!(
+            should_reject_grouped_root(
+                &OpeningClaimsLayout::new(4, 1).expect("single group"),
+                true,
+                SetupContributionMode::Direct,
+                None,
+            ),
+            None
+        );
     }
 }

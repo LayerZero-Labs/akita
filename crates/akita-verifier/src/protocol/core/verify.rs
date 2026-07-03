@@ -13,11 +13,12 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    folded_root_supports_opening_shape, grouped_root_rejection, root_direct_schedule,
-    root_tensor_projection_enabled, schedule_root_fold_step, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
-    CleartextWitnessProof, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
-    RingCommitment, Schedule, SetupContributionMode, Step,
+    folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
+    schedule_root_fold_step, should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
+    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingCommitment, Schedule,
+    SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -106,14 +107,23 @@ fn reject_unsupported_grouped_root<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    grouped_root_rejection(
+    if let Some(message) = should_reject_grouped_root(
         opening_batch,
         Cfg::TIERED_COMMITMENT,
         setup_contribution_mode,
         None,
-    )
-    .map(|reason| reason.into_verifier_error())
-    .map_or(Ok(()), Err)
+    ) {
+        return Err(
+            if message == GROUPED_ROOT_TIERED_UNSUPPORTED
+                || message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED
+            {
+                AkitaError::InvalidSetup(message.to_string())
+            } else {
+                AkitaError::InvalidProof
+            },
+        );
+    }
+    Ok(())
 }
 
 fn validate_root_direct_recommitment_shape<F, const D: usize>(

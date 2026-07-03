@@ -8,7 +8,21 @@ use crate::compute::{
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::{grouped_root_rejection, schedule_terminal_direct_witness_shape};
+use akita_types::{
+    schedule_terminal_direct_witness_shape, should_reject_grouped_root,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
+};
+
+fn grouped_root_prover_error(message: &'static str) -> AkitaError {
+    if message == GROUPED_ROOT_TIERED_UNSUPPORTED
+        || message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED
+    {
+        AkitaError::InvalidSetup(message.to_string())
+    } else {
+        AkitaError::InvalidInput(message.to_string())
+    }
+}
+
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
 ///
@@ -112,7 +126,7 @@ where
     opening_claims.validate(expanded.seed())?;
     let opening_batch = opening_claims.layout()?;
     let flat_polys = claims.flat_polys();
-    if let Some(reason) = grouped_root_rejection(
+    if let Some(message) = should_reject_grouped_root(
         &opening_batch,
         Cfg::TIERED_COMMITMENT,
         setup_contribution_mode,
@@ -122,7 +136,7 @@ where
                 .any(|poly| poly.onehot_chunk_size().is_none()),
         ),
     ) {
-        return Err(reason.into_prover_error());
+        return Err(grouped_root_prover_error(message));
     }
     let num_vars = opening_batch.max_num_vars();
     let mut schedule = Cfg::get_params_for_prove(&opening_batch)?;
