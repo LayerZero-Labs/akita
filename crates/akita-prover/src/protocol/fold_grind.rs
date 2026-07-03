@@ -104,6 +104,28 @@ fn grind_probe_nonces(
     }
 }
 
+/// Extracted fold-probe geometry from one schedule level.
+///
+/// Callers extract these numbers from [`LevelParams`] before entering the
+/// const-`D` kernel; the kernel must not read schedule types.
+#[derive(Debug, Clone, Copy)]
+struct FoldProbeParams {
+    point_fold: PointFoldShape,
+    num_chunks: usize,
+    blocks_per_chunk: usize,
+}
+
+impl FoldProbeParams {
+    fn from_level(lp: &LevelParams) -> Self {
+        let num_chunks = lp.witness_chunk.num_chunks;
+        Self {
+            point_fold: PointFoldShape::from_level(lp),
+            num_chunks,
+            blocks_per_chunk: lp.num_blocks / num_chunks.max(1),
+        }
+    }
+}
+
 /// One fold probe: returns the global folded witness and the per-window centered
 /// responses `z_i` under the given (preview) challenges.
 ///
@@ -114,13 +136,13 @@ fn grind_probe_nonces(
 /// coefficient-wise sum of the windows (`Σ_i z_i = z`), so grind acceptance on
 /// the global L∞ is identical to a standalone global fold over all blocks.
 #[allow(clippy::type_complexity)]
-fn fold_probe_witness<F, P, B, const D: usize>(
+fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     challenges: &Challenges,
     polys: &[&P],
     point_indices: &[usize],
-    lp: &LevelParams,
+    params: FoldProbeParams,
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -129,8 +151,11 @@ where
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
-    let shape = PointFoldShape::from_level(lp);
-    let num_chunks = lp.witness_chunk.num_chunks;
+    let FoldProbeParams {
+        point_fold: shape,
+        num_chunks,
+        blocks_per_chunk,
+    } = params;
     if num_chunks <= 1 {
         let witness = build_point_decompose_fold_witness::<F, P, B, D>(
             backend,
@@ -144,7 +169,6 @@ where
         return Ok((witness, per_chunk));
     }
 
-    let blocks_per_chunk = lp.num_blocks / num_chunks;
     let windows = (0..num_chunks)
         .map(|chunk| {
             let windowed = window_sparse_challenges(challenges, chunk, blocks_per_chunk)?;
@@ -203,6 +227,7 @@ where
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
     let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
+    let fold_probe_params = FoldProbeParams::from_level(lp);
     let labels = stage1_fold_challenge_labels();
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
 
@@ -221,13 +246,13 @@ where
         )?;
         let (witness, z_folded_centered_per_chunk) =
             akita_types::dispatch_ring_dim_result!(ring_d, |D| {
-                let (witness, z_per_chunk) = fold_probe_witness::<F, P, B, D>(
+                let (witness, z_per_chunk) = fold_probe_witness_kernel::<F, P, B, D>(
                     backend,
                     prepared,
                     &challenges,
                     polys,
                     &point_indices,
-                    lp,
+                    fold_probe_params,
                 )?;
                 let z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>> = z_per_chunk
                     .into_iter()
