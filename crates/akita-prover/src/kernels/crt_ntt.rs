@@ -183,7 +183,7 @@ pub enum NttSlotCacheAny {
 }
 
 /// Map of warmed NTT caches keyed by [`NttCacheKey`].
-pub type NttCacheMap = std::collections::HashMap<NttCacheKey, NttSlotCacheAny>;
+pub type NttCacheMap = std::collections::HashMap<NttCacheKey, std::sync::Arc<NttSlotCacheAny>>;
 
 impl NttSlotCacheAny {
     #[must_use]
@@ -415,7 +415,7 @@ mod ntt_slot_cache_any {
             ring_d: 64,
             num_ring_elements: 1,
         };
-        map.insert(key, sample_cache::<64>().into());
+        map.insert(key, std::sync::Arc::new(sample_cache::<64>().into()));
         assert!(map.contains_key(&key));
         assert_eq!(map.get(&key).expect("slot").ring_d(), 64);
     }

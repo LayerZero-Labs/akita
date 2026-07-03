@@ -39,6 +39,7 @@ fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
 fn make_fold_step(ring_dimension: usize, num_blocks: usize, block_len: usize) -> FoldStep {
     let mut params = LevelParams::log_basis_stub(3);
     params.ring_dimension = ring_dimension;
+    params.role_dims = akita_types::CommitmentRingDims::uniform(ring_dimension);
     params.num_blocks = num_blocks;
     params.block_len = block_len;
     FoldStep {

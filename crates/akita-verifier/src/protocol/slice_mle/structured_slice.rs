@@ -410,16 +410,31 @@ mod tests {
             num_blocks_per_claim: lp.num_blocks,
             num_claims,
         };
-        let instance = RingRelationInstance::<F>::from_parts::<D>(
+        let v = vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()];
+        let commitment_rows = vec![CyclotomicRing::<F, D>::zero(); lp.effective_commit_rows()];
+        let row_coefficient_rings = vec![CyclotomicRing::<F, D>::zero(); num_claims];
+        let y = akita_types::assemble_relation_y::<F>(
+            lp.role_dims(),
+            akita_types::RelationYLayout {
+                n_d: lp.d_key.row_len(),
+                commit_rows_per_group: lp.effective_commit_rows(),
+                b_inner_rows_per_group: lp.b_inner_rows_per_group(),
+                n_a: lp.a_key.row_len(),
+            },
+            &akita_types::RingVec::from_ring_elems(&v),
+            &akita_types::RingVec::from_ring_elems(&commitment_rows),
+        )?;
+        let instance = RingRelationInstance::<F>::new(
             m_row_layout,
             challenges,
             opening_point,
             ring_multiplier_point,
             opening_batch,
             vec![F::zero(); num_claims],
-            &vec![CyclotomicRing::<F, D>::zero(); num_claims],
-            &vec![CyclotomicRing::<F, D>::zero(); num_claims],
-            &[],
+            akita_types::RingVec::from_ring_elems(&row_coefficient_rings),
+            y,
+            akita_types::RingVec::from_ring_elems(&v),
+            lp.role_dims(),
         )?;
         instance.segment_layout(lp, None)
     }

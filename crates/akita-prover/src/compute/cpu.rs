@@ -83,16 +83,18 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         f: impl FnOnce(&NttSlotCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let key = self.envelope_ntt_key::<D>()?;
-        let cache = self
-            .shared_ntt
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-        let slot = cache.get(&key).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
-                key.ring_d, key.num_ring_elements
-            ))
-        })?;
+        let slot = {
+            let cache = self
+                .shared_ntt
+                .lock()
+                .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+            Arc::clone(cache.get(&key).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
+                    key.ring_d, key.num_ring_elements
+                ))
+            })?)
+        };
         f(slot.as_d::<D>()?)
     }
 
@@ -146,7 +148,7 @@ fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
         .shared_ntt
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
-        .insert(key, slot);
+        .insert(key, Arc::new(slot));
     prepared
         .ntt_i8_capacity_by_ring_d
         .lock()
@@ -272,17 +274,19 @@ where
         key: NttCacheKey,
         f: impl FnOnce(&crate::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
-        let cache = prepared
-            .shared_ntt
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-        let slot = cache.get(&key).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
-                key.ring_d, key.num_ring_elements
-            ))
-        })?;
-        f(slot)
+        let slot = {
+            let cache = prepared
+                .shared_ntt
+                .lock()
+                .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+            Arc::clone(cache.get(&key).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
+                    key.ring_d, key.num_ring_elements
+                ))
+            })?)
+        };
+        f(&slot)
     }
 
     fn prepared_expanded_setup<'a>(
