@@ -183,6 +183,7 @@ fn family_catalog(
     }
 }
 
+#[cfg(not(feature = "all-schedules"))]
 fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     module_name: &str,
     keys: &[AkitaScheduleLookupKey],
@@ -205,6 +206,7 @@ fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     );
 }
 
+#[cfg(not(feature = "all-schedules"))]
 fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaScheduleLookupKey]) {
     match family.module_name {
         "fp128_d128_full" => {
