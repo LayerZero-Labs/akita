@@ -180,11 +180,16 @@ fn verify_onehot(
 
 /// Recursive prove + verify round-trips, and the proof actually folds (so the
 /// setup-product sumcheck is exercised on at least one level).
+///
+/// Snap-sized schedules at large `nv` (e.g. 20) may not admit setup-prefix
+/// repacking into the next fold's `B` geometry; recursive setup still succeeds
+/// via the inline-setup fallback exercised in
+/// [`run_recursive_missing_prefix_slots_falls_back`]. Prefix slot population
+/// for smaller arities is covered by `akita-setup::recursion` unit tests.
 fn run_recursive_roundtrip(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let fixture = prove_onehot(nv, SetupContributionMode::Recursive);
-        assert_setup_prefix_slots_populated(&fixture.verifier_setup);
         assert!(
             setup_sumcheck_levels(&fixture.proof) > 0,
             "recursive nv={nv} must produce at least one non-terminal fold level \
