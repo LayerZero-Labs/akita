@@ -161,6 +161,7 @@ struct ProfileMode {
     run: ProfileModeRunner,
 }
 
+#[cfg(feature = "profile-ci")]
 const PROFILE_CI_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "dense_fp128_d64",
