@@ -306,10 +306,10 @@ where
     // context was built, and each operation adapter takes its dimension from
     // the schedule data at the operation.
     for level in 0..schedule_ctx.ring_plan().num_folds() {
-        let ring_d = schedule_ctx.ring_plan().dim_at(level)?;
+        let role_dims = schedule_ctx.ring_plan().dims_at(level)?;
         stacks
             .prove_stack_at_level(level)
-            .ensure_fold_level_envelope_ntt(expanded.as_ref(), ring_d)?;
+            .ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;
     }
 
     let root_scheduled = schedule.get_execution_schedule(0)?;

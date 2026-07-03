@@ -128,7 +128,7 @@ where
         let scheduled = schedule.get_execution_schedule(level)?;
         scheduled.validate_current_w_len(current_state.w.len())?;
         let level_params = &scheduled.params;
-        let level_d = level_params.ring_dimension;
+        let role_dims = level_params.role_dims();
         let is_terminal_level = scheduled.is_terminal;
         let m_row_layout = if is_terminal_level {
             MRowLayout::WithoutDBlock
@@ -142,7 +142,7 @@ where
         };
         let prepared_fold = {
             let stack = stacks.prove_stack_at_level(level);
-            stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), level_d)?;
+            stack.ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;
             prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
                 stack,
                 transcript,
@@ -154,7 +154,8 @@ where
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!(
-                    "suffix prepare level {level} D{level_d} failed: {err:?}"
+                    "suffix prepare level {level} d_a={} failed: {err:?}",
+                    role_dims.d_a()
                 ))
             })?
         };

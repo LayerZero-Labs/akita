@@ -26,7 +26,9 @@ use akita_types::sis::{
     rounded_up_collision_linf_t, rounded_up_collision_linf_tiered_commitment,
     rounded_up_collision_linf_w, SisTableKey,
 };
-use akita_types::{AjtaiKeyParams, DecompositionParams, GroupRootParams, LevelParams};
+use akita_types::{
+    AjtaiKeyParams, CommitmentRingDims, DecompositionParams, GroupRootParams, LevelParams,
+};
 
 fn require_exact_rank(
     role: &str,
@@ -340,8 +342,12 @@ impl GeneratedFoldStep {
             // a root-direct commit stays single-chunk.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups: Vec::new(),
+            role_dims: CommitmentRingDims::uniform(ring_d),
         };
-        params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
+        let mut params =
+            params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
+        params.stamp_role_dims_from_keys();
+        Ok(params)
     }
 
     /// Expand a compact root step for a grouped-root schedule.
@@ -504,8 +510,12 @@ impl GeneratedFoldStep {
             cached_num_digits_fold_value: 1,
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
+            role_dims: CommitmentRingDims::uniform(ring_d),
         };
-        params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)
+        let mut params =
+            params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)?;
+        params.stamp_role_dims_from_keys();
+        Ok(params)
     }
 }
 

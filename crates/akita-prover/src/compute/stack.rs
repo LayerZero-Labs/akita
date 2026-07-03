@@ -172,6 +172,29 @@ where
         self.tensor.ensure_envelope_ntt(expanded, ring_d)?;
         self.ring_switch.ensure_envelope_ntt(expanded, ring_d)
     }
+
+    /// Warm full-envelope NTT slots for each distinct role dimension at one fold level.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any cluster fails envelope key derivation or cache build.
+    pub fn ensure_fold_level_role_ntt(
+        &self,
+        expanded: &AkitaExpandedSetup<F>,
+        dims: akita_types::CommitmentRingDims,
+    ) -> Result<(), AkitaError> {
+        let mut unique = [0usize; 3];
+        let mut count = 0usize;
+        for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
+            if d == 0 || unique[..count].contains(&d) {
+                continue;
+            }
+            unique[count] = d;
+            count += 1;
+            self.ensure_fold_level_envelope_ntt(expanded, d)?;
+        }
+        Ok(())
+    }
 }
 
 /// Single-backend degenerate [`ProverComputeStack`] (all four clusters share `B`).

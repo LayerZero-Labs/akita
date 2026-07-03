@@ -707,11 +707,11 @@ mod tests {
         let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
             vec![F::zero(); 64],
         ))];
-        let err = validate_root_direct_recommitment_shape::<F, D>(
+        let err = validate_root_direct_recommitment_shape::<F>(
             &witnesses,
-            &setup_seed,
+            &DirectRecommitGeometry::from_level(&params, &setup_seed),
             &opening_batch(6),
-            &params,
+            D,
         )
         .expect_err("A layout needs four setup entries but setup has three");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
@@ -735,11 +735,11 @@ mod tests {
         let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
             vec![F::zero(); 32],
         ))];
-        let err = validate_root_direct_recommitment_shape::<F, D>(
+        let err = validate_root_direct_recommitment_shape::<F>(
             &witnesses,
-            &setup_seed,
+            &DirectRecommitGeometry::from_level(&params, &setup_seed),
             &opening_batch(6),
-            &params,
+            D,
         )
         .expect_err("num_vars=6 requires 64 direct witness elements");
         assert!(matches!(err, AkitaError::InvalidProof));

@@ -180,16 +180,37 @@ pub struct LevelParams {
     /// group and `d_key` describes the shared D matrix over all group `w_hat`
     /// segments.
     pub precommitted_groups: Vec<GroupRootParams>,
+    /// Per-role ring dimensions at this level (`d_a`, `d_b`, `d_d`).
+    pub role_dims: CommitmentRingDims,
 }
 
 impl LevelParams {
     /// Per-role ring dimensions at this level.
     ///
-    /// Uniform schedules use `d_a = d_b = d_d = ring_dimension`. The planner
-    /// may populate divergent roles later via [`Self::with_role_dims`].
+    /// Per-role ring dimensions stored on this level.
     #[must_use]
     pub fn role_dims(&self) -> CommitmentRingDims {
-        CommitmentRingDims::uniform(self.ring_dimension)
+        self.role_dims
+    }
+
+    /// Replace per-role ring dimensions after validating nesting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when dims are unsupported or fail nesting.
+    pub fn with_role_dims(mut self, dims: CommitmentRingDims) -> Result<Self, AkitaError> {
+        crate::schedule_context::validate_role_dims(dims)?;
+        self.role_dims = dims;
+        Ok(self)
+    }
+
+    /// Derive `role_dims` from `ring_dimension` and each key's stored ring dimension.
+    pub fn stamp_role_dims_from_keys(&mut self) {
+        self.role_dims = CommitmentRingDims {
+            inner: self.ring_dimension,
+            outer: self.b_key.sis_table_key().ring_dimension as usize,
+            opening: self.d_key.sis_table_key().ring_dimension as usize,
+        };
     }
 
     /// Synthetic `LevelParams` carrying only a terminal-direct's `log_basis`.
@@ -231,6 +252,7 @@ impl LevelParams {
             cached_num_digits_fold_value: 1,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
+            role_dims: CommitmentRingDims::uniform(0),
         }
     }
 
@@ -293,6 +315,7 @@ impl LevelParams {
             cached_num_digits_fold_value: 1,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
+            role_dims: CommitmentRingDims::uniform(ring_dimension),
         }
     }
 
@@ -908,6 +931,7 @@ impl LevelParams {
             // a property of the witness this level commits, so preserve it.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
+            role_dims: self.role_dims,
         };
         let field_bits = self.field_bits_for_cache();
         rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims)
@@ -978,6 +1002,7 @@ impl LevelParams {
             // the ranks, so it stays with `self` like the SIS buckets.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
+            role_dims: other.role_dims,
         }
         .with_fold_linf_cap_config(field_bits, 0)
     }

@@ -450,7 +450,7 @@ impl<'s> ValidatedScheduleContext<'s> {
     }
 }
 
-fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
+pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
     for d in [dims.inner, dims.outer, dims.opening] {
         if !SUPPORTED_RING_DIMS.contains(&d) {
             return Err(AkitaError::InvalidSetup(format!(
@@ -479,6 +479,7 @@ mod tests {
         params.ring_dimension = ring_dimension;
         params.num_blocks = num_blocks;
         params.block_len = block_len;
+        params.role_dims = CommitmentRingDims::uniform(ring_dimension);
         FoldStep {
             params,
             current_w_len: 0,

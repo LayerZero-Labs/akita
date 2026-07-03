@@ -10,9 +10,9 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims,
+    DecompositionParams, DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout,
+    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, Step,
 };
 
 use crate::schedule_params::{
@@ -520,7 +520,7 @@ fn grouped_root_main_level_params_candidate(
     } else {
         0
     };
-    let params = LevelParams {
+    let mut params = LevelParams {
         ring_dimension: d,
         log_basis,
         a_key,
@@ -546,9 +546,11 @@ fn grouped_root_main_level_params_candidate(
         // and not used by the grouped precommit path.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: ctx.precommitted_groups.to_vec(),
+        role_dims: CommitmentRingDims::uniform(d),
     }
     .with_fold_linf_cap_config(decomp.field_bits(), main_num_polys)?;
 
+    params.stamp_role_dims_from_keys();
     Ok(Some(params))
 }
 

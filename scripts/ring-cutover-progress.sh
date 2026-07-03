@@ -143,11 +143,16 @@ if [[ "$mode" == "report" && "$pv" -gt 0 ]]; then
   done
 fi
 
-if [[ "$mode" == "gate" ]]; then
+  if [[ "$mode" == "gate" ]]; then
   fail=0
   if [[ "$pv" -gt 0 ]]; then
     echo
     echo "MERGE GATE FAIL: $pv prover discriminator violation(s) (const-D fn taking schedule types)." >&2
+    fail=1
+  fi
+  if [[ "$vv" -gt 0 ]]; then
+    echo
+    echo "MERGE GATE FAIL: $vv verifier discriminator violation(s) (const-D fn taking schedule types; target 0)." >&2
     fail=1
   fi
   if [[ "$total" -gt 0 ]]; then

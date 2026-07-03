@@ -21,8 +21,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
-    OpeningClaimsLayout, PolynomialGroupLayout, Schedule, Step,
+    AkitaScheduleLookupKey, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
+    LevelParams, MRowLayout, OpeningClaimsLayout, PolynomialGroupLayout, Schedule, Step,
 };
 
 use crate::{policy_of, CommitmentConfig};
@@ -239,7 +239,7 @@ fn expand_envelope_witness_at_ring_d(
     } else {
         0
     };
-    let params = LevelParams {
+    let mut params = LevelParams {
         ring_dimension: target_ring_d,
         log_basis,
         a_key: AjtaiKeyParams::try_new(
@@ -284,7 +284,9 @@ fn expand_envelope_witness_at_ring_d(
         cached_num_digits_fold_value: 1,
         precommitted_groups: Vec::new(),
         witness_chunk: akita_types::witness::ChunkedWitnessCfg::default_non_chunked(),
+        role_dims: CommitmentRingDims::uniform(target_ring_d),
     };
+    params.stamp_role_dims_from_keys();
     params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
 }
 

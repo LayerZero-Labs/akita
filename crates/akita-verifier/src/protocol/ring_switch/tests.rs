@@ -44,12 +44,14 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
     let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
         &challenges,
         F::one(),
-        &lp,
+        &RingSwitchRowEvalLevel::from_lp(&lp),
         &[],
         0,
         &[],
         MRowLayout::WithDBlock,
         reject_test_segment_layout(),
+        1,
+        0,
     ) {
         Ok(_) => panic!("invalid log_basis should be rejected"),
         Err(err) => err,
@@ -64,12 +66,14 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
     let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
         &challenges,
         F::one(),
-        &lp,
+        &RingSwitchRowEvalLevel::from_lp(&lp),
         &[],
         0,
         &[],
         MRowLayout::WithDBlock,
         reject_test_segment_layout(),
+        1,
+        0,
     ) {
         Ok(_) => panic!("zero num_blocks should be rejected"),
         Err(err) => err,
