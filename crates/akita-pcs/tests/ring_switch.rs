@@ -373,7 +373,7 @@ mod tests {
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
         let rows = lp
-            .m_row_count_for(1, 0, MRowLayout::WithDBlock)
+            .m_row_count_for(1, MRowLayout::WithDBlock)
             .expect("valid row count");
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -398,14 +398,18 @@ mod tests {
                 &tau1,
                 1,
                 &[F::one()],
-                0,
                 MRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
-            let expected =
-                relation_claim_from_rows::<F, D>(&tau1, alpha, &instance.v, &commitment.u)
-                    .expect("relation claim");
+            let expected = relation_claim_from_rows::<F, D>(
+                &tau1,
+                alpha,
+                lp.a_key.row_len(),
+                &instance.v,
+                &commitment.u,
+            )
+            .expect("relation claim");
             assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
         }
     }
@@ -507,7 +511,7 @@ mod tests {
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = lp.m_row_count_for(1, 0, MRowLayout::WithDBlock).unwrap();
+        let rows = lp.m_row_count_for(1, MRowLayout::WithDBlock).unwrap();
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
 
         for row in 0..rows {
@@ -531,13 +535,18 @@ mod tests {
                 &tau1,
                 1,
                 &[F::one()],
-                0,
                 MRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
-            let expected =
-                relation_claim_from_rows::<F, D>(&tau1, alpha, &instance.v, &commitment.u).unwrap();
+            let expected = relation_claim_from_rows::<F, D>(
+                &tau1,
+                alpha,
+                lp.a_key.row_len(),
+                &instance.v,
+                &commitment.u,
+            )
+            .unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
         }
     }
@@ -673,7 +682,7 @@ mod tests {
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
         let rows = level_params
-            .m_row_count_for(1, 0, MRowLayout::WithDBlock)
+            .m_row_count_for(1, MRowLayout::WithDBlock)
             .unwrap();
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
         let tau1: Vec<F> = (0..num_i)
@@ -691,7 +700,6 @@ mod tests {
             &tau1,
             1,
             &[F::one()],
-            0,
             MRowLayout::WithDBlock,
         )
         .expect("m evals (materialized)");
@@ -847,7 +855,6 @@ mod tests {
                 &tau1,
                 1,
                 &[F::one()],
-                0,
                 MRowLayout::WithDBlock,
             )
             .expect("chunked m evals (prover)");

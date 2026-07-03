@@ -35,7 +35,6 @@ macro_rules! impl_multi_chunk_companion {
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
             const D: usize = <$base as $crate::CommitmentConfig>::D;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
-            const TIERED_COMMITMENT: bool = <$base as $crate::CommitmentConfig>::TIERED_COMMITMENT;
 
             fn decomposition() -> akita_types::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()
@@ -121,7 +120,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
-        tiered: Cfg::TIERED_COMMITMENT,
         witness_chunk: Cfg::chunked_witness_cfg(),
     }
 }
@@ -174,17 +172,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
-
-    /// Enable the second commitment tier (matrix `F`).
-    ///
-    /// When `true`, the planner is allowed
-    /// to reuse a smaller first-tier matrix `B` across `f` witness slices and
-    /// commit the partial images with a second-tier matrix `F`
-    /// (`u_final = F · decompose(u_1 ‖ … ‖ u_f)`), shrinking the shared
-    /// preprocessing matrix and the verifier setup-contribution scan. See
-    /// `specs/tiered-commitment.md`. Threaded into the planner via
-    /// [`PlannerPolicy::tiered`] (see [`policy_of`]).
-    const TIERED_COMMITMENT: bool = false;
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;

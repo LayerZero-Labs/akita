@@ -32,7 +32,6 @@ schedules-default = [
 all-schedules = [
   "schedules-default",
   "schedules-fp128-d64-onehot-tensor",
-  "schedules-fp128-d64-onehot-tiered",
   "schedules-fp128-d64-onehot-multi-chunk",
   "schedules-fp128-d64-onehot-multi-chunk-w2r2",
   "schedules-fp128-d64-onehot-multi-chunk-w4r2",
@@ -58,10 +57,6 @@ schedules-fp128-d64-onehot-tensor = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-tensor",
 ]
-schedules-fp128-d64-onehot-tiered = [
-  "dep:akita-schedules",
-  "akita-schedules/fp128-d64-onehot-tiered",
-]
 schedules-fp128-d64-onehot-multi-chunk = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-multi-chunk",
@@ -78,6 +73,7 @@ schedules-fp128-d64-full-multi-chunk = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-full-multi-chunk",
 ]
+
 schedules-fp32-d128-onehot = [
   "dep:akita-schedules",
   "akita-schedules/fp32-d128-onehot",

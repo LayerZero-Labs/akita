@@ -250,12 +250,6 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d64_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w8r2,
     },
-    // Tiered second-tier commitment (F). Only tiers with a batch (B > A), so
-    // run with `AKITA_NUM_POLYS=16` or more; excluded from the `all` sweep.
-    ProfileMode {
-        name: "onehot_fp128_d64_tiered",
-        run: run_profile_onehot_fp128_d64_tiered,
-    },
     ProfileMode {
         name: "dense_fp32_d64",
         run: run_profile_dense_fp32_d64,
@@ -301,7 +295,6 @@ const PROFILE_MODES: &[ProfileMode] = &[
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_tensor",
-    "onehot_fp128_d64_tiered",
     "onehot_fp128_d64_multi_chunk_w2r2",
     "onehot_fp128_d64_multi_chunk_w4r2",
     "onehot_fp128_d64_multi_chunk_w8r2",
@@ -438,16 +431,6 @@ fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
         )
     };
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tensor", &title, nv, num_polys);
-}
-
-fn run_profile_onehot_fp128_d64_tiered(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D64OneHotTiered;
-    let prime = fp128_prime_label();
-    let onehot_k = onehot_k_for_num_vars(nv);
-    let title = format!(
-        "=== onehot_fp128_d64_tiered (fp128, {prime}, D=64, 1-of-{onehot_k}, tiered F-commit, batch={num_polys}) ==="
-    );
-    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tiered", &title, nv, num_polys);
 }
 
 fn run_profile_dense_fp128_d32(nv: usize, num_polys: usize) {
