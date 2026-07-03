@@ -79,7 +79,7 @@ where
     let num_claims = opening_batch.num_total_polynomials();
     let opening_num_vars = opening_batch.max_num_vars();
     // A-role root fold ring dimension (schedule-derived).
-    let root_ring_d = root_params.ring_dimension;
+    let root_ring_d = root_params.role_dims().d_a();
     let alpha_bits = root_ring_d.trailing_zeros() as usize;
     let needs_extension_reduction =
         root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars);
@@ -197,9 +197,9 @@ where
     }
 
     // Absorb root claims through the D-free flat commitment encoder keyed on the
-    // root level's schedule `ring_dimension` (byte-identical to the verifier's
+    // root level's B-role dimension (byte-identical to the verifier's
     // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
-    claims.append_to_transcript::<T>(root_params.ring_dimension, transcript)?;
+    claims.append_to_transcript::<T>(root_params.role_dims().d_b(), transcript)?;
 
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R>(
         stack,
@@ -305,8 +305,8 @@ where
     }
 
     // Absorb root claims through the D-free flat commitment encoder keyed on the
-    // root level's schedule `ring_dimension` (S2/S7 byte parity).
-    claims.append_to_transcript::<T>(root_params.ring_dimension, transcript)?;
+    // root level's B-role dimension (S2/S7 byte parity).
+    claims.append_to_transcript::<T>(root_params.role_dims().d_b(), transcript)?;
 
     let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
         root_params,

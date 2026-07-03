@@ -58,7 +58,8 @@ pub use levels::{
 };
 pub use relation::{
     assemble_relation_y, generate_y, relation_claim_from_rows, relation_claim_from_rows_extension,
-    relation_claim_from_rows_extension_at_dims, RelationYLayout,
+    relation_claim_from_rows_extension_at_dims, relation_y_coeff_len, relation_y_row_count,
+    RelationYLayout,
 };
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,

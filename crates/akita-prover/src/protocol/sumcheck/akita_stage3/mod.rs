@@ -86,7 +86,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
     {
-        let ring_d = lp.ring_dimension;
+        let ring_d = relation.role_dims().d_a();
         let setup_term = build_setup_product_term::<F, E, T>(
             ring_d,
             expanded,

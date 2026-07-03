@@ -21,7 +21,7 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    assemble_relation_y, dispatch_ring_dim_result, CommitmentRingDims, RelationYLayout, RingVec,
+    assemble_relation_y, dispatch_ring_dim_result, RelationYLayout, RingVec,
     RingView,
 };
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, MRowLayout};
@@ -481,7 +481,7 @@ impl RingRelationProver {
         validate_chunked_witness_cfg(&lp)?;
         // Per-role ring dimensions for this level; the mixed-row spec feeds
         // diverging role dims here (uniform today).
-        let dims = CommitmentRingDims::uniform(lp.ring_dimension);
+        let dims = lp.role_dims();
         let opening_batch = fold_claims.opening_claims().layout();
         let polys = fold_claims.flat_polys();
         let group_sizes = opening_batch.group_sizes();
@@ -650,7 +650,7 @@ impl RingRelationProver {
             e_hat,
             e_folded,
             flattened_hint,
-            dims.uniform_dim()?,
+            dims,
         );
         Ok((instance, witness))
     }

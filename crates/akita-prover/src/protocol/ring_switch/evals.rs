@@ -1,7 +1,8 @@
 use super::*;
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
-use akita_algebra::ring::eval_flat_ring_at_pows;
+use akita_algebra::ring::{eval_flat_ring_at_pows, scalar_powers};
 use akita_types::embed_ring_subfield_scalar_flat;
+use akita_types::CommitmentRingDims;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
@@ -61,6 +62,7 @@ pub fn compute_m_evals_x<F, E>(
     challenges: &Challenges,
     alpha: E,
     alpha_pows: &[E],
+    role_dims: CommitmentRingDims,
     lp: &LevelParams,
     tau1: &[E],
     num_polys: usize,
@@ -72,13 +74,18 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    let ring_d = alpha_pows.len();
-    if ring_d != lp.ring_dimension {
+    let d_a = role_dims.d_a();
+    let d_b = role_dims.d_b();
+    let d_d = role_dims.d_d();
+    if alpha_pows.len() != d_a {
         return Err(AkitaError::InvalidSize {
-            expected: lp.ring_dimension,
-            actual: ring_d,
+            expected: d_a,
+            actual: alpha_pows.len(),
         });
     }
+    let alpha_pows_a = alpha_pows;
+    let alpha_pows_b = scalar_powers(alpha, d_b);
+    let alpha_pows_d = scalar_powers(alpha, d_d);
     let num_claims = gamma.len();
     if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
         return Err(AkitaError::InvalidInput(
@@ -231,9 +238,9 @@ where
         0
     };
     let a_width = inner_width;
-    let d_view = setup.shared_matrix.ring_view_dyn(n_d, d_width, ring_d)?;
-    let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, ring_d)?;
-    let a_view = setup.shared_matrix.ring_view_dyn(n_a, a_width, ring_d)?;
+    let d_view = setup.shared_matrix.ring_view_dyn(n_d, d_width, d_d)?;
+    let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, d_b)?;
+    let a_view = setup.shared_matrix.ring_view_dyn(n_a, a_width, d_a)?;
     let d_rows: Vec<&[F]> = (0..n_d)
         .map(|r| d_view.row_flat(r))
         .collect::<Result<_, _>>()?;
@@ -244,7 +251,7 @@ where
         .map(|r| a_view.row_flat(r))
         .collect::<Result<_, _>>()?;
     let f_rows: Vec<&[F]> = if tiered {
-        let f_view = setup.shared_matrix.ring_view_dyn(n_f, width_f, ring_d)?;
+        let f_view = setup.shared_matrix.ring_view_dyn(n_f, width_f, d_b)?;
         (0..n_f)
             .map(|r| f_view.row_flat(r))
             .collect::<Result<_, _>>()?
@@ -275,7 +282,7 @@ where
                 .copied()
                 .map(|coefficient| {
                     embed_ring_subfield_scalar_flat::<F, E>(
-                        ring_d,
+                        d_a,
                         coefficient,
                         AkitaError::InvalidInput(
                             "public-row coefficient does not encode in the ring-subfield basis"
@@ -299,7 +306,7 @@ where
                         block_idx,
                         gamma[claim_idx],
                         coefficient_ring.map(Vec::as_slice),
-                        alpha_pows,
+                        alpha_pows_a,
                     )
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()
@@ -326,8 +333,8 @@ where
                 if !eq_i.is_zero() {
                     acc += *eq_i
                         * eval_flat_ring_at_pows(
-                            &d_rows[di][d_phys_col * ring_d..(d_phys_col + 1) * ring_d],
-                            alpha_pows,
+                            &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
+                            &alpha_pows_d,
                         );
                 }
             }
@@ -367,8 +374,8 @@ where
                     if !eq_i.is_zero() {
                         acc += eq_i
                             * eval_flat_ring_at_pows(
-                                &b_rows[row_idx][within * ring_d..(within + 1) * ring_d],
-                                alpha_pows,
+                                &b_rows[row_idx][within * d_b..(within + 1) * d_b],
+                                &alpha_pows_b,
                             );
                     }
                 }
@@ -378,8 +385,8 @@ where
                     if !eq_i.is_zero() {
                         acc += *eq_i
                             * eval_flat_ring_at_pows(
-                                &b_rows[row_idx][local_col * ring_d..(local_col + 1) * ring_d],
-                                alpha_pows,
+                                &b_rows[row_idx][local_col * d_b..(local_col + 1) * d_b],
+                                &alpha_pows_b,
                             );
                     }
                 }
@@ -404,8 +411,8 @@ where
                     if !eq_i.is_zero() {
                         acc += eq_i
                             * eval_flat_ring_at_pows(
-                                &f_rows[f_row][c * ring_d..(c + 1) * ring_d],
-                                alpha_pows,
+                                &f_rows[f_row][c * d_b..(c + 1) * d_b],
+                                &alpha_pows_b,
                             );
                     }
                 }
@@ -424,14 +431,14 @@ where
             let local_k = k;
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
-            let a_eval = ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows)?;
+            let a_eval = ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
             let mut acc = consistency_weight * a_eval * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i
                         * eval_flat_ring_at_pows(
-                            &a_rows[a_idx][local_k * ring_d..(local_k + 1) * ring_d],
-                            alpha_pows,
+                            &a_rows[a_idx][local_k * d_a..(local_k + 1) * d_a],
+                            alpha_pows_a,
                         );
                 }
             }
@@ -452,7 +459,7 @@ where
         })
         .collect();
 
-    let alpha_pow_d = alpha_pows[ring_d - 1] * alpha;
+    let alpha_pow_d = alpha_pows_d[d_d - 1] * alpha;
     let denom = alpha_pow_d + E::one();
     let r_tail_len = rows * levels;
     let r_tail: Vec<E> = cfg_into_iter!(0..r_tail_len)

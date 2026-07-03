@@ -258,7 +258,9 @@ where
         ..
     } = current_state;
     let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
-    if !commitment.can_decode_vec(level_params.ring_dimension) {
+    let role_dims = level_params.role_dims();
+    let commit_d = role_dims.d_b();
+    if !commitment.can_decode_vec(commit_d) {
         return Err(AkitaError::InvalidProof);
     }
     // D-free suffix hint: the cache carries the flat `AkitaCommitmentHint<F>`
@@ -268,19 +270,15 @@ where
     let opening_point = &sumcheck_challenges;
 
     // §6 invariant (H5 byte-parity) — absorb the suffix commitment through the
-    // D-free flat coefficient encoder keyed on the level's schedule
-    // `ring_dimension`. This is byte-identical to the verifier's
+    // D-free flat coefficient encoder keyed on the level's B-role dimension.
+    // This is byte-identical to the verifier's
     // `current_state.commitment.append_flat_to_transcript(...)` (S7
     // `prepare_fold_data`) and to the former typed `append_as_ring_commitment`
     // path (S2 byte-identity test). The same coefficient order, same
     // `ABSORB_COMMITMENT` label.
-    commitment.append_flat_to_transcript::<T>(
-        ABSORB_COMMITMENT,
-        level_params.ring_dimension,
-        transcript,
-    )?;
+    commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
 
-    let alpha = level_params.ring_dimension.trailing_zeros() as usize;
+    let alpha = role_dims.d_a().trailing_zeros() as usize;
     let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let logical_polys = [logical_w];
     let fold_polys = [&w];

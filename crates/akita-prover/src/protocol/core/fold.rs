@@ -99,7 +99,7 @@ where
     let tensor = stack.tensor();
     // A-role fold dimension: the EOR sumcheck and tensor projection operate on
     // the claim polynomials at this level's fold ring.
-    let ring_d = level_params.ring_dimension;
+    let ring_d = level_params.role_dims().d_a();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
         let proved = dispatch_ring_dim_result!(ring_d, |D| {
             prove_extension_opening_reduction::<F, E, T, P, TS, D>(
@@ -282,7 +282,7 @@ where
     let opening = stack.opening();
     // Extracted level numbers for the A-role claims-evaluation operation; the
     // kernels below must not read schedule types.
-    let ring_d = level_params.ring_dimension;
+    let ring_d = level_params.role_dims().d_a();
     let m_vars = level_params.m_vars;
     let r_vars = level_params.r_vars;
     let block_len = level_params.block_len;
@@ -472,7 +472,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let lp = &scheduled.params;
-    let ring_d = lp.ring_dimension;
+    let ring_d = prepared_fold.instance.role_dims().d_a();
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
     let build_output = ring_switch_build_w::<F, R>(
         &prepared_fold.instance,

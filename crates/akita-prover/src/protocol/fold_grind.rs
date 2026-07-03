@@ -298,7 +298,7 @@ where
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     // A-role fold dimension; per-role split attaches here (mixed-row spec).
-    let ring_d = lp.ring_dimension;
+    let ring_d = lp.role_dims().d_a();
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
     let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;

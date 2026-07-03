@@ -3,7 +3,7 @@
 use crate::compute::FlatDigitBlocks;
 use crate::DecomposeFoldWitness;
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{AkitaCommitmentHint, DigitBlocks, RingVec};
+use akita_types::{AkitaCommitmentHint, CommitmentRingDims, DigitBlocks, RingRole, RingVec};
 
 /// Prover secret for the per-fold ring relation (never built on the verifier).
 ///
@@ -20,12 +20,11 @@ pub struct RingRelationWitness<F: FieldCore> {
     pub e_hat: DigitBlocks,
     pub e_folded: RingVec<F>,
     pub hint: AkitaCommitmentHint<F>,
-    ring_dim: usize,
+    role_dims: CommitmentRingDims,
 }
 
 impl<F: FieldCore> RingRelationWitness<F> {
-    /// Construct from D-free fold outputs under a schedule-derived ring
-    /// dimension.
+    /// Construct from D-free fold outputs under schedule-derived role dimensions.
     pub fn from_flat_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
         z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
@@ -33,7 +32,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
         e_hat: DigitBlocks,
         e_folded: RingVec<F>,
         hint: AkitaCommitmentHint<F>,
-        ring_dim: usize,
+        role_dims: CommitmentRingDims,
     ) -> Self {
         Self {
             z_folded_rings,
@@ -42,70 +41,97 @@ impl<F: FieldCore> RingRelationWitness<F> {
             e_hat,
             e_folded,
             hint,
-            ring_dim,
+            role_dims,
         }
     }
 
-    /// Stored ring dimension (coefficients per ring element).
-    pub fn ring_dim(&self) -> usize {
-        self.ring_dim
+    /// Per-role ring dimensions for this witness.
+    pub fn role_dims(&self) -> CommitmentRingDims {
+        self.role_dims
     }
 
+    /// Validate one role carrier against dispatch `D`.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the requested ring dimension does not match storage.
-    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        if self.ring_dim != D {
+    /// Returns an error if the requested ring dimension does not match the role.
+    pub fn ensure_role_dim<const D: usize>(&self, role: RingRole) -> Result<(), AkitaError> {
+        let expected = self.role_dims.dim_for(role);
+        if D != expected {
             return Err(AkitaError::InvalidInput(format!(
-                "ring relation witness ring_d={} does not match requested D={D}",
-                self.ring_dim
+                "ring relation witness role {role:?} expects d={expected}, requested D={D}"
             )));
         }
-        self.z_folded_rings.ensure_ring_dim::<D>()?;
-        if self.e_hat.digit_stride() != D {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.e_hat.digit_stride(),
-            });
-        }
-        if !self.e_folded.can_decode_vec(D) {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.e_folded.coeff_len(),
-            });
-        }
-        for chunk in &self.z_folded_centered_per_chunk {
-            for row in chunk {
-                if row.len() != D {
+        match role {
+            RingRole::Inner => {
+                self.z_folded_rings.ensure_ring_dim::<D>()?;
+                if !self.e_folded.can_decode_vec(D) {
                     return Err(AkitaError::InvalidSize {
                         expected: D,
-                        actual: row.len(),
+                        actual: self.e_folded.coeff_len(),
+                    });
+                }
+                for chunk in &self.z_folded_centered_per_chunk {
+                    for row in chunk {
+                        if row.len() != D {
+                            return Err(AkitaError::InvalidSize {
+                                expected: D,
+                                actual: row.len(),
+                            });
+                        }
+                    }
+                }
+            }
+            RingRole::Opening => {
+                if self.e_hat.digit_stride() != D {
+                    return Err(AkitaError::InvalidSize {
+                        expected: D,
+                        actual: self.e_hat.digit_stride(),
                     });
                 }
             }
+            RingRole::Outer => {}
         }
         Ok(())
     }
 
-    /// Rebuild typed `e_hat` digit planes after [`Self::ensure_ring_dim`].
+    /// Validate that all role carriers match a single uniform dimension `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if roles diverge or any carrier does not match `D`.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        let uniform = self.role_dims.uniform_dim()?;
+        if uniform != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "ring relation witness uniform dim {uniform} does not match requested D={D}"
+            )));
+        }
+        self.ensure_role_dim::<D>(RingRole::Inner)?;
+        self.ensure_role_dim::<D>(RingRole::Opening)?;
+        self.ensure_role_dim::<D>(RingRole::Outer)?;
+        Ok(())
+    }
+
+    /// Rebuild typed `e_hat` digit planes after [`Self::ensure_role_dim`].
     pub fn e_hat_trusted<const D: usize>(&self) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        self.ensure_ring_dim::<D>()?;
+        self.ensure_role_dim::<D>(RingRole::Opening)?;
         FlatDigitBlocks::from_digit_blocks(&self.e_hat)
     }
 
-    /// Borrow folded `e` rows after [`Self::ensure_ring_dim`].
+    /// Borrow folded `e` rows after [`Self::ensure_role_dim`].
     pub fn e_folded_trusted<const D: usize>(
         &self,
     ) -> Result<&[akita_algebra::CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_ring_dim::<D>()?;
+        self.ensure_role_dim::<D>(RingRole::Inner)?;
         Ok(self.e_folded.as_ring_slice_trusted::<D>())
     }
 
-    /// Borrow per-chunk centered fold responses after [`Self::ensure_ring_dim`].
+    /// Borrow per-chunk centered fold responses after [`Self::ensure_role_dim`].
     pub fn z_folded_centered_per_chunk_trusted<const D: usize>(
         &self,
     ) -> Result<Vec<Vec<[i32; D]>>, AkitaError> {
-        self.ensure_ring_dim::<D>()?;
+        self.ensure_role_dim::<D>(RingRole::Inner)?;
         self.z_folded_centered_per_chunk
             .iter()
             .map(|chunk| {

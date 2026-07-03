@@ -30,8 +30,9 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    let ring_d = lp.ring_dimension;
-    dispatch_ring_dim_result!(ring_d, |D| {
+    let dims = instance.role_dims();
+    let d_a = dims.d_a();
+    dispatch_ring_dim_result!(d_a, |D| {
         let default_gamma;
         let gamma = if let Some(gamma) = gamma {
             gamma
@@ -95,6 +96,7 @@ where
                     challenges,
                     alpha,
                     &ring_alpha_evals_y,
+                    dims,
                     lp,
                     &tau1,
                     num_polys,
@@ -114,6 +116,7 @@ where
                 challenges,
                 alpha,
                 &ring_alpha_evals_y,
+                dims,
                 lp,
                 &tau1,
                 num_polys,

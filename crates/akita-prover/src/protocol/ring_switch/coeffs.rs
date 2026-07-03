@@ -4,6 +4,7 @@ use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
+use akita_types::RingRole;
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
 ///
@@ -165,8 +166,10 @@ where
         + AkitaSerialize,
     B: RuntimeRingSwitchProveBackend<F>,
 {
-    let ring_d = lp.ring_dimension;
-    dispatch_ring_dim_result!(ring_d, |D| {
+    let dims = instance.role_dims();
+    dispatch_ring_dim_result!(dims.d_a(), |D| {
+        witness.ensure_role_dim::<D>(RingRole::Opening)?;
+        witness.ensure_role_dim::<D>(RingRole::Inner)?;
         let num_claims = instance.opening_batch().num_total_polynomials();
         let RingRelationWitness {
             z_folded_rings,
@@ -179,7 +182,14 @@ where
         } = witness;
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         validate_chunked_witness_cfg(lp)?;
-        let e_hat = FlatDigitBlocks::<D>::from_digit_blocks(&e_hat)?;
+        let e_hat = if dims.d_d() == D {
+            FlatDigitBlocks::<D>::from_digit_blocks(&e_hat)?
+        } else {
+            return Err(AkitaError::InvalidSetup(format!(
+                "mixed-role ring switch build requires d_d={} to match d_a={D} until nested views land",
+                dims.d_d()
+            )));
+        };
         let e_folded = e_folded.as_ring_slice_trusted::<D>();
         let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
             &hint,

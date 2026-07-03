@@ -18,6 +18,60 @@ pub struct RelationYLayout {
     pub n_a: usize,
 }
 
+/// Logical M-row count encoded in assembled relation `y`.
+///
+/// Layout: consistency (1) | D (`n_d`) | COMMIT | B_inner | A (`n_a`).
+#[must_use]
+pub fn relation_y_row_count(layout: RelationYLayout, num_commitment_groups: usize) -> usize {
+    let commit_rows = layout
+        .commit_rows_per_group
+        .saturating_mul(num_commitment_groups);
+    let b_inner_total = layout
+        .b_inner_rows_per_group
+        .saturating_mul(num_commitment_groups);
+    1 + layout.n_d + commit_rows + b_inner_total + layout.n_a
+}
+
+/// Expected flat coefficient length of assembled `y` under per-role dimensions.
+///
+/// # Errors
+///
+/// Returns an error if any segment length arithmetic overflows.
+pub fn relation_y_coeff_len(
+    dims: CommitmentRingDims,
+    layout: RelationYLayout,
+    num_commitment_groups: usize,
+) -> Result<usize, AkitaError> {
+    let commit_rows = layout
+        .commit_rows_per_group
+        .checked_mul(num_commitment_groups)
+        .ok_or_else(|| AkitaError::InvalidSetup("relation y commit row count overflow".into()))?;
+    let b_inner_total = layout
+        .b_inner_rows_per_group
+        .checked_mul(num_commitment_groups)
+        .ok_or_else(|| AkitaError::InvalidSetup("relation y B_inner row count overflow".into()))?;
+    let d_segment = layout
+        .n_d
+        .checked_mul(dims.d_d())
+        .ok_or_else(|| AkitaError::InvalidSetup("relation y D segment overflow".into()))?;
+    let commit_segment = commit_rows
+        .checked_mul(dims.d_b())
+        .ok_or_else(|| AkitaError::InvalidSetup("relation y COMMIT segment overflow".into()))?;
+    let b_inner_segment = b_inner_total
+        .checked_mul(dims.d_b())
+        .ok_or_else(|| AkitaError::InvalidSetup("relation y B_inner segment overflow".into()))?;
+    let a_segment = layout
+        .n_a
+        .checked_mul(dims.d_a())
+        .ok_or_else(|| AkitaError::InvalidSetup("relation y A segment overflow".into()))?;
+    dims.d_a()
+        .checked_add(d_segment)
+        .and_then(|len| len.checked_add(commit_segment))
+        .and_then(|len| len.checked_add(b_inner_segment))
+        .and_then(|len| len.checked_add(a_segment))
+        .ok_or_else(|| AkitaError::InvalidSetup("relation y coefficient length overflow".into()))
+}
+
 /// Number of ring rows decodable at role dimension `d` (compact or tagged storage).
 fn ring_row_count_at<F: FieldCore>(vec: &RingVec<F>, d: usize) -> Result<usize, AkitaError> {
     if vec.coeff_len() == 0 {

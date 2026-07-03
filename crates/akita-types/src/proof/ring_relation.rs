@@ -398,22 +398,26 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
         // Shared, single-machine quotient tail: never scales with the chunk count.
         let r_levels = r_decomp_levels::<F>(lp.log_basis);
-        let y_rows = match self.role_dims.uniform_dim() {
-            Ok(uniform) => {
-                if !self.y.coeff_len().is_multiple_of(uniform) {
-                    return Err(AkitaError::InvalidSetup(
-                        "ring relation y length is not a multiple of uniform ring dimension"
-                            .to_string(),
-                    ));
-                }
-                self.y.coeff_len() / uniform
-            }
-            Err(_) => {
-                return Err(AkitaError::InvalidSetup(
-                    "mixed-role y row count is not supported until Slice 1".to_string(),
-                ));
-            }
+        let n_d_active = match self.m_row_layout {
+            MRowLayout::WithDBlock => lp.d_key.row_len(),
+            MRowLayout::WithoutDBlock => 0,
         };
+        let y_layout = crate::proof::relation::RelationYLayout {
+            n_d: n_d_active,
+            commit_rows_per_group: lp.effective_commit_rows(),
+            b_inner_rows_per_group: lp.b_inner_rows_per_group(),
+            n_a: lp.a_key.row_len(),
+        };
+        let num_groups = self.opening_batch.num_groups();
+        let expected_y_len =
+            crate::proof::relation::relation_y_coeff_len(self.role_dims, y_layout, num_groups)?;
+        if self.y.coeff_len() != expected_y_len {
+            return Err(AkitaError::InvalidSetup(format!(
+                "ring relation y coefficient length {} does not match per-role layout (expected {expected_y_len})",
+                self.y.coeff_len()
+            )));
+        }
+        let y_rows = crate::proof::relation::relation_y_row_count(y_layout, num_groups);
         let r_len_total = y_rows
             .checked_mul(r_levels)
             .ok_or_else(|| AkitaError::InvalidSetup("r-tail length overflow".to_string()))?;
@@ -773,11 +777,21 @@ mod tests {
 
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
+        use crate::proof::relation::{relation_y_row_count, RelationYLayout};
+
         let lp = test_level_params();
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let v_zeros = vec![CyclotomicRing::zero(); lp.d_key.row_len()];
+        let y_layout = RelationYLayout {
+            n_d: lp.d_key.row_len(),
+            commit_rows_per_group: lp.effective_commit_rows(),
+            b_inner_rows_per_group: lp.b_inner_rows_per_group(),
+            n_a: lp.a_key.row_len(),
+        };
+        let y_rows = relation_y_row_count(y_layout, opening_batch.num_groups());
+        let v_zeros = vec![CyclotomicRing::zero(); y_layout.n_d];
+        let y_zeros = vec![CyclotomicRing::zero(); y_rows];
         let instance = RingRelationInstance::<F>::from_parts::<D>(
             MRowLayout::WithDBlock,
             test_challenges(&lp, opening_batch.num_total_polynomials()),
@@ -786,7 +800,7 @@ mod tests {
             opening_batch,
             vec![F::one(); 3],
             &[CyclotomicRing::one(); 3],
-            &[CyclotomicRing::zero(); 2],
+            &y_zeros,
             &v_zeros,
         )
         .expect("same-axis relation");
