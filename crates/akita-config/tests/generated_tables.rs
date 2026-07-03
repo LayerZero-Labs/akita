@@ -452,7 +452,7 @@ fn check_scalar_keys(
         return;
     }
 
-    for key in keys {
+    for &key in keys {
         if let Some(mismatch) = compare_scalar_key(family, catalog, key) {
             into.push(mismatch);
         }
