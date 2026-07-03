@@ -1,8 +1,9 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
 use super::*;
+use akita_types::dispatch_ring_dim_result;
 
-pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore, const D: usize> {
+pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) reduction_challenges: Option<Vec<E>>,
     pub(in crate::protocol::core) final_relation: Option<(E, Vec<E>)>,
@@ -71,9 +72,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_fold_eor<F, E, T, const D: usize>(
+pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    _y_rings: &[CyclotomicRing<F, D>],
     challenge_point: &[E],
     openings: &[E],
     row_coefficients: &[E],
@@ -83,7 +83,46 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, E, T, const D: usize>(
     block_order: BlockOrder,
     requires_reduction: bool,
     transcript: &mut T,
-) -> Result<FoldEorReplay<F, E, D>, AkitaError>
+) -> Result<FoldEorReplay<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let d_a = lp.role_dims().d_a();
+    dispatch_ring_dim_result!(d_a, |D| {
+        verify_fold_eor_kernel::<F, E, T, D>(
+            extension_opening_reduction,
+            challenge_point,
+            openings,
+            row_coefficients,
+            opening_batch,
+            basis,
+            lp.m_vars,
+            lp.r_vars,
+            d_a.trailing_zeros() as usize,
+            block_order,
+            requires_reduction,
+            transcript,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_fold_eor_kernel<F, E, T, const D: usize>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    challenge_point: &[E],
+    openings: &[E],
+    row_coefficients: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    m_vars: usize,
+    r_vars: usize,
+    alpha_bits: usize,
+    block_order: BlockOrder,
+    requires_reduction: bool,
+    transcript: &mut T,
+) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -94,7 +133,6 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
     let mut eor_trace_final: Option<(E, Vec<E>)> = None;
     let reduction_check = if let Some(reduction) = extension_opening_reduction {
         if <E as ExtField<F>>::EXT_DEGREE == 1 {
@@ -158,8 +196,8 @@ where
         let prepared = prepare_opening_point::<F, E, D>(
             &protocol_point,
             basis,
-            lp.m_vars,
-            lp.r_vars,
+            m_vars,
+            r_vars,
             alpha_bits,
             block_order,
         )?;
@@ -168,8 +206,8 @@ where
         vec![prepare_opening_point::<F, E, D>(
             challenge_point,
             basis,
-            lp.m_vars,
-            lp.r_vars,
+            m_vars,
+            r_vars,
             alpha_bits,
             block_order,
         )?]
@@ -271,7 +309,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_stage2<F, E, T, const D: usize>(
+fn verify_stage2<F, E, T>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup<F>,
     stage2: &AkitaStage2Proof<F, E>,
@@ -284,7 +322,7 @@ fn verify_stage2<F, E, T, const D: usize>(
     setup_claim: Option<E>,
     ring_opening_point: &RingOpeningPoint<F>,
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
-    trace: Option<TraceClaim<F, E, D>>,
+    trace: Option<TraceWireAtRoleA<'_, F, E>>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -292,16 +330,127 @@ where
     T: Transcript<F>,
 {
     let witness_oracle = match stage2 {
-        AkitaStage2Proof::Terminal(proof) => stage2_cleartext_oracle::<F, E, D>(
-            &proof.final_witness,
-            physical_w_len,
-            lp,
-            num_segments,
-        )?,
+        AkitaStage2Proof::Terminal(proof) => {
+            stage2_cleartext_oracle::<F, E>(&proof.final_witness, physical_w_len, lp, num_segments)?
+        }
         AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
             eval: proof.next_w_eval(),
         },
     };
+    let d_a = lp.role_dims().d_a();
+    dispatch_ring_dim_result!(d_a, |D| {
+        verify_stage2_kernel::<F, E, T, D>(
+            transcript,
+            setup,
+            stage2,
+            stage1,
+            rs,
+            relation_claim,
+            witness_oracle,
+            setup_claim,
+            ring_opening_point,
+            ring_multiplier_point,
+            trace.map(|wire| wire.into_claim::<D>()).transpose()?,
+        )
+    })
+}
+
+enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
+    Recursive {
+        lp: &'a LevelParams,
+        layout: akita_types::TraceWeightLayout,
+        trace_coeff: E,
+        trace_opening_claim: E,
+        prepared_point: PreparedOpeningPoint<F, E>,
+        trace_basis: BasisMode,
+        trace_eval_scale: E,
+    },
+    Root {
+        lp: &'a LevelParams,
+        layout: akita_types::TraceWeightLayout,
+        prepared_point: PreparedOpeningPoint<F, E>,
+        trace_block_opening: Vec<E>,
+        trace_basis: BasisMode,
+        row_coefficients: Vec<E>,
+        trace_coeff: E,
+        trace_eval_target: E,
+        trace_claim_scales: Option<Vec<E>>,
+        opening_batch: OpeningClaimsLayout,
+    },
+}
+
+impl<'a, F, E> TraceWireAtRoleA<'a, F, E>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    fn into_claim<const D: usize>(self) -> Result<TraceClaim<F, E, D>, AkitaError> {
+        match self {
+            Self::Recursive {
+                lp,
+                layout,
+                trace_coeff,
+                trace_opening_claim,
+                prepared_point,
+                trace_basis,
+                trace_eval_scale,
+            } => Ok(TraceClaim {
+                layout,
+                trace_coeff,
+                trace_opening_claim,
+                trace_terms: trace_terms_recursive(
+                    &prepared_point,
+                    lp,
+                    trace_basis,
+                    trace_eval_scale,
+                )?,
+            }),
+            Self::Root {
+                lp,
+                layout,
+                prepared_point,
+                trace_block_opening,
+                trace_basis,
+                row_coefficients,
+                trace_coeff,
+                trace_eval_target,
+                trace_claim_scales,
+                opening_batch,
+            } => build_trace_claim_root::<F, E, D>(
+                layout,
+                lp,
+                &opening_batch,
+                &prepared_point,
+                &trace_block_opening,
+                trace_basis,
+                &row_coefficients,
+                trace_coeff,
+                trace_eval_target,
+                trace_claim_scales.as_deref(),
+            ),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_stage2_kernel<F, E, T, const D: usize>(
+    transcript: &mut T,
+    setup: &AkitaVerifierSetup<F>,
+    stage2: &AkitaStage2Proof<F, E>,
+    stage1: Stage1Replay<E>,
+    rs: &RingSwitchVerifyOutput<E>,
+    relation_claim: E,
+    witness_oracle: Stage2WitnessOracle<'_, F, E>,
+    setup_claim: Option<E>,
+    ring_opening_point: &RingOpeningPoint<F>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
+    trace: Option<TraceClaim<F, E, D>>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + HalvingField,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
     let stage2_verifier = AkitaStage2Verifier::new(
         stage1.batching_coeff,
         stage1.s_claim,
@@ -332,13 +481,14 @@ where
     Ok(sumcheck_challenges)
 }
 
-fn verify_stage3<F, E, T, const D: usize>(
+fn verify_stage3<F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     rs: &RingSwitchVerifyOutput<E>,
     sumcheck_challenges: &[E],
     stage2_next_w_eval: E,
     stage3: Option<(&SetupSumcheckProof<E>, &LevelParams)>,
+    role_d_a: usize,
 ) -> Result<Option<Vec<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -359,22 +509,26 @@ where
             .get(rs.ring_bits..)
             .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-        let verifier = SetupSumcheckVerifier::new::<F, D>(
-            &rs.prepared_row_eval,
-            setup_x_challenges,
-            rs.alpha,
-        )?;
-        let rho_w = verifier.verify_batched_stage3::<F, T, D>(
-            setup,
-            next_fold_level_params,
-            proof,
-            stage2_next_w_eval,
-            sumcheck_challenges,
-            witness_rounds,
-            eta,
-            transcript,
-        )?;
-        transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
+        let rho_w = dispatch_ring_dim_result!(role_d_a, |D| {
+            let verifier = SetupSumcheckVerifier::new::<F, D>(
+                &rs.prepared_row_eval,
+                setup_x_challenges,
+                rs.alpha,
+            )?;
+            let rho_w = verifier.verify_batched_stage3::<F, T>(
+                setup,
+                next_fold_level_params,
+                role_d_a,
+                proof,
+                stage2_next_w_eval,
+                sumcheck_challenges,
+                witness_rounds,
+                eta,
+                transcript,
+            )?;
+            transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
+            Ok(rho_w)
+        })?;
         return Ok(Some(rho_w));
     }
     Ok(None)
@@ -382,13 +536,13 @@ where
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(in crate::protocol::core) fn verify_fold<F, E, T, const D: usize>(
+pub(in crate::protocol::core) fn verify_fold<F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     prepared: PreparedFoldReplay<'_, F, E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -398,7 +552,10 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let _ = commitment.as_ring_slice::<D>()?;
+    let role_dims = prepared.lp.role_dims();
+    dispatch_ring_dim_result!(role_dims.d_b(), |D| {
+        commitment.as_ring_slice::<D>().map(|_| ())
+    })?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
             opening_shape.num_total_polynomials(),
@@ -406,22 +563,26 @@ where
         )?,
         prepared.fold_grind_nonce,
     )?;
-    prepared.v.as_ring_slice::<D>()?;
+    if !prepared.v.coeffs().is_empty() {
+        dispatch_ring_dim_result!(role_dims.d_d(), |D| {
+            prepared.v.as_ring_slice::<D>().map(|_| ())
+        })?;
+    }
     let stage1_challenges = derive_stage1_challenges::<F, T>(
         transcript,
         prepared.v.coeffs(),
-        D,
+        role_dims.d_a(),
         prepared.lp.num_blocks,
         opening_shape.num_total_polynomials(),
         prepared.lp,
         prepared.m_row_layout,
         prepared.fold_grind_nonce,
     )?;
-    let (gamma, row_coefficient_rings) =
+    let (gamma, row_coefficient_rings) = dispatch_ring_dim_result!(role_dims.d_a(), |D| {
         RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
             &prepared.row_coefficients,
-        )?;
-    let role_dims = prepared.lp.role_dims();
+        )
+    })?;
     let n_d_active = match prepared.m_row_layout {
         MRowLayout::WithDBlock => prepared.lp.d_key.row_len(),
         MRowLayout::WithoutDBlock => 0,
@@ -455,7 +616,8 @@ where
         row_coefficients: &prepared.row_coefficients,
         lp: prepared.lp,
     };
-    let rs = match prepared.stage2 {
+    let d_a = role_dims.d_a();
+    let rs = dispatch_ring_dim_result!(d_a, |D| match prepared.stage2 {
         AkitaStage2Proof::Intermediate(_) => {
             let next_w_commitment = prepared.next_w_commitment.ok_or(AkitaError::InvalidProof)?;
             let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
@@ -465,7 +627,7 @@ where
                 next_w_commitment,
                 next_ring_dim,
                 transcript,
-            )?
+            )
         }
         AkitaStage2Proof::Terminal(_) => {
             let replay = prepared
@@ -477,9 +639,9 @@ where
                 prepared.w_len,
                 transcript,
                 replay,
-            )?
+            )
         }
-    };
+    })?;
     let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
         relation_instance.role_dims(),
         &rs.tau1,
@@ -515,16 +677,14 @@ where
             .trace_prepared_point
             .as_ref()
             .ok_or(AkitaError::InvalidProof)?;
-        Some(TraceClaim {
+        Some(TraceWireAtRoleA::Recursive {
+            lp: prepared.lp,
             layout,
             trace_coeff,
             trace_opening_claim: trace_coeff * prepared.trace_eval_target,
-            trace_terms: trace_terms_recursive(
-                prepared_point,
-                prepared.lp,
-                prepared.trace_basis,
-                prepared.trace_eval_scale,
-            )?,
+            prepared_point: prepared_point.clone(),
+            trace_basis: prepared.trace_basis,
+            trace_eval_scale: prepared.trace_eval_scale,
         })
     } else {
         let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
@@ -540,27 +700,29 @@ where
             rs.ring_bits,
             num_trace_blocks,
         )?;
-        Some(build_trace_claim_root::<F, E, D>(
+        Some(TraceWireAtRoleA::Root {
+            lp: prepared.lp,
             layout,
-            prepared.lp,
-            relation_instance.opening_batch(),
-            prepared
+            prepared_point: prepared
                 .trace_prepared_point
                 .as_ref()
-                .ok_or(AkitaError::InvalidProof)?,
-            prepared
+                .ok_or(AkitaError::InvalidProof)?
+                .clone(),
+            trace_block_opening: prepared
                 .trace_block_opening
                 .as_ref()
-                .ok_or(AkitaError::InvalidProof)?,
-            prepared.trace_basis,
-            &prepared.row_coefficients,
+                .ok_or(AkitaError::InvalidProof)?
+                .clone(),
+            trace_basis: prepared.trace_basis,
+            row_coefficients: prepared.row_coefficients.clone(),
             trace_coeff,
-            prepared.trace_eval_target,
-            prepared.trace_claim_scales.as_deref(),
-        )?)
+            trace_eval_target: prepared.trace_eval_target,
+            trace_claim_scales: prepared.trace_claim_scales.clone(),
+            opening_batch: relation_instance.opening_batch().clone(),
+        })
     };
     let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
-    let sumcheck_challenges = verify_stage2::<F, E, T, D>(
+    let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,
         setup,
         prepared.stage2,
@@ -580,13 +742,14 @@ where
     } else {
         E::zero()
     };
-    let stage3_challenges = verify_stage3::<F, E, T, D>(
+    let stage3_challenges = verify_stage3::<F, E, T>(
         setup,
         transcript,
         &rs,
         &sumcheck_challenges,
         stage2_next_w_eval,
         prepared.stage3,
+        d_a,
     )?;
     Ok(stage3_challenges.unwrap_or(sumcheck_challenges))
 }

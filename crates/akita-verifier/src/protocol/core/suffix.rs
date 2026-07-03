@@ -1,5 +1,4 @@
 use super::*;
-use akita_types::dispatch_ring_dim_result;
 use akita_types::{terminal_witness_segment_layout, OpeningClaimsLayout, RingView};
 
 /// Verifier state carried between suffix fold levels.
@@ -27,8 +26,8 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
 /// fails, or the terminal witness replay is malformed.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-#[tracing::instrument(skip_all, name = "prepare_fold_data")]
-fn prepare_fold_data<'a, F, E, T, const D: usize>(
+#[tracing::instrument(skip_all, name = "prepare_fold_replay")]
+fn prepare_fold_replay<'a, F, E, T>(
     proof: &'a AkitaLevelProof<F, E>,
     transcript: &mut T,
     current_state: &'a SuffixVerifierState<'a, F, E>,
@@ -42,9 +41,11 @@ where
     T: Transcript<F>,
 {
     let lp = &scheduled.params;
+    let role_dims = lp.role_dims();
+    let commit_d = role_dims.d_b();
     let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
-    let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let m_row_layout = proof.m_row_layout();
+    let alpha_bits = role_dims.d_a().trailing_zeros() as usize;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
@@ -55,7 +56,7 @@ where
     // the former typed `append_as_ring_commitment` path (S2 byte-identity test).
     current_state.commitment.append_flat_to_transcript::<T>(
         ABSORB_COMMITMENT,
-        lp.ring_dimension,
+        commit_d,
         transcript,
     )?;
     let num_claims = 1usize;
@@ -68,9 +69,8 @@ where
         reduction_challenges: _,
         final_relation: eor_trace_final,
         ..
-    } = verify_fold_eor::<F, E, T, D>(
+    } = verify_fold_eor::<F, E, T>(
         proof.extension_opening_reduction(),
-        &[],
         current_state.opening_point.as_slice(),
         &openings,
         &row_coefficients,
@@ -109,7 +109,7 @@ where
                     MRowLayout::WithDBlock,
                 )?
             };
-            ring.checked_mul(D).ok_or_else(|| {
+            ring.checked_mul(role_dims.d_a()).ok_or_else(|| {
                 AkitaError::InvalidSetup("next witness length overflow".to_string())
             })?
         }
@@ -234,8 +234,8 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
 
-                let challenges = dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    let prepared = prepare_fold_data::<F, E, T, D_LEVEL>(
+                let challenges = {
+                    let prepared = prepare_fold_replay::<F, E, T>(
                         level_proof,
                         transcript,
                         &current_state,
@@ -243,8 +243,8 @@ where
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                     )?;
-                    verify_fold::<F, E, T, D_LEVEL>(setup, transcript, prepared)
-                })?;
+                    verify_fold::<F, E, T>(setup, transcript, prepared)?
+                };
 
                 let next_level_d = next_params.ring_dimension;
                 if next_level_d == 0
@@ -296,17 +296,15 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    let prepared = prepare_fold_data::<F, E, T, D_LEVEL>(
-                        terminal_proof,
-                        transcript,
-                        &current_state,
-                        &scheduled,
-                        BlockOrder::ColumnMajor,
-                        setup_contribution_mode,
-                    )?;
-                    verify_fold::<F, E, T, D_LEVEL>(setup, transcript, prepared)
-                })?;
+                let prepared = prepare_fold_replay::<F, E, T>(
+                    terminal_proof,
+                    transcript,
+                    &current_state,
+                    &scheduled,
+                    BlockOrder::ColumnMajor,
+                    setup_contribution_mode,
+                )?;
+                verify_fold::<F, E, T>(setup, transcript, prepared)?;
                 // The trailing-Direct witness shape is already validated in
                 // `verify_folded_batched_proof` before this loop.
                 if !scheduled.is_terminal {

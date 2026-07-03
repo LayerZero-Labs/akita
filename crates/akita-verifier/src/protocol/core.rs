@@ -4,7 +4,6 @@
 //! in `verify`, `root_fold`, and `suffix`. Schedule/config dispatch stays with
 //! the scheme crate until the verifier-facing config boundary is extracted.
 
-use super::validate_level_dispatch;
 mod extension_opening_reduction;
 mod verify;
 use crate::protocol::ring_switch::{
@@ -15,7 +14,6 @@ use crate::stages::stage1::{
 };
 use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;
-use akita_algebra::CyclotomicRing;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     HalvingField, PseudoMersenneField, RandomSampling,

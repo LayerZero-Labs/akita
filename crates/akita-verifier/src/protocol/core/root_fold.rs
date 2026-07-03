@@ -73,38 +73,33 @@ where
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
     }
 
-    // `D` enters here exactly once, at the fold kernel-entry boundary. The
-    // dispatched body interprets the flat commitment as typed rings, runs the
-    // ring-dimension-typed opening/EOR/fold kernels, and returns the D-free
-    // root challenge vector.
-    dispatch_ring_dim_result!(ring_dim, |D| {
-        verify_root_inner::<F, E, T, D>(
-            proof,
-            setup,
-            transcript,
-            commitment.rows(),
-            &openings,
-            &opening_batch,
-            shared_opening_point,
-            num_claims,
-            m_row_layout,
-            extension_opening_reduction,
-            stage3_sumcheck_proof,
-            next_fold_level_params,
-            basis,
-            root_lp,
-            terminal_final_w_len,
-        )
-    })
+    // D-free root replay: typed kernels dispatch inside `verify_fold` and
+    // `verify_fold_eor` on per-role dimensions.
+    verify_root_inner::<F, E, T>(
+        proof,
+        setup,
+        transcript,
+        commitment.rows(),
+        &openings,
+        &opening_batch,
+        shared_opening_point,
+        num_claims,
+        m_row_layout,
+        extension_opening_reduction,
+        stage3_sumcheck_proof,
+        next_fold_level_params,
+        basis,
+        root_lp,
+        terminal_final_w_len,
+    )
 }
 
-/// Ring-dimension-typed root-fold replay kernel.
+/// Root-fold replay orchestrator (D-free).
 ///
-/// Reached only through [`verify_root`]'s single `dispatch_ring_dim_result!`
-/// boundary; `D` is the schedule's root ring dimension. Flat `v` and commitment
-/// buffers are reinterpreted under `D` inside [`verify_fold`].
+/// Reached from [`verify_root`]; per-role typed kernels dispatch inside
+/// [`verify_fold`] and [`verify_fold_eor`].
 #[allow(clippy::too_many_arguments)]
-fn verify_root_inner<F, E, T, const D: usize>(
+fn verify_root_inner<F, E, T>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -126,7 +121,8 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    validate_level_dispatch::<D>(root_lp)?;
+    let role_dims = root_lp.role_dims();
+    let d_a = role_dims.d_a();
     let v_storage = match proof {
         AkitaBatchedRootProof::Fold(fold) => fold.v.clone(),
         AkitaBatchedRootProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
@@ -134,23 +130,24 @@ where
     };
 
     if extension_opening_reduction.is_none() {
-        let prepared_point = prepare_opening_point::<F, E, D>(
-            shared_opening_point,
-            basis,
-            root_lp.m_vars,
-            root_lp.r_vars,
-            root_lp.ring_dimension.trailing_zeros() as usize,
-            BlockOrder::RowMajor,
-        )?;
+        let prepared_point = dispatch_ring_dim_result!(d_a, |D| {
+            prepare_opening_point::<F, E, D>(
+                shared_opening_point,
+                basis,
+                root_lp.m_vars,
+                root_lp.r_vars,
+                d_a.trailing_zeros() as usize,
+                BlockOrder::RowMajor,
+            )
+        })?;
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
-    let root_eor = verify_fold_eor::<F, E, T, D>(
+    let root_eor = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
-        &[],
         shared_opening_point,
         openings,
         &row_coefficients,
@@ -171,19 +168,12 @@ where
         }
     }
     let trace_block_opening: Vec<E> = if let Some(rho) = &reduction_check {
-        let protocol_point =
-            ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)?;
-        root_trace_block_opening::<E>(
-            &protocol_point,
-            root_lp,
-            root_lp.ring_dimension.trailing_zeros() as usize,
-        )?
+        let protocol_point = dispatch_ring_dim_result!(d_a, |D| {
+            ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)
+        })?;
+        root_trace_block_opening::<E>(&protocol_point, root_lp, d_a.trailing_zeros() as usize)?
     } else {
-        root_trace_block_opening::<E>(
-            shared_opening_point,
-            root_lp,
-            root_lp.ring_dimension.trailing_zeros() as usize,
-        )?
+        root_trace_block_opening::<E>(shared_opening_point, root_lp, d_a.trailing_zeros() as usize)?
     };
     let ordinary_trace_eval_target =
         opening_batch.batched_eval_target(&row_coefficients, openings)?;
@@ -211,7 +201,7 @@ where
                 akita_types::MRowLayout::WithDBlock,
                 root_lp.witness_chunk.num_chunks,
             )?
-            .checked_mul(D)
+            .checked_mul(d_a)
             .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
         }
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
@@ -274,5 +264,5 @@ where
         trace_claim_scales,
         trace_basis: basis,
     };
-    verify_fold::<F, E, T, D>(setup, transcript, prepared)
+    verify_fold::<F, E, T>(setup, transcript, prepared)
 }

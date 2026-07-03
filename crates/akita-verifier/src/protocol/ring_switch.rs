@@ -12,9 +12,10 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec,
-    SetupContributionPlanInputs, TerminalWitnessTranscriptParts, WitnessLayout,
+    gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup,
+    CommitmentRingDims, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationInstance, RingRole, RingVec, SetupContributionPlanInputs,
+    TerminalWitnessTranscriptParts, WitnessLayout,
 };
 
 use super::slice_mle::{
@@ -22,7 +23,7 @@ use super::slice_mle::{
     SetupEvaluator, SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
     ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
-use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
+use super::{validate_log_basis, validate_ring_dispatch};
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
 mod tensor_challenges;
@@ -304,54 +305,97 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
+    let level = RingSwitchRowEvalLevel::from_lp(lp);
     let chunk_layout = relation.segment_layout(lp, witness_ring_len)?;
     let opening_batch = relation.opening_batch();
+    let num_polys = opening_batch.num_total_polynomials();
+    let depth_fold = lp.num_digits_fold(num_polys, F::modulus_bits())?;
+    let rows = lp.m_row_count_for(1, 0, relation.m_row_layout())?;
     prepare_ring_switch_row_eval_inner::<F, E, D>(
         &relation.challenges,
         alpha,
-        lp,
+        &level,
         tau1,
-        opening_batch.num_total_polynomials(),
+        num_polys,
         replay.row_coefficients,
         relation.m_row_layout(),
         chunk_layout,
+        depth_fold,
+        rows,
     )
+}
+
+struct RingSwitchRowEvalLevel {
+    role_dims: CommitmentRingDims,
+    log_basis: u32,
+    num_digits_commit: usize,
+    num_digits_open: usize,
+    num_blocks: usize,
+    block_len: usize,
+    n_b: usize,
+    n_d: usize,
+    n_a: usize,
+    tier_split: usize,
+    n_f: usize,
+    a_key_col_len: usize,
+    b_key_col_len: usize,
+}
+
+impl RingSwitchRowEvalLevel {
+    fn from_lp(lp: &LevelParams) -> Self {
+        Self {
+            role_dims: lp.role_dims(),
+            log_basis: lp.log_basis,
+            num_digits_commit: lp.num_digits_commit,
+            num_digits_open: lp.num_digits_open,
+            num_blocks: lp.num_blocks,
+            block_len: lp.block_len,
+            n_b: lp.b_key.row_len(),
+            n_d: lp.d_key.row_len(),
+            n_a: lp.a_key.row_len(),
+            tier_split: lp.tier_split,
+            n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
+            a_key_col_len: lp.a_key.col_len(),
+            b_key_col_len: lp.b_key.col_len(),
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     challenges: &Challenges,
     alpha: E,
-    lp: &LevelParams,
+    level: &RingSwitchRowEvalLevel,
     tau1: &[E],
     num_polys: usize,
     gamma: &[E],
     m_row_layout: MRowLayout,
     chunk_layout: WitnessLayout,
+    depth_fold: usize,
+    rows: usize,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
-    validate_level_dispatch::<D>(lp)?;
+    validate_role_dispatch::<D>(level.role_dims, RingRole::Inner)?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
     if num_polys != num_claims {
         return Err(AkitaError::InvalidProof);
     }
 
-    let log_basis = lp.log_basis;
+    let log_basis = level.log_basis;
     validate_log_basis(log_basis)?;
-    let depth_commit = lp.num_digits_commit;
-    let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
-    let num_blocks = lp.num_blocks;
+    let depth_commit = level.num_digits_commit;
+    let depth_open = level.num_digits_open;
+    let num_blocks = level.num_blocks;
     if num_blocks == 0 || !num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "num_blocks must be a non-zero power of two".to_string(),
         ));
     }
-    if lp.block_len == 0 {
+    if level.block_len == 0 {
         return Err(AkitaError::InvalidSetup(
             "block_len must be non-zero".to_string(),
         ));
@@ -361,8 +405,8 @@ where
             "digit depths must be non-zero".to_string(),
         ));
     }
-    let n_b = lp.b_key.row_len();
-    let n_d = lp.d_key.row_len();
+    let n_b = level.n_b;
+    let n_d = level.n_d;
     let num_t_vectors = num_polys;
     // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
     let total_blocks = num_blocks
@@ -374,11 +418,11 @@ where
             actual: challenges.logical_len(),
         });
     }
-    let block_len = lp.block_len;
+    let block_len = level.block_len;
     let inner_width = block_len
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-    if lp.a_key.col_len() < inner_width {
+    if level.a_key_col_len < inner_width {
         return Err(AkitaError::InvalidSetup(
             "A-key column width is too small for verifier layout".to_string(),
         ));
@@ -397,23 +441,22 @@ where
     //     ));
     // }
     let expected_b_width = num_polys
-        .checked_mul(lp.a_key.row_len())
+        .checked_mul(level.n_a)
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(num_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
     // Tiered: the stored first-tier `B'` is the full B width divided by the
     // reuse factor `tier_split`.
-    let expected_stored_b_width = if lp.f_key.is_some() {
-        expected_b_width.div_ceil(lp.tier_split.max(1))
+    let expected_stored_b_width = if level.n_f > 0 {
+        expected_b_width.div_ceil(level.tier_split.max(1))
     } else {
         expected_b_width
     };
-    if lp.b_key.col_len() < expected_stored_b_width {
+    if level.b_key_col_len < expected_stored_b_width {
         return Err(AkitaError::InvalidSetup(
             "B-key column width is too small for verifier layout".to_string(),
         ));
     }
-    let rows = lp.m_row_count_for(1, 0, m_row_layout)?;
 
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
@@ -446,9 +489,9 @@ where
                 });
             }
             let blocks_per_claim = factored.blocks_per_claim()?;
-            if blocks_per_claim != lp.num_blocks {
+            if blocks_per_claim != level.num_blocks {
                 return Err(AkitaError::InvalidSize {
-                    expected: lp.num_blocks,
+                    expected: level.num_blocks,
                     actual: blocks_per_claim,
                 });
             }
@@ -471,12 +514,12 @@ where
         block_len,
         inner_width,
         log_basis,
-        n_a: lp.a_key.row_len(),
+        n_a: level.n_a,
         n_d,
         m_row_layout,
         n_b,
-        tier_split: lp.tier_split,
-        n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
+        tier_split: level.tier_split,
+        n_f: level.n_f,
         rows,
         num_polys,
         chunk_layout,

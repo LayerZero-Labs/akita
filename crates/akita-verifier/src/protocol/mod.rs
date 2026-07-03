@@ -1,7 +1,6 @@
 //! Verifier replay for batched, recursive, and ring-switch proof steps.
 
 use akita_field::AkitaError;
-use akita_types::LevelParams;
 
 pub(crate) mod core;
 pub(crate) mod ring_switch;
@@ -14,13 +13,6 @@ pub(crate) use slice_mle::{SetupEvalPlan, SetupEvaluator};
 #[inline]
 pub(crate) fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {
     akita_types::validate_ring_dispatch::<D>()
-}
-
-#[inline]
-pub(crate) fn validate_level_dispatch<const D: usize>(
-    lp: &LevelParams,
-) -> Result<usize, AkitaError> {
-    akita_types::validate_level_dispatch::<D>(lp)
 }
 
 #[inline]

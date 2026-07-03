@@ -119,19 +119,22 @@ pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
 ///
 /// Segment-typed wire payloads expand to logical `i8` digits once here; stage-2
 /// never sees the segment encoding again.
-pub(crate) fn stage2_cleartext_oracle<'a, F, E, const D: usize>(
+pub(crate) fn stage2_cleartext_oracle<'a, F, E>(
     witness: &'a CleartextWitnessProof<F>,
     physical_w_len: usize,
-    lp: &'a akita_types::LevelParams,
+    lp: &akita_types::LevelParams,
     num_segments: usize,
 ) -> Result<Stage2WitnessOracle<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
     E: FieldCore,
 {
+    let d_a = lp.role_dims().d_a();
     let source = match witness {
         CleartextWitnessProof::SegmentTyped(_) => {
-            let digits = witness.logical_i8_digits::<D>(lp, num_segments)?;
+            let digits = akita_types::dispatch_ring_dim_result!(d_a, |D| {
+                witness.logical_i8_digits::<D>(lp, num_segments)
+            })?;
             if digits.len() != physical_w_len {
                 return Err(AkitaError::InvalidProof);
             }
