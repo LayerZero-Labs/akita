@@ -8,7 +8,7 @@ use crate::compute::{
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{
-    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningBatch,
+    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
@@ -416,7 +416,7 @@ impl RingRelationProver {
         ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        fold_claims: ProverOpeningBatch<'a, PointF, P, F, D>,
+        fold_claims: ProverOpeningData<'a, PointF, P, F, D>,
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
         transcript: &mut T,
@@ -436,20 +436,18 @@ impl RingRelationProver {
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
-        let opening_batch = fold_claims.to_opening_shape::<F>()?;
+        let opening_batch = fold_claims.opening_claims().layout();
         let polys = fold_claims.flat_polys();
-        let group_sizes = opening_batch.num_polys_per_commitment_group();
-        let mut hints = Vec::with_capacity(fold_claims.groups.len());
+        let group_sizes = opening_batch.group_sizes();
+        let hints = fold_claims.hints().to_vec();
         let mut commitment_rows = Vec::new();
-        for group in fold_claims.groups {
-            let (group_commitment, group_hint) = group.commitment;
+        for group_commitment in fold_claims.commitments() {
             if group_commitment.u.len() != lp.effective_commit_rows() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
             commitment_rows.extend_from_slice(&group_commitment.u);
-            hints.push(group_hint.clone());
         }
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
@@ -463,7 +461,7 @@ impl RingRelationProver {
                 "batched prover ring-multiplier opening-point layout mismatch".to_string(),
             ));
         }
-        let num_claims = opening_batch.num_polynomials();
+        let num_claims = opening_batch.num_total_polynomials();
         if polys.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),

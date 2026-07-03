@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, RingCommitment, SetupContributionMode,
-    SetupPrefixVerifierRegistry, VerifierOpeningBatch,
+    AkitaVerifierSetup, PolynomialGroupClaims, FlatMatrix, RingCommitment, SetupContributionMode,
+    SetupPrefixVerifierRegistry, OpeningClaims,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
@@ -107,10 +107,10 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> VerifierOpeningBatch<'static, F, &'a RingCommitment<F, D>> {
-        VerifierOpeningBatch::from_groups(
+    ) -> OpeningClaims<'static, F, &'a RingCommitment<F, D>> {
+        OpeningClaims::from_groups(
             self.opening_point.clone(),
-            vec![CommitmentGroup {
+            vec![PolynomialGroupClaims {
                 claims: openings.to_vec(),
                 commitment: &self.commitment,
             }],

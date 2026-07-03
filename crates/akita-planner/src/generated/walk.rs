@@ -13,13 +13,12 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, CommitmentGroupScheduleKey, DirectStep, FoldStep, GroupRootParams,
-    LevelParams, MRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout,
+    PolynomialGroupLayout, Schedule, Step,
 };
 
 use crate::generated::{
-    validate_group_batch_entry_key, GeneratedCommitmentGroupScheduleKey, GeneratedFoldStep,
-    GeneratedGroupBatchScheduleTableEntry, GeneratedScheduleTableEntry, GeneratedStep,
+    validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::group_batch::{
     grouped_root_direct_witness_len, grouped_root_next_w_len, grouped_root_precommitted_groups,
@@ -33,7 +32,7 @@ pub(crate) struct GeneratedEntryWalkOutput {
 
 pub(crate) fn walk_generated_schedule_entry(
     entry: &GeneratedScheduleTableEntry,
-    key: CommitmentGroupScheduleKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -42,6 +41,32 @@ pub(crate) fn walk_generated_schedule_entry(
     validate_entry_key(entry, key)?;
     entry.validate()?;
 
+    if key.precommitteds.is_empty() {
+        return walk_scalar_generated_schedule_entry(
+            entry,
+            key.final_group,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
+    }
+
+    walk_grouped_generated_schedule_entry(
+        entry,
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
+}
+
+fn walk_scalar_generated_schedule_entry(
+    entry: &GeneratedScheduleTableEntry,
+    key: PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<GeneratedEntryWalkOutput, AkitaError> {
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits
         .checked_mul(policy.chal_ext_degree as u32)
@@ -51,7 +76,7 @@ pub(crate) fn walk_generated_schedule_entry(
             )
         })?;
     let expected_root_w_len = 1usize
-        .checked_shl(key.num_vars as u32)
+        .checked_shl(key.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
 
     let mut steps = Vec::with_capacity(entry.steps.len());
@@ -71,7 +96,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 })?;
                 let is_terminal = matches!(next, GeneratedStep::Direct(_));
                 let num_claims = if fold_level == 0 {
-                    key.num_polynomials
+                    key.num_polynomials()
                 } else {
                     1
                 };
@@ -89,7 +114,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 // single-chunk); the pricing below uses the same count.
                 lp.witness_chunk = policy.witness_chunk_for_level(fold_level);
                 let num_polynomials = if fold_level == 0 {
-                    key.num_polynomials
+                    key.num_polynomials()
                 } else {
                     1
                 };
@@ -180,7 +205,7 @@ pub(crate) fn walk_generated_schedule_entry(
                                 fold_challenge_shape_at_level,
                                 0,
                                 expected_root_w_len,
-                                key.num_polynomials,
+                                key.num_polynomials(),
                             )
                         })
                         .transpose()?;
@@ -201,7 +226,7 @@ pub(crate) fn walk_generated_schedule_entry(
                         )
                     })?;
                     let num_polynomials = if fold_level == 1 {
-                        key.num_polynomials
+                        key.num_polynomials()
                     } else {
                         1
                     };
@@ -261,17 +286,13 @@ pub(crate) fn walk_generated_schedule_entry(
 }
 
 /// Walk one grouped-root generated catalog row into a runtime [`Schedule`].
-pub(crate) fn walk_generated_group_batch_schedule_entry(
-    entry: &GeneratedGroupBatchScheduleTableEntry,
+fn walk_grouped_generated_schedule_entry(
+    entry: &GeneratedScheduleTableEntry,
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
-    key.validate()?;
-    validate_group_batch_entry_key(&entry.key, key)?;
-    entry.validate()?;
-
     let extension_opening_width = policy.claim_ext_degree;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits
@@ -282,10 +303,10 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
             )
         })?;
     let root_eor_key =
-        CommitmentGroupScheduleKey::new(key.final_group.num_vars, key.num_polynomials()?);
+        PolynomialGroupLayout::new(key.final_group.num_vars(), key.num_polynomials()?);
 
     let expected_root_w_len = 1usize
-        .checked_shl(key.final_group.num_vars as u32)
+        .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness length overflow".into()))?;
     let mut steps = Vec::with_capacity(entry.steps.len());
     let mut total_bytes = 0usize;
@@ -309,7 +330,7 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
                     ));
                 }
                 let inputs = AkitaScheduleInputs {
-                    num_vars: key.final_group.num_vars,
+                    num_vars: key.final_group.num_vars(),
                     level: fold_level,
                     current_w_len,
                 };
@@ -327,7 +348,7 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
                         policy,
                         ring_challenge_config,
                         fold_shape,
-                        key.final_group.num_polynomials,
+                        key.final_group.num_polynomials(),
                         precommitted_groups,
                         precommitted_d_width,
                     )?
@@ -358,7 +379,7 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
                         grouped_root_next_w_len(
                             field_bits,
                             &lp,
-                            key.final_group.num_polynomials,
+                            key.final_group.num_polynomials(),
                             MRowLayout::WithDBlock,
                         )?
                     } else {
@@ -378,7 +399,7 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
                         ));
                     };
                     let next_inputs = AkitaScheduleInputs {
-                        num_vars: key.final_group.num_vars,
+                        num_vars: key.final_group.num_vars(),
                         level: fold_level + 1,
                         current_w_len: len,
                     };
@@ -433,7 +454,7 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
                     let direct_current_w_len = grouped_root_direct_witness_len(key)?;
                     let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-                        num_vars: key.final_group.num_vars,
+                        num_vars: key.final_group.num_vars(),
                         level: 0,
                         current_w_len: direct_current_w_len,
                     });
@@ -451,7 +472,7 @@ pub(crate) fn walk_generated_group_batch_schedule_entry(
                                 policy,
                                 ring_challenge_config,
                                 fold_shape,
-                                key.final_group.num_polynomials,
+                                key.final_group.num_polynomials(),
                                 precommitted_groups,
                                 precommitted_d_width,
                             )?)
@@ -537,7 +558,7 @@ fn validate_expanded_precommitted_groups(
 #[allow(clippy::too_many_arguments)]
 fn expand_validated_fold_level(
     step: &GeneratedFoldStep,
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -548,7 +569,7 @@ fn expand_validated_fold_level(
     validate_fold_geometry(step, key, policy, fold_level, current_w_len)?;
     validate_log_basis(step.log_basis, policy)?;
     let inputs = AkitaScheduleInputs {
-        num_vars: key.num_vars,
+        num_vars: key.num_vars(),
         level: fold_level,
         current_w_len,
     };
@@ -563,23 +584,6 @@ fn expand_validated_fold_level(
     validate_expanded_level_params(&lp, step, policy, fold_level, num_claims)
 }
 
-fn validate_entry_key(
-    entry: &GeneratedScheduleTableEntry,
-    key: CommitmentGroupScheduleKey,
-) -> Result<(), AkitaError> {
-    let expected = GeneratedCommitmentGroupScheduleKey {
-        num_vars: key.num_vars,
-        num_polynomials: key.num_polynomials,
-    };
-    if entry.key != expected {
-        return Err(AkitaError::InvalidSetup(format!(
-            "generated schedule key mismatch: entry key {:?}, requested key {:?}",
-            entry.key, expected
-        )));
-    }
-    Ok(())
-}
-
 fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), AkitaError> {
     let (min, max) = policy.basis_range;
     if log_basis < min || log_basis > max {
@@ -592,7 +596,7 @@ fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), Akit
 
 fn validate_fold_geometry(
     step: &GeneratedFoldStep,
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     fold_level: usize,
     current_w_len: usize,
@@ -631,7 +635,7 @@ fn validate_fold_geometry(
         if m_vars
             .checked_add(r_vars)
             .and_then(|n| n.checked_add(alpha))
-            .is_none_or(|bits| bits < key.num_vars)
+            .is_none_or(|bits| bits < key.num_vars())
         {
             return Err(AkitaError::InvalidSetup(
                 "generated root geometry has too few variables for key".to_string(),
