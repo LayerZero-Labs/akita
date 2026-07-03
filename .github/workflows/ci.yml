@@ -136,7 +136,7 @@ jobs:
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
-          cargo nextest run --profile ci --release --no-default-features --features parallel,disk-persistence \
+          cargo nextest run --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)

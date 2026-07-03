@@ -87,8 +87,8 @@ pub use proof::{
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
     segment_typed_witness_shape, segment_typed_witness_upper_bound_bytes,
     segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_level_params,
-    setup_prefix_slot_id, tail_golomb_rice_z_params, tail_segment_layout,
-    tail_segment_multiplicities_from_layout, terminal_e_hat_bytes_from_blocks,
+    setup_prefix_slot_id, should_reject_grouped_root, tail_golomb_rice_z_params,
+    tail_segment_layout, tail_segment_multiplicities_from_layout, terminal_e_hat_bytes_from_blocks,
     terminal_golomb_grind_tail_t_vectors, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     validate_public_matrix_matches_seed, validate_scalar_point_matches_poly_arity,
@@ -115,9 +115,9 @@ pub use proof::{
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
-    detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
-    schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
-    schedule_terminal_direct_witness_shape, scheduled_next_level_params,
+    detect_field_modulus, grouped_root_commit_params, r_decomp_levels, root_current_w_len,
+    root_direct_schedule, schedule_is_root_direct, schedule_num_fold_levels,
+    schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
     DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, Step,

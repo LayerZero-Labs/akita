@@ -317,18 +317,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn get_params_for_grouped_batched_commitment(
         key: &AkitaScheduleLookupKey,
     ) -> Result<LevelParams, AkitaError> {
-        let schedule = Self::runtime_schedule(key.clone())?;
-        match schedule.steps.first() {
-            Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "grouped root-direct schedule is missing commit params".to_string(),
-                )
-            }),
-            None => Err(AkitaError::InvalidSetup(
-                "grouped schedule has no steps".to_string(),
-            )),
-        }
+        Self::grouped_root_commit_params(&Self::runtime_schedule(key.clone())?)
+    }
+
+    /// Root commit layout read from a grouped runtime schedule.
+    fn grouped_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
+        akita_types::grouped_root_commit_params(schedule)
     }
 
     /// Schedule consumed by the prove/verify root path.
