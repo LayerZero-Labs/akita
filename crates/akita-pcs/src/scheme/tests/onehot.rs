@@ -36,10 +36,7 @@ fn conservative_config_commit_returns_frozen_layout() {
     );
     assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
     assert_eq!(frozen_layout.conservative_n_b, layout.b_key.row_len());
-    assert_eq!(
-        commitment.rows().count(),
-        frozen_layout.conservative_n_b
-    );
+    assert_eq!(commitment.rows().count(), frozen_layout.conservative_n_b);
 }
 
 fn grouped_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
@@ -99,8 +96,14 @@ fn conservative_config_allows_independent_precommitted_groups() {
 
         assert_eq!(pre_a_frozen.key, pre_a_key);
         assert_eq!(pre_b_frozen.key, pre_b_key);
-        assert_eq!(pre_a_commitment.rows().count(), pre_a_frozen.conservative_n_b);
-        assert_eq!(pre_b_commitment.rows().count(), pre_b_frozen.conservative_n_b);
+        assert_eq!(
+            pre_a_commitment.rows().count(),
+            pre_a_frozen.conservative_n_b
+        );
+        assert_eq!(
+            pre_b_commitment.rows().count(),
+            pre_b_frozen.conservative_n_b
+        );
         assert_ne!(pre_a_frozen.key, pre_b_frozen.key);
     });
 }
@@ -161,12 +164,76 @@ fn group_batch_schedule_preserves_precommitted_order() {
 }
 
 #[test]
+fn group_batch_commits_precommitteds_then_double_size_final_group() {
+    const PRE_NV: usize = 8;
+    const FINAL_NV: usize = PRE_NV * 2;
+    const GROUP_SIZE: usize = 1;
+
+    let pre_a_key = akita_types::CommitmentGroupScheduleKey::new(PRE_NV, GROUP_SIZE);
+    let pre_b_key = akita_types::CommitmentGroupScheduleKey::new(PRE_NV, GROUP_SIZE);
+    let pre_opening_batch = OpeningBatchShape::new(PRE_NV, GROUP_SIZE).expect("precommit batch");
+    let pre_a_layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
+        .expect("precommit A layout");
+    let pre_b_layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
+        .expect("precommit B layout");
+    let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_5001)];
+    let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_6001)];
+
+    with_conservative_commit_stack(FINAL_NV, GROUP_SIZE, |setup, stack| {
+        let (pre_a_commitment, _pre_a_hint) =
+            ConservativeCommitter::commit::<_, _>(setup, &pre_a_polys, stack).expect("precommit A");
+        let (pre_b_commitment, _pre_b_hint) =
+            ConservativeCommitter::commit::<_, _>(setup, &pre_b_polys, stack).expect("precommit B");
+        let pre_a_frozen =
+            akita_types::CommitmentGroupLayout::from_params(pre_a_key, &pre_a_layout);
+        let pre_b_frozen =
+            akita_types::CommitmentGroupLayout::from_params(pre_b_key, &pre_b_layout);
+        let grouped_key = akita_types::AkitaScheduleLookupKey {
+            final_group: akita_types::CommitmentGroupScheduleKey::new(FINAL_NV, GROUP_SIZE),
+            precommitteds: vec![pre_a_frozen.clone(), pre_b_frozen.clone()],
+        };
+
+        let main_params = OneHotCfg::get_params_for_grouped_batched_commitment(&grouped_key)
+            .expect("main grouped commit params");
+        let final_polys = [debug_make_onehot_poly(&main_params, 0x0bee_fcaf_9a77_7001)];
+        let (final_commitment, final_hint) = OneHotScheme::commit_final_group::<_, _>(
+            setup,
+            &final_polys,
+            stack,
+            vec![pre_a_key, pre_b_key],
+        )
+        .expect("final grouped commitment");
+
+        assert_eq!(
+            pre_a_commitment.rows().count(),
+            pre_a_frozen.conservative_n_b
+        );
+        assert_eq!(
+            pre_b_commitment.rows().count(),
+            pre_b_frozen.conservative_n_b
+        );
+        assert_eq!(final_commitment.rows().count(), main_params.b_key.row_len());
+        assert_eq!(final_hint.decomposed_inner_rows.len(), GROUP_SIZE);
+        assert_eq!(
+            akita_prover::RootPolyMeta::num_vars(&final_polys[0]),
+            FINAL_NV,
+            "final one-hot group should live on the doubled variable domain"
+        );
+        assert_eq!(main_params.precommitted_groups.len(), 2);
+        assert_eq!(main_params.precommitted_groups[0].layout, pre_a_frozen);
+        assert_eq!(main_params.precommitted_groups[1].layout, pre_b_frozen);
+    });
+}
+
+#[test]
 fn commit_group_returns_frozen_conservative_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::CommitmentGroupScheduleKey::new(NV, GROUP_SIZE);
-    let layout = OneHotCfg::get_params_for_group_commit(&key).expect("group commit layout");
+    let opening_batch = akita_types::OpeningBatchShape::new(NV, GROUP_SIZE).expect("opening batch");
+    let layout =
+        OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("group commit layout");
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");

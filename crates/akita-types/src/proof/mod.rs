@@ -60,7 +60,7 @@ pub use opening_batch::{
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLayout, RingRelationSegmentLengths,
+    RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{

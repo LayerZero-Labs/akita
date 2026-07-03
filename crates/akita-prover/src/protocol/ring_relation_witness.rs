@@ -12,6 +12,10 @@ use akita_types::{AkitaCommitmentHint, DigitBlocks, RingVec};
 /// [`crate::compute::recompose_flat_hint_inner_rows`]).
 pub struct RingRelationWitness<F: FieldCore> {
     pub z_folded_rings: DecomposeFoldWitness<F>,
+    /// Per-window centered fold responses `z_i = Σ_{j∈I_i} c_j s_j` emitted
+    /// z-first per chunk by `build_w_coeffs`. Length `num_chunks` (one element
+    /// equal to the global centered fold response for the single-chunk case).
+    pub z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
     pub fold_grind_nonce: u32,
     pub e_hat: DigitBlocks,
     pub e_folded: RingVec<F>,
@@ -24,6 +28,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
     /// dimension.
     pub fn from_flat_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
+        z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
         fold_grind_nonce: u32,
         e_hat: DigitBlocks,
         e_folded: RingVec<F>,
@@ -32,6 +37,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
     ) -> Self {
         Self {
             z_folded_rings,
+            z_folded_centered_per_chunk,
             fold_grind_nonce,
             e_hat,
             e_folded,
@@ -68,6 +74,16 @@ impl<F: FieldCore> RingRelationWitness<F> {
                 actual: self.e_folded.coeff_len(),
             });
         }
+        for chunk in &self.z_folded_centered_per_chunk {
+            for row in chunk {
+                if row.len() != D {
+                    return Err(AkitaError::InvalidSize {
+                        expected: D,
+                        actual: row.len(),
+                    });
+                }
+            }
+        }
         Ok(())
     }
 
@@ -83,5 +99,30 @@ impl<F: FieldCore> RingRelationWitness<F> {
     ) -> Result<&[akita_algebra::CyclotomicRing<F, D>], AkitaError> {
         self.ensure_ring_dim::<D>()?;
         Ok(self.e_folded.as_ring_slice_trusted::<D>())
+    }
+
+    /// Borrow per-chunk centered fold responses after [`Self::ensure_ring_dim`].
+    pub fn z_folded_centered_per_chunk_trusted<const D: usize>(
+        &self,
+    ) -> Result<Vec<Vec<[i32; D]>>, AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.z_folded_centered_per_chunk
+            .iter()
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .map(|row| {
+                        let arr: [i32; D] =
+                            row.as_slice()
+                                .try_into()
+                                .map_err(|_| AkitaError::InvalidSize {
+                                    expected: D,
+                                    actual: row.len(),
+                                })?;
+                        Ok(arr)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect()
     }
 }

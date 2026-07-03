@@ -21,3 +21,6 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q2/akita-zk-sumcheck-hiding-plain.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
 | `2026-Q2/akita-zk-v-hiding.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
 | `2026-Q2/l2-msis-opnorm-folded-witness.md` | historical | _(cancelled; no book fold)_ | 2026-Q2 |
+| `2026-Q2/akita-sis-consolidation.md` | superseded | `book/src/how/security.md` | 2026-Q2 |
+| `2026-Q2/sis-euclidean-estimator.md` | superseded | `book/src/how/security.md` | 2026-Q2 |
+| `2026-Q2/sis-infinity-estimator-implementation-plan.md` | superseded | _(slice plan superseded by cutover spec)_ | 2026-Q2 |

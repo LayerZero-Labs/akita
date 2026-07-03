@@ -721,7 +721,7 @@ mod tests {
             row_coefficients: &gamma,
             lp: &level_params,
         };
-        let prepared = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1)
+        let prepared = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1, None)
             .expect("prepare_ring_switch_row_eval");
 
         let got = prepared

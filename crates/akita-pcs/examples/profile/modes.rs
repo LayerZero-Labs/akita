@@ -12,7 +12,10 @@ use akita_field::{
     PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey, FpExtEncoding, LevelParams};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, FpExtEncoding, LevelParams,
+    MultiChunkProfileId,
+};
 
 type F = fp128::Field;
 
@@ -190,6 +193,19 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
+    // Chunked relation (distributed prover witness layout on leading fold levels).
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk_w2r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk_w4r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w4r2,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w8r2,
+    },
     // Tiered second-tier commitment (F). Only tiers with a batch (B > A), so
     // run with `AKITA_NUM_POLYS=16` or more; excluded from the `all` sweep.
     ProfileMode {
@@ -242,6 +258,9 @@ const PROFILE_MODES: &[ProfileMode] = &[
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_tensor",
     "onehot_fp128_d64_tiered",
+    "onehot_fp128_d64_multi_chunk_w2r2",
+    "onehot_fp128_d64_multi_chunk_w4r2",
+    "onehot_fp128_d64_multi_chunk_w8r2",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
@@ -313,6 +332,52 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     let title = fp128_onehot_title(64, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp128_d64_multi_chunk_named<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+>(
+    label: &str,
+    profile: MultiChunkProfileId,
+    nv: usize,
+    num_polys: usize,
+) {
+    let prime = fp128_prime_label();
+    let onehot_k = onehot_k_for_num_vars(nv);
+    let title = format!(
+        "=== {label} (fp128, {prime}, D=64, 1-of-{onehot_k}, distributed chunked relation, num_chunks={} x {} leading levels) ===",
+        profile.num_chunks(),
+        profile.num_activated_levels(),
+    );
+    run_onehot_mode::<D, Cfg>(label, &title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp128_d64_multi_chunk_w8r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunk>(
+        "onehot_fp128_d64_multi_chunk_w8r2",
+        MultiChunkProfileId::W8R2,
+        nv,
+        num_polys,
+    );
+}
+
+fn run_profile_onehot_fp128_d64_multi_chunk_w2r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunkW2R2>(
+        "onehot_fp128_d64_multi_chunk_w2r2",
+        MultiChunkProfileId::W2R2,
+        nv,
+        num_polys,
+    );
+}
+
+fn run_profile_onehot_fp128_d64_multi_chunk_w4r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunkW4R2>(
+        "onehot_fp128_d64_multi_chunk_w4r2",
+        MultiChunkProfileId::W4R2,
+        nv,
+        num_polys,
+    );
 }
 
 fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {

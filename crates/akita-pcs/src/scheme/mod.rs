@@ -16,7 +16,9 @@ use akita_prover::{AkitaProverSetup, CommittedGroupHandle};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{validate_ring_subfield_role, BasisMode, Commitment, FpExtEncoding};
+use akita_types::{
+    validate_ring_subfield_role, BasisMode, Commitment, CommitmentGroupScheduleKey, FpExtEncoding,
+};
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, SetupContributionMode};
 use akita_types::{AkitaVerifierSetup, VerifierOpeningBatch};
 use std::marker::PhantomData;
@@ -175,6 +177,34 @@ where
     {
         Self::validate_policy_ring_dim(setup)?;
         akita_prover::commit_group::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
+    }
+
+    /// Commit the final polynomial bundle for a grouped root commitment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if input validation, grouped layout selection, or
+    /// commitment execution fails.
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_final_group")]
+    pub fn commit_final_group<P, B>(
+        setup: &AkitaProverSetup<Cfg::Field>,
+        polys: &[P],
+        stack: &UniformProverStack<'_, Cfg::Field, B>,
+        precommitteds: Vec<CommitmentGroupScheduleKey>,
+    ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
+    where
+        Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
+        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+        P: RuntimeRootCommitPoly<Cfg::Field>,
+        B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+    {
+        Self::validate_policy_ring_dim(setup)?;
+        akita_prover::commit_final_group::<Cfg, P, B>(
+            polys,
+            setup.expanded.as_ref(),
+            stack,
+            precommitteds,
+        )
     }
 
     /// Produce a fused batched opening proof for one shared opening point.

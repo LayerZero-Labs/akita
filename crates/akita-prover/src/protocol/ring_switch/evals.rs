@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use akita_algebra::ring::eval_flat_ring_at_pows;
 use akita_types::embed_ring_subfield_scalar_flat;
 
@@ -142,10 +143,18 @@ where
     };
     let rows = lp.m_row_count_for(1, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
+    // Chunked layout replicates the `z` segment once per window; `e`/`t` are
+    // partitioned (their totals are unchanged). `num_chunks = 1` is the
+    // single-chunk case.
+    validate_chunked_witness_cfg(lp)?;
+    let num_chunks = lp.witness_chunk.num_chunks;
+    let z_cols_total = z_len
+        .checked_mul(num_chunks)
+        .ok_or_else(|| AkitaError::InvalidSetup("chunked Z width overflow".to_string()))?;
     let total_cols = w_len
         .checked_add(t_len)
         .and_then(|cols| cols.checked_add(u_seg_len))
-        .and_then(|cols| cols.checked_add(z_len))
+        .and_then(|cols| cols.checked_add(z_cols_total))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
 
@@ -454,9 +463,22 @@ where
         })
         .collect();
 
-    out.extend(z_segment);
-    out.extend(w_segment);
-    out.extend(t_segment);
+    // Chunked column layout `[z|e_i|t_i]…[u][r]`: `z` is replicated per window
+    // and `e`/`t` are partitioned by global block (same per-cell values as the
+    // flat segments, only repositioned).
+    let blocks_per_chunk = num_blocks / num_chunks;
+    for i in 0..num_chunks {
+        out.extend_from_slice(&z_segment);
+        let block_lo = i * blocks_per_chunk;
+        for outer in w_segment.chunks_exact(num_blocks) {
+            out.extend_from_slice(&outer[block_lo..block_lo + blocks_per_chunk]);
+        }
+        for outer in t_segment.chunks_exact(num_blocks) {
+            out.extend_from_slice(&outer[block_lo..block_lo + blocks_per_chunk]);
+        }
+    }
+    // Tiered `û` is rejected for chunked layouts; for the single-chunk layout it
+    // is the contiguous segment after `t̂`. Either way it follows the windows.
     out.extend(u_segment);
     out.extend(r_tail);
     out.resize(x_len, E::zero());

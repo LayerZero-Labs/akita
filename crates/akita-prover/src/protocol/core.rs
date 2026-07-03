@@ -50,9 +50,8 @@ use akita_types::{
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
     CleartextWitnessProof, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
     LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingMultiplierOpeningPoint,
-    RingRelationSegmentLayout, RingVec, RingView, Schedule, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
-    VerifierOpeningBatch,
+    RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
+    SetupSumcheckProof, Step, TerminalLevelProof, TraceTable, VerifierOpeningBatch,
 };
 use std::sync::Arc;
 

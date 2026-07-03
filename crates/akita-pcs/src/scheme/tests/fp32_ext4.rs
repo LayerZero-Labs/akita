@@ -24,17 +24,19 @@ fn scale_batched_root_layout_unchecked(
         .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?;
     let mut scaled = root_lp.clone();
     scaled.b_key = akita_types::AjtaiKeyParams::new_unchecked(
+        scaled.b_key.min_security_bits(),
         scaled.b_key.sis_family(),
         scaled.b_key.row_len(),
         b_col_len,
-        scaled.b_key.collision_l2_sq(),
+        scaled.b_key.coeff_linf_bound(),
         d,
     );
     scaled.d_key = akita_types::AjtaiKeyParams::new_unchecked(
+        scaled.d_key.min_security_bits(),
         scaled.d_key.sis_family(),
         scaled.d_key.row_len(),
         d_col_len,
-        scaled.d_key.collision_l2_sq(),
+        scaled.d_key.coeff_linf_bound(),
         d,
     );
     Ok(scaled)
@@ -56,7 +58,7 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 /// `0` `params_only` default. The fixture scales batched B/D widths
 /// via [`scale_batched_root_layout_unchecked`] because it is synthetic.
 fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
-    use akita_types::AjtaiKeyParams;
+    use akita_types::{AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
     let sis_family = akita_types::SisModulusFamily::Q32;
     // Commit ring dimension must equal the static `D` the scheme dispatches
     // (`DensePoly::<SmallF>` / `validate_commit_level_params::<F, D>`); both
@@ -70,14 +72,17 @@ fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
     };
     // Match the verifier-reachable derivation for this fixture's
     // `(log_basis=3, log_commit_bound=32, stage1.inf_norm=1, ring_subfield=2)`:
-    // B/D use the exact derived key `32 * 7^2`; A rounds `linf=14` up to
-    // coefficient bucket 15, giving `32 * 15^2`.
-    let a_bucket: u128 = 7200;
-    let bd_bucket: u128 = 1568;
+    // B/D use the exact coefficient bucket `7`; A rounds `linf=14` up to
+    // coefficient bucket `15`.
+    let a_bucket: u128 = 15;
+    let bd_bucket: u128 = 7;
     let mut params = LevelParams::params_only(sis_family, d, 3, 1, 1, 1, stage1);
-    params.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_bucket, d);
-    params.b_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);
-    params.d_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);
+    params.a_key =
+        AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, a_bucket, d);
+    params.b_key =
+        AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, bd_bucket, d);
+    params.d_key =
+        AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, bd_bucket, d);
     params.with_decomp(m_vars, 0, 12, 12, 0).unwrap()
 }
 

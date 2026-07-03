@@ -895,6 +895,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::test_support::{
+        aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
+    };
     use crate::DensePoly;
     use akita_field::Prime128OffsetA7F7 as F;
 
@@ -924,6 +927,49 @@ mod tests {
             sparse.fold_blocks_ring::<D>(&scalars, 2),
             dense.fold_blocks_ring::<D>(&scalars, 2)
         );
+    }
+
+    #[test]
+    fn sparse_ring_tensor_decompose_fold_matches_negacyclic_product_reference() {
+        const D: usize = 8;
+        let block_len = 2;
+        let num_digits = 1;
+        let tensor = tensor_oracle_challenges::<D>();
+        let polys = [
+            SparseRingPoly::<F>::from_signed_coeffs(
+                6,
+                D,
+                8,
+                vec![(0, 1, 1), (1, 3, -1), (3, 2, 1), (6, 5, -1)],
+            )
+            .unwrap(),
+            SparseRingPoly::<F>::from_signed_coeffs(
+                6,
+                D,
+                8,
+                vec![(0, 0, -1), (2, 4, 1), (5, 7, 1), (7, 2, -1)],
+            )
+            .unwrap(),
+        ];
+        let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
+
+        let expected = aggregate_witnesses::<F, D>(
+            &polys
+                .iter()
+                .zip(product_challenges.chunks(4))
+                .map(|(poly, challenges)| {
+                    poly.decompose_fold::<D>(challenges, block_len, num_digits, 0)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let poly_refs = polys.iter().collect::<Vec<_>>();
+        let got = SparseRingPoly::<F>::decompose_fold_tensor_batched::<D>(
+            &poly_refs, &tensor, block_len, num_digits, 0,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(got, expected);
     }
 
     #[test]

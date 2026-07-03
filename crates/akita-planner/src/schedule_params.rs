@@ -15,17 +15,56 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    rounded_up_collision_linf_t, rounded_up_collision_linf_tiered_commitment,
+    rounded_up_collision_linf_w, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams,
+    segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
+    ChunkedWitnessCfg, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams,
     DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
+
+fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
+    SisTableKey {
+        min_security_bits: policy.min_sis_security_bits,
+        family: policy.sis_family,
+        ring_dimension: policy.ring_dimension as u32,
+        coeff_linf_bound,
+    }
+}
+
+/// Validate the policy's multi-chunk witness settings at a planner entry point.
+///
+/// Layout-only rules live on [`ChunkedWitnessCfg::validate`]; the tiered guard
+/// and the recursion-depth bound (which needs the planner-private
+/// [`MAX_RECURSION_DEPTH`]) are enforced here so `akita-types` stays free of
+/// planner internals.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] for an invalid `ChunkedWitnessCfg`, a
+/// tiered + multi-chunk combination, or `num_activated_levels` beyond the
+/// planner recursion cap. Verifier-reachable: never panics.
+pub(crate) fn validate_policy_witness_chunk(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    let mc = policy.witness_chunk;
+    mc.validate()?;
+    if policy.tiered && mc.uses_multi_chunk() {
+        return Err(AkitaError::InvalidSetup(
+            "multi-chunk witness layout is unsupported with tiered commitments".to_string(),
+        ));
+    }
+    if mc.num_activated_levels > MAX_RECURSION_DEPTH {
+        return Err(AkitaError::InvalidSetup(format!(
+            "num_activated_levels={} exceeds the planner recursion cap {MAX_RECURSION_DEPTH}",
+            mc.num_activated_levels
+        )));
+    }
+    Ok(())
+}
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
@@ -55,7 +94,7 @@ const MAX_TIERED_SPLIT_FACTOR: usize = 16;
 /// slices (`f | width`). No column structure is preserved and `f` need not be a
 /// power of two — the relation only enforces `B'·t_i = u_i` and
 /// `F(u_1 ‖ … ‖ u_f) = u_final`, and every prover/verifier path slices `t̂` flatly.
-/// `F` is sized at its own collision bucket ([`rounded_up_collision_norm_tiered_commitment`]).
+/// `F` is sized at its own collision bucket ([`rounded_up_collision_linf_tiered_commitment`]).
 ///
 /// `B'` matrix size is monotonically non-increasing in `f`, so the **smallest**
 /// divisor `f` in `2..=MAX_TIERED_SPLIT_FACTOR` whose size drops to
@@ -86,9 +125,12 @@ fn multi_tiered_keys(
     }
 
     // `F` commits balanced base-`2^log_basis` digits of `u_concat`.
-    let Some(norm_f) =
-        rounded_up_collision_norm_tiered_commitment(b_key.sis_family(), ring_d, log_basis)
-    else {
+    let Some(norm_f) = rounded_up_collision_linf_tiered_commitment(
+        b_key.min_security_bits(),
+        b_key.sis_family(),
+        ring_d,
+        log_basis,
+    ) else {
         return Ok((1, b_key.clone(), None));
     };
 
@@ -99,12 +141,7 @@ fn multi_tiered_keys(
             continue;
         }
         let shrunk_width = b_key.col_len() / f; // exact: f divides the B width
-        let Some(n_b_small) = min_secure_rank(
-            b_key.sis_family(),
-            ring_d as u32,
-            b_key.collision_l2_sq(),
-            shrunk_width as u64,
-        ) else {
+        let Some(n_b_small) = min_secure_rank(b_key.sis_table_key(), shrunk_width as u64) else {
             continue;
         };
         let Some(b_small_size) = n_b_small.checked_mul(shrunk_width) else {
@@ -120,16 +157,31 @@ fn multi_tiered_keys(
         else {
             continue;
         };
-        let Some(n_f) = min_secure_rank(b_key.sis_family(), ring_d as u32, norm_f, width_f as u64)
-        else {
+        let Some(n_f) = min_secure_rank(
+            SisTableKey {
+                min_security_bits: b_key.min_security_bits(),
+                family: b_key.sis_family(),
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: norm_f,
+            },
+            width_f as u64,
+        ) else {
             continue;
         };
-        let f_key = AjtaiKeyParams::try_new(b_key.sis_family(), n_f, width_f, norm_f, ring_d)?;
+        let f_key = AjtaiKeyParams::try_new(
+            b_key.min_security_bits(),
+            b_key.sis_family(),
+            n_f,
+            width_f,
+            norm_f,
+            ring_d,
+        )?;
         let tiered_b_key = AjtaiKeyParams::try_new(
+            b_key.min_security_bits(),
             b_key.sis_family(),
             n_b_small,
             shrunk_width,
-            b_key.collision_l2_sq(),
+            b_key.coeff_linf_bound(),
             ring_d,
         )?;
         return Ok((f, tiered_b_key, Some(f_key)));
@@ -149,7 +201,12 @@ fn derive_candidate_level_params(
     ring_challenge_config: RingChallengeConfigFn<'_>,
     current_witness_len: usize,
     log_basis: u32,
+    fold_level: usize,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
+    // Chunk count of the witness this level commits/produces (sized below as
+    // `next_witness_len`). Equal for the metadata field and the width pricing so
+    // a future verifier recomputing the size from `witness_chunk` agrees.
+    let num_chunks = policy.chunks_at_level(fold_level);
     let Ok(ring_challenge_cfg) = ring_challenge_config(policy.ring_dimension) else {
         return Ok(None);
     };
@@ -171,6 +228,11 @@ fn derive_candidate_level_params(
         let Some(num_blocks) = 1usize.checked_shl(r as u32) else {
             continue;
         };
+        // Multi-chunk levels require an equal block window per chunk; skip splits
+        // that do not divide evenly (not fixed up later).
+        if num_chunks > 1 && !num_blocks.is_multiple_of(num_chunks) {
+            continue;
+        }
         let block_len = num_ring_elems.div_ceil(num_blocks);
 
         // Recursive levels commit a dense balanced-digit witness (`is_root =
@@ -188,6 +250,7 @@ fn derive_candidate_level_params(
             continue;
         };
         let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+            policy.min_sis_security_bits,
             family,
             d,
             decomp,
@@ -202,27 +265,52 @@ fn derive_candidate_level_params(
         ) else {
             continue;
         };
-        let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
-        let Some(norm_t) = rounded_up_collision_norm_t(family, d, log_basis) else {
+        let a_key = AjtaiKeyParams::try_new(
+            policy.min_sis_security_bits,
+            family,
+            n_a,
+            width_s,
+            norm_s,
+            d,
+        )?;
+        let Some(norm_t) =
+            rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, log_basis)
+        else {
             continue;
         };
         let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, 1) else {
             continue;
         };
-        let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
+        let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
             continue;
         };
-        let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
-        let Some(norm_w) = rounded_up_collision_norm_w(family, d, log_basis) else {
+        let b_key = AjtaiKeyParams::try_new(
+            policy.min_sis_security_bits,
+            family,
+            n_b,
+            width_t,
+            norm_t,
+            d,
+        )?;
+        let Some(norm_w) =
+            rounded_up_collision_linf_w(policy.min_sis_security_bits, family, d, log_basis)
+        else {
             continue;
         };
         let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
             continue;
         };
-        let Some(n_d) = min_secure_rank(family, d as u32, norm_w, width_w as u64) else {
+        let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
             continue;
         };
-        let d_key = AjtaiKeyParams::try_new(family, n_d, width_w, norm_w, d)?;
+        let d_key = AjtaiKeyParams::try_new(
+            policy.min_sis_security_bits,
+            family,
+            n_d,
+            width_w,
+            norm_w,
+            d,
+        )?;
 
         let (tier_split, b_key, f_key) = if policy.tiered {
             let Some(a_matrix_size) = a_key.row_len().checked_mul(a_key.col_len()) else {
@@ -256,27 +344,28 @@ fn derive_candidate_level_params(
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: policy.witness_chunk_for_level(fold_level),
             precommitted_groups: Vec::new(),
         }
         .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
             continue;
         };
 
-        let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
+        let next_witness_len = w_ring_element_count_for_chunks(
             policy.decomposition.field_bits(),
             &candidate_params,
             1,
-            1,
             MRowLayout::WithDBlock,
+            num_chunks,
         )?
         .checked_mul(policy.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
-        let next_witness_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
+        let next_witness_len_terminal = w_ring_element_count_for_chunks(
             policy.decomposition.field_bits(),
             &candidate_params,
             1,
-            1,
             MRowLayout::WithoutDBlock,
+            num_chunks,
         )?
         .checked_mul(policy.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
@@ -351,6 +440,16 @@ fn make_terminal_direct_step(
     field_bits: u32,
     num_polynomials: usize,
 ) -> Result<DirectStep, AkitaError> {
+    // The terminal-direct (cleartext) witness is single-chunk by construction:
+    // the prover emits the global folded response and one shared `r̂` tail, so
+    // chunking the cleartext tail is unsupported. The last fold level must be
+    // single-chunk (only the leading activated levels are chunked). Reject here
+    // to match `resolve.rs` and avoid a cryptic prover-side layout mismatch.
+    if terminal_lp.witness_chunk.num_chunks > 1 {
+        return Err(AkitaError::InvalidSetup(
+            "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
+        ));
+    }
     let witness_shape = segment_typed_witness_shape(
         terminal_lp,
         field_bits,
@@ -366,6 +465,29 @@ fn make_terminal_direct_step(
         direct_bytes,
         params: None,
     })
+}
+
+/// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
+/// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
+/// fold-then-direct branch without aborting fold-then-fold exploration.
+fn try_terminal_direct_suffix_cost(
+    current_w_len: usize,
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+    key: CommitmentGroupScheduleKey,
+    terminal_fold_level: usize,
+) -> Result<Option<(DirectStep, usize)>, AkitaError> {
+    if terminal_lp.witness_chunk.num_chunks > 1 {
+        return Ok(None);
+    }
+    let (direct, direct_bytes) = terminal_direct_suffix_cost(
+        current_w_len,
+        terminal_lp,
+        field_bits,
+        key,
+        terminal_fold_level,
+    )?;
+    Ok(Some((direct, direct_bytes)))
 }
 
 pub(crate) fn terminal_direct_suffix_cost(
@@ -446,6 +568,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         ring_challenge_config,
         current_witness_len,
         current_lb,
+        level,
     )?
     .is_some()
     {
@@ -472,7 +595,13 @@ pub(crate) fn derive_optimal_suffix_schedule(
             continue;
         }
         let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params(policy, ring_challenge_config, current_witness_len, lb)?
+            derive_candidate_level_params(
+                policy,
+                ring_challenge_config,
+                current_witness_len,
+                lb,
+                level,
+            )?
         else {
             continue;
         };
@@ -506,33 +635,34 @@ pub(crate) fn derive_optimal_suffix_schedule(
         // Branch A: suffix is a Direct at level+1.
         if let Some(direct_suffix) = suffix.best_direct {
             let field_bits = policy.decomposition.field_bits();
-            let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
+            if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
                 direct_suffix.current_w_len,
                 &candidate_params,
                 field_bits,
                 key,
                 level,
-            )?;
-            let level_proof_size = level_proof_bytes(
-                field_bits,
-                field_bits * policy.chal_ext_degree as u32,
-                &candidate_params,
-                None,
-                next_witness_len_terminal,
-                1,
-                MRowLayout::WithoutDBlock,
-            ) + eor_bytes;
-            let total = level_proof_size + suffix_cost;
-            let steps = vec![
-                Step::Fold(FoldStep {
-                    params: candidate_params.clone(),
-                    current_w_len: current_witness_len,
-                    next_w_len: next_witness_len_terminal,
-                    level_bytes: level_proof_size,
-                }),
-                Step::Direct(direct_step),
-            ];
-            try_update(total, steps, &mut best_for_this_lb);
+            )? {
+                let level_proof_size = level_proof_bytes(
+                    field_bits,
+                    field_bits * policy.chal_ext_degree as u32,
+                    &candidate_params,
+                    None,
+                    next_witness_len_terminal,
+                    1,
+                    MRowLayout::WithoutDBlock,
+                ) + eor_bytes;
+                let total = level_proof_size + suffix_cost;
+                let steps = vec![
+                    Step::Fold(FoldStep {
+                        params: candidate_params.clone(),
+                        current_w_len: current_witness_len,
+                        next_w_len: next_witness_len_terminal,
+                        level_bytes: level_proof_size,
+                    }),
+                    Step::Direct(direct_step),
+                ];
+                try_update(total, steps, &mut best_for_this_lb);
+            }
         }
         // Branch B: suffix is a Fold at level+1.
         for suffix_fold in suffix.best_fold_per_lb.values() {
@@ -645,6 +775,7 @@ fn compute_root_direct_level_params(
         let is_onehot = decomp.log_commit_bound == 1;
         let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
         let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
+            policy.min_sis_security_bits,
             sis_family,
             d as u32,
             num_claims,
@@ -678,6 +809,7 @@ fn compute_root_direct_level_params(
         return Ok(None);
     };
     let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+        policy.min_sis_security_bits,
         sis_family,
         d,
         level_decomp,
@@ -692,27 +824,52 @@ fn compute_root_direct_level_params(
     ) else {
         return Ok(None);
     };
-    let a_key = AjtaiKeyParams::try_new(sis_family, n_a, width_s, norm_s, d)?;
-    let Some(norm_t) = rounded_up_collision_norm_t(sis_family, d, log_basis) else {
+    let a_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        sis_family,
+        n_a,
+        width_s,
+        norm_s,
+        d,
+    )?;
+    let Some(norm_t) =
+        rounded_up_collision_linf_t(policy.min_sis_security_bits, sis_family, d, log_basis)
+    else {
         return Ok(None);
     };
     let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Some(n_b) = min_secure_rank(sis_family, d as u32, norm_t, width_t as u64) else {
+    let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
         return Ok(None);
     };
-    let b_key = AjtaiKeyParams::try_new(sis_family, n_b, width_t, norm_t, d)?;
-    let Some(norm_w) = rounded_up_collision_norm_w(sis_family, d, log_basis) else {
+    let b_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        sis_family,
+        n_b,
+        width_t,
+        norm_t,
+        d,
+    )?;
+    let Some(norm_w) =
+        rounded_up_collision_linf_w(policy.min_sis_security_bits, sis_family, d, log_basis)
+    else {
         return Ok(None);
     };
     let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Some(n_d) = min_secure_rank(sis_family, d as u32, norm_w, width_w as u64) else {
+    let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
         return Ok(None);
     };
-    let d_key = AjtaiKeyParams::try_new(sis_family, n_d, width_w, norm_w, d)?;
+    let d_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        sis_family,
+        n_d,
+        width_w,
+        norm_w,
+        d,
+    )?;
 
     // A one-hot root (`log_commit_bound == 1`) commits a sparse witness; record
     // its chunk size so `num_digits_fold` and the binding norm size the folded
@@ -754,6 +911,8 @@ fn compute_root_direct_level_params(
         field_bits_hint: 0,
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
+        // Root-direct ships the raw polynomial on the wire (no chunked commitment).
+        witness_chunk: ChunkedWitnessCfg::default(),
         precommitted_groups: Vec::new(),
     }
     .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
@@ -803,6 +962,7 @@ fn find_schedule_inner(
     };
 
     key.validate()?;
+    validate_policy_witness_chunk(policy)?;
 
     let witness_len = 1usize
         .checked_shl(key.num_vars as u32)
@@ -852,6 +1012,10 @@ fn find_schedule_inner(
     let min_r_vars: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_r_vars: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
 
+    // Chunk count of the witness committed at the root fold (absolute level 0).
+    let root_num_chunks = policy.chunks_at_level(0);
+    let root_witness_chunk = policy.witness_chunk_for_level(0);
+
     let (min_log_basis, max_log_basis) = policy.basis_range;
     for candidate_log_basis in min_log_basis..=max_log_basis {
         let level_decomp = DecompositionParams {
@@ -865,6 +1029,10 @@ fn find_schedule_inner(
             let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
                 continue;
             };
+            // Multi-chunk root candidates require an equal block window per chunk.
+            if root_num_chunks > 1 && !num_blocks.is_multiple_of(root_num_chunks) {
+                continue;
+            }
             let m_vars = reduced_vars - r_vars;
 
             let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
@@ -879,6 +1047,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+                policy.min_sis_security_bits,
                 family,
                 d,
                 level_decomp,
@@ -893,8 +1062,20 @@ fn find_schedule_inner(
             ) else {
                 continue;
             };
-            let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
-            let Some(norm_t) = rounded_up_collision_norm_t(family, d, candidate_log_basis) else {
+            let a_key = AjtaiKeyParams::try_new(
+                policy.min_sis_security_bits,
+                family,
+                n_a,
+                width_s,
+                norm_s,
+                d,
+            )?;
+            let Some(norm_t) = rounded_up_collision_linf_t(
+                policy.min_sis_security_bits,
+                family,
+                d,
+                candidate_log_basis,
+            ) else {
                 continue;
             };
             let Some(width_t) =
@@ -902,11 +1083,23 @@ fn find_schedule_inner(
             else {
                 continue;
             };
-            let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
+            let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
                 continue;
             };
-            let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
-            let Some(norm_w) = rounded_up_collision_norm_w(family, d, candidate_log_basis) else {
+            let b_key = AjtaiKeyParams::try_new(
+                policy.min_sis_security_bits,
+                family,
+                n_b,
+                width_t,
+                norm_t,
+                d,
+            )?;
+            let Some(norm_w) = rounded_up_collision_linf_w(
+                policy.min_sis_security_bits,
+                family,
+                d,
+                candidate_log_basis,
+            ) else {
                 continue;
             };
             let Some(width_w) =
@@ -914,10 +1107,17 @@ fn find_schedule_inner(
             else {
                 continue;
             };
-            let Some(n_d) = min_secure_rank(family, d as u32, norm_w, width_w as u64) else {
+            let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
                 continue;
             };
-            let d_key = AjtaiKeyParams::try_new(family, n_d, width_w, norm_w, d)?;
+            let d_key = AjtaiKeyParams::try_new(
+                policy.min_sis_security_bits,
+                family,
+                n_d,
+                width_w,
+                norm_w,
+                d,
+            )?;
 
             let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
                 policy.onehot_chunk_size
@@ -960,6 +1160,7 @@ fn find_schedule_inner(
                 field_bits_hint: 0,
                 cached_num_digits_fold_claims: 0,
                 cached_num_digits_fold_value: 1,
+                witness_chunk: root_witness_chunk,
                 precommitted_groups: Vec::new(),
             }
             .with_fold_linf_cap_config(field_bits, key.num_polynomials) else {
@@ -967,12 +1168,12 @@ fn find_schedule_inner(
             };
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
-                let rings = w_ring_element_count_with_counts_for_layout_bits(
+                let rings = w_ring_element_count_for_chunks(
                     field_bits,
                     &candidate_params,
                     key.num_polynomials,
-                    1,
                     layout,
+                    root_num_chunks,
                 )?;
                 rings.checked_mul(policy.ring_dimension).ok_or_else(|| {
                     AkitaError::InvalidSetup("root next witness length overflow".into())
@@ -1019,34 +1220,35 @@ fn find_schedule_inner(
 
             // Branch A: suffix at level 1 is a Direct
             if let Some(direct_suffix) = suffix.best_direct {
-                let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
+                if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
                     direct_suffix.current_w_len,
                     &candidate_params,
                     field_bits,
                     key,
                     0,
-                )?;
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    field_bits * policy.chal_ext_degree as u32,
-                    &candidate_params,
-                    None,
-                    next_w_len_terminal,
-                    1,
-                    MRowLayout::WithoutDBlock,
-                ) + eor_bytes;
-                let total = root_proof_size + suffix_cost;
-                if total < best_cost {
-                    best_cost = total;
-                    best_steps = vec![
-                        Step::Fold(FoldStep {
-                            params: candidate_params.clone(),
-                            current_w_len: witness_len,
-                            next_w_len: next_w_len_terminal,
-                            level_bytes: root_proof_size,
-                        }),
-                        Step::Direct(direct_step),
-                    ];
+                )? {
+                    let root_proof_size = level_proof_bytes(
+                        field_bits,
+                        field_bits * policy.chal_ext_degree as u32,
+                        &candidate_params,
+                        None,
+                        next_w_len_terminal,
+                        1,
+                        MRowLayout::WithoutDBlock,
+                    ) + eor_bytes;
+                    let total = root_proof_size + suffix_cost;
+                    if total < best_cost {
+                        best_cost = total;
+                        best_steps = vec![
+                            Step::Fold(FoldStep {
+                                params: candidate_params.clone(),
+                                current_w_len: witness_len,
+                                next_w_len: next_w_len_terminal,
+                                level_bytes: root_proof_size,
+                            }),
+                            Step::Direct(direct_step),
+                        ];
+                    }
                 }
             }
             // Branch B: suffix at level 1 is a Fold
@@ -1086,19 +1288,29 @@ fn find_schedule_inner(
 #[cfg(test)]
 mod tiering_tests {
     use super::*;
-    use akita_types::sis::{min_secure_rank, AjtaiKeyParams, SisModulusFamily};
+    use akita_types::sis::{
+        min_secure_rank, AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
+    };
 
     const D: usize = 64;
     const FAMILY: SisModulusFamily = SisModulusFamily::Q128;
     const LOG_BASIS: u32 = 3;
     const DELTA_OPEN: usize = 43;
 
-    fn tiered_collision() -> u128 {
-        rounded_up_collision_norm_tiered_commitment(FAMILY, D, LOG_BASIS).unwrap()
+    fn tiered_linf_bound() -> u128 {
+        rounded_up_collision_linf_tiered_commitment(DEFAULT_SIS_SECURITY_BITS, FAMILY, D, LOG_BASIS)
+            .unwrap()
     }
 
     fn b_key(n_b: usize, width: usize) -> AjtaiKeyParams {
-        AjtaiKeyParams::new_unchecked(FAMILY, n_b, width, tiered_collision(), D)
+        AjtaiKeyParams::new_unchecked(
+            DEFAULT_SIS_SECURITY_BITS,
+            FAMILY,
+            n_b,
+            width,
+            tiered_linf_bound(),
+            D,
+        )
     }
 
     #[test]
@@ -1128,16 +1340,25 @@ mod tiering_tests {
         assert_eq!(out_b.col_len(), width_t / f);
         // F width = f · n_b' · δ_open, same collision bucket as B.
         assert_eq!(fk.col_len(), f * out_b.row_len() * DELTA_OPEN);
-        let norm = tiered_collision();
-        assert_eq!(out_b.collision_l2_sq(), norm);
-        assert_eq!(fk.collision_l2_sq(), norm);
+        let norm = tiered_linf_bound();
+        assert_eq!(out_b.coeff_linf_bound(), norm);
+        assert_eq!(fk.coeff_linf_bound(), norm);
         // Minimality: no smaller divisor of width_t (in 2..f) makes B' fit under A.
         for smaller in 2..f {
             if !width_t.is_multiple_of(smaller) {
                 continue;
             }
             let w = width_t / smaller;
-            let n = min_secure_rank(FAMILY, D as u32, norm, w as u64).unwrap();
+            let n = min_secure_rank(
+                SisTableKey {
+                    min_security_bits: DEFAULT_SIS_SECURITY_BITS,
+                    family: FAMILY,
+                    ring_dimension: D as u32,
+                    coeff_linf_bound: norm,
+                },
+                w as u64,
+            )
+            .unwrap();
             assert!(
                 n * w > a_matrix_size,
                 "split f={smaller} should not fit under A"

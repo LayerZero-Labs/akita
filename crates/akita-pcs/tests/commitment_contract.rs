@@ -1,10 +1,10 @@
 //! Contract test for downstream-style custom root commit sources.
 //!
-//! Proves that `commit_with_params` accepts a polynomial type that is not one
-//! of Akita's built-in root representations, with only [`RootCommitSource`] on
-//! `P` and a downstream-owned backend implementing [`RootCommitKernel`] for a
-//! local commit view (orphan-rule-safe: the backend type is local to this test
-//! crate).
+//! Proves that `batched_commit_with_params` accepts a polynomial type that is
+//! not one of Akita's built-in root representations, with only
+//! [`RootCommitSource`] on `P` and a downstream-owned backend implementing
+//! [`RootCommitKernel`] for a local commit view (orphan-rule-safe: the backend
+//! type is local to this test crate).
 
 #![allow(missing_docs)]
 
@@ -229,6 +229,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
     let len = 1usize << NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
+    assert_commit_source_only(&contract);
     let dense = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense oracle");
     let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");

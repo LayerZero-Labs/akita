@@ -7,13 +7,11 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{
-    AkitaProverSetup, DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch,
-};
+use akita_prover::{DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, Commitment,
-    CommitmentGroup, PointVariableSelection, SetupContributionMode, VerifierOpeningBatch,
+    AkitaCommitmentHint, BasisMode, Commitment, CommitmentGroup, PointVariableSelection,
+    SetupContributionMode, VerifierOpeningBatch,
 };
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};

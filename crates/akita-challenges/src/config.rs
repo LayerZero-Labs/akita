@@ -138,6 +138,22 @@ impl SparseChallengeConfig {
         }
     }
 
+    /// Worst-case number of non-zero coefficients in one sampled challenge.
+    ///
+    /// This is the support-size factor used by tensor fold-grind tail bounds.
+    #[inline]
+    #[must_use]
+    pub fn nonzero_count_max(&self) -> usize {
+        match self {
+            Self::Uniform { weight, .. } => *weight,
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+            } => count_mag1.saturating_add(*count_mag2),
+            Self::BoundedL1Norm => MAX_L1_NORM_32,
+        }
+    }
+
     /// Worst-case `L_infinity` norm of the sampled coefficients.
     #[inline]
     pub fn infinity_norm(&self) -> u32 {
@@ -364,18 +380,21 @@ mod entropy_tests {
         };
         assert_eq!(shell.l1_norm(), 51);
         assert_eq!(shell.challenge_l2_sq_max(), 71);
+        assert_eq!(shell.nonzero_count_max(), 41);
 
         let uni128 = SparseChallengeConfig::Uniform {
             weight: 31,
             nonzero_coeffs: vec![-1, 1],
         };
         assert_eq!(uni128.challenge_l2_sq_max(), 31);
+        assert_eq!(uni128.nonzero_count_max(), 31);
 
         let uni256 = SparseChallengeConfig::Uniform {
             weight: 23,
             nonzero_coeffs: vec![-1, 1],
         };
         assert_eq!(uni256.challenge_l2_sq_max(), 23);
+        assert_eq!(uni256.nonzero_count_max(), 23);
 
         let bounded = SparseChallengeConfig::BoundedL1Norm;
         assert_eq!(bounded.challenge_l2_sq_max(), 8 * 121);

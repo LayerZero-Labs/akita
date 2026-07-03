@@ -5,7 +5,6 @@ use crate::compute::{
     LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
     RuntimeRootProvePoly, UniformProverStack,
 };
-use crate::CommittedGroupHandle;
 use crate::ProverOpeningBatch;
 use crate::ProverTranscriptGrind;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -14,7 +13,7 @@ use akita_field::{
     RandomSampling,
 };
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
+use akita_types::{BasisMode, CommitmentGroupScheduleKey, FpExtEncoding, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -106,21 +105,23 @@ where
         P: RuntimeRootCommitPoly<F>,
         B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
 
-    /// Commit one standalone one-hot commitment group with conservative B rank.
+    /// Commit the final polynomial bundle for a grouped root commitment.
     ///
-    /// The returned metadata freezes the group layout for a later grouped final
-    /// plan. Grouped opening proofs remain unsupported until the next rollout
-    /// phase.
+    /// `precommitteds` contains schedule keys for prior commitment groups in
+    /// transcript order. The implementation derives the final group shape from
+    /// `polys`, freezes precommitted layouts, and resolves the grouped root
+    /// commitment layout internally.
     ///
     /// # Errors
     ///
-    /// Returns an error if the group is empty, dense, exceeds setup capacity, or
-    /// cannot be conservatively planned.
-    fn commit_group<P, B>(
+    /// Returns an error if input validation, grouped layout selection, or
+    /// commitment execution fails.
+    fn commit_final_group<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
-    ) -> Result<CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
+        precommitteds: Vec<CommitmentGroupScheduleKey>,
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,

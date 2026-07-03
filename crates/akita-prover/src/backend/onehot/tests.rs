@@ -1,5 +1,8 @@
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
+use crate::backend::test_support::{
+    aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
+};
 use crate::compute::RootPolyMeta;
 use crate::DensePoly;
 use akita_field::RandomSampling;
@@ -7,36 +10,6 @@ use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset
 use akita_types::FlatMatrix;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-
-fn aggregate_witnesses<F: FieldCore, const D: usize>(
-    witnesses: &[DecomposeFoldWitness<F>],
-) -> DecomposeFoldWitness<F> {
-    let mut z_folded_rings = witnesses[0].z_folded_rings_trusted::<D>().to_vec();
-    let mut centered_coeffs = witnesses[0].centered_coeffs_owned::<D>();
-    for witness in &witnesses[1..] {
-        for (dst, src) in z_folded_rings
-            .iter_mut()
-            .zip(witness.z_folded_rings_trusted::<D>())
-        {
-            *dst += *src;
-        }
-        for (dst, src) in centered_coeffs
-            .iter_mut()
-            .zip(witness.centered_coeffs_trusted::<D>())
-        {
-            for k in 0..D {
-                dst[k] += src[k];
-            }
-        }
-    }
-    let centered_inf_norm = centered_coeffs
-        .iter()
-        .flat_map(|coeffs| coeffs.iter())
-        .map(|coeff| coeff.unsigned_abs())
-        .max()
-        .unwrap_or(0);
-    DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
-}
 
 fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, I>) -> DensePoly<F>
 where
@@ -847,6 +820,144 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     let got =
         OneHotPoly::<F>::decompose_fold_batched::<D>(&poly_refs, &challenges, block_len, 1, 0)
             .expect("onehot batched path should apply");
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn single_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_reference() {
+    type F = Prime24Offset3;
+    const D: usize = 8;
+
+    let block_len = 2;
+    let num_digits = 1;
+    let tensor = tensor_oracle_challenges::<D>();
+    let polys = [
+        OneHotPoly::<F, usize>::new(
+            8,
+            D,
+            vec![
+                Some(1usize),
+                None,
+                Some(3usize),
+                Some(7usize),
+                None,
+                Some(2usize),
+                Some(6usize),
+                None,
+            ],
+        )
+        .unwrap(),
+        OneHotPoly::<F, usize>::new(
+            8,
+            D,
+            vec![
+                None,
+                Some(0usize),
+                Some(5usize),
+                None,
+                Some(4usize),
+                Some(7usize),
+                None,
+                Some(1usize),
+            ],
+        )
+        .unwrap(),
+    ];
+    let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
+
+    let expected = aggregate_witnesses::<F, D>(
+        &polys
+            .iter()
+            .zip(product_challenges.chunks(4))
+            .map(|(poly, challenges)| {
+                poly.decompose_fold::<D>(challenges, block_len, num_digits, 0)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let got = OneHotPoly::<F>::decompose_fold_tensor_batched::<D>(
+        &poly_refs, &tensor, block_len, num_digits, 0,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn multi_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_reference() {
+    type F = Prime24Offset3;
+    const D: usize = 8;
+
+    let block_len = 2;
+    let num_digits = 1;
+    let tensor = tensor_oracle_challenges::<D>();
+    let polys = [
+        OneHotPoly::<F, usize>::new(
+            4,
+            D,
+            vec![
+                Some(1usize),
+                None,
+                Some(3usize),
+                Some(0usize),
+                None,
+                Some(2usize),
+                Some(1usize),
+                None,
+                Some(0usize),
+                Some(3usize),
+                None,
+                Some(2usize),
+                Some(1usize),
+                None,
+                Some(3usize),
+                Some(0usize),
+            ],
+        )
+        .unwrap(),
+        OneHotPoly::<F, usize>::new(
+            4,
+            D,
+            vec![
+                None,
+                Some(0usize),
+                Some(2usize),
+                None,
+                Some(1usize),
+                Some(3usize),
+                None,
+                Some(2usize),
+                Some(0usize),
+                None,
+                Some(1usize),
+                Some(3usize),
+                None,
+                Some(2usize),
+                Some(0usize),
+                None,
+            ],
+        )
+        .unwrap(),
+    ];
+    let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
+
+    let expected = aggregate_witnesses::<F, D>(
+        &polys
+            .iter()
+            .zip(product_challenges.chunks(4))
+            .map(|(poly, challenges)| {
+                poly.decompose_fold::<D>(challenges, block_len, num_digits, 0)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let got = OneHotPoly::<F>::decompose_fold_tensor_batched::<D>(
+        &poly_refs, &tensor, block_len, num_digits, 0,
+    )
+    .unwrap()
+    .unwrap();
 
     assert_eq!(got, expected);
 }

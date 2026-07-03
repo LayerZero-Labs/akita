@@ -20,10 +20,25 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
-) -> Result<(RingRelationSegmentLayout, akita_types::TraceWeightLayout), AkitaError> {
-    let segment = instance.segment_layout(lp)?;
-    let layout =
-        trace_weight_layout_from_segment(lp, &segment, col_bits, ring_bits, num_trace_blocks)?;
+) -> Result<
+    (
+        akita_types::WitnessChunkLayout,
+        akita_types::TraceWeightLayout,
+    ),
+    AkitaError,
+> {
+    let witness_layout = instance.segment_layout(lp, None)?;
+    let segment = *witness_layout
+        .chunks
+        .first()
+        .ok_or_else(|| AkitaError::InvalidSetup("empty witness layout".to_string()))?;
+    let layout = trace_weight_layout_from_segment(
+        lp,
+        &witness_layout,
+        col_bits,
+        ring_bits,
+        num_trace_blocks,
+    )?;
     Ok((segment, layout))
 }
 

@@ -425,6 +425,34 @@ mod tests {
         F::from_canonical_u128(value)
     }
 
+    fn single_chunk_layout(
+        num_blocks: usize,
+        offset_z: usize,
+        z_len: usize,
+        offset_e: usize,
+        offset_t: usize,
+        offset_r: usize,
+    ) -> crate::WitnessLayout {
+        crate::WitnessLayout {
+            blocks_per_chunk: num_blocks,
+            chunks: vec![crate::WitnessChunkLayout {
+                offset_z,
+                offset_e,
+                offset_t,
+                offset_u: None,
+                offset_r: Some(offset_r),
+                global_block_base: 0,
+            }],
+            chunk_lengths: vec![crate::WitnessChunkLengths {
+                z_len,
+                e_len: 0,
+                t_len: 0,
+                u_len: None,
+                r_len: Some(0),
+            }],
+        }
+    }
+
     #[test]
     fn compute_setup_layout_matches_prepare_required() {
         let block_len = 12;
@@ -460,18 +488,14 @@ mod tests {
         };
         let shape = SetupRelationShape::from(&inputs);
         let layout = compute_setup_layout(&shape).expect("layout");
+        let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
         let plan = SetupContributionPlan::prepare::<F>(
             &inputs,
             &full_vec_randomness,
             None,
             None,
             &fold_gadget,
-            0,
-            64,
-            offset_z,
-            0,
-            None,
-            None,
+            &chunk_layout,
         )
         .expect("plan");
         assert_eq!(layout.required, plan.required());
@@ -528,18 +552,14 @@ mod tests {
             tier_split: 1,
             n_f: 0,
         };
+        let chunk_layout = single_chunk_layout(4, 0, z_range, 0, 64, 0);
         let plan_a = SetupContributionPlan::prepare::<F>(
             &inputs_a,
             &[test_scalar(99), test_scalar(100)],
             None,
             None,
             &fold_gadget,
-            0,
-            64,
-            0,
-            0,
-            None,
-            None,
+            &chunk_layout,
         )
         .expect("plan a");
         inputs_a.eq_tau1 = vec![test_scalar(1); 8];
@@ -549,12 +569,7 @@ mod tests {
             None,
             None,
             &fold_gadget,
-            0,
-            64,
-            0,
-            0,
-            None,
-            None,
+            &chunk_layout,
         )
         .expect("plan b");
         assert_eq!(required, plan_a.required());

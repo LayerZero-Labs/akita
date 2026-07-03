@@ -183,6 +183,7 @@ fn fold_recursive_handle_tamper_rejected() {
     });
 }
 
+#[allow(dead_code)]
 fn assert_invalid_proof<T: core::fmt::Debug>(label: &str, result: Result<T, AkitaError>) {
     match result {
         Err(AkitaError::InvalidProof) => {}

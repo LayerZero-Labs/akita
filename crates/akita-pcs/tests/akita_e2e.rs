@@ -388,6 +388,113 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
     );
 }
 
+/// End-to-end chunked prove→verify: the multi-chunk preset stamps
+/// `num_chunks = 8` on the two leading fold levels (NV=16 ⇒ 64 blocks each).
+/// The single prover assembles the modified `[zᵢ|eᵢ|t̂ᵢ]…|r̂` relation and the
+/// verifier evaluates the chunked row-MLE; the proof must verify.
+#[test]
+fn chunked_multi_chunk_prove_verify() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::D64FullMultiChunk;
+        const D: usize = Cfg::D;
+        const NV: usize = 16;
+
+        // Confirm the schedule actually activates chunking on the leading folds.
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            CommitmentGroupScheduleKey::singleton(NV),
+        ))
+        .expect("multi-chunk schedule");
+        let chunked_levels = plan
+            .steps
+            .iter()
+            .filter(|s| {
+                matches!(s, akita_types::Step::Fold(f) if f.params.witness_chunk.num_chunks > 1)
+            })
+            .count();
+        assert!(
+            chunked_levels >= 1,
+            "multi-chunk preset must produce at least one chunked fold level"
+        );
+
+        let layout = singleton_layout::<Cfg>(NV);
+        let mut rng = StdRng::seed_from_u64(0x6b1d_c0de);
+        let evals: Vec<F> = (0..1usize << NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).unwrap();
+        let pt = random_point::<F>(NV);
+        let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .unwrap();
+
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
+        let hints = vec![hint];
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_chunked_e2e");
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+            &setup,
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitment,
+                hints.into_iter().next().unwrap(),
+            ),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .unwrap();
+
+        let proof_bytes = proof.size();
+        assert!(proof_bytes > 0, "chunked proof must be non-empty");
+        assert_eq!(
+            batched_total_fold_levels(&proof),
+            plan.num_fold_levels(),
+            "chunked proof level count must match the schedule"
+        );
+
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_chunked_e2e");
+        let openings = [expected_opening];
+        let verify_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert!(
+            verify_result.is_ok(),
+            "chunked verification must pass: {:?}",
+            verify_result.err()
+        );
+
+        tracing::info!(
+            chunked_levels,
+            proof_bytes,
+            plan_total_bytes = plan.total_bytes,
+            "chunked-d64/nv16 e2e"
+        );
+    });
+}
+
 #[test]
 fn full_d64_prove_verify() {
     init_rayon_pool();

@@ -1,7 +1,8 @@
 //! Fold-l∞ Fiat–Shamir grind: preview off-sponge clones, commit the winning nonce.
 
-use crate::compute::{RootOpeningSource, RuntimeOpeningProveBackendFor};
-use crate::DecomposeFoldWitness;
+use crate::compute::{
+    OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
+};
 use akita_challenges::{
     grind_probe_permutation, preview_folding_challenges, sample_folding_challenges,
     stage1_fold_challenge_labels, Challenges,
@@ -16,7 +17,11 @@ use akita_types::{
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
-use super::ring_relation::{build_point_decompose_fold_witness, PointFoldShape};
+use super::ring_relation::{
+    aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
+    window_sparse_challenges, PointFoldShape,
+};
+use crate::DecomposeFoldWitness;
 
 /// Preview-only transcript access for prover-side fold grinding.
 ///
@@ -87,9 +92,7 @@ fn grind_probe_nonces(
     let cap = contract.max_nonce_exclusive;
     match binding.grind_probe_order {
         FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN => Ok((0..cap).collect()),
-        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE
-            if contract.policy == FoldWitnessLinfCapPolicy::TailBoundWithGrind =>
-        {
+        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE if contract.policy.allows_grind() => {
             let absorb_buf = lp.fold_grind_probe_order_absorb_buf(num_claims);
             let seed = transcript.preview_challenge_bytes_after_absorb(&absorb_buf, 32);
             Ok(grind_probe_permutation(&seed, cap))
@@ -101,6 +104,68 @@ fn grind_probe_nonces(
     }
 }
 
+/// One fold probe: returns the global folded witness and the per-window centered
+/// responses `z_i` under the given (preview) challenges.
+///
+/// For `num_chunks <= 1` this is the legacy single global fold and the sole
+/// window equals the global centered response (byte-identical to the
+/// pre-chunking path). For `num_chunks > 1` the fold is computed per block
+/// window (`window_sparse_challenges`) and the global witness is the exact
+/// coefficient-wise sum of the windows (`Σ_i z_i = z`), so grind acceptance on
+/// the global L∞ is identical to a standalone global fold over all blocks.
+#[allow(clippy::type_complexity)]
+fn fold_probe_witness<F, P, B, const D: usize>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup>,
+    challenges: &Challenges,
+    polys: &[&P],
+    point_indices: &[usize],
+    lp: &LevelParams,
+) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    P: RootOpeningSource<F, D>,
+    B: crate::compute::ComputeBackendSetup<F>
+        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+{
+    let shape = PointFoldShape::from_level(lp);
+    let num_chunks = lp.witness_chunk.num_chunks;
+    if num_chunks <= 1 {
+        let witness = build_point_decompose_fold_witness::<F, P, B, D>(
+            backend,
+            prepared,
+            challenges,
+            polys,
+            point_indices,
+            shape,
+        )?;
+        let per_chunk = vec![witness.centered_coeffs_owned::<D>()];
+        return Ok((witness, per_chunk));
+    }
+
+    let blocks_per_chunk = lp.num_blocks / num_chunks;
+    let windows = (0..num_chunks)
+        .map(|chunk| {
+            let windowed = window_sparse_challenges(challenges, chunk, blocks_per_chunk)?;
+            build_point_decompose_fold_witness::<F, P, B, D>(
+                backend,
+                prepared,
+                &windowed,
+                polys,
+                point_indices,
+                shape,
+            )
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let per_chunk = windows
+        .iter()
+        .map(|w| w.centered_coeffs_owned::<D>())
+        .collect();
+    let global = aggregate_decompose_fold_witnesses::<F, D>(windows)?;
+    Ok((global, per_chunk))
+}
+
 /// Probe fold challenges off-sponge, accept the first witness under `t*`, then commit.
 ///
 /// Plain presets probe `nonce = 0, 1, …` (minimum accepting nonce). ZK presets
@@ -110,6 +175,7 @@ fn grind_probe_nonces(
 /// When `tail_t_vectors` is set, presets reject witnesses whose centered coefficients do not
 /// fit the terminal Golomb planner budget at wire low bits (including `WorstCaseBetaOnly`
 /// presets that do not reroll on linf cap).
+#[allow(clippy::type_complexity)]
 pub(crate) fn sample_fold_decompose_witness<F, P, B, T>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
@@ -118,7 +184,7 @@ pub(crate) fn sample_fold_decompose_witness<F, P, B, T>(
     lp: &LevelParams,
     num_claims: usize,
     tail_t_vectors: Option<usize>,
-) -> Result<(DecomposeFoldWitness<F>, Challenges, u32), AkitaError>
+) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -138,7 +204,6 @@ where
     let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
     let labels = stage1_fold_challenge_labels();
-    let point_fold_shape = PointFoldShape::from_level(lp);
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
 
     let mut grind_probe_count = 0u32;
@@ -154,18 +219,22 @@ where
             labels,
             nonce,
         )?;
-        // A-role point-fold kernel entry: dispatch per grind attempt on the
-        // schedule-derived fold dimension (4-way match, negligible cost).
-        let witness = akita_types::dispatch_ring_dim_result!(ring_d, |D| {
-            build_point_decompose_fold_witness::<F, P, B, D>(
-                backend,
-                prepared,
-                &challenges,
-                polys,
-                &point_indices,
-                point_fold_shape,
-            )
-        })?;
+        let (witness, z_folded_centered_per_chunk) =
+            akita_types::dispatch_ring_dim_result!(ring_d, |D| {
+                let (witness, z_per_chunk) = fold_probe_witness::<F, P, B, D>(
+                    backend,
+                    prepared,
+                    &challenges,
+                    polys,
+                    &point_indices,
+                    lp,
+                )?;
+                let z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>> = z_per_chunk
+                    .into_iter()
+                    .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
+                    .collect();
+                Ok((witness, z_folded_centered_per_chunk))
+            })?;
         if !accepts_fold_witness::<F>(
             &contract,
             &witness,
@@ -186,7 +255,7 @@ where
             labels,
             nonce,
         )?;
-        return Ok((witness, challenges, nonce));
+        return Ok((witness, z_folded_centered_per_chunk, challenges, nonce));
     }
 
     Err(AkitaError::InvalidInput(format!(

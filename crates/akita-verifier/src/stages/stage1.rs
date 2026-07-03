@@ -281,27 +281,23 @@ mod fold_grind_nonce_tests {
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
     use akita_types::{FoldLinfProtocolBinding, SisModulusFamily};
 
-    fn sample_level_params(fold_shape: TensorChallengeShape) -> LevelParams {
-        LevelParams::params_only(
-            SisModulusFamily::Q128,
-            64,
-            3,
-            2,
-            4,
-            3,
-            SparseChallengeConfig::ExactShell {
-                count_mag1: 30,
-                count_mag2: 12,
-            },
-        )
-        .with_decomp(4, 2, 2, 2, 0)
-        .expect("level params")
-        .with_fold_challenge_shape(fold_shape)
+    fn sample_level_params(
+        stage1_config: SparseChallengeConfig,
+        fold_shape: TensorChallengeShape,
+    ) -> LevelParams {
+        LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 2, 4, 3, stage1_config)
+            .with_decomp(4, 2, 2, 2, 0)
+            .expect("level params")
+            .with_fold_challenge_shape(fold_shape)
+            .expect("fold challenge shape")
     }
 
     #[test]
     fn worst_case_beta_only_rejects_nonzero_nonce() {
-        let lp = sample_level_params(TensorChallengeShape::Tensor);
+        let lp = sample_level_params(
+            SparseChallengeConfig::BoundedL1Norm,
+            TensorChallengeShape::Tensor,
+        );
         let contract = lp
             .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
             .expect("contract");
@@ -315,13 +311,41 @@ mod fold_grind_nonce_tests {
 
     #[test]
     fn tail_bound_with_grind_accepts_nonce_below_cap() {
-        let lp = sample_level_params(TensorChallengeShape::Flat);
+        let lp = sample_level_params(
+            SparseChallengeConfig::ExactShell {
+                count_mag1: 30,
+                count_mag2: 12,
+            },
+            TensorChallengeShape::Flat,
+        );
         let contract = lp
             .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
             .expect("contract");
         assert_eq!(
             contract.policy,
             akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        );
+        let cap = contract.max_nonce_exclusive;
+        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
+        assert!(validate_fold_grind_nonce(&contract, cap - 1).is_ok());
+        assert!(validate_fold_grind_nonce(&contract, cap).is_err());
+    }
+
+    #[test]
+    fn tensor_tail_bound_with_grind_accepts_nonce_below_cap() {
+        let lp = sample_level_params(
+            SparseChallengeConfig::ExactShell {
+                count_mag1: 30,
+                count_mag2: 12,
+            },
+            TensorChallengeShape::Tensor,
+        );
+        let contract = lp
+            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
+            .expect("contract");
+        assert_eq!(
+            contract.policy,
+            akita_types::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
         );
         let cap = contract.max_nonce_exclusive;
         assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
