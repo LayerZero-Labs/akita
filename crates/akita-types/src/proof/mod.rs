@@ -28,10 +28,10 @@ mod tests;
 mod wire;
 
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout, GROUPED_ROOT_DENSE_UNSUPPORTED,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED,
+    grouped_root_rejection, sample_public_row_coefficients, GroupedRootRejection, OpeningClaims,
+    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,

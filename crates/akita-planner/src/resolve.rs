@@ -15,7 +15,7 @@ use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{table_entry, GeneratedScheduleTable, GeneratedScheduleTableEntry};
 use crate::schedule_params::validate_policy_witness_chunk;
 use crate::PlannerPolicy;
-use crate::{find_group_batch_schedule, find_schedule};
+use crate::find_group_batch_schedule;
 
 /// Resolve the runtime [`Schedule`] using an explicit optional catalog.
 pub fn resolve_schedule(
@@ -25,38 +25,12 @@ pub fn resolve_schedule(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
-    key.validate()?;
-    AkitaScheduleLookupKey::single(key).validate()?;
-    validate_policy_witness_chunk(policy)?;
-    let Some(table) = catalog else {
-        return find_schedule(
-            key,
-            policy,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-        );
-    };
-    validate_catalog_identity(
-        &table,
-        policy,
-        &ring_challenge_config,
-        &fold_challenge_shape_at_level,
-    )?;
-    let lookup_key = AkitaScheduleLookupKey::single(key);
-    if let Some(entry) = table_entry(table, &lookup_key) {
-        return schedule_from_entry(
-            entry,
-            &lookup_key,
-            policy,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-        );
-    }
-    find_schedule(
-        key,
+    resolve_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(key),
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,
+        catalog,
     )
 }
 

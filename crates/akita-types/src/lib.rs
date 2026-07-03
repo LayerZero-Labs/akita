@@ -102,14 +102,14 @@ pub use proof::{
     SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
     SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape,
-    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, GROUPED_ROOT_DENSE_UNSUPPORTED,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, GroupedRootRejection,
+    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE, grouped_root_rejection,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
-    detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
+    detect_field_modulus, grouped_root_commit_params, r_decomp_levels, root_current_w_len, root_direct_schedule,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
     schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,

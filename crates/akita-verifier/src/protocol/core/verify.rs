@@ -13,12 +13,11 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, OpeningClaims, OpeningClaimsLayout, RingCommitment, Schedule,
-    SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED,
+    folded_root_supports_opening_shape, grouped_root_rejection, root_direct_schedule,
+    root_tensor_projection_enabled, schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
+    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingCommitment, Schedule,
+    SetupContributionMode, Step,
 };
 use std::array::from_fn;
 
@@ -31,12 +30,13 @@ where
     if D == 0 || !D.is_power_of_two() || !evals.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }
+    if !evals.len().is_multiple_of(D) {
+        return Err(AkitaError::InvalidProof);
+    }
     Ok(evals
         .chunks(D)
         .map(|chunk| {
-            CyclotomicRing::from_coefficients(from_fn(|idx| {
-                chunk.get(idx).copied().unwrap_or_else(F::zero)
-            }))
+            CyclotomicRing::from_coefficients(from_fn(|idx| chunk[idx]))
         })
         .collect())
 }
@@ -102,21 +102,14 @@ fn reject_unsupported_grouped_root<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    if opening_batch.num_groups() <= 1 {
-        return Ok(());
-    }
-    if Cfg::TIERED_COMMITMENT {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
-        ));
-    }
-    if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
-        ));
-    }
-    // Unsupported grouped claims: `InvalidProof` (unit variant). See `GROUPED_ROOT_UNSUPPORTED`.
-    Err(AkitaError::InvalidProof)
+    grouped_root_rejection(
+        opening_batch,
+        Cfg::TIERED_COMMITMENT,
+        setup_contribution_mode,
+        None,
+    )
+    .map(|reason| reason.into_verifier_error())
+    .map_or(Ok(()), Err)
 }
 
 fn validate_root_direct_recommitment_shape<F, const D: usize>(
@@ -345,7 +338,7 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let opening_batch = claims.layout();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     validate_root_direct_recommitment_shape::<F, D>(
         witnesses,
         setup.expanded.seed(),
@@ -422,7 +415,7 @@ where
     claims
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
-    let opening_batch = claims.layout();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg, D>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;

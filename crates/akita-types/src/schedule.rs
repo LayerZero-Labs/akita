@@ -229,6 +229,11 @@ impl AkitaScheduleLookupKey {
         }
         for layout in &self.precommitteds {
             layout.validate()?;
+            if layout.group.num_vars() == 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "schedule lookup key dimensions must be at least 1".to_string(),
+                ));
+            }
             if layout.group.num_vars() > self.final_group.num_vars() / 2 {
                 return Err(AkitaError::InvalidInput(
                     "grouped root requires precommitted groups to have at most half the final num_vars"
@@ -663,6 +668,21 @@ pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
     match schedule.steps.first() {
         Some(Step::Fold(step)) => Some(step),
         Some(Step::Direct(_)) | None => None,
+    }
+}
+
+/// Root commit layout read from the first step of a grouped runtime schedule.
+pub fn grouped_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
+    match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+        Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "grouped root-direct schedule is missing commit params".to_string(),
+            )
+        }),
+        None => Err(AkitaError::InvalidSetup(
+            "grouped schedule has no steps".to_string(),
+        )),
     }
 }
 
