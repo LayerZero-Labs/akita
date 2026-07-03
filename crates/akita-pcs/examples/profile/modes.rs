@@ -15,7 +15,8 @@ use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup,
-    FpExtEncoding, LevelParams, MultiChunkProfileId, PolynomialGroupLayout, RingCommitment,
+    FlatRingVec, FpExtEncoding, LevelParams, MultiChunkProfileId, PolynomialGroupLayout,
+    RingCommitment,
 };
 use akita_verifier::CommitmentVerifier;
 

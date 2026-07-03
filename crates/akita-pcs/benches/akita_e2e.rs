@@ -10,8 +10,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{AkitaProverSetup, CommitmentProver, DensePoly, OneHotPoly, ProverOpeningData};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, OpeningClaims,
-    PointVariableSelection, PolynomialGroupClaims, RingCommitment, SetupContributionMode,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, FlatRingVec,
+    OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RingCommitment,
+    SetupContributionMode,
 };
 use akita_verifier::CommitmentVerifier;
 use criterion::measurement::WallTime;
@@ -48,7 +49,7 @@ fn random_point(nv: usize) -> Vec<F> {
 fn prover_claims<'a, P, CommitF: FieldCore, const D: usize>(
     point: &'a [F],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
+    commitment: &'a FlatRingVec<CommitF>,
     hint: AkitaCommitmentHint<CommitF, D>,
 ) -> ProverOpeningData<'a, F, P, CommitF, D> {
     let group = PolynomialGroupClaims::new(
@@ -109,7 +110,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             ProverSetup = AkitaProverSetup<F, D>,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
+            Commitment = FlatRingVec<F>,
             CommitHint = AkitaCommitmentHint<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
@@ -117,7 +118,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             D,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
+            Commitment = FlatRingVec<F>,
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
@@ -278,7 +279,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
             ProverSetup = AkitaProverSetup<F, D>,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
+            Commitment = FlatRingVec<F>,
             CommitHint = AkitaCommitmentHint<F, D>,
             BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
@@ -286,7 +287,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
             D,
             ExtField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
+            Commitment = FlatRingVec<F>,
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {

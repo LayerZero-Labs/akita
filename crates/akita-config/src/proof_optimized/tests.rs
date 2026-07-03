@@ -43,6 +43,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
             current_w_len: 1 << 8,
             next_w_len: 1 << 4,
             level_bytes: 0,
+            compression: Default::default(),
         }),
         Step::Direct(DirectStep {
             current_w_len: 1 << 4,
@@ -79,6 +80,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
             direct_bytes: 0,
             params: None,
         })],
+        root_compression: None,
         total_bytes: 0,
     };
 
@@ -138,6 +140,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
                     direct_bytes: 0,
                     params: None,
                 })],
+                root_compression: None,
                 total_bytes: 0,
             })
         }
@@ -205,6 +208,7 @@ fn setup_matrix_envelope_does_not_add_conservative_layout() {
                     direct_bytes: 0,
                     params: None,
                 })],
+                root_compression: None,
                 total_bytes: 0,
             })
         }

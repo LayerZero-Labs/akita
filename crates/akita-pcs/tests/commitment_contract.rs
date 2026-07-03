@@ -179,7 +179,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         )
         .expect("dense batched commit");
 
-    assert_eq!(contract_commitment.u, dense_commitment.u);
+    assert_eq!(contract_commitment, dense_commitment);
     assert_eq!(
         contract_hint.decomposed_inner_rows,
         dense_hint.decomposed_inner_rows

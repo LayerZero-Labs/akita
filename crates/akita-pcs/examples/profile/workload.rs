@@ -24,8 +24,9 @@ use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint,
     AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, CleartextWitnessShape,
-    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, RingCommitment, Schedule, SetupContributionMode, Step,
+    FlatRingVec, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, RingCommitment, Schedule, SetupContributionMode,
+    Step,
 };
 use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
@@ -37,7 +38,7 @@ pub(crate) const ONEHOT_K: usize = 256;
 fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore, const D: usize>(
     point: &'a [E],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
+    commitment: &'a FlatRingVec<CommitF>,
     hint: AkitaCommitmentHint<CommitF, D>,
 ) -> ProverOpeningData<'a, E, P, CommitF, D> {
     let group = PolynomialGroupClaims::new(
@@ -401,7 +402,7 @@ fn run_prove<
             ProverSetup = AkitaProverSetup<FF, D>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
@@ -409,7 +410,7 @@ fn run_prove<
             D,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
     FF: CanonicalField
@@ -556,7 +557,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             ProverSetup = AkitaProverSetup<FF, D>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
@@ -564,7 +565,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             D,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
     Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
@@ -660,7 +661,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             ProverSetup = AkitaProverSetup<FF, D>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
@@ -668,7 +669,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             D,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
     Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
@@ -763,7 +764,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             ProverSetup = AkitaProverSetup<FF, D>,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
             CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
@@ -771,7 +772,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             D,
             ExtField = Cfg::ExtField,
             VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
+            Commitment = FlatRingVec<FF>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
     Cfg::ExtField: FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,

@@ -36,7 +36,7 @@ fn conservative_config_commit_returns_frozen_layout() {
     );
     assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
     assert_eq!(frozen_layout.conservative_n_b, layout.b_key.row_len());
-    assert_eq!(commitment.u.len(), frozen_layout.conservative_n_b);
+    assert_eq!(commitment.count(), frozen_layout.conservative_n_b);
 }
 
 fn grouped_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
@@ -96,8 +96,8 @@ fn conservative_config_allows_independent_precommitted_groups() {
 
         assert_eq!(pre_a_frozen.group, pre_a_key);
         assert_eq!(pre_b_frozen.group, pre_b_key);
-        assert_eq!(pre_a_commitment.u.len(), pre_a_frozen.conservative_n_b);
-        assert_eq!(pre_b_commitment.u.len(), pre_b_frozen.conservative_n_b);
+        assert_eq!(pre_a_commitment.count(), pre_a_frozen.conservative_n_b);
+        assert_eq!(pre_b_commitment.count(), pre_b_frozen.conservative_n_b);
         assert_ne!(pre_a_frozen.group, pre_b_frozen.group);
     });
 }
@@ -205,9 +205,9 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
         )
         .expect("final grouped commitment");
 
-        assert_eq!(pre_a_commitment.u.len(), pre_a_frozen.conservative_n_b);
-        assert_eq!(pre_b_commitment.u.len(), pre_b_frozen.conservative_n_b);
-        assert_eq!(final_commitment.u.len(), main_params.b_key.row_len());
+        assert_eq!(pre_a_commitment.count(), pre_a_frozen.conservative_n_b);
+        assert_eq!(pre_b_commitment.count(), pre_b_frozen.conservative_n_b);
+        assert_eq!(final_commitment.count(), main_params.b_key.row_len());
         assert_eq!(final_hint.decomposed_inner_rows.len(), GROUP_SIZE);
         assert_eq!(
             final_polys[0].num_vars(),

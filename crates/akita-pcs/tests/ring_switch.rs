@@ -104,8 +104,8 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
     use akita_types::{
-        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, MRowLayout,
-        OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RingCommitment,
+        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, FlatRingVec,
+        MRowLayout, OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RingCommitment,
         RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
@@ -118,7 +118,7 @@ mod tests {
     fn prover_fold_claims<'a, F: FieldCore + Clone, P, const D: usize>(
         point: &'a [F],
         polynomials: &'a [&'a P],
-        commitment: &'a RingCommitment<F, D>,
+        commitment: &'a FlatRingVec<F>,
         hint: AkitaCommitmentHint<F, D>,
     ) -> ProverOpeningData<'a, F, P, F, D> {
         let group = PolynomialGroupClaims::new(
@@ -407,7 +407,7 @@ mod tests {
                 alpha,
                 lp.a_key.row_len(),
                 &instance.v,
-                &commitment.u,
+                commitment.as_ring_slice::<D>().expect("commitment rings"),
             )
             .expect("relation claim");
             assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
@@ -544,7 +544,7 @@ mod tests {
                 alpha,
                 lp.a_key.row_len(),
                 &instance.v,
-                &commitment.u,
+                commitment.as_ring_slice::<D>().expect("commitment rings"),
             )
             .unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
