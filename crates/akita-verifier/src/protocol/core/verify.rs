@@ -347,7 +347,7 @@ where
     // Validate the flat commitment shape against the schedule-derived ring
     // dimension before interpreting it. `RingView::new` enforces the
     // multiple-of-`ring_dim` invariant; no panic on malformed lengths.
-    let ring_dim = params.ring_dimension;
+    let ring_dim = params.role_dims().d_b();
     let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
     let geom = DirectRecommitGeometry::from_level(params, setup.expanded.seed());
     let recomputed_matches = dispatch_ring_dim_result!(ring_dim, |D| {
@@ -637,7 +637,7 @@ where
                 root_step.next_w_len,
             )?;
 
-            let first_level_d = first_recursive_params.ring_dimension;
+            let first_level_d = first_recursive_params.role_dims().d_b();
             if !root_stage2.next_w_commitment.can_decode_vec(first_level_d) {
                 return Err(AkitaError::InvalidProof);
             }

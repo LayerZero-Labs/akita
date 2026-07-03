@@ -319,7 +319,7 @@ where
         // against the scheduled root params under the schedule-derived ring
         // dimension via `RingView::new` (no-panic gate, mirrors the verifier's
         // commitment-length check) before interpreting it as ring rows.
-        let root_ring_dim = root_scheduled.params.ring_dimension;
+        let root_ring_dim = root_scheduled.params.role_dims().d_b();
         let expected_rows = root_scheduled.params.effective_commit_rows();
         let commitments = claims.commitments();
         for commitment in commitments {

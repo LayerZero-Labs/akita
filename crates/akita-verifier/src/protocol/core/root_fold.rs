@@ -56,7 +56,7 @@ where
     // dimension before interpreting it: `RingView::new` enforces the
     // multiple-of-`ring_dim` invariant (no panic), and the ring count must
     // equal the expected commitment-row count.
-    let ring_dim = root_lp.ring_dimension;
+    let ring_dim = root_lp.role_dims().d_b();
     let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
     if commitment_view.num_rings() != root_lp.effective_commit_rows() {
         return Err(AkitaError::InvalidProof);
@@ -254,7 +254,7 @@ where
         stage2,
         next_w_commitment,
         next_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
-            .then_some(next_fold_level_params.ring_dimension),
+            .then_some(next_fold_level_params.role_dims().d_b()),
         terminal_replay,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         trace_prepared_point: Some(prepared_point.clone()),

@@ -6,9 +6,10 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::mixed_d_per_level_schedule;
 use akita_field::AkitaError;
+use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
     validate_role_dispatch, CleartextWitnessShape, CommitmentRingDims, DirectStep, FoldStep,
-    LevelParams, RingDimPlan, RingRole, Schedule, Step, ValidatedScheduleContext,
+    LevelParams, RingDimPlan, RingRole, RingView, Schedule, Step, ValidatedScheduleContext,
 };
 
 type Envelope = fp128::D128Full;
@@ -75,6 +76,29 @@ fn validated_schedule_context_rejects_fold_dim_above_gen_ring_dim() {
     let err = ValidatedScheduleContext::new(&schedule, 64)
         .expect_err("gen_ring_dim=64 cannot host fold d_a=128");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
+}
+
+#[test]
+fn nested_role_dims_b_role_row_count_differs_from_a_role() {
+    let dims = CommitmentRingDims {
+        inner: 128,
+        outer: 64,
+        opening: 32,
+    };
+    assert!(dims.nests());
+    let coeffs = vec![F::zero(); 128];
+    assert_eq!(
+        RingView::new(&coeffs, dims.d_b())
+            .expect("valid at B-role d_b")
+            .num_rings(),
+        2
+    );
+    assert_eq!(
+        RingView::new(&coeffs, dims.d_a())
+            .expect("valid at A-role d_a")
+            .num_rings(),
+        1
+    );
 }
 
 #[test]

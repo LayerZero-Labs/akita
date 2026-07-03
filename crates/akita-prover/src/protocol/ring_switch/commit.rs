@@ -34,7 +34,7 @@ where
     Cfg::Field: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
-    let commit_d = commit_params.ring_dimension;
+    let commit_d = commit_params.role_dims().d_b();
     commit_ctx.ensure_envelope_ntt(expanded.as_ref(), commit_d)?;
     dispatch_ring_dim_result!(commit_d, |D| {
         let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
@@ -45,10 +45,9 @@ where
         let w = packed_witness.as_ref().unwrap_or(logical_w);
         let backend = commit_ctx.backend();
         let prepared = commit_ctx.prepared();
-        if commit_params.ring_dimension != D {
+        if commit_d != D {
             return Err(AkitaError::InvalidInput(format!(
-                "commit_w layout D={} does not match target D={D}",
-                commit_params.ring_dimension
+                "commit_w B-role d_b={commit_d} does not match target D={D}",
             )));
         }
         if !w.len().is_multiple_of(D) {

@@ -171,7 +171,7 @@ where
         stage1: stage1_proof,
         stage2,
         next_w_commitment,
-        next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.ring_dimension),
+        next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
         terminal_replay,
         stage3,
         trace_prepared_point: Some(prepared_point.clone()),
@@ -216,7 +216,9 @@ where
         let current_lp = &scheduled.params;
         let next_params = &scheduled.next_params;
         let next_w_len = scheduled.next_w_len;
-        let level_d = current_lp.ring_dimension;
+        let role_dims = current_lp.role_dims();
+        let commit_d = role_dims.d_b();
+        let witness_d = role_dims.d_a();
 
         match step {
             AkitaLevelProof::Intermediate { .. } => {
@@ -224,12 +226,12 @@ where
                 if scheduled.is_terminal {
                     return Err(AkitaError::InvalidProof);
                 }
-                if !current_state.commitment.can_decode_vec(level_d)
-                    || !level_proof.v().can_decode_vec(level_d)
+                if !current_state.commitment.can_decode_vec(commit_d)
+                    || !level_proof.v().can_decode_vec(witness_d)
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let commitment_view = RingView::new(current_state.commitment.coeffs(), level_d)?;
+                let commitment_view = RingView::new(current_state.commitment.coeffs(), commit_d)?;
                 if commitment_view.num_rings() != current_lp.effective_commit_rows() {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -246,9 +248,11 @@ where
                     verify_fold::<F, E, T>(setup, transcript, prepared)?
                 };
 
-                let next_level_d = next_params.ring_dimension;
-                if next_level_d == 0
-                    || !level_proof.next_w_commitment().can_decode_vec(next_level_d)
+                let next_commit_d = next_params.role_dims().d_b();
+                if next_commit_d == 0
+                    || !level_proof
+                        .next_w_commitment()
+                        .can_decode_vec(next_commit_d)
                 {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -270,7 +274,7 @@ where
                     )?
                 };
                 let computed_next_w_len =
-                    computed_next_w_ring.checked_mul(level_d).ok_or_else(|| {
+                    computed_next_w_ring.checked_mul(witness_d).ok_or_else(|| {
                         AkitaError::InvalidSetup("next witness length overflow".to_string())
                     })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
@@ -286,7 +290,7 @@ where
             }
             AkitaLevelProof::Terminal { .. } => {
                 let terminal_proof = step;
-                if !current_state.commitment.can_decode_vec(level_d) {
+                if !current_state.commitment.can_decode_vec(commit_d) {
                     return Err(AkitaError::InvalidProof);
                 }
                 if terminal_proof
