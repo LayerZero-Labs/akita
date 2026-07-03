@@ -108,13 +108,11 @@ where
 {
     if let Some(message) = should_reject_grouped_root(opening_batch, setup_contribution_mode, None)
     {
-        return Err(
-            if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
-                AkitaError::InvalidSetup(message.to_string())
-            } else {
-                AkitaError::InvalidProof
-            },
-        );
+        return Err(if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
+            AkitaError::InvalidSetup(message.to_string())
+        } else {
+            AkitaError::InvalidProof
+        });
     }
     Ok(())
 }
