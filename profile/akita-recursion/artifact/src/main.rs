@@ -21,7 +21,7 @@ use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    CommitmentProver, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
+    ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
     ProverOpeningData,
 };
 use akita_recursion_glue::AkitaJoltInputs;
