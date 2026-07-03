@@ -16,11 +16,11 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, Commitment,
-    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingVec, RingView, Schedule,
-    SetupContributionMode, Step, ValidatedScheduleContext,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup,
+    BasisMode, CleartextWitnessProof, Commitment, FpExtEncoding, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, RingVec, RingView, Schedule, SetupContributionMode, Step,
+    ValidatedScheduleContext, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
 

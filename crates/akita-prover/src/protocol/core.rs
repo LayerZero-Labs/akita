@@ -44,13 +44,13 @@ use akita_types::{
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
-    CleartextWitnessProof, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
-    LevelParams, MRowLayout, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    RingMultiplierOpeningPoint, RingVec, RingView, Schedule, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
+    trace_weight_layout_from_segment, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
+    AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder, CleartextWitnessProof, Commitment,
+    ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, MRowLayout, OpeningClaims,
+    OpeningClaimsLayout, PreparedOpeningPoint, RingMultiplierOpeningPoint, RingVec, RingView,
+    Schedule, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step,
+    TerminalLevelProof, TraceTable,
 };
 use std::sync::Arc;
 

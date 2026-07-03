@@ -5,7 +5,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AkitaCommitmentHint,
     Commitment, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PolynomialGroupLayout, RingVec,
+    RingVec,
 };
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.

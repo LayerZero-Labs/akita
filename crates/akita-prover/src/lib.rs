@@ -14,11 +14,7 @@ mod validation;
 
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{
-    padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, Commitment,
-    DigitBlocks, OpeningClaimsLayout, OpeningPoints, PointVariableSelection, PolynomialGroupLayout,
-    RingVec,
-};
+use akita_types::{DigitBlocks, RingVec};
 
 pub use api::{
     batched_commit, batched_commit_with_params, commit, commit_final_group, commit_group,
