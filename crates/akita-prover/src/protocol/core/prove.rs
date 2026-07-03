@@ -14,13 +14,12 @@ use akita_types::{
     GROUPED_ROOT_UNSUPPORTED,
 };
 
-fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
+fn reject_unsupported_grouped_root<F, P, const D: usize>(
     opening_batch: &OpeningClaimsLayout,
     polys: &[&P],
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
-    Cfg: CommitmentConfig,
     F: FieldCore,
     P: RootPolyShape<F, D>,
 {
@@ -144,7 +143,7 @@ where
     opening_claims.validate(expanded.seed())?;
     let opening_batch = opening_claims.layout();
     let flat_polys = claims.flat_polys();
-    reject_unsupported_grouped_root::<Cfg, Cfg::Field, P, D>(
+    reject_unsupported_grouped_root::<Cfg::Field, P, D>(
         &opening_batch,
         &flat_polys,
         setup_contribution_mode,
