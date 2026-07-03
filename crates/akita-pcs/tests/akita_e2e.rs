@@ -14,7 +14,7 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::{CommitmentProver, ProverOpeningData};
+use akita_prover::ProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
