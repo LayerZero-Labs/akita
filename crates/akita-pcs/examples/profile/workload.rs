@@ -15,18 +15,17 @@ use akita_prover::compute::{
     RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
 use akita_prover::{
-    AkitaProverSetup, CommitmentProver, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
-    ProverOpeningData,
+    AkitaProverSetup, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly, ProverOpeningData,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint,
-    AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, CleartextWitnessShape,
-    Commitment, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, Schedule, SetupContributionMode, Step,
+    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
+    BlockOrder, CleartextWitnessProof, CleartextWitnessShape, Commitment, FpExtEncoding,
+    LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    Schedule, SetupContributionMode, Step,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

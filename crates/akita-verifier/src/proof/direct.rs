@@ -87,7 +87,6 @@ where
 mod tests {
     use super::*;
     use akita_field::{Fp32, FpExt2, NegOneNr};
-    use akita_types::{CommitmentGroup, RingVec};
     use akita_types::{PointVariableSelection, PolynomialGroupClaims, RingVec};
 
     type F = Fp32<251>;
