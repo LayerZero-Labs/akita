@@ -979,6 +979,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 }
 
 /// Quiet one-hot prove for fold-linf distribution sampling. Returns per-level observations.
+#[allow(dead_code)] // used by the `fold_linf_stats` example, not `profile`
 pub(crate) fn run_onehot_fold_linf_sample<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     nv: usize,
     layout: &LevelParams,
@@ -1092,6 +1093,7 @@ where
 }
 
 /// Quiet dense prove for fold-linf distribution sampling. Returns per-level observations.
+#[allow(dead_code)] // used by the `fold_linf_stats` example, not `profile`
 pub(crate) fn run_dense_fold_linf_sample<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     nv: usize,
     layout: &LevelParams,

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-#[path = "fold_linf_stats_report.rs"]
+#[path = "fold_linf_stats/report.rs"]
 mod fold_linf_stats_report;
 #[path = "profile/report.rs"]
 mod report;
