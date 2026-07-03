@@ -11,7 +11,7 @@ use std::env;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, OpeningBatchShape};
+use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, OpeningBatchShape};
 use fold_linf_stats_report::{print_fold_linf_aggregate_report, FoldLinfLevelSample};
 use workload::{run_dense_fold_linf_sample, run_onehot_fold_linf_sample};
 
@@ -43,7 +43,10 @@ fn collect_samples<Cfg: CommitmentConfig<Field = F>>(
     sample: fn(usize, &LevelParams, &akita_types::Schedule, u64) -> Vec<akita_prover::FoldGrindObservation>,
 ) -> Vec<FoldLinfLevelSample> {
     let layout = resolve_layout::<Cfg>(nv);
-    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule");
+    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        CommitmentGroupScheduleKey::singleton(nv),
+    ))
+    .expect("schedule");
     report::print_layout(&layout, 1, Cfg::decomposition().field_bits());
 
     let mut samples = Vec::new();
@@ -104,7 +107,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    let nv = env_usize("AKITA_NUM_VARS", 24);
+    let nv = env_usize("AKITA_NUM_VARS", 23);
     let iterations = env_usize("AKITA_FOLD_LINF_ITERATIONS", 10);
     let seed_base = env::var("AKITA_FOLD_LINF_SEED_BASE")
         .ok()
