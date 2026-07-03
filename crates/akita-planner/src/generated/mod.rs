@@ -7,18 +7,9 @@ pub struct GeneratedFoldStep {
     pub m_vars: u32,
     pub r_vars: u32,
     pub n_a: u32,
-    /// Stored first-tier `B` rank. This is the actual committed rank: the shrunk
-    /// `B'` rank when the step is tiered (`tier_split.is_some()`), and the full
-    /// `B` rank otherwise.
+    /// Stored first-tier `B` rank.
     pub n_b: u32,
     pub n_d: u32,
-    /// Tiered split factor `f`. `None` for single-tier steps; `Some(f)` when the
-    /// step reuses a smaller `B'` across `f` column-slices (paired with `n_f`).
-    pub tier_split: Option<u32>,
-    /// Second-tier `F` rank. `None` for single-tier steps; `Some` iff
-    /// `tier_split` is `Some`. Expansion sizes `F` from `tier_split`, `n_b`, and
-    /// the level's `num_digits_open`.
-    pub n_f: Option<u32>,
 }
 
 /// Terminal direct-send step in a generated schedule.
@@ -72,11 +63,11 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
     pub onehot_chunk_size: usize,
-    pub tiered: bool,
     /// Multi-chunk witness layout this table was emitted under. A chunked policy
     /// never aliases a single-chunk table (and vice versa), even when row keys
     /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
     pub witness_chunk: akita_types::ChunkedWitnessCfg,
+
     pub root_fold_shape: akita_challenges::TensorChallengeShape,
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,
