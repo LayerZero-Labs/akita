@@ -430,6 +430,7 @@ fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tensor", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp128_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32Full;
     assert_singleton_mode("dense_fp128_d32", num_polys);
