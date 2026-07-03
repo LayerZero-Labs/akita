@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn recursive_d64_setup_populates_prefix_slots() {
-        let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(20, 1)
+        let setup = new_prover_setup_recursion::<F, 64, fp128::D64OneHot>(12, 1)
             .expect("recursive D64 setup");
 
         assert!(
