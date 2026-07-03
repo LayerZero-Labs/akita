@@ -361,7 +361,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
         &setup,
         std::slice::from_ref(&poly),
         &stack,
@@ -521,7 +521,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
             .expect("stack");
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
         &setup,
         &[poly_a.clone(), poly_b.clone()],
         &stack,
@@ -635,7 +635,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
             .expect("stack");
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
         &setup,
         &[poly_a.clone(), poly_b.clone()],
         &stack,
@@ -733,7 +733,8 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let polys = [poly.clone(), poly];
     let poly_refs = [&polys[0], &polys[1]];
     let (commitment, hint) =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(&setup, &polys, &stack).unwrap();
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(&setup, &polys, &stack)
+            .unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_a];
 

@@ -294,9 +294,12 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .unwrap();
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::batched_commit(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))

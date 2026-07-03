@@ -15,9 +15,12 @@ fn verify_passes_for_consistent_opening() {
             .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .unwrap();
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::batched_commit(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -69,9 +72,12 @@ fn verify_rejects_wrong_opening() {
             .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .unwrap();
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::batched_commit(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -252,9 +258,12 @@ fn monomial_basis_prove_verify_round_trip() {
             .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .unwrap();
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::batched_commit(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 
@@ -318,7 +327,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
             .expect("stack");
     let verifier_setup =
         <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::commit(
+    let (commitment, hint) = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::batched_commit(
         &setup,
         std::slice::from_ref(&poly),
         &stack,
