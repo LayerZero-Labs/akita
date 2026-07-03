@@ -9,16 +9,23 @@ use akita_types::sis::{
     AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentGroupLayout,
-    CommitmentGroupScheduleKey, DecompositionParams, DirectStep, FoldStep, GroupRootParams,
-    LevelParams, MRowLayout, Schedule, Step,
+    direct_witness_bytes, extension_opening_reduction_level_bytes,
+    level_proof_bytes_with_compression, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, CommitmentGroupLayout, CommitmentGroupScheduleKey, DecompositionParams,
+    DirectStep, FoldStep, GroupRootParams, LevelParams, LevelProofByteParams, MRowLayout, Schedule,
+    Step,
 };
 
+use crate::compression::{
+    assign_schedule_compression_plans, build_fold_compression_plans, build_root_compression_plan,
+    compression_suffix_for_fold, CompressionSetupCursor,
+};
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
+    SuffixState,
 };
 use crate::PlannerPolicy;
+use akita_types::compression_plan_suffix_digits;
 
 pub(crate) fn group_root_params_from_layout(
     layout: &CommitmentGroupLayout,
@@ -645,6 +652,7 @@ pub fn find_group_batch_schedule(
         precommitted_d_width,
         precommitted_groups: &precommitted_groups,
     };
+    let mut compression_cursor = CompressionSetupCursor::default();
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_config,
@@ -698,16 +706,24 @@ pub fn find_group_batch_schedule(
                 continue;
             }
 
-            let suffix = derive_optimal_suffix_schedule(
+            let root_u_plan =
+                build_root_compression_plan(policy, &candidate_params, &mut compression_cursor)?;
+            let root_u_suffix = compression_plan_suffix_digits(root_u_plan.as_ref());
+            let suffix_probe = derive_optimal_suffix_schedule(
                 &suffix_ctx,
+                &mut compression_cursor,
                 &mut memo,
-                1,
-                next_w_len,
-                next_w_len_terminal,
-                candidate_log_basis,
-                0,
+                SuffixState {
+                    level: 1,
+                    current_witness_len: next_w_len,
+                    current_witness_len_terminal: next_w_len_terminal,
+                    current_lb: candidate_log_basis,
+                    depth: 0,
+                    leading_current_u_suffix: root_u_suffix,
+                    accumulated_witness_suffix: 0,
+                },
             )?;
-            if suffix.is_empty() {
+            if suffix_probe.is_empty() {
                 continue;
             }
             let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
@@ -723,21 +739,58 @@ pub fn find_group_batch_schedule(
             // A grouped root that is immediately terminal needs a grouped
             // segment-typed witness layout; keep phase-1 schedules on the
             // singleton recursive suffix path.
-            if suffix.best_direct.is_some() && suffix.best_fold_per_lb.is_empty() {
+            if suffix_probe.best_direct.is_some() && suffix_probe.best_fold_per_lb.is_empty() {
                 return Err(AkitaError::InvalidSetup(
                     "grouped terminal root folds are not supported yet; grouped folded schedules require a singleton recursive suffix".to_string(),
                 ));
             }
-            for suffix_fold in suffix.best_fold_per_lb.values() {
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    challenge_field_bits,
+            for suffix_probe_fold in suffix_probe.best_fold_per_lb.values() {
+                let successor_is_direct = false;
+                let fold_compression = build_fold_compression_plans(
+                    policy,
                     &candidate_params,
-                    Some(&suffix_fold.first_fold_params),
-                    next_w_len,
-                    1,
-                    MRowLayout::WithDBlock,
-                ) + eor_bytes;
+                    &suffix_probe_fold.first_fold_params,
+                    successor_is_direct,
+                    &mut compression_cursor,
+                )?;
+                let suffix_digits = compression_suffix_for_fold(&fold_compression);
+                let scheduled_next_w_len = next_w_len
+                    .saturating_add(suffix_digits)
+                    .saturating_add(root_u_suffix);
+                let scheduled_child_terminal = next_w_len_terminal
+                    .saturating_add(suffix_digits)
+                    .saturating_add(root_u_suffix);
+                let child_accumulated = root_u_suffix.saturating_add(suffix_digits);
+                let child_leading =
+                    compression_plan_suffix_digits(fold_compression.next_u.as_ref());
+                let child_suffix = derive_optimal_suffix_schedule(
+                    &suffix_ctx,
+                    &mut compression_cursor,
+                    &mut memo,
+                    SuffixState {
+                        level: 1,
+                        current_witness_len: scheduled_next_w_len,
+                        current_witness_len_terminal: scheduled_child_terminal,
+                        current_lb: candidate_log_basis,
+                        depth: 0,
+                        leading_current_u_suffix: child_leading,
+                        accumulated_witness_suffix: child_accumulated,
+                    },
+                )?;
+                let Some(suffix_fold) = child_suffix.best_fold_per_lb.get(&candidate_log_basis)
+                else {
+                    continue;
+                };
+                let root_proof_size = level_proof_bytes_with_compression(LevelProofByteParams {
+                    base_field_bits: field_bits,
+                    challenge_field_bits,
+                    lp: &candidate_params,
+                    next_lp: Some(&suffix_fold.first_fold_params),
+                    next_w_len: scheduled_next_w_len,
+                    layout: MRowLayout::WithDBlock,
+                    fold_compression: Some(&fold_compression),
+                    penultimate_raw_next_u: false,
+                }) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()
@@ -747,9 +800,9 @@ pub fn find_group_batch_schedule(
                     steps.push(Step::Fold(FoldStep {
                         params: candidate_params.clone(),
                         current_w_len: root_current_w_len,
-                        next_w_len,
+                        next_w_len: scheduled_next_w_len,
                         level_bytes: root_proof_size,
-                        compression: Default::default(),
+                        compression: fold_compression,
                     }));
                     steps.extend(suffix_fold.steps.iter().cloned());
                     best = Some((total, steps));
@@ -758,14 +811,15 @@ pub fn find_group_batch_schedule(
         }
     }
 
-    let Some((total_bytes, steps)) = best else {
+    let Some((total_bytes, mut steps)) = best else {
         return Err(AkitaError::InvalidSetup(
             "main grouped root is not committable".to_string(),
         ));
     };
+    let root_compression = assign_schedule_compression_plans(policy, &mut steps)?;
     Ok(Schedule {
         steps,
-        root_compression: None,
+        root_compression,
         total_bytes,
     })
 }
@@ -775,7 +829,8 @@ mod tests {
     use super::*;
     use crate::find_schedule;
     use akita_types::{
-        AkitaScheduleLookupKey, CommitmentGroupScheduleKey, DecompositionParams, SisModulusFamily,
+        AkitaScheduleLookupKey, CommitmentGroupScheduleKey, CompressionPolicy, DecompositionParams,
+        SisModulusFamily,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -792,6 +847,7 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
+            compression: CompressionPolicy::default(),
         }
     }
 

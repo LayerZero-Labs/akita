@@ -104,6 +104,42 @@ fn append_i8_suffix(
     crate::backend::RecursiveWitnessFlat::from_i8_digits(digits)
 }
 
+fn truncate_i8_witness(
+    witness: &crate::backend::RecursiveWitnessFlat,
+    len: usize,
+) -> Result<crate::backend::RecursiveWitnessFlat, AkitaError> {
+    let digits = witness.as_i8_digits();
+    if digits.len() < len {
+        return Err(AkitaError::InvalidSetup(format!(
+            "witness truncate length {len} exceeds witness length {}",
+            digits.len()
+        )));
+    }
+    Ok(crate::backend::RecursiveWitnessFlat::from_i8_digits(
+        digits[..len].to_vec(),
+    ))
+}
+
+fn evaluate_next_u_compression<F, const D: usize>(
+    setup_fields: &[F],
+    plan: &CommitmentCompressionPlan,
+    hidden_u: &[CyclotomicRing<F, D>],
+    suffix_offset: usize,
+    log_basis: u32,
+) -> Result<VCompressionProverData<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    let raw_payload = flatten_ring_rows(hidden_u);
+    let num_digits = decomposition_digits_per_scalar(plan)?;
+    let evaluation =
+        evaluate_commitment_compression(setup_fields, plan, &raw_payload, num_digits, log_basis)?;
+    Ok(VCompressionProverData {
+        evaluation,
+        suffix_offset,
+    })
+}
+
 fn evaluate_v_compression<F, const D: usize>(
     setup_fields: &[F],
     plan: &CommitmentCompressionPlan,
@@ -299,27 +335,19 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
 pub(in crate::protocol::core) fn scheduled_m_row_layout(
     scheduled: &ExecutionSchedule,
 ) -> MRowLayout {
-    match (
-        scheduled.current_u_compression.is_some(),
-        scheduled.is_terminal || scheduled.compression.v.is_some(),
-    ) {
+    let omit_b = scheduled.current_u_compression.is_some();
+    let omit_d = scheduled.compression.v.is_some() || scheduled.is_terminal;
+    match (omit_b, omit_d) {
+        (false, false) => MRowLayout::WithDBlock,
+        (false, true) => MRowLayout::WithoutDBlock,
         (true, true) => MRowLayout::WithoutCommitmentBlocks,
         (true, false) => MRowLayout::WithoutCommitmentBlocks,
-        (false, true) => MRowLayout::WithoutDBlock,
-        (false, false) => MRowLayout::WithDBlock,
     }
 }
 
 pub(in crate::protocol::core) fn reject_active_b_side_compression(
-    scheduled: &ExecutionSchedule,
+    _scheduled: &ExecutionSchedule,
 ) -> Result<(), AkitaError> {
-    if scheduled.compression.next_u.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "B-side commitment compression for next u is not enabled yet; \
-             it needs a base-prefix commitment relation before emitting compact u"
-                .to_string(),
-        ));
-    }
     Ok(())
 }
 
@@ -913,9 +941,44 @@ where
     if let Some(compression) = v_compression.as_ref() {
         logical_w = append_i8_suffix(logical_w, &compression.evaluation.padded_suffix_digits);
     }
-    scheduled.validate_next_w_len(logical_w.len())?;
+    let base_next_witness_len = logical_w.len();
     let next_commitment = if is_terminal_fold {
         None
+    } else if let Some(plan) = scheduled.compression.next_u.as_ref() {
+        let _span = tracing::info_span!("commit_w_level", level).entered();
+        let base_w = truncate_i8_witness(&logical_w, base_next_witness_len)?;
+        let committed = crate::commit_next_w::<Cfg, C, D>(
+            &scheduled.next_params,
+            expanded,
+            stack.commit(),
+            &base_w,
+        )?;
+        let hidden_u = crate::protocol::ring_relation::raw_u_rows_from_recursive_hint(
+            stack.commit().backend(),
+            stack.commit().prepared(),
+            &scheduled.next_params,
+            &committed.hint,
+        )?;
+        let next_u_compression = evaluate_next_u_compression::<F, D>(
+            expanded.shared_matrix().as_field_slice(),
+            plan,
+            &hidden_u,
+            base_next_witness_len,
+            scheduled.next_params.log_basis,
+        )?;
+        logical_w = append_i8_suffix(
+            logical_w,
+            &next_u_compression.evaluation.padded_suffix_digits,
+        );
+        Some(NextWitnessCommitment {
+            witness: committed.witness,
+            commitment: next_u_compression
+                .evaluation
+                .public_payload
+                .clone()
+                .into_compact(),
+            hint: committed.hint,
+        })
     } else {
         let _span = tracing::info_span!("commit_w_level", level).entered();
         Some(crate::commit_next_w::<Cfg, C, D>(
@@ -925,6 +988,7 @@ where
             &logical_w,
         )?)
     };
+    scheduled.validate_next_w_len(logical_w.len())?;
     let (next_commitment, final_witness) = bind_next_witness_for_ring_switch::<F, T, D>(
         transcript,
         is_terminal_fold,

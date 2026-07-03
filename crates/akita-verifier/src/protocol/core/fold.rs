@@ -210,27 +210,19 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
 pub(in crate::protocol::core) fn scheduled_m_row_layout(
     scheduled: &ExecutionSchedule,
 ) -> MRowLayout {
-    match (
-        scheduled.current_u_compression.is_some(),
-        scheduled.is_terminal || scheduled.compression.v.is_some(),
-    ) {
+    let omit_b = scheduled.current_u_compression.is_some();
+    let omit_d = scheduled.compression.v.is_some() || scheduled.is_terminal;
+    match (omit_b, omit_d) {
+        (false, false) => MRowLayout::WithDBlock,
+        (false, true) => MRowLayout::WithoutDBlock,
         (true, true) => MRowLayout::WithoutCommitmentBlocks,
         (true, false) => MRowLayout::WithoutCommitmentBlocks,
-        (false, true) => MRowLayout::WithoutDBlock,
-        (false, false) => MRowLayout::WithDBlock,
     }
 }
 
 pub(in crate::protocol::core) fn reject_active_b_side_compression(
-    scheduled: &ExecutionSchedule,
+    _scheduled: &ExecutionSchedule,
 ) -> Result<(), AkitaError> {
-    if scheduled.compression.next_u.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "B-side commitment compression for next u is not enabled yet; \
-             it needs a base-prefix commitment relation before accepting compact u"
-                .to_string(),
-        ));
-    }
     Ok(())
 }
 

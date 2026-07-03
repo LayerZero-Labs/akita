@@ -262,9 +262,13 @@ where
                 })?;
 
                 let next_level_d = next_params.ring_dimension;
-                if next_level_d == 0
-                    || !level_proof.next_w_commitment().can_decode_vec(next_level_d)
-                {
+                let next_w_shape_ok = if let Some(plan) = scheduled.compression.next_u.as_ref() {
+                    level_proof.next_w_commitment().coeff_len() == plan.public_len
+                } else {
+                    next_level_d != 0
+                        && level_proof.next_w_commitment().can_decode_vec(next_level_d)
+                };
+                if !next_w_shape_ok {
                     return Err(AkitaError::InvalidProof);
                 }
                 scheduled.validate_next_w_len(next_w_len)?;

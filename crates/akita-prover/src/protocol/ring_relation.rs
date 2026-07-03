@@ -305,6 +305,28 @@ where
     Ok(rows)
 }
 
+/// Raw B-side commitment rows for a base-prefix recursive witness commitment.
+pub(in crate::protocol) fn raw_u_rows_from_recursive_hint<F, B, const D: usize>(
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    lp: &LevelParams,
+    hint: &crate::backend::RecursiveCommitmentHintCache<F>,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    B: DigitRowsComputeBackend<F>,
+{
+    let typed_hint = hint.to_typed::<D>()?;
+    let (flat_t_hat, _) = typed_hint.into_flat_parts();
+    compute_u_rows(
+        backend,
+        prepared,
+        lp.b_key.row_len(),
+        &flat_t_hat,
+        lp.log_basis,
+    )
+}
+
 fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
     transcript: &mut T,

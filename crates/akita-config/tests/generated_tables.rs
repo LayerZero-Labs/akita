@@ -64,6 +64,31 @@ fn group_batch_emission_matches_supported_policy_shape() {
     }
 }
 
+#[test]
+fn compressed_fp128_d128_full_rows_materialize() {
+    let family = ALL_GENERATED_FAMILIES
+        .iter()
+        .find(|family| family.module_name == "fp128_d128_full")
+        .expect("fp128_d128_full family must be registered");
+    for key in [
+        CommitmentGroupScheduleKey {
+            num_vars: 28,
+            num_polynomials: 1,
+        },
+        CommitmentGroupScheduleKey {
+            num_vars: 26,
+            num_polynomials: 4,
+        },
+    ] {
+        let table_backed = (family.table_backed)(key).expect("table row must materialize");
+        let regenerated = (family.regen)(key).expect("DP schedule must materialize");
+        assert!(
+            schedules_equal(&table_backed, &regenerated),
+            "table row must match regenerated schedule for {key:?}"
+        );
+    }
+}
+
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_d128_full" => fp128::D128Full::schedule_catalog().is_some(),
@@ -283,6 +308,7 @@ fn fold_steps_equal(left: &FoldStep, right: &FoldStep) -> bool {
         && left.next_w_len == right.next_w_len
         && left.level_bytes == right.level_bytes
         && left.params == right.params
+        && left.compression == right.compression
 }
 
 fn direct_steps_equal(left: &DirectStep, right: &DirectStep) -> bool {
@@ -302,6 +328,9 @@ fn steps_equal(left: &Step, right: &Step) -> bool {
 
 fn schedules_equal(left: &Schedule, right: &Schedule) -> bool {
     if left.total_bytes != right.total_bytes {
+        return false;
+    }
+    if left.root_compression != right.root_compression {
         return false;
     }
     if left.steps.len() != right.steps.len() {

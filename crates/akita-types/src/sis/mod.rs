@@ -20,6 +20,7 @@
 //! contains no SIS formula of its own.
 
 pub mod ajtai_key;
+pub mod compression;
 pub mod decomposition_digits;
 pub mod fold_linf_cap;
 pub mod fold_witness_grind;
@@ -30,6 +31,13 @@ pub use ajtai_key::{
     ceil_coeff_linf_bucket, ceil_supported_collision, collision_l2_sq_for_linf_envelope,
     derived_collision_l2_sq_key, min_secure_rank, AjtaiKeyParams, SisModulusFamily,
     COEFF_LINF_BUCKETS,
+};
+pub use compression::{
+    build_compression_plan_with_layers, compression_plan_public_bytes,
+    compression_plan_setup_field_len, compression_plan_suffix_digits,
+    compression_setup_field_len_for_schedule, plan_commitment_compression,
+    secure_compression_output_len, CompressionPlanBuildRequest, CompressionPlanRequest,
+    CompressionPolicy, COMPRESSION_LOOKUP_D,
 };
 pub use decomposition_digits::{
     compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,

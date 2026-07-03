@@ -8,7 +8,7 @@
 //! schedule-table representation it consumes.
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
-use crate::{stage1_tree_stage_shapes, LevelParams, MRowLayout};
+use crate::{stage1_tree_stage_shapes, FoldCompressionPlan, LevelParams, MRowLayout};
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
 pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
@@ -68,24 +68,100 @@ pub fn level_proof_bytes(
     _num_claims: usize,
     layout: MRowLayout,
 ) -> usize {
+    level_proof_bytes_with_compression(LevelProofByteParams {
+        base_field_bits,
+        challenge_field_bits,
+        lp,
+        next_lp,
+        next_w_len,
+        layout,
+        fold_compression: None,
+        penultimate_raw_next_u: false,
+    })
+}
+
+/// Inputs for [`level_proof_bytes_with_compression`].
+pub struct LevelProofByteParams<'a> {
+    pub base_field_bits: u32,
+    pub challenge_field_bits: u32,
+    pub lp: &'a LevelParams,
+    pub next_lp: Option<&'a LevelParams>,
+    pub next_w_len: usize,
+    pub layout: MRowLayout,
+    pub fold_compression: Option<&'a FoldCompressionPlan>,
+    pub penultimate_raw_next_u: bool,
+}
+
+/// Like [`level_proof_bytes`], but prices compressed public `v` / next-`u`
+/// payloads when `fold_compression` is present.
+pub fn level_proof_bytes_with_compression(params: LevelProofByteParams<'_>) -> usize {
+    let LevelProofByteParams {
+        base_field_bits,
+        challenge_field_bits,
+        lp,
+        next_lp,
+        next_w_len,
+        layout,
+        fold_compression,
+        penultimate_raw_next_u,
+    } = params;
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     match layout {
         MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks => {
-            FOLD_GRIND_NONCE_BYTES + sumcheck
+            let mut total = FOLD_GRIND_NONCE_BYTES + sumcheck;
+            if let Some(compression) = fold_compression {
+                if let Some(v_plan) = compression.v.as_ref() {
+                    total = total.saturating_add(v_plan.public_len.saturating_mul(base_elem_bytes));
+                } else {
+                    total = total.saturating_add(proof_ring_vec_bytes(
+                        lp.d_key.row_len(),
+                        lp.ring_dimension,
+                        base_elem_bytes,
+                    ));
+                }
+                if penultimate_raw_next_u {
+                    if let Some(next_lp) = next_lp {
+                        total = total.saturating_add(proof_ring_vec_bytes(
+                            next_lp.b_key.row_len(),
+                            next_lp.ring_dimension,
+                            base_elem_bytes,
+                        ));
+                        total = total.saturating_add(challenge_elem_bytes);
+                    }
+                }
+            }
+            total
         }
         MRowLayout::WithDBlock => {
             let next_lp = next_lp
                 .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
-            let v_bytes =
-                proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
-            let next_commit_bytes = proof_ring_vec_bytes(
-                next_lp.b_key.row_len(),
-                next_lp.ring_dimension,
-                base_elem_bytes,
-            );
+            let v_bytes = fold_compression
+                .and_then(|plan| plan.v.as_ref())
+                .map(|plan| plan.public_len.saturating_mul(base_elem_bytes))
+                .unwrap_or_else(|| {
+                    proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes)
+                });
+            let next_commit_bytes = if penultimate_raw_next_u {
+                proof_ring_vec_bytes(
+                    next_lp.b_key.row_len(),
+                    next_lp.ring_dimension,
+                    base_elem_bytes,
+                )
+            } else {
+                fold_compression
+                    .and_then(|plan| plan.next_u.as_ref())
+                    .map(|plan| plan.public_len.saturating_mul(base_elem_bytes))
+                    .unwrap_or_else(|| {
+                        proof_ring_vec_bytes(
+                            next_lp.b_key.row_len(),
+                            next_lp.ring_dimension,
+                            base_elem_bytes,
+                        )
+                    })
+            };
             let next_eval_bytes = challenge_elem_bytes;
             let b = 1usize << lp.log_basis;
             let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);

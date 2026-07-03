@@ -620,7 +620,12 @@ where
             )?;
 
             let first_level_d = first_recursive_params.ring_dimension;
-            if !root_stage2.next_w_commitment.can_decode_vec(first_level_d) {
+            let root_next_w_ok = if let Some(plan) = root_step.compression.next_u.as_ref() {
+                root_stage2.next_w_commitment.coeff_len() == plan.public_len
+            } else {
+                first_level_d != 0 && root_stage2.next_w_commitment.can_decode_vec(first_level_d)
+            };
+            if !root_next_w_ok {
                 return Err(AkitaError::InvalidProof);
             }
             let root_next_opening = proof

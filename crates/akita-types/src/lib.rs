@@ -111,7 +111,10 @@ pub use proof::{
     GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
-pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
+pub use proof_size::{
+    level_proof_bytes, level_proof_bytes_with_compression, LevelProofByteParams,
+    FOLD_GRIND_NONCE_BYTES,
+};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
@@ -122,7 +125,13 @@ pub use schedule::{
     ExecutionSchedule, FoldCompressionPlan, FoldStep, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
-pub use sis::{AjtaiKeyParams, SisModulusFamily};
+pub use sis::{
+    build_compression_plan_with_layers, compression_plan_public_bytes,
+    compression_plan_setup_field_len, compression_plan_suffix_digits,
+    compression_setup_field_len_for_schedule, plan_commitment_compression,
+    secure_compression_output_len, AjtaiKeyParams, CompressionPlanBuildRequest,
+    CompressionPlanRequest, CompressionPolicy, SisModulusFamily, COMPRESSION_LOOKUP_D,
+};
 pub use tail_golomb_rice_low_bits::{
     cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule, WIRE_RICE_LOW_BITS_DELTA,
     WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,

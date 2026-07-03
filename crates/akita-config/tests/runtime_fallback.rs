@@ -16,7 +16,7 @@
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::{find_schedule, PlannerPolicy};
-use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey};
+use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey, CompressionPolicy};
 
 /// A one-point 2-poly key that no shipped table carries (shipped tables only
 /// hold singleton / 4-batched keys), so it forces the DP fallback path on both
@@ -89,6 +89,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
+        compression: CompressionPolicy::default(),
     };
     assert_eq!(
         policy, expected,

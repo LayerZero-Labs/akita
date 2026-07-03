@@ -181,8 +181,8 @@ mod tests {
     };
     use crate::{find_group_batch_schedule, find_schedule};
     use akita_types::{
-        AkitaScheduleLookupKey, CommitmentGroupLayout, DecompositionParams, LevelParams,
-        SisModulusFamily, Step,
+        AkitaScheduleLookupKey, CommitmentGroupLayout, CompressionPolicy, DecompositionParams,
+        LevelParams, SisModulusFamily, Step,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -199,6 +199,7 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
+            compression: CompressionPolicy::default(),
         }
     }
 

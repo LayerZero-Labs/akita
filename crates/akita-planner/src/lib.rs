@@ -12,9 +12,11 @@
 //! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset
 //! live in `akita-config`, the only crate that can name the presets.
 
-pub use akita_types::{DecompositionParams, SisModulusFamily};
+pub use akita_types::DecompositionParams;
+use akita_types::SisModulusFamily;
 
 pub mod catalog_identity;
+mod compression;
 pub mod emit;
 pub mod generated;
 mod group_batch;
@@ -25,6 +27,10 @@ pub use akita_challenges::TensorChallengeShape;
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,
     ring_challenge_config_digest, validate_catalog_identity,
+};
+pub use compression::{
+    build_fold_compression_plans, build_root_compression_plan, compression_suffix_for_fold,
+    fold_level_public_commit_bytes,
 };
 pub use emit::{
     refresh_generated_wiring, run_regen_fmt, write_family_module, write_group_batch_family_module,
@@ -71,4 +77,6 @@ pub struct PlannerPolicy {
     /// folded-witness digit count. Only consulted at a root level whose
     /// `log_commit_bound == 1`; dense levels use `nonzeros = D`.
     pub onehot_chunk_size: usize,
+    /// Commitment compression policy (enabled by default).
+    pub compression: akita_types::CompressionPolicy,
 }

@@ -9,7 +9,8 @@ use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatchShape;
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, Schedule, SetupMatrixEnvelope,
+    compression_setup_field_len_for_schedule, AkitaScheduleLookupKey, CommitmentGroupScheduleKey,
+    LevelParams, Schedule, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -257,6 +258,13 @@ where
         opening_batch,
         &mut envelope.max_setup_len,
     )?;
+    envelope.max_setup_len =
+        envelope
+            .max_setup_len
+            .saturating_add(compression_setup_field_len_for_schedule(
+                schedule.root_compression.as_ref(),
+                &schedule.steps,
+            ));
     Ok(envelope)
 }
 

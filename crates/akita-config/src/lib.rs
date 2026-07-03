@@ -52,6 +52,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
+        compression: akita_types::CompressionPolicy::default(),
     }
 }
 

@@ -54,6 +54,8 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.basis_range.0));
     h.write_u64(u64::from(policy.basis_range.1));
     h.write_u64(policy.onehot_chunk_size as u64);
+    h.write_u64(u64::from(policy.compression.enabled));
+    h.write_u64(policy.compression.max_layers as u64);
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
     out
@@ -553,7 +555,7 @@ impl Fnv64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{DecompositionParams, SisModulusFamily};
+    use akita_types::{CompressionPolicy, DecompositionParams, SisModulusFamily};
 
     fn flat_fold(_: AkitaScheduleInputs) -> TensorChallengeShape {
         TensorChallengeShape::Flat
@@ -573,6 +575,7 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
+            compression: CompressionPolicy::default(),
         }
     }
 

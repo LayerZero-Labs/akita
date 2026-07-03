@@ -19,13 +19,19 @@ use akita_types::sis::{
     FoldWitnessLinfCapConfig, FoldWitnessNorms,
 };
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    segment_typed_witness_shape, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    direct_witness_bytes, extension_opening_reduction_level_bytes,
+    level_proof_bytes_with_compression, segment_typed_witness_shape,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, CleartextWitnessShape,
+    CommitmentGroupScheduleKey, DecompositionParams, DirectStep, FoldStep, LevelParams,
+    LevelProofByteParams, MRowLayout, Schedule, Step,
 };
 
+use crate::compression::{
+    assign_schedule_compression_plans, build_fold_compression_plans, build_root_compression_plan,
+    compression_suffix_for_fold, CompressionSetupCursor,
+};
 use crate::PlannerPolicy;
+use akita_types::compression_plan_suffix_digits;
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
@@ -206,13 +212,11 @@ pub(crate) struct FoldSuffix {
     pub(crate) steps: Vec<Step>,
 }
 
-/// Best direct suffix at one DP state: witness length only. The terminal
+/// Feasibility marker for a direct suffix at one DP state. The terminal
 /// `DirectStep` is materialized at stitch time from the predecessor fold's
 /// committed `LevelParams`.
 #[derive(Clone, Copy)]
-pub(crate) struct DirectSuffix {
-    pub(crate) current_w_len: usize,
-}
+pub(crate) struct DirectSuffix;
 
 /// Result of the suffix DP at one state. Both shape options are reported
 /// because the parent's proof-size formula depends on the child's first
@@ -276,19 +280,29 @@ pub(crate) fn terminal_direct_suffix_cost(
     Ok((direct, direct_bytes))
 }
 
-pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
+pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32, usize, usize), SuffixResult>;
 
 /// DP-invariant inputs for the suffix search.
 ///
 /// `policy`, `ring_challenge_config`, and `num_vars` are constant across the whole
 /// recursion, so they are carried in one context value rather than as
 /// per-call arguments (keeps the recursive signature small).
-#[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) ring_challenge_config: RingChallengeConfigFn<'a>,
     pub(crate) num_vars: usize,
     pub(crate) key: CommitmentGroupScheduleKey,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SuffixState {
+    pub(crate) level: usize,
+    pub(crate) current_witness_len: usize,
+    pub(crate) current_witness_len_terminal: usize,
+    pub(crate) current_lb: u32,
+    pub(crate) depth: usize,
+    pub(crate) leading_current_u_suffix: usize,
+    pub(crate) accumulated_witness_suffix: usize,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -305,24 +319,33 @@ pub(crate) struct SuffixCtx<'a> {
 /// `log_basis` (from [`derive_candidate_level_params`]).
 pub(crate) fn derive_optimal_suffix_schedule(
     ctx: &SuffixCtx<'_>,
+    compression_cursor: &mut CompressionSetupCursor,
     memo: &mut ScheduleMemo,
-    level: usize,
-    current_witness_len: usize,
-    current_witness_len_terminal: usize,
-    current_lb: u32,
-    depth: usize,
+    state: SuffixState,
 ) -> Result<SuffixResult, AkitaError> {
-    let SuffixCtx {
+    let &SuffixCtx {
         policy,
         ring_challenge_config,
         num_vars,
         key,
-    } = *ctx;
+    } = ctx;
+    let SuffixState {
+        level,
+        current_witness_len,
+        current_witness_len_terminal,
+        current_lb,
+        depth,
+        leading_current_u_suffix,
+        accumulated_witness_suffix,
+    } = state;
+    let geometry_w_len = current_witness_len.saturating_sub(accumulated_witness_suffix);
     let memo_key = (
         level,
         current_witness_len,
         current_witness_len_terminal,
         current_lb,
+        leading_current_u_suffix,
+        accumulated_witness_suffix,
     );
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&memo_key) {
@@ -333,14 +356,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let best_direct = if derive_candidate_level_params(
         policy,
         ring_challenge_config,
-        current_witness_len,
+        geometry_w_len,
         current_lb,
     )?
     .is_some()
     {
-        Some(DirectSuffix {
-            current_w_len: current_witness_len_terminal,
-        })
+        Some(DirectSuffix)
     } else {
         None
     };
@@ -361,26 +382,31 @@ pub(crate) fn derive_optimal_suffix_schedule(
             continue;
         }
         let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
-            derive_candidate_level_params(policy, ring_challenge_config, current_witness_len, lb)?
+            derive_candidate_level_params(policy, ring_challenge_config, geometry_w_len, lb)?
         else {
             continue;
         };
 
-        let suffix = derive_optimal_suffix_schedule(
+        let suffix_probe = derive_optimal_suffix_schedule(
             ctx,
+            compression_cursor,
             memo,
-            level + 1,
-            next_witness_len,
-            next_witness_len_terminal,
-            lb,
-            depth + 1,
+            SuffixState {
+                level: level + 1,
+                current_witness_len: next_witness_len,
+                current_witness_len_terminal: next_witness_len_terminal,
+                current_lb: lb,
+                depth: depth + 1,
+                leading_current_u_suffix,
+                accumulated_witness_suffix: 0,
+            },
         )?;
         let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
             policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
             policy.claim_ext_degree,
             level,
             CommitmentGroupScheduleKey::singleton(num_vars),
-            current_witness_len,
+            geometry_w_len,
         ) else {
             continue;
         };
@@ -392,57 +418,124 @@ pub(crate) fn derive_optimal_suffix_schedule(
             }
         };
 
-        // Branch A: suffix is a Direct at level+1.
-        if let Some(direct_suffix) = suffix.best_direct {
+        // Branch A: suffix is a Direct at level+1 (penultimate fold).
+        if suffix_probe.best_direct.is_some() {
             let field_bits = policy.decomposition.field_bits();
+            let successor_is_direct = true;
+            let next_lp = &candidate_params;
+            let fold_compression = build_fold_compression_plans(
+                policy,
+                &candidate_params,
+                next_lp,
+                successor_is_direct,
+                compression_cursor,
+            )?;
+            let suffix_digits = compression_suffix_for_fold(&fold_compression);
+            let scheduled_next_w_len = next_witness_len_terminal
+                .saturating_add(suffix_digits)
+                .saturating_add(accumulated_witness_suffix)
+                .saturating_add(if accumulated_witness_suffix == 0 {
+                    leading_current_u_suffix
+                } else {
+                    0
+                });
             let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
-                direct_suffix.current_w_len,
+                scheduled_next_w_len,
                 &candidate_params,
                 field_bits,
                 key,
                 level,
             )?;
-            let level_proof_size = level_proof_bytes(
-                field_bits,
-                field_bits * policy.chal_ext_degree as u32,
-                &candidate_params,
-                None,
-                next_witness_len_terminal,
-                1,
-                MRowLayout::WithoutDBlock,
-            ) + eor_bytes;
+            let level_proof_size = level_proof_bytes_with_compression(LevelProofByteParams {
+                base_field_bits: field_bits,
+                challenge_field_bits: field_bits * policy.chal_ext_degree as u32,
+                lp: &candidate_params,
+                next_lp: Some(next_lp),
+                next_w_len: scheduled_next_w_len,
+                layout: MRowLayout::WithoutDBlock,
+                fold_compression: Some(&fold_compression),
+                penultimate_raw_next_u: true,
+            }) + eor_bytes;
             let total = level_proof_size + suffix_cost;
             let steps = vec![
                 Step::Fold(FoldStep {
                     params: candidate_params.clone(),
                     current_w_len: current_witness_len,
-                    next_w_len: next_witness_len_terminal,
+                    next_w_len: scheduled_next_w_len,
                     level_bytes: level_proof_size,
-                    compression: Default::default(),
+                    compression: fold_compression,
                 }),
                 Step::Direct(direct_step),
             ];
             try_update(total, steps, &mut best_for_this_lb);
         }
         // Branch B: suffix is a Fold at level+1.
-        for suffix_fold in suffix.best_fold_per_lb.values() {
-            let level_proof_size = level_proof_bytes(
-                policy.decomposition.field_bits(),
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+        for suffix_probe_fold in suffix_probe.best_fold_per_lb.values() {
+            let field_bits = policy.decomposition.field_bits();
+            let successor_is_direct = false;
+            let fold_compression = build_fold_compression_plans(
+                policy,
                 &candidate_params,
-                Some(&suffix_fold.first_fold_params),
-                next_witness_len,
-                1,
-                MRowLayout::WithDBlock,
-            ) + eor_bytes;
+                &suffix_probe_fold.first_fold_params,
+                successor_is_direct,
+                compression_cursor,
+            )?;
+            let suffix_digits = compression_suffix_for_fold(&fold_compression);
+            let scheduled_next_w_len = next_witness_len
+                .saturating_add(suffix_digits)
+                .saturating_add(accumulated_witness_suffix)
+                .saturating_add(if accumulated_witness_suffix == 0 {
+                    leading_current_u_suffix
+                } else {
+                    0
+                });
+            let scheduled_child_terminal = next_witness_len_terminal
+                .saturating_add(suffix_digits)
+                .saturating_add(accumulated_witness_suffix)
+                .saturating_add(if accumulated_witness_suffix == 0 {
+                    leading_current_u_suffix
+                } else {
+                    0
+                });
+            let child_accumulated = accumulated_witness_suffix
+                .saturating_add(leading_current_u_suffix)
+                .saturating_add(suffix_digits);
+            let child_leading = compression_plan_suffix_digits(fold_compression.next_u.as_ref());
+            let child_suffix = derive_optimal_suffix_schedule(
+                ctx,
+                compression_cursor,
+                memo,
+                SuffixState {
+                    level: level + 1,
+                    current_witness_len: scheduled_next_w_len,
+                    current_witness_len_terminal: scheduled_child_terminal,
+                    current_lb: lb,
+                    depth: depth + 1,
+                    leading_current_u_suffix: child_leading,
+                    accumulated_witness_suffix: child_accumulated,
+                },
+            )?;
+            let Some(suffix_fold) = child_suffix.best_fold_per_lb.get(&lb) else {
+                continue;
+            };
+            let level_proof_size = level_proof_bytes_with_compression(LevelProofByteParams {
+                base_field_bits: field_bits,
+                challenge_field_bits: field_bits * policy.chal_ext_degree as u32,
+                lp: &candidate_params,
+                next_lp: Some(&suffix_fold.first_fold_params),
+                next_w_len: scheduled_next_w_len,
+                layout: MRowLayout::WithDBlock,
+                fold_compression: Some(&fold_compression),
+                penultimate_raw_next_u: false,
+            }) + eor_bytes;
             let total = level_proof_size + suffix_fold.total_bytes;
             let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
             steps.push(Step::Fold(FoldStep {
                 params: candidate_params.clone(),
                 current_w_len: current_witness_len,
-                next_w_len: next_witness_len,
+                next_w_len: scheduled_next_w_len,
                 level_bytes: level_proof_size,
-                compression: Default::default(),
+                compression: fold_compression,
             }));
             steps.extend(suffix_fold.steps.iter().cloned());
             try_update(total, steps, &mut best_for_this_lb);
@@ -675,6 +768,7 @@ fn find_schedule_inner(
 ) -> Result<Schedule, AkitaError> {
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape: FoldShapeFn<'_> = &fold_challenge_shape_at_level;
+    let mut compression_cursor = CompressionSetupCursor::default();
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_config,
@@ -860,16 +954,24 @@ fn find_schedule_inner(
                 continue;
             }
 
-            let suffix = derive_optimal_suffix_schedule(
+            let root_u_plan =
+                build_root_compression_plan(policy, &candidate_params, &mut compression_cursor)?;
+            let root_u_suffix = compression_plan_suffix_digits(root_u_plan.as_ref());
+            let suffix_probe = derive_optimal_suffix_schedule(
                 &suffix_ctx,
+                &mut compression_cursor,
                 &mut memo,
-                1,
-                next_w_len,
-                next_w_len_terminal,
-                candidate_log_basis,
-                0,
+                SuffixState {
+                    level: 1,
+                    current_witness_len: next_w_len,
+                    current_witness_len_terminal: next_w_len_terminal,
+                    current_lb: candidate_log_basis,
+                    depth: 0,
+                    leading_current_u_suffix: root_u_suffix,
+                    accumulated_witness_suffix: 0,
+                },
             )?;
-            if suffix.is_empty() {
+            if suffix_probe.is_empty() {
                 continue;
             }
             let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
@@ -882,24 +984,38 @@ fn find_schedule_inner(
                 continue;
             };
 
-            // Branch A: suffix at level 1 is a Direct
-            if let Some(direct_suffix) = suffix.best_direct {
+            // Branch A: suffix at level 1 is a Direct (penultimate root fold).
+            if suffix_probe.best_direct.is_some() {
+                let successor_is_direct = true;
+                let next_lp = &candidate_params;
+                let fold_compression = build_fold_compression_plans(
+                    policy,
+                    &candidate_params,
+                    next_lp,
+                    successor_is_direct,
+                    &mut compression_cursor,
+                )?;
+                let suffix_digits = compression_suffix_for_fold(&fold_compression);
+                let scheduled_next_w_len = next_w_len_terminal
+                    .saturating_add(suffix_digits)
+                    .saturating_add(root_u_suffix);
                 let (direct_step, suffix_cost) = terminal_direct_suffix_cost(
-                    direct_suffix.current_w_len,
+                    scheduled_next_w_len,
                     &candidate_params,
                     field_bits,
                     key,
                     0,
                 )?;
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    field_bits * policy.chal_ext_degree as u32,
-                    &candidate_params,
-                    None,
-                    next_w_len_terminal,
-                    1,
-                    MRowLayout::WithoutDBlock,
-                ) + eor_bytes;
+                let root_proof_size = level_proof_bytes_with_compression(LevelProofByteParams {
+                    base_field_bits: field_bits,
+                    challenge_field_bits: field_bits * policy.chal_ext_degree as u32,
+                    lp: &candidate_params,
+                    next_lp: Some(next_lp),
+                    next_w_len: scheduled_next_w_len,
+                    layout: MRowLayout::WithoutDBlock,
+                    fold_compression: Some(&fold_compression),
+                    penultimate_raw_next_u: true,
+                }) + eor_bytes;
                 let total = root_proof_size + suffix_cost;
                 if total < best_cost {
                     best_cost = total;
@@ -907,25 +1023,62 @@ fn find_schedule_inner(
                         Step::Fold(FoldStep {
                             params: candidate_params.clone(),
                             current_w_len: witness_len,
-                            next_w_len: next_w_len_terminal,
+                            next_w_len: scheduled_next_w_len,
                             level_bytes: root_proof_size,
-                            compression: Default::default(),
+                            compression: fold_compression,
                         }),
                         Step::Direct(direct_step),
                     ];
                 }
             }
             // Branch B: suffix at level 1 is a Fold
-            for suffix_fold in suffix.best_fold_per_lb.values() {
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    field_bits * policy.chal_ext_degree as u32,
+            for suffix_probe_fold in suffix_probe.best_fold_per_lb.values() {
+                let successor_is_direct = false;
+                let fold_compression = build_fold_compression_plans(
+                    policy,
                     &candidate_params,
-                    Some(&suffix_fold.first_fold_params),
-                    next_w_len,
-                    1,
-                    MRowLayout::WithDBlock,
-                ) + eor_bytes;
+                    &suffix_probe_fold.first_fold_params,
+                    successor_is_direct,
+                    &mut compression_cursor,
+                )?;
+                let suffix_digits = compression_suffix_for_fold(&fold_compression);
+                let scheduled_next_w_len = next_w_len
+                    .saturating_add(suffix_digits)
+                    .saturating_add(root_u_suffix);
+                let child_accumulated = root_u_suffix.saturating_add(suffix_digits);
+                let child_leading =
+                    compression_plan_suffix_digits(fold_compression.next_u.as_ref());
+                let scheduled_child_terminal = next_w_len_terminal
+                    .saturating_add(suffix_digits)
+                    .saturating_add(root_u_suffix);
+                let child_suffix = derive_optimal_suffix_schedule(
+                    &suffix_ctx,
+                    &mut compression_cursor,
+                    &mut memo,
+                    SuffixState {
+                        level: 1,
+                        current_witness_len: scheduled_next_w_len,
+                        current_witness_len_terminal: scheduled_child_terminal,
+                        current_lb: candidate_log_basis,
+                        depth: 0,
+                        leading_current_u_suffix: child_leading,
+                        accumulated_witness_suffix: child_accumulated,
+                    },
+                )?;
+                let Some(suffix_fold) = child_suffix.best_fold_per_lb.get(&candidate_log_basis)
+                else {
+                    continue;
+                };
+                let root_proof_size = level_proof_bytes_with_compression(LevelProofByteParams {
+                    base_field_bits: field_bits,
+                    challenge_field_bits: field_bits * policy.chal_ext_degree as u32,
+                    lp: &candidate_params,
+                    next_lp: Some(&suffix_fold.first_fold_params),
+                    next_w_len: scheduled_next_w_len,
+                    layout: MRowLayout::WithDBlock,
+                    fold_compression: Some(&fold_compression),
+                    penultimate_raw_next_u: false,
+                }) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if total < best_cost {
                     best_cost = total;
@@ -933,9 +1086,9 @@ fn find_schedule_inner(
                     steps.push(Step::Fold(FoldStep {
                         params: candidate_params.clone(),
                         current_w_len: witness_len,
-                        next_w_len,
+                        next_w_len: scheduled_next_w_len,
                         level_bytes: root_proof_size,
-                        compression: Default::default(),
+                        compression: fold_compression,
                     }));
                     steps.extend(suffix_fold.steps.iter().cloned());
                     best_steps = steps;
@@ -944,9 +1097,11 @@ fn find_schedule_inner(
         }
     }
 
+    let root_compression = assign_schedule_compression_plans(policy, &mut best_steps)?;
+
     Ok(Schedule {
         steps: best_steps,
-        root_compression: None,
+        root_compression,
         total_bytes: best_cost,
     })
 }
