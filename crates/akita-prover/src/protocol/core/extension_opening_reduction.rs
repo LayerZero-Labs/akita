@@ -261,7 +261,7 @@ where
     } else {
         let transcript_openings = openings.as_slice();
         append_claim_values_to_transcript::<F, E, T>(transcript_openings, transcript);
-        let opening_shape = opening_batch.layout();
+        let opening_shape = opening_batch.layout()?;
         sample_public_row_coefficients::<F, E, T>(&opening_shape, transcript)?
     };
     if row_partials_by_claim.len() != row_coefficients.len() {
