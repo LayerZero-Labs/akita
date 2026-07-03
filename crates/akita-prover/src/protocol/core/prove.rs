@@ -146,12 +146,6 @@ where
 {
     claims.validate::<Cfg::Field>()?;
     let opening_claims = claims.opening_claims();
-    validate_batched_inputs(
-        expanded.as_ref(),
-        opening_claims.point(),
-        &opening_claims.group_sizes(),
-        true,
-    )?;
     opening_claims.validate(expanded.seed())?;
     let opening_batch = opening_claims.layout();
     let flat_polys = claims.flat_polys();

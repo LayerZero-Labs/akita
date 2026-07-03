@@ -18,8 +18,8 @@ commitment groups in one root proof. The first supported shape is deliberately
 narrow:
 
 - every opened polynomial is a one-hot polynomial;
-- the final/main group defines the shared padded opening arity, and every
-  precommitted group has `num_vars <= main.num_vars`;
+- the final group defines the shared padded opening arity, and every
+  precommitted group has `num_vars <= final_group.num_vars / 2`;
 - all groups are opened at one shared point;
 - group sizes `K_g` may differ;
 - multi-group structure exists only at the root fold;
@@ -89,8 +89,7 @@ commitments, witness shapes, and descriptors must return `AkitaError`.
 
 - Multipoint openings. The batch still has one shared opening point.
 - Dense polynomial support for the initial multi-group root batching rollout.
-- Precommitted groups whose `num_vars` exceed the final/main group's
-  `num_vars`.
+- Precommitted groups whose `num_vars` exceed `final_group.num_vars / 2`.
 - Tiered multi-group commitments. Existing tiered paths may keep rejecting
 `G > 1`.
 - Recursive setup-contribution support for `G > 1` in the first rollout, unless
@@ -334,10 +333,12 @@ num_w_vectors = 1
 num_z_vectors = 1
 ```
 
-The final/main group sets the shared padded opening arity used by the grouped
+The final group sets the shared padded opening arity used by the grouped
 root. Precommitted group entries may have smaller arity; their
 `PointVariableSelection` chooses the coordinates they use from the shared point.
-Precommitted entries with arity greater than the final/main group must reject.
+Precommitted entries with arity greater than `final_group.num_vars / 2` must
+reject. This is the integer-division bound enforced by
+`AkitaScheduleLookupKey::validate`.
 
 Use the group-batch key for final commit/prove planning:
 
@@ -898,7 +899,8 @@ At `commit_final` time:
 - `precommitteds` must be well-formed group metadata;
 - the full `AkitaScheduleLookupKey` must be derivable from
   `precommitteds + new`;
-- each precommitted group must have `key.num_vars <= new.key.num_vars`;
+- each precommitted group must have
+  `group.num_vars <= final_group.num_vars / 2`;
 - each precommitted group must keep its `PrecommittedGroupParams` `m`, `r`,
   `log_basis`, `n_a`, and B width;
 - each precommitted group must use the frozen conservative B row count in the
@@ -937,7 +939,7 @@ At verify time:
 | ----------------------------------------------- | ------------------------------------------ | ---------------------------------------- |
 | Tiered preset + `G > 1`                         | Root relation quotient / prove entry       | `AkitaError::InvalidSetup`               |
 | Dense polynomial + `G > 1`                      | `commit_group` / `commit_final`            | `AkitaError::InvalidInput`               |
-| Precommitted `num_vars > main.num_vars`         | `commit_final` / grouped key validation    | `AkitaError::InvalidInput`               |
+| Precommitted `num_vars > final_group.num_vars / 2` | `commit_final` / grouped key validation | `AkitaError::InvalidInput`               |
 | Recursive setup contribution + `G > 1`          | Prove / verify entry                       | `AkitaError::InvalidSetup`               |
 | Scalar table lookup collapsing `[1,3]` to `[4]` | Generated schedule lookup                  | table miss or `AkitaError::InvalidSetup` |
 | Grouped proof with descriptor version 1         | Descriptor parse                           | `SerializationError`                     |

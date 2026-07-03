@@ -13,7 +13,6 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::collections::BTreeSet;
-use std::ops::Deref;
 
 /// Tiered presets cannot open multi-group root batches yet.
 pub const GROUPED_ROOT_TIERED_UNSUPPORTED: &str =
@@ -167,7 +166,7 @@ impl OpeningClaimsLayout {
 
     /// Validate layout count consistency.
     pub fn check(&self) -> Result<(), AkitaError> {
-        if self.groups.is_empty() || self.num_total_polynomials() == 0 {
+        if self.groups.is_empty() || self.checked_num_total_polynomials()? == 0 {
             return Err(AkitaError::InvalidProof);
         }
         for group in &self.groups {
@@ -201,6 +200,13 @@ impl OpeningClaimsLayout {
             .iter()
             .map(|group| group.num_polynomials())
             .sum()
+    }
+
+    fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
+        self.groups.iter().try_fold(0usize, |acc, group| {
+            acc.checked_add(group.num_polynomials())
+                .ok_or(AkitaError::InvalidProof)
+        })
     }
 
     /// Number of polynomials in each group.
@@ -354,7 +360,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
 
     /// Validate internal routing/count consistency.
     pub fn check(&self) -> Result<(), AkitaError> {
-        if self.groups.is_empty() || self.num_total_polynomials() == 0 {
+        if self.groups.is_empty() || self.checked_num_total_polynomials()? == 0 {
             return Err(AkitaError::InvalidProof);
         }
         let point_len = self.point.as_ref().len();
@@ -387,7 +393,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 actual: self.num_vars(),
             });
         }
-        let num_polynomials = self.num_total_polynomials();
+        let num_polynomials = self.checked_num_total_polynomials()?;
         if num_polynomials > seed.max_num_batched_polys {
             return Err(AkitaError::InvalidSize {
                 expected: seed.max_num_batched_polys,
@@ -418,6 +424,13 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             .iter()
             .map(|group| group.evaluations.len())
             .sum()
+    }
+
+    fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
+        self.groups.iter().try_fold(0usize, |acc, group| {
+            acc.checked_add(group.evaluations.len())
+                .ok_or(AkitaError::InvalidProof)
+        })
     }
 
     /// Number of polynomials/evaluations in each group.
@@ -526,8 +539,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     where
         TranscriptF: FieldCore + CanonicalField,
         F: ExtField<TranscriptF>,
-        C: Deref,
-        C::Target: AppendToTranscript<TranscriptF>,
+        C: AppendToTranscript<TranscriptF>,
         T: Transcript<TranscriptF>,
     {
         self.check()?;
@@ -549,7 +561,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         for group in &self.groups {
             group
                 .commitment
-                .deref()
                 .append_to_transcript(ABSORB_COMMITMENT, transcript);
         }
         for coord in self.point() {

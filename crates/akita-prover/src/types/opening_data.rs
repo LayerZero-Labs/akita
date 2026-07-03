@@ -1,11 +1,8 @@
 use crate::api::CommitmentWithHint;
 use crate::compute::{RootOpeningSource, RootPolyShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_transcript::labels::ABSORB_BATCH_SHAPE;
 use akita_transcript::Transcript;
-use akita_types::{
-    AkitaCommitmentHint, AppendToTranscript, FlatRingVec, OpeningClaims, RingCommitment,
-};
+use akita_types::{AkitaCommitmentHint, FlatRingVec, OpeningClaims, RingCommitment};
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
 #[derive(Debug, Clone)]
@@ -124,8 +121,10 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
 
     /// Commitments in commitment-group order.
     pub fn commitments(&self) -> Vec<&RingCommitment<CommitF, D>> {
-        (0..self.opening_claims.num_groups())
-            .filter_map(|index| self.opening_claims.group_commitment(index).ok())
+        self.opening_claims
+            .groups()
+            .iter()
+            .map(|group| group.commitment())
             .collect()
     }
 
@@ -134,37 +133,10 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     where
         CommitF: CanonicalField,
         PointF: ExtField<CommitF>,
-        P: RootPolyShape<CommitF, D>,
         T: Transcript<CommitF>,
     {
-        let claims = self.opening_claims();
-        let groups = claims.groups();
-        let num_polynomials = groups
-            .iter()
-            .map(|group| group.num_evaluations())
-            .sum::<usize>();
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &claims.num_vars());
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &num_polynomials);
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &groups.len());
-        for group in groups {
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_evaluations());
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.point_vars().num_vars());
-            for &index in group.point_vars().indices() {
-                transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
-            }
-        }
-        for commitment in self.commitments() {
-            commitment
-                .append_to_transcript(akita_transcript::labels::ABSORB_COMMITMENT, transcript);
-        }
-        for coord in claims.point() {
-            akita_transcript::append_ext_field::<CommitF, PointF, T>(
-                transcript,
-                akita_transcript::labels::ABSORB_EVALUATION_CLAIMS,
-                coord,
-            );
-        }
-        Ok(())
+        self.opening_claims
+            .append_to_transcript::<CommitF, T>(transcript)
     }
 
     /// Return the only group when the current single-group path applies.
