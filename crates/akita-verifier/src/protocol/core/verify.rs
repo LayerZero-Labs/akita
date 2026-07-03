@@ -16,11 +16,11 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup,
-    BasisMode, CleartextWitnessProof, Commitment, FpExtEncoding, LevelParams, OpeningClaims,
-    OpeningClaimsLayout, RingVec, RingView, Schedule, SetupContributionMode, Step,
-    ValidatedScheduleContext, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED,
+    should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
+    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, Commitment,
+    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingVec, RingView, Schedule,
+    SetupContributionMode, Step, ValidatedScheduleContext,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -33,6 +33,11 @@ where
     if D == 0 || !D.is_power_of_two() || !evals.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }
+    // Borrow flat coeffs as fixed-width ring rows: tail slots in the final row
+    // are zero-filled when `evals.len()` is not a multiple of `D`. Root-direct
+    // verify validates witness length before calling here; padding keeps this
+    // helper aligned with the runtime-ring view where `D` is a local packing
+    // width, not a protocol-wide invariant on flat vector length.
     Ok(evals
         .chunks(D)
         .map(|chunk| {
@@ -77,21 +82,23 @@ fn reject_unsupported_grouped_root<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    if opening_batch.num_groups() <= 1 {
-        return Ok(());
+    if let Some(message) = should_reject_grouped_root(
+        opening_batch,
+        Cfg::TIERED_COMMITMENT,
+        setup_contribution_mode,
+        None,
+    ) {
+        return Err(
+            if message == GROUPED_ROOT_TIERED_UNSUPPORTED
+                || message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED
+            {
+                AkitaError::InvalidSetup(message.to_string())
+            } else {
+                AkitaError::InvalidProof
+            },
+        );
     }
-    if Cfg::TIERED_COMMITMENT {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
-        ));
-    }
-    if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
-        ));
-    }
-    // Unsupported grouped claims: `InvalidProof` (unit variant). See `GROUPED_ROOT_UNSUPPORTED`.
-    Err(AkitaError::InvalidProof)
+    Ok(())
 }
 
 struct DirectRecommitGeometry {
@@ -343,7 +350,7 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let opening_batch = claims.layout();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     // Validate the flat commitment shape against the schedule-derived ring
     // dimension before interpreting it. `RingView::new` enforces the
     // multiple-of-`ring_dim` invariant; no panic on malformed lengths.
@@ -427,7 +434,7 @@ where
     claims
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
-    let opening_batch = claims.layout();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;

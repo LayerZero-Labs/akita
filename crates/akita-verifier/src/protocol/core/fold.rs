@@ -546,7 +546,10 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let opening_shape = prepared.opening_batch.layout();
+    let opening_shape = prepared
+        .opening_batch
+        .layout()
+        .map_err(|_| AkitaError::InvalidProof)?;
     let commitment = prepared
         .opening_batch
         .single_group_commitment()

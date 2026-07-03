@@ -114,7 +114,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 2;
-    const MAIN_SIZE: usize = 3;
+    const MAIN_SIZE: usize = 4;
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
@@ -152,7 +152,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
             let schedule =
                 OneHotCfg::runtime_schedule(grouped_key.clone()).expect("grouped runtime schedule");
             let root = grouped_root_params(&schedule);
-            let main_params = OneHotCfg::get_params_for_grouped_batched_commitment(&grouped_key)
+            let main_params = akita_types::grouped_root_commit_params(&schedule)
                 .expect("main grouped commit params");
 
             assert_eq!(grouped_key.num_commitment_groups(), 3);

@@ -10,45 +10,21 @@ use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
-    ValidatedScheduleContext, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    schedule_terminal_direct_witness_shape, should_reject_grouped_root, ValidatedScheduleContext,
     GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED,
 };
 
-fn reject_unsupported_grouped_root<Cfg, F, P>(
-    opening_batch: &OpeningClaimsLayout,
-    polys: &[&P],
-    setup_contribution_mode: SetupContributionMode,
-) -> Result<(), AkitaError>
-where
-    Cfg: CommitmentConfig,
-    F: FieldCore,
-    P: RootPolyMeta<F>,
-{
-    if opening_batch.num_groups() <= 1 {
-        return Ok(());
+fn grouped_root_prover_error(message: &'static str) -> AkitaError {
+    if message == GROUPED_ROOT_TIERED_UNSUPPORTED
+        || message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED
+    {
+        AkitaError::InvalidSetup(message.to_string())
+    } else {
+        AkitaError::InvalidInput(message.to_string())
     }
-    if Cfg::TIERED_COMMITMENT {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
-        ));
-    }
-    if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
-        ));
-    }
-    if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
-        return Err(AkitaError::InvalidInput(
-            GROUPED_ROOT_DENSE_UNSUPPORTED.to_string(),
-        ));
-    }
-    Err(AkitaError::InvalidInput(
-        GROUPED_ROOT_UNSUPPORTED.to_string(),
-    ))
 }
+
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
 ///
@@ -159,13 +135,20 @@ where
     claims.validate::<Cfg::Field>()?;
     let opening_claims = claims.opening_claims();
     opening_claims.validate(expanded.seed())?;
-    let opening_batch = opening_claims.layout();
+    let opening_batch = opening_claims.layout()?;
     let flat_polys = claims.flat_polys();
-    reject_unsupported_grouped_root::<Cfg, Cfg::Field, P>(
+    if let Some(message) = should_reject_grouped_root(
         &opening_batch,
-        &flat_polys,
+        Cfg::TIERED_COMMITMENT,
         setup_contribution_mode,
-    )?;
+        Some(
+            flat_polys
+                .iter()
+                .any(|poly| poly.onehot_chunk_size().is_none()),
+        ),
+    ) {
+        return Err(grouped_root_prover_error(message));
+    }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     let schedule_ctx = ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
     let root_commit_params = match schedule.steps.first() {

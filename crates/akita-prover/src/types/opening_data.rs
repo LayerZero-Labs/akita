@@ -168,7 +168,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         T: Transcript<CommitF>,
     {
         let layout = self.opening_layout::<CommitF>()?;
-        layout.append_to_transcript::<CommitF, T>(transcript)?;
+        layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
         for commitment in self.commitments() {
             commitment.append_to_transcript(
                 akita_transcript::labels::ABSORB_COMMITMENT,

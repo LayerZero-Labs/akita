@@ -46,7 +46,7 @@ where
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
     let openings = claims.flat_evaluations();
-    let opening_batch = claims.layout();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let shared_opening_point = claims.point();
     let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
@@ -67,7 +67,7 @@ where
     // `ring_dim`, then the shared opening point. This replaces the former
     // `OpeningClaims::append_to_transcript`, whose generic commitment
     // path required a typed `RingCommitment: AppendToTranscript`.
-    opening_batch.append_to_transcript::<F, T>(transcript)?;
+    opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
     commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript)?;
     for coord in shared_opening_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);

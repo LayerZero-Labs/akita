@@ -478,10 +478,8 @@ impl RingRelationProver {
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
-        // Per-role ring dimensions for this level; the mixed-row spec feeds
-        // diverging role dims here (uniform today).
         let dims = lp.role_dims();
-        let opening_batch = fold_claims.opening_claims().layout();
+        let opening_batch = fold_claims.opening_claims().layout()?;
         let polys = fold_claims.flat_polys();
         let group_sizes = opening_batch.group_sizes();
         let num_groups = fold_claims.opening_claims().num_groups();

@@ -94,7 +94,7 @@ where
         + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = fold_claims.opening_claims().layout();
+    let opening_batch = fold_claims.opening_claims().layout()?;
     let fold_polys = fold_claims.flat_polys();
     let tensor = stack.tensor();
     // A-role fold dimension: the EOR sumcheck and tensor projection operate on
