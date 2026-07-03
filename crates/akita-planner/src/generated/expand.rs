@@ -17,8 +17,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedGroupBatchScheduleTableEntry,
-    GeneratedScheduleTableEntry, GeneratedStep,
+    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
@@ -481,18 +480,6 @@ impl GeneratedScheduleTableEntry {
     /// # Errors
     ///
     /// Returns an error when any invariant is violated.
-    pub fn validate(&self) -> Result<(), AkitaError> {
-        validate_generated_steps(self.steps)
-    }
-}
-
-impl GeneratedGroupBatchScheduleTableEntry {
-    /// Validate the structural invariants shared with scalar generated entries.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the step list is empty, has a non-terminal direct
-    /// step, or does not end in a direct step.
     pub fn validate(&self) -> Result<(), AkitaError> {
         validate_generated_steps(self.steps)
     }

@@ -15,7 +15,7 @@ use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup,
-    CommitmentGroupScheduleKey, FpExtEncoding, LevelParams, MultiChunkProfileId, RingCommitment,
+    FpExtEncoding, LevelParams, MultiChunkProfileId, PolynomialGroupLayout, RingCommitment,
 };
 use akita_verifier::CommitmentVerifier;
 
@@ -37,7 +37,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
 ) {
     let layout = resolve_layout::<F, Cfg>(nv);
     let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        CommitmentGroupScheduleKey::singleton(nv),
+        PolynomialGroupLayout::singleton(nv),
     ))
     .expect("schedule plan");
     tracing::info!("{}", title);
@@ -81,10 +81,10 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
 {
     // The dense profile opens one polynomial at one point, so the schedule key
     // is the singleton root the prover actually resolves via
-    // `new_from_opening_batch`.
+    // `new_from_layout`.
     let layout = resolve_layout::<FF, Cfg>(nv);
     let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        CommitmentGroupScheduleKey::singleton(nv),
+        PolynomialGroupLayout::singleton(nv),
     ))
     .expect("schedule plan");
     tracing::info!("{}", title);
@@ -143,13 +143,13 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             );
         }
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            CommitmentGroupScheduleKey::singleton(nv),
+            PolynomialGroupLayout::singleton(nv),
         ))
         .expect("schedule plan");
         print_layout(&layout, 1, Cfg::decomposition().field_bits());
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan));
     } else {
-        let schedule_key = CommitmentGroupScheduleKey::new(nv, num_polys);
+        let schedule_key = PolynomialGroupLayout::new(nv, num_polys);
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_key))
             .expect("schedule plan");
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
@@ -558,7 +558,7 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
 
 fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> LevelParams {
     Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout")
 }

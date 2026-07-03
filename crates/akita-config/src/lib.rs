@@ -13,10 +13,11 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+#[cfg(test)]
+use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentGroupScheduleKey,
-    DecompositionParams, LevelParams, OpeningBatchShape, Schedule, SetupMatrixEnvelope,
-    SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
+    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -322,13 +323,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
-    fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
-        Self::runtime_schedule(AkitaScheduleLookupKey::single(key))
+    /// `InvalidSetup` if no schedule-table entry exists for `layout`.
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+        Self::runtime_schedule(AkitaScheduleLookupKey::from_layout(layout)?)
     }
 
-    /// Root commit layout the `batched_prove` flow uses for `opening_batch`,
+    /// Root commit layout the `batched_prove` flow uses for `layout`,
     /// read off the runtime schedule's first step (the root Fold params or
     /// the root-direct's commit slot). Same layout per-point commits use,
     /// so they stay compatible with the batched prove root.
@@ -343,9 +343,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
     /// schedule lacks a commit (the uncommittable edge case).
     fn get_params_for_batched_commitment(
-        opening_batch: &OpeningBatchShape,
+        layout: &OpeningClaimsLayout,
     ) -> Result<LevelParams, AkitaError> {
-        let schedule = Self::get_params_for_prove(opening_batch)?;
+        let schedule = Self::get_params_for_prove(layout)?;
         match schedule.steps.first() {
             Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
             Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
@@ -546,7 +546,7 @@ mod fp128_policy_tests {
     ) {
         for &num_vars in num_vars_values {
             let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-                CommitmentGroupScheduleKey::singleton(num_vars),
+                PolynomialGroupLayout::singleton(num_vars),
             ))
             .unwrap();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
@@ -598,7 +598,7 @@ mod fp128_policy_tests {
             2
         );
 
-        let opening_batch = OpeningBatchShape::new(20, 1).expect("singleton opening batch");
+        let opening_batch = OpeningClaimsLayout::new(20, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
@@ -612,7 +612,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_family_selector_uses_generated_singleton_plans() {
-        let key = CommitmentGroupScheduleKey::singleton(32);
+        let key = PolynomialGroupLayout::singleton(32);
 
         let full = fp128::best_full_schedule(key)
             .expect("selector should resolve full schedules")
@@ -630,7 +630,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_family_selector_supports_batched_keys() {
-        let key = CommitmentGroupScheduleKey::new(30, 4);
+        let key = PolynomialGroupLayout::new(30, 4);
 
         let selection = fp128::best_onehot_schedule(key)
             .expect("selector should resolve batched onehot schedules")

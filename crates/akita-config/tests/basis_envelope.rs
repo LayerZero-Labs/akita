@@ -3,7 +3,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey, Step};
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout, Step};
 
 /// Sparse singleton keys covering small, production, stress, and table-max nv.
 const BASIS_ENVELOPE_NUM_VARS: &[usize] = &[10, 16, 28, 30, 64, 120];
@@ -14,7 +14,7 @@ fn d64_onehot_schedule_stays_within_basis_envelope() {
 
     for &nv in BASIS_ENVELOPE_NUM_VARS {
         let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            CommitmentGroupScheduleKey::singleton(nv),
+            PolynomialGroupLayout::singleton(nv),
         )) {
             Ok(schedule) => schedule,
             Err(_) => continue,

@@ -45,7 +45,7 @@ where
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let opening_batch = instance.opening_batch();
-    let num_polys = opening_batch.num_polynomials();
+    let num_polys = opening_batch.num_total_polynomials();
 
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
@@ -74,7 +74,7 @@ where
     let alpha_evals_y = scalar_powers(alpha, D);
 
     let challenges = &instance.challenges;
-    if gamma.len() != instance.opening_batch().num_polynomials() {
+    if gamma.len() != instance.opening_batch().num_total_polynomials() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
         ));

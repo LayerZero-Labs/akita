@@ -35,38 +35,20 @@ pub enum GeneratedStep {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedCommitmentGroupScheduleKey {
-    pub num_vars: usize,
-    pub num_polynomials: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedCommitmentGroupLayout {
-    pub key: GeneratedCommitmentGroupScheduleKey,
-    pub m_vars: usize,
-    pub r_vars: usize,
-    pub log_basis: u32,
-    pub n_a: usize,
-    pub conservative_n_b: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedScheduleLookupKey {
-    /// Final group shape for the grouped root commitment.
-    pub final_group: GeneratedCommitmentGroupScheduleKey,
-    pub precommitteds: &'static [GeneratedCommitmentGroupLayout],
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedGroupBatchScheduleTableEntry {
-    pub key: GeneratedScheduleLookupKey,
-    pub steps: &'static [GeneratedStep],
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleTableEntry {
-    pub key: GeneratedCommitmentGroupScheduleKey,
+    pub final_group: akita_types::PolynomialGroupLayout,
+    pub precommitteds: &'static [akita_types::PrecommittedGroupParams],
     pub steps: &'static [GeneratedStep],
+}
+
+impl GeneratedScheduleTableEntry {
+    /// Build the runtime schedule lookup key represented by this generated row.
+    pub(crate) fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
+        akita_types::AkitaScheduleLookupKey {
+            final_group: self.final_group,
+            precommitteds: self.precommitteds.to_vec(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +78,6 @@ pub struct GeneratedScheduleCatalogIdentity {
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedScheduleTable {
     pub entries: &'static [GeneratedScheduleTableEntry],
-    pub group_batch_entries: &'static [GeneratedGroupBatchScheduleTableEntry],
     pub identity: GeneratedScheduleCatalogIdentity,
 }
 
@@ -104,75 +85,39 @@ pub mod expand;
 pub mod validate;
 pub(crate) mod walk;
 pub use akita_types::SisModulusFamily;
-pub use validate::{
-    validate_generated_group_batch_schedule_entry, validate_generated_schedule_entry,
-    validate_generated_schedule_table,
-};
-
-use core::cmp::Ordering;
-
-/// Lexicographic order used by shipped catalog emission: `num_polynomials`, then `num_vars`.
-#[inline]
-pub fn catalog_key_cmp(
-    a: GeneratedCommitmentGroupScheduleKey,
-    b: GeneratedCommitmentGroupScheduleKey,
-) -> Ordering {
-    a.num_polynomials
-        .cmp(&b.num_polynomials)
-        .then_with(|| a.num_vars.cmp(&b.num_vars))
-}
+pub use akita_types::{PolynomialGroupLayout, PrecommittedGroupParams};
+pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
 
 /// Returns true when `entries` are ordered for [`table_entry`] binary search.
 pub fn catalog_entries_sorted_for_lookup(entries: &[GeneratedScheduleTableEntry]) -> bool {
     entries
         .windows(2)
-        .all(|window| catalog_key_cmp(window[0].key, window[1].key).is_lt())
+        .all(|window| generated_schedule_key_cmp(&window[0], &window[1]).is_lt())
 }
 
 pub fn table_entry(
     table: GeneratedScheduleTable,
-    key: GeneratedCommitmentGroupScheduleKey,
+    key: &akita_types::AkitaScheduleLookupKey,
 ) -> Option<&'static GeneratedScheduleTableEntry> {
     debug_assert!(catalog_entries_sorted_for_lookup(table.entries));
     table
         .entries
-        .binary_search_by(|entry| catalog_key_cmp(entry.key, key))
+        .binary_search_by(|entry| generated_schedule_key_cmp_runtime(entry, key))
         .ok()
         .map(|idx| &table.entries[idx])
 }
 
-pub fn group_batch_table_entry(
-    table: GeneratedScheduleTable,
-    key: &akita_types::AkitaScheduleLookupKey,
-) -> Option<&'static GeneratedGroupBatchScheduleTableEntry> {
-    debug_assert!(catalog_group_batch_entries_sorted_for_lookup(
-        table.group_batch_entries
-    ));
-    table
-        .group_batch_entries
-        .binary_search_by(|entry| generated_group_batch_key_cmp_runtime(&entry.key, key))
-        .ok()
-        .map(|idx| &table.group_batch_entries[idx])
-}
-
-/// Returns true when grouped rows are ordered for [`group_batch_table_entry`]
-/// binary search.
-pub fn catalog_group_batch_entries_sorted_for_lookup(
-    entries: &[GeneratedGroupBatchScheduleTableEntry],
-) -> bool {
-    entries
-        .windows(2)
-        .all(|window| generated_group_batch_key_cmp(&window[0].key, &window[1].key).is_lt())
-}
-
-pub fn generated_group_batch_key_cmp(
-    left: &GeneratedScheduleLookupKey,
-    right: &GeneratedScheduleLookupKey,
+pub fn generated_schedule_key_cmp(
+    left: &GeneratedScheduleTableEntry,
+    right: &GeneratedScheduleTableEntry,
 ) -> std::cmp::Ordering {
-    let left_main = (left.final_group.num_vars, left.final_group.num_polynomials);
+    let left_main = (
+        left.final_group.num_vars(),
+        left.final_group.num_polynomials(),
+    );
     let right_main = (
-        right.final_group.num_vars,
-        right.final_group.num_polynomials,
+        right.final_group.num_vars(),
+        right.final_group.num_polynomials(),
     );
     left_main
         .cmp(&right_main)
@@ -185,17 +130,17 @@ pub fn generated_group_batch_key_cmp(
         })
 }
 
-pub fn generated_group_batch_key_cmp_runtime(
-    generated: &GeneratedScheduleLookupKey,
+pub fn generated_schedule_key_cmp_runtime(
+    generated: &GeneratedScheduleTableEntry,
     runtime: &akita_types::AkitaScheduleLookupKey,
 ) -> std::cmp::Ordering {
     let left_main = (
-        generated.final_group.num_vars,
-        generated.final_group.num_polynomials,
+        generated.final_group.num_vars(),
+        generated.final_group.num_polynomials(),
     );
     let right_main = (
-        runtime.final_group.num_vars,
-        runtime.final_group.num_polynomials,
+        runtime.final_group.num_vars(),
+        runtime.final_group.num_polynomials(),
     );
     left_main
         .cmp(&right_main)
@@ -208,15 +153,18 @@ pub fn generated_group_batch_key_cmp_runtime(
         .then_with(|| precommitted_groups_cmp(generated.precommitteds, &runtime.precommitteds))
 }
 
-/// Sort order for runtime grouped keys; matches [`generated_group_batch_key_cmp`].
-pub fn runtime_group_batch_key_cmp(
+/// Sort order for runtime keys; matches [`generated_schedule_key_cmp`].
+pub fn runtime_schedule_key_cmp(
     left: &akita_types::AkitaScheduleLookupKey,
     right: &akita_types::AkitaScheduleLookupKey,
 ) -> std::cmp::Ordering {
-    let left_main = (left.final_group.num_vars, left.final_group.num_polynomials);
+    let left_main = (
+        left.final_group.num_vars(),
+        left.final_group.num_polynomials(),
+    );
     let right_main = (
-        right.final_group.num_vars,
-        right.final_group.num_polynomials,
+        right.final_group.num_vars(),
+        right.final_group.num_polynomials(),
     );
     left_main
         .cmp(&right_main)
@@ -224,58 +172,31 @@ pub fn runtime_group_batch_key_cmp(
         .then_with(|| {
             left.precommitteds
                 .iter()
-                .map(runtime_precommitted_group_sort_key)
-                .cmp(
-                    right
-                        .precommitteds
-                        .iter()
-                        .map(runtime_precommitted_group_sort_key),
-                )
+                .map(precommitted_group_sort_key)
+                .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
         })
 }
 
-fn runtime_precommitted_group_sort_key(
-    key: &akita_types::CommitmentGroupLayout,
-) -> (usize, usize, usize, usize, u32, usize, usize) {
-    (
-        key.key.num_vars,
-        key.key.num_polynomials,
-        key.m_vars,
-        key.r_vars,
-        key.log_basis,
-        key.n_a,
-        key.conservative_n_b,
-    )
-}
-
 fn precommitted_groups_cmp(
-    generated: &[GeneratedCommitmentGroupLayout],
-    runtime: &[akita_types::CommitmentGroupLayout],
+    generated: &[akita_types::PrecommittedGroupParams],
+    runtime: &[akita_types::PrecommittedGroupParams],
 ) -> std::cmp::Ordering {
     generated
         .iter()
         .zip(runtime)
         .map(|(left, right)| {
-            precommitted_group_sort_key(left).cmp(&(
-                right.key.num_vars,
-                right.key.num_polynomials,
-                right.m_vars,
-                right.r_vars,
-                right.log_basis,
-                right.n_a,
-                right.conservative_n_b,
-            ))
+            precommitted_group_sort_key(left).cmp(&precommitted_group_sort_key(right))
         })
         .find(|ord| *ord != std::cmp::Ordering::Equal)
         .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 fn precommitted_group_sort_key(
-    key: &GeneratedCommitmentGroupLayout,
+    key: &akita_types::PrecommittedGroupParams,
 ) -> (usize, usize, usize, usize, u32, usize, usize) {
     (
-        key.key.num_vars,
-        key.key.num_polynomials,
+        key.group.num_vars(),
+        key.group.num_polynomials(),
         key.m_vars,
         key.r_vars,
         key.log_basis,
@@ -284,15 +205,11 @@ fn precommitted_group_sort_key(
     )
 }
 
-fn group_batch_key_eq(
-    generated: &GeneratedScheduleLookupKey,
+fn schedule_key_eq(
+    generated: &GeneratedScheduleTableEntry,
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
-    generated.final_group
-        == GeneratedCommitmentGroupScheduleKey {
-            num_vars: key.final_group.num_vars,
-            num_polynomials: key.final_group.num_polynomials,
-        }
+    generated.final_group == key.final_group
         && generated.precommitteds.len() == key.precommitteds.len()
         && generated
             .precommitteds
@@ -302,14 +219,10 @@ fn group_batch_key_eq(
 }
 
 fn precommitted_group_key_eq(
-    generated: &GeneratedCommitmentGroupLayout,
-    layout: &akita_types::CommitmentGroupLayout,
+    generated: &akita_types::PrecommittedGroupParams,
+    layout: &akita_types::PrecommittedGroupParams,
 ) -> bool {
-    generated.key
-        == GeneratedCommitmentGroupScheduleKey {
-            num_vars: layout.key.num_vars,
-            num_polynomials: layout.key.num_polynomials,
-        }
+    generated.group == layout.group
         && generated.m_vars == layout.m_vars
         && generated.r_vars == layout.r_vars
         && generated.log_basis == layout.log_basis
@@ -317,42 +230,16 @@ fn precommitted_group_key_eq(
         && generated.conservative_n_b == layout.conservative_n_b
 }
 
-/// Returns an error when the generated grouped key does not match the runtime key.
-pub(crate) fn validate_group_batch_entry_key(
-    generated: &GeneratedScheduleLookupKey,
+/// Returns an error when the generated key does not match the runtime key.
+pub(crate) fn validate_entry_key(
+    generated: &GeneratedScheduleTableEntry,
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> Result<(), akita_field::AkitaError> {
-    if group_batch_key_eq(generated, key) {
+    if schedule_key_eq(generated, key) {
         Ok(())
     } else {
         Err(akita_field::AkitaError::InvalidSetup(
-            "generated grouped schedule key mismatch".to_string(),
+            "generated schedule key mismatch".to_string(),
         ))
-    }
-}
-
-/// Build a runtime grouped key from a generated catalog row key.
-pub(crate) fn runtime_key_from_generated(
-    key: &GeneratedScheduleLookupKey,
-) -> akita_types::AkitaScheduleLookupKey {
-    use akita_types::{AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey};
-
-    AkitaScheduleLookupKey {
-        final_group: CommitmentGroupScheduleKey::new(
-            key.final_group.num_vars,
-            key.final_group.num_polynomials,
-        ),
-        precommitteds: key
-            .precommitteds
-            .iter()
-            .map(|group| CommitmentGroupLayout {
-                key: CommitmentGroupScheduleKey::new(group.key.num_vars, group.key.num_polynomials),
-                m_vars: group.m_vars,
-                r_vars: group.r_vars,
-                log_basis: group.log_basis,
-                n_a: group.n_a,
-                conservative_n_b: group.conservative_n_b,
-            })
-            .collect(),
     }
 }

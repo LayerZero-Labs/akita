@@ -379,7 +379,7 @@ where
 {
     let alpha_pows = scalar_powers(alpha, D);
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
-    let num_t_vectors = relation.opening_batch().num_polynomials();
+    let num_t_vectors = relation.opening_batch().num_total_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
         lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
         lp.log_basis,
@@ -403,7 +403,7 @@ where
     E: FieldCore,
 {
     let opening_batch = relation.opening_batch();
-    let num_polynomials = opening_batch.num_polynomials();
+    let num_polynomials = opening_batch.num_total_polynomials();
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;

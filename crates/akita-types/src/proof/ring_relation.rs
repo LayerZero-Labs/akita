@@ -1,6 +1,6 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
-use super::OpeningBatchShape;
+use super::OpeningClaimsLayout;
 use crate::witness::{WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
 use crate::FpExtEncoding;
 use crate::{
@@ -84,7 +84,7 @@ pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     pub challenges: Challenges,
     opening_point: RingOpeningPoint<F>,
     ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-    opening_batch: OpeningBatchShape,
+    opening_batch: OpeningClaimsLayout,
     gamma: Vec<F>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     y: Vec<CyclotomicRing<F, D>>,
@@ -101,15 +101,15 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         challenges: Challenges,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        opening_batch: OpeningBatchShape,
+        opening_batch: OpeningClaimsLayout,
         gamma: Vec<F>,
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         y: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
-        if gamma.len() != opening_batch.num_polynomials()
-            || row_coefficient_rings.len() != opening_batch.num_polynomials()
+        if gamma.len() != opening_batch.num_total_polynomials()
+            || row_coefficient_rings.len() != opening_batch.num_total_polynomials()
         {
             return Err(AkitaError::InvalidInput(
                 "ring relation gamma/row coefficients length mismatch".to_string(),
@@ -137,7 +137,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         self.m_row_layout
     }
 
-    pub fn opening_batch(&self) -> &OpeningBatchShape {
+    pub fn opening_batch(&self) -> &OpeningClaimsLayout {
         &self.opening_batch
     }
 
@@ -217,7 +217,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         lp: &LevelParams,
         witness_ring_len: Option<usize>,
     ) -> Result<WitnessLayout, AkitaError> {
-        let num_claims = self.opening_batch.num_polynomials();
+        let num_claims = self.opening_batch.num_total_polynomials();
         let lens = ring_relation_segment_lengths::<F, D>(
             lp,
             RingRelationOpeningCounts {
@@ -395,12 +395,12 @@ mod tests {
     #[test]
     fn relation_instance_rejects_empty_y() {
         let lp = test_level_params();
-        let opening_batch = OpeningBatchShape::new(2, 1).expect("valid opening batch");
+        let opening_batch = OpeningClaimsLayout::new(2, 1).expect("valid opening batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F, D>::new(
             MRowLayout::WithoutDBlock,
-            test_challenges(&lp, opening_batch.num_polynomials()),
+            test_challenges(&lp, opening_batch.num_total_polynomials()),
             opening_point,
             ring_multiplier_point,
             opening_batch,
@@ -425,14 +425,14 @@ mod tests {
     }
 
     /// Build a minimal `WithDBlock` relation instance whose layout-relevant
-    /// shape is `opening_batch.num_polynomials() = num_claims` and `y.len() =
+    /// shape is `opening_batch.num_total_polynomials() = num_claims` and `y.len() =
     /// num_rows` (the only fields [`RingRelationInstance::segment_layout`] reads).
     fn build_instance(
         lp: &LevelParams,
         num_claims: usize,
         num_rows: usize,
     ) -> RingRelationInstance<F, D> {
-        let opening_batch = OpeningBatchShape::new(8, num_claims).expect("opening batch");
+        let opening_batch = OpeningClaimsLayout::new(8, num_claims).expect("opening batch");
         let opening_point = opening_point(lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         RingRelationInstance::<F, D>::new(
@@ -581,12 +581,12 @@ mod tests {
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
         let lp = test_level_params();
-        let opening_batch = OpeningBatchShape::new(2, 3).expect("valid batch");
+        let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let instance = RingRelationInstance::<F, D>::new(
             MRowLayout::WithDBlock,
-            test_challenges(&lp, opening_batch.num_polynomials()),
+            test_challenges(&lp, opening_batch.num_total_polynomials()),
             opening_point,
             ring_multiplier_point,
             opening_batch,
@@ -602,8 +602,8 @@ mod tests {
         let lens = ring_relation_segment_lengths::<F, D>(
             &lp,
             RingRelationOpeningCounts {
-                num_claims: instance.opening_batch().num_polynomials(),
-                num_t_vectors: instance.opening_batch().num_polynomials(),
+                num_claims: instance.opening_batch().num_total_polynomials(),
+                num_t_vectors: instance.opening_batch().num_total_polynomials(),
             },
             instance.m_row_layout(),
         )
