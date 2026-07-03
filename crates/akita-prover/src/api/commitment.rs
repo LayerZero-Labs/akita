@@ -8,14 +8,14 @@ use crate::compute::{
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
 use akita_algebra::CyclotomicRing;
-use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaScheduleLookupKey, FlatDigitBlocks, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, RingCommitment,
+    AkitaExpandedSetup, FlatDigitBlocks, FpExtEncoding, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, RingCommitment,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -200,12 +200,49 @@ pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<
 pub(crate) fn validate_batched_onehot_chunk_size_for_params<F, const D: usize, P>(
     polys: &[P],
     params: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
     P: RootPolyShape<F, D>,
 {
-    let expected = params.onehot_chunk_size;
+    opening_batch.check()?;
+    let mut offset = 0usize;
+    for (group_index, group) in opening_batch.groups().iter().enumerate() {
+        let end = offset.checked_add(group.num_polynomials()).ok_or_else(|| {
+            AkitaError::InvalidInput("one-hot validation layout overflow".to_string())
+        })?;
+        let group_polys = polys.get(offset..end).ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "one-hot validation polynomial range mismatch with opening layout".to_string(),
+            )
+        })?;
+        validate_onehot_chunk_size_for_slice::<F, D, P>(
+            group_polys,
+            params.onehot_chunk_size,
+            group_index,
+        )?;
+        offset = end;
+    }
+
+    if offset != polys.len() {
+        return Err(AkitaError::InvalidInput(
+            "one-hot validation polynomial count mismatch with opening layout".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_onehot_chunk_size_for_slice<F, const D: usize, P>(
+    polys: &[P],
+    expected: usize,
+    group_index: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    P: RootPolyShape<F, D>,
+{
     if expected <= 1 {
         return Ok(());
     }
@@ -214,13 +251,13 @@ where
             Some(actual) if actual == expected => {}
             Some(actual) => {
                 return Err(AkitaError::InvalidInput(format!(
-                    "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
+                    "one-hot polynomial {poly_idx} in group {group_index} uses onehot_k={actual}, but this \
                      config/layout requires onehot_k={expected}"
                 )));
             }
             None => {
                 return Err(AkitaError::InvalidInput(format!(
-                    "polynomial {poly_idx} is dense, but this config/layout requires \
+                    "polynomial {poly_idx} in group {group_index} is dense, but this config/layout requires \
                      one-hot polynomials with onehot_k={expected}"
                 )));
             }
@@ -392,24 +429,13 @@ where
     Ok(schedule_root_fold_step(&schedule).is_some())
 }
 
-fn should_transform_final_group_commitment<Cfg, const D: usize>(
-    key: &AkitaScheduleLookupKey,
-) -> Result<bool, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(key.final_group.num_vars()) {
-        return Ok(false);
-    }
-    let schedule = Cfg::runtime_schedule(key.clone())?;
-    Ok(schedule_root_fold_step(&schedule).is_some())
-}
-
 /// Validate a batched commitment request and derive its `OpeningClaimsLayout`.
 ///
-/// The input slice is one commitment group at the shared opening point.
-/// Polynomials may have smaller natural arity than the shared padded batch
-/// domain; the largest arity selects the root layout.
+/// The input slice is the final commitment group at the shared opening point.
+/// Polynomials may have smaller natural arity than the shared padded final
+/// group domain; the largest arity selects the final group layout. Supplying
+/// `precommitteds` prepends those earlier groups to build the grouped root
+/// opening layout used for schedule selection.
 ///
 /// # Errors
 ///
@@ -418,6 +444,7 @@ where
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<F>,
+    precommitteds: &[PolynomialGroupLayout],
 ) -> Result<OpeningClaimsLayout, AkitaError>
 where
     F: FieldCore,
@@ -450,53 +477,15 @@ where
         )));
     }
 
-    OpeningClaimsLayout::new(padded_num_vars, polys.len())
-}
-
-fn precommitted_layouts_from_keys<Cfg>(
-    precommitteds: Vec<PolynomialGroupLayout>,
-) -> Result<Vec<PrecommittedGroupParams>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    if precommitteds.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "commit_final_group requires at least one precommitted group".to_string(),
-        ));
-    }
-    precommitteds
-        .into_iter()
-        .map(|key| {
-            key.validate()?;
-            let layout = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
-            let params = <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(&layout)?;
-            Ok(PrecommittedGroupParams::from_params(key, &params))
-        })
-        .collect()
-}
-
-fn final_group_key_from_polys<Cfg, const D: usize, P>(
-    polys: &[P],
-    setup: &AkitaExpandedSetup<Cfg::Field>,
-    precommitteds: Vec<PolynomialGroupLayout>,
-) -> Result<AkitaScheduleLookupKey, AkitaError>
-where
-    Cfg: CommitmentConfig,
-    P: RootPolyShape<Cfg::Field, D>,
-{
-    let layout = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, setup)?;
-    let key = AkitaScheduleLookupKey {
-        final_group: layout.groups()[0],
-        precommitteds: precommitted_layouts_from_keys::<Cfg>(precommitteds)?,
-    };
-    key.validate()?;
-    Ok(key)
+    let final_group = PolynomialGroupLayout::new(padded_num_vars, polys.len());
+    OpeningClaimsLayout::from_root_groups(precommitteds, final_group)
 }
 
 fn commit_with_selected_params<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B, D>,
+    validation_layout: &OpeningClaimsLayout,
     params: &LevelParams,
     transform_root: bool,
 ) -> Result<CommitmentWithHint<Cfg::Field, D>, AkitaError>
@@ -509,7 +498,11 @@ where
     B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
     let commit_ctx = stack.commit();
-    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, params)?;
+    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, P>(
+        polys,
+        params,
+        validation_layout,
+    )?;
     if transform_root {
         let tensor_ctx = stack.tensor();
         let transformed = polys
@@ -557,18 +550,24 @@ where
     P: RootCommitPoly<Cfg::Field, D>,
     B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
-    let layout = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
+    let layout = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, expanded, &[])?;
     let params = Cfg::get_params_for_batched_commitment(&layout)?;
     let transform_root = should_transform_root_commitment::<Cfg, D>(&layout)?;
-    commit_with_selected_params::<Cfg, D, P, B>(polys, expanded, stack, &params, transform_root)
+    commit_with_selected_params::<Cfg, D, P, B>(
+        polys,
+        expanded,
+        stack,
+        &layout,
+        &params,
+        transform_root,
+    )
 }
 
 /// Commit the final polynomial bundle for a grouped root commitment.
 ///
 /// The final group shape is derived from `polys`; `precommitteds` supplies the
-/// schedule keys for prior groups in transcript order. Each precommitted key is
-/// resolved through the conservative commitment config to freeze its layout
-/// before selecting the final group's grouped root commitment layout.
+/// prior groups in transcript order. The grouped schedule path freezes those
+/// layouts before selecting the final group's grouped root commitment layout.
 ///
 /// # Errors
 ///
@@ -588,10 +587,25 @@ where
     P: RootCommitPoly<Cfg::Field, D>,
     B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
-    let key = final_group_key_from_polys::<Cfg, D, P>(polys, expanded, precommitteds)?;
-    let params = Cfg::get_params_for_grouped_batched_commitment(&key)?;
-    let transform_root = should_transform_final_group_commitment::<Cfg, D>(&key)?;
-    commit_with_selected_params::<Cfg, D, P, B>(polys, expanded, stack, &params, transform_root)
+    if precommitteds.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "commit_final_group requires at least one precommitted group".to_string(),
+        ));
+    }
+
+    let layout =
+        prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, expanded, &precommitteds)?;
+    let params = Cfg::get_params_for_batched_commitment(&layout)?;
+    let transform_root = should_transform_root_commitment::<Cfg, D>(&layout)?;
+    let final_layout = OpeningClaimsLayout::from_groups(vec![layout.root_final_group_layout()?])?;
+    commit_with_selected_params::<Cfg, D, P, B>(
+        polys,
+        expanded,
+        stack,
+        &final_layout,
+        &params,
+        transform_root,
+    )
 }
 
 /// Commit one polynomial bundle using already-selected level parameters.
@@ -616,9 +630,9 @@ where
     B: DigitRowsComputeBackend<F>
         + for<'a> RootCommitKernel<<P as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
 {
-    prepare_batched_commit_inputs::<F, D, P>(polys, expanded)?;
+    let layout = prepare_batched_commit_inputs::<F, D, P>(polys, expanded, &[])?;
     validate_commit_level_params::<F, D>(params, expanded)?;
-    validate_batched_onehot_chunk_size_for_params::<F, D, P>(polys, params)?;
+    validate_batched_onehot_chunk_size_for_params::<F, D, P>(polys, params, &layout)?;
     commit_with_validated_params::<F, D, P, B>(polys, ctx, params)
 }
 
@@ -755,12 +769,13 @@ mod tests {
         .with_onehot_chunk_size(256);
         let wrong = OneHotPoly::<F, D, u16>::new(64, vec![Some(1), None]).unwrap();
         let ok = OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap();
+        let layout = OpeningClaimsLayout::new(4, 1).expect("layout");
 
         assert!(matches!(
-            validate_batched_onehot_chunk_size_for_params::<F, D, _>(&[wrong], &params),
+            validate_batched_onehot_chunk_size_for_params::<F, D, _>(&[wrong], &params, &layout),
             Err(AkitaError::InvalidInput(_))
         ));
-        validate_batched_onehot_chunk_size_for_params::<F, D, _>(&[ok], &params)
+        validate_batched_onehot_chunk_size_for_params::<F, D, _>(&[ok], &params, &layout)
             .expect("matching onehot_k should be accepted");
     }
 
@@ -785,13 +800,109 @@ mod tests {
         let ok_wrapped = MultilinearPolynomial::onehot(
             OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap(),
         );
+        let layout = OpeningClaimsLayout::new(4, 1).expect("layout");
 
         assert!(matches!(
-            validate_batched_onehot_chunk_size_for_params::<F, D, _>(&[wrong_wrapped], &params),
+            validate_batched_onehot_chunk_size_for_params::<F, D, _>(
+                &[wrong_wrapped],
+                &params,
+                &layout,
+            ),
             Err(AkitaError::InvalidInput(_))
         ));
-        validate_batched_onehot_chunk_size_for_params::<F, D, _>(&[ok_wrapped], &params)
+        validate_batched_onehot_chunk_size_for_params::<F, D, _>(&[ok_wrapped], &params, &layout)
             .expect("matching wrapped onehot_k should be accepted");
+    }
+
+    #[test]
+    fn onehot_chunk_size_validator_checks_grouped_slices() {
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_onehot_chunk_size(256);
+        let opening_batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
+        let pre_ok = OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap();
+        let final_ok = OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap();
+        validate_batched_onehot_chunk_size_for_params::<F, D, _>(
+            &[pre_ok, final_ok],
+            &params,
+            &opening_batch,
+        )
+        .expect("same grouped onehot_k values should be accepted");
+
+        let pre_wrong = OneHotPoly::<F, D, u16>::new(64, vec![Some(1), None]).unwrap();
+        let final_ok = OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap();
+        assert!(matches!(
+            validate_batched_onehot_chunk_size_for_params::<F, D, _>(
+                &[pre_wrong, final_ok],
+                &params,
+                &opening_batch,
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn onehot_chunk_size_validator_rejects_grouped_final_slice_shape_mismatch() {
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_onehot_chunk_size(256);
+        let opening_batch = OpeningClaimsLayout::from_root_groups(
+            &[PolynomialGroupLayout::new(2, 1)],
+            PolynomialGroupLayout::new(4, 1),
+        )
+        .expect("layout");
+
+        let final_ok = OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap();
+        assert!(matches!(
+            validate_batched_onehot_chunk_size_for_params::<F, D, _>(
+                &[final_ok],
+                &params,
+                &opening_batch,
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
+
+        let final_only_layout = OpeningClaimsLayout::from_groups(vec![opening_batch
+            .root_final_group_layout()
+            .unwrap()])
+        .expect("final-only layout");
+        let final_ok = OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap();
+        validate_batched_onehot_chunk_size_for_params::<F, D, _>(
+            &[final_ok],
+            &params,
+            &final_only_layout,
+        )
+        .expect("final group slice should be accepted with matching layout shape");
+
+        let final_wrong = OneHotPoly::<F, D, u16>::new(64, vec![Some(1), None]).unwrap();
+        assert!(matches!(
+            validate_batched_onehot_chunk_size_for_params::<F, D, _>(
+                &[final_wrong],
+                &params,
+                &final_only_layout,
+            ),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 
     #[test]

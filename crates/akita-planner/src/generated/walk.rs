@@ -13,8 +13,8 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout,
-    PolynomialGroupLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, PolynomialGroupLayout,
+    PrecommittedLevelParams, Schedule, Step,
 };
 
 use crate::generated::{
@@ -536,7 +536,7 @@ fn walk_grouped_generated_schedule_entry(
 
 fn validate_expanded_precommitted_groups(
     key: &AkitaScheduleLookupKey,
-    groups: &[GroupRootParams],
+    groups: &[PrecommittedLevelParams],
 ) -> Result<(), AkitaError> {
     if groups.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(format!(

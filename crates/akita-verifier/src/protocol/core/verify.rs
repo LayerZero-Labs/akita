@@ -16,9 +16,9 @@ use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_root_fold_step, should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingCommitment, Schedule,
-    SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED,
+    FpExtEncoding, LevelParams, LevelParamsLike, OpeningClaims, OpeningClaimsLayout,
+    RingCommitment, Schedule, SetupContributionMode, Step,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -84,6 +84,10 @@ where
 {
     let num_vars = opening_batch.max_num_vars();
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
+    if opening_batch.num_groups() > 1 {
+        let commit_params = Cfg::grouped_root_commit_params(&schedule)?;
+        schedule = root_direct_schedule(num_vars, commit_params)?;
+    }
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
@@ -92,7 +96,7 @@ where
             alpha_bits,
         ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
         {
-            let commit_params = Cfg::get_params_for_batched_commitment(opening_batch)?;
+            let commit_params = Cfg::grouped_root_commit_params(&schedule)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
@@ -147,45 +151,79 @@ where
             "direct witness layout requires non-zero digit depths".to_string(),
         ));
     }
+    if opening_batch.num_total_polynomials() != witnesses.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    for group_index in 0..opening_batch.num_groups() {
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let range = opening_batch.root_group_claim_range(group_index)?;
+        if range.end > witnesses.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        if group_index == opening_batch.root_final_group_index()? {
+            validate_direct_group_shape::<F, D>(
+                &witnesses[range],
+                setup_seed,
+                group_layout.num_vars(),
+                params,
+            )?;
+        } else {
+            let group_params = params
+                .precommitted_groups
+                .get(group_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            validate_direct_group_shape::<F, D>(
+                &witnesses[range],
+                setup_seed,
+                group_layout.num_vars(),
+                group_params,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_direct_group_shape<F, const D: usize>(
+    witnesses: &[CleartextWitnessProof<F>],
+    setup_seed: &AkitaSetupSeed,
+    num_vars: usize,
+    params: &impl LevelParamsLike,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
     let expected_witness_len = 1usize
-        .checked_shl(
-            u32::try_from(opening_batch.max_num_vars()).map_err(|_| AkitaError::InvalidProof)?,
-        )
+        .checked_shl(u32::try_from(num_vars).map_err(|_| AkitaError::InvalidProof)?)
         .ok_or(AkitaError::InvalidProof)?;
     let direct_capacity = params
-        .num_blocks
-        .checked_mul(params.block_len)
+        .num_blocks()
+        .checked_mul(params.block_len())
         .ok_or_else(|| AkitaError::InvalidSetup("direct witness capacity overflow".to_string()))?;
     if expected_witness_len.div_ceil(D) > direct_capacity {
         return Err(AkitaError::InvalidSetup(
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    if opening_batch.num_total_polynomials() != witnesses.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-
     let a_required_cols = params
-        .block_len
-        .checked_mul(params.num_digits_commit)
+        .block_len()
+        .checked_mul(params.num_digits_commit())
         .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
     let a_required = params
-        .a_key
-        .row_len()
+        .a_rows_len()
         .checked_mul(a_required_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct A footprint overflow".to_string()))?;
     let per_witness_outer_cols = params
-        .num_blocks
-        .checked_mul(params.a_key.row_len())
-        .and_then(|cols| cols.checked_mul(params.num_digits_open))
+        .num_blocks()
+        .checked_mul(params.a_rows_len())
+        .and_then(|cols| cols.checked_mul(params.num_digits_open()))
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
     let b_required_cols = witnesses
         .len()
         .checked_mul(per_witness_outer_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
     let b_required = params
-        .b_key
-        .row_len()
+        .b_rows_len()
         .checked_mul(b_required_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct B footprint overflow".to_string()))?;
     if a_required.max(b_required) > setup_seed.max_setup_len {
@@ -243,10 +281,10 @@ where
     out
 }
 
-pub(crate) fn direct_decomposed_inner_rows<F, const D: usize>(
+fn direct_decomposed_inner_rows<F, const D: usize>(
     witness_rings: &[CyclotomicRing<F, D>],
     setup: &AkitaVerifierSetup<F>,
-    params: &LevelParams,
+    params: &impl LevelParamsLike,
 ) -> Result<Vec<[i8; D]>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -254,24 +292,24 @@ where
     let a_matrix = setup
         .expanded
         .shared_matrix()
-        .ring_view::<D>(params.a_key.row_len(), params.a_key.col_len())?;
+        .ring_view::<D>(params.a_rows_len(), params.a_col_len())?;
     let a_rows: Vec<_> = a_matrix.rows().collect();
     let out_capacity = params
-        .num_blocks
-        .checked_mul(params.a_key.row_len())
-        .and_then(|len| len.checked_mul(params.num_digits_open))
+        .num_blocks()
+        .checked_mul(params.a_rows_len())
+        .and_then(|len| len.checked_mul(params.num_digits_open()))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("direct witness row capacity overflow".to_string())
         })?;
     let mut out = Vec::with_capacity(out_capacity);
 
-    for block_idx in 0..params.num_blocks {
-        let start = block_idx.checked_mul(params.block_len).ok_or_else(|| {
+    for block_idx in 0..params.num_blocks() {
+        let start = block_idx.checked_mul(params.block_len()).ok_or_else(|| {
             AkitaError::InvalidSetup("direct witness block offset overflow".to_string())
         })?;
         let block = if start < witness_rings.len() {
             let end = start
-                .checked_add(params.block_len)
+                .checked_add(params.block_len())
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("direct witness block end overflow".to_string())
                 })?
@@ -280,12 +318,12 @@ where
         } else {
             &[]
         };
-        let block_digits = decompose_rows_i8(block, params.num_digits_commit, params.log_basis);
+        let block_digits = decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
         let t_rows = mat_vec_mul_i8_plain::<F, D>(&a_rows, &block_digits);
         out.extend(decompose_rows_i8(
             &t_rows,
-            params.num_digits_open,
-            params.log_basis,
+            params.num_digits_open(),
+            params.log_basis(),
         ));
     }
 
@@ -295,22 +333,11 @@ where
 fn recommit_direct_witness_group<F, const D: usize>(
     group_witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    params: &LevelParams,
+    params: &impl LevelParamsLike,
 ) -> Result<RingCommitment<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    // Root-direct commitments are single-tier only: the sent commitment is the
-    // plain `B·t̂`. Tiering is never planned on the root-direct (small-instance)
-    // path.
-    if params.f_key.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "root-direct recommitment does not support tiered commitment \
-             (f_key must be absent on the root-direct path)"
-                .to_string(),
-        ));
-    }
-
     let mut outer_input = Vec::new();
     for witness in group_witnesses {
         let field_witness = witness
@@ -318,13 +345,17 @@ where
             .ok_or(AkitaError::InvalidProof)?
             .coeffs();
         let witness_rings = field_evals_to_rings::<F, D>(field_witness)?;
-        outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, params)?);
+        outer_input.extend(direct_decomposed_inner_rows::<F, D>(
+            &witness_rings,
+            setup,
+            params,
+        )?);
     }
 
     let b_matrix = setup
         .expanded
         .shared_matrix()
-        .ring_view::<D>(params.b_key.row_len(), outer_input.len())?;
+        .ring_view::<D>(params.b_rows_len(), outer_input.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     let u = mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input);
     Ok(RingCommitment { u })
@@ -348,10 +379,6 @@ where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
     E: FieldCore,
 {
-    let commitment = claims
-        .single_group_commitment()
-        .copied()
-        .ok_or(AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     validate_root_direct_recommitment_shape::<F, D>(
         witnesses,
@@ -359,10 +386,35 @@ where
         &opening_batch,
         params,
     )?;
+    // Root-direct commitments are single-tier only: the sent commitment is the
+    // plain `B·t̂`. Tiering is never planned on the root-direct path.
+    if params.f_key.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "root-direct recommitment does not support tiered commitment \
+             (f_key must be absent on the root-direct path)"
+                .to_string(),
+        ));
+    }
 
-    let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, params)?;
-    if &recomputed != commitment {
-        return Err(AkitaError::InvalidProof);
+    let final_group = opening_batch.root_final_group_index()?;
+    for group_index in 0..opening_batch.num_groups() {
+        let range = opening_batch.root_group_claim_range(group_index)?;
+        if range.end > witnesses.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let expected = claims.group_commitment(group_index).copied()?;
+        let recomputed = if group_index == final_group {
+            recommit_direct_witness_group::<F, D>(&witnesses[range], setup, params)?
+        } else {
+            let group_params = params
+                .precommitted_groups
+                .get(group_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            recommit_direct_witness_group::<F, D>(&witnesses[range], setup, group_params)?
+        };
+        if &recomputed != expected {
+            return Err(AkitaError::InvalidProof);
+        }
     }
 
     Ok(())
@@ -741,15 +793,11 @@ mod tests {
     }
 
     #[test]
-    fn reject_unsupported_grouped_root_rejects_generic_multi_group() {
+    fn reject_unsupported_grouped_root_allows_direct_multi_group() {
         use akita_config::proof_optimized::fp128;
 
         let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped batch");
-        let err = reject_unsupported_grouped_root::<fp128::D64OneHot>(
-            &batch,
-            SetupContributionMode::Direct,
-        )
-        .expect_err("multi-group verify must reject before schedule lookup");
-        assert!(matches!(err, AkitaError::InvalidProof));
+        reject_unsupported_grouped_root::<fp128::D64OneHot>(&batch, SetupContributionMode::Direct)
+            .expect("non-tiered direct multi-group verification is schedule-validated");
     }
 }

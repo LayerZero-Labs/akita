@@ -140,6 +140,10 @@ where
     }
     let num_vars = opening_batch.max_num_vars();
     let mut schedule = Cfg::get_params_for_prove(&opening_batch)?;
+    if opening_batch.num_groups() > 1 {
+        let commit_params = Cfg::grouped_root_commit_params(&schedule)?;
+        schedule = root_direct_schedule(num_vars, commit_params)?;
+    }
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
@@ -148,7 +152,7 @@ where
             alpha_bits,
         ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
         {
-            let commit_params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
+            let commit_params = Cfg::grouped_root_commit_params(&schedule)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
@@ -161,6 +165,7 @@ where
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(
         &flat_polys,
         root_commit_params,
+        &opening_batch,
     )?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
@@ -273,14 +278,22 @@ where
 {
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
+        let opening_batch = claims.opening_claims().layout()?;
         let commitments = claims.commitments();
-        if commitments
-            .iter()
-            .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
-        {
+        if commitments.len() != opening_batch.num_groups() {
             return Err(AkitaError::InvalidInput(
-                "root commitment row count does not match scheduled root params".to_string(),
+                "root commitment group count does not match opening batch".to_string(),
             ));
+        }
+        for (group_index, commitment) in commitments.iter().enumerate() {
+            let expected = root_scheduled
+                .params
+                .root_group_commitment_rows(&opening_batch, group_index)?;
+            if commitment.u.len() != expected {
+                return Err(AkitaError::InvalidInput(
+                    "root commitment row count does not match scheduled root params".to_string(),
+                ));
+            }
         }
     }
 

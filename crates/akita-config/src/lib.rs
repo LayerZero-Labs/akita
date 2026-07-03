@@ -17,7 +17,8 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    LevelParams, OpeningClaimsLayout, PrecommittedGroupParams, Schedule, SetupMatrixEnvelope,
+    SisModulusFamily, Step,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -124,6 +125,39 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         tiered: Cfg::TIERED_COMMITMENT,
         witness_chunk: Cfg::chunked_witness_cfg(),
     }
+}
+
+/// Build the canonical schedule key for a root opening batch under `Cfg`.
+///
+/// Scalar openings delegate to [`AkitaScheduleLookupKey::from_layout`]. Grouped
+/// roots freeze all earlier groups through the conservative commitment policy and
+/// use the final group as the grouped root's new commitment group.
+pub fn opening_schedule_key<Cfg: CommitmentConfig>(
+    layout: &OpeningClaimsLayout,
+) -> Result<AkitaScheduleLookupKey, AkitaError> {
+    layout.check()?;
+    let mut key = AkitaScheduleLookupKey::from_layout(layout)?;
+    if layout.num_groups() == 1 {
+        return Ok(key);
+    }
+
+    key.precommitteds = layout
+        .root_precommitted_group_layouts()?
+        .iter()
+        .copied()
+        .map(|group| {
+            group.validate()?;
+            let singleton = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+            let params =
+                <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+                    &singleton,
+                )?;
+            Ok(PrecommittedGroupParams::from_params(group, &params))
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+
+    key.validate()?;
+    Ok(key)
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -332,7 +366,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// `InvalidSetup` if no schedule-table entry exists for `layout`.
     fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-        Self::runtime_schedule(AkitaScheduleLookupKey::from_layout(layout)?)
+        Self::runtime_schedule(opening_schedule_key::<Self>(layout)?)
     }
 
     /// Root commit layout the `batched_prove` flow uses for `layout`,

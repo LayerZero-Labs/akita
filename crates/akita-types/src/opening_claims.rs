@@ -27,7 +27,7 @@ pub const GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED: &str =
 pub const GROUPED_ROOT_DENSE_UNSUPPORTED: &str =
     "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md";
 
-/// Grouped root prove/verify is not implemented yet.
+/// Legacy grouped-root unsupported message kept for stale-proof diagnostics.
 pub const GROUPED_ROOT_UNSUPPORTED: &str =
     "multi-group root batching is not supported yet; see specs/multi-group-batching.md";
 
@@ -53,7 +53,7 @@ pub fn should_reject_grouped_root(
     if includes_dense_polynomial == Some(true) {
         return Some(GROUPED_ROOT_DENSE_UNSUPPORTED);
     }
-    Some(GROUPED_ROOT_UNSUPPORTED)
+    None
 }
 
 /// Ordered coordinate selection into an opening batch's shared point.
@@ -185,6 +185,17 @@ impl OpeningClaimsLayout {
         Ok(layout)
     }
 
+    /// Build a root-opening layout from precommitted groups plus the final/new group.
+    pub fn from_root_groups(
+        precommitteds: &[PolynomialGroupLayout],
+        final_group: PolynomialGroupLayout,
+    ) -> Result<Self, AkitaError> {
+        let mut groups = Vec::with_capacity(precommitteds.len() + 1);
+        groups.extend_from_slice(precommitteds);
+        groups.push(final_group);
+        Self::from_groups(groups)
+    }
+
     /// Worst-case setup envelope as a one-group layout.
     pub fn from_setup_seed(seed: &AkitaSetupSeed) -> Result<Self, AkitaError> {
         Self::new(seed.max_num_vars, seed.max_num_batched_polys)
@@ -246,6 +257,62 @@ impl OpeningClaimsLayout {
     /// Borrow one group layout by index.
     pub fn group_layout(&self, g: usize) -> Result<&PolynomialGroupLayout, AkitaError> {
         self.groups.get(g).ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Commitment-group index used as the final/new group for grouped root schedules.
+    pub fn root_final_group_index(&self) -> Result<usize, AkitaError> {
+        self.check()?;
+        self.groups
+            .len()
+            .checked_sub(1)
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Layouts of precommitted groups in root transcript order.
+    pub fn root_precommitted_group_layouts(&self) -> Result<&[PolynomialGroupLayout], AkitaError> {
+        self.check()?;
+        let final_index = self.root_final_group_index()?;
+        Ok(&self.groups[..final_index])
+    }
+
+    /// Final/new group layout for grouped root schedule lookup.
+    pub fn root_final_group_layout(&self) -> Result<PolynomialGroupLayout, AkitaError> {
+        Ok(*self.group_layout(self.root_final_group_index()?)?)
+    }
+
+    /// Flat claim range covered by one commitment group.
+    pub fn root_group_claim_range(
+        &self,
+        group_index: usize,
+    ) -> Result<std::ops::Range<usize>, AkitaError> {
+        self.check()?;
+        if group_index >= self.groups.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let start = self.groups[..group_index]
+            .iter()
+            .try_fold(0usize, |acc, group| {
+                acc.checked_add(group.num_polynomials())
+                    .ok_or(AkitaError::InvalidProof)
+            })?;
+        let end = start
+            .checked_add(self.groups[group_index].num_polynomials())
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(start..end)
+    }
+
+    /// Raw grouped root-direct witness length in field elements.
+    pub fn root_direct_witness_len(&self) -> Result<usize, AkitaError> {
+        self.check()?;
+        self.groups.iter().try_fold(0usize, |acc, group| {
+            let shift = u32::try_from(group.num_vars()).map_err(|_| AkitaError::InvalidProof)?;
+            let group_len = 1usize
+                .checked_shl(shift)
+                .ok_or(AkitaError::InvalidProof)?
+                .checked_mul(group.num_polynomials())
+                .ok_or(AkitaError::InvalidProof)?;
+            acc.checked_add(group_len).ok_or(AkitaError::InvalidProof)
+        })
     }
 
     /// Digest layout-only opening geometry.
@@ -666,6 +733,62 @@ mod tests {
     }
 
     #[test]
+    fn root_layout_helpers_preserve_group_order_and_lengths() {
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(3, 2),
+            PolynomialGroupLayout::new(4, 1),
+        ])
+        .expect("grouped layout");
+
+        assert_eq!(layout.root_final_group_index().expect("final index"), 2);
+        assert_eq!(
+            layout
+                .root_precommitted_group_layouts()
+                .expect("precommitted layouts"),
+            &[
+                PolynomialGroupLayout::new(2, 1),
+                PolynomialGroupLayout::new(3, 2),
+            ]
+        );
+        assert_eq!(
+            layout.root_final_group_layout().expect("final layout"),
+            PolynomialGroupLayout::new(4, 1)
+        );
+        assert_eq!(layout.root_group_claim_range(0).expect("range"), 0..1);
+        assert_eq!(layout.root_group_claim_range(1).expect("range"), 1..3);
+        assert_eq!(layout.root_group_claim_range(2).expect("range"), 3..4);
+        assert_eq!(
+            layout.root_direct_witness_len().expect("direct len"),
+            4 + 16 + 16
+        );
+    }
+
+    #[test]
+    fn from_root_groups_appends_final_group_after_precommitteds() {
+        let precommitteds = [
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(3, 2),
+        ];
+        let final_group = PolynomialGroupLayout::new(4, 3);
+        let layout = OpeningClaimsLayout::from_root_groups(&precommitteds, final_group)
+            .expect("root layout");
+
+        assert_eq!(
+            layout.groups(),
+            &[
+                PolynomialGroupLayout::new(2, 1),
+                PolynomialGroupLayout::new(3, 2),
+                PolynomialGroupLayout::new(4, 3),
+            ]
+        );
+        assert_eq!(
+            layout.root_final_group_layout().expect("final group"),
+            final_group
+        );
+    }
+
+    #[test]
     fn with_padded_point_rejects_longer_point() {
         let err = OpeningClaims::with_padded_point(&[F::zero(); 3], 2, 1)
             .expect_err("point longer than num_vars");
@@ -677,7 +800,15 @@ mod tests {
         let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
         assert_eq!(
             should_reject_grouped_root(&layout, false, SetupContributionMode::Direct, None),
-            Some(GROUPED_ROOT_UNSUPPORTED)
+            None
+        );
+        assert_eq!(
+            should_reject_grouped_root(&layout, false, SetupContributionMode::Recursive, None,),
+            Some(GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED)
+        );
+        assert_eq!(
+            should_reject_grouped_root(&layout, false, SetupContributionMode::Direct, Some(true)),
+            Some(GROUPED_ROOT_DENSE_UNSUPPORTED)
         );
         assert_eq!(
             should_reject_grouped_root(

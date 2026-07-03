@@ -1,10 +1,10 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_field::{AkitaError, Fp32, FpExt2, NegOneNr};
+use akita_field::{Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaScheduleLookupKey, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims,
+    PolynomialGroupClaims, PolynomialGroupLayout,
 };
 
 type F = Fp32<251>;
@@ -51,11 +51,10 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 }
 
 #[test]
-fn batched_prove_opening_batch_rejects_multi_group_shape() {
+fn schedule_key_from_layout_selects_final_multi_group_shape() {
     let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped shape");
     assert_eq!(batch.num_groups(), 2);
-    assert!(matches!(
-        AkitaScheduleLookupKey::from_layout(&batch),
-        Err(AkitaError::InvalidSetup(_))
-    ));
+    let key = AkitaScheduleLookupKey::from_layout(&batch).expect("layout-only grouped key");
+    assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
+    assert!(key.precommitteds.is_empty());
 }

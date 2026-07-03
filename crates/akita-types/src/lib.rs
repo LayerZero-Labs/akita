@@ -60,8 +60,8 @@ pub use layout::{
     gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, GroupRootParams, LevelParams, MRowLayout,
-    RingMatrixView, RingOpeningPoint,
+    sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix, LevelParams, LevelParamsLike, MRowLayout,
+    PrecommittedLevelParams, RingMatrixView, RingOpeningPoint,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

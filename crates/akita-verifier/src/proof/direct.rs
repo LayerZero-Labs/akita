@@ -73,10 +73,25 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    for (claim_idx, opening) in openings.iter().enumerate().take(num_polynomials) {
-        let witness = witnesses.get(claim_idx).ok_or(AkitaError::InvalidProof)?;
-        if !cleartext_witness_opening_matches(witness, opening_point, opening, basis)? {
-            return Err(AkitaError::InvalidProof);
+    let mut claim_idx = 0usize;
+    for group_idx in 0..opening_batch.num_groups() {
+        let point_vars = claims.group_point_vars(group_idx)?;
+        let group_point = point_vars
+            .indices()
+            .iter()
+            .map(|&idx| {
+                opening_point
+                    .get(idx)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for opening in claims.group_evaluations(group_idx)? {
+            let witness = witnesses.get(claim_idx).ok_or(AkitaError::InvalidProof)?;
+            if !cleartext_witness_opening_matches(witness, &group_point, opening, basis)? {
+                return Err(AkitaError::InvalidProof);
+            }
+            claim_idx = claim_idx.checked_add(1).ok_or(AkitaError::InvalidProof)?;
         }
     }
 

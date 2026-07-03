@@ -2,7 +2,9 @@ use crate::api::CommitmentWithHint;
 use crate::compute::{RootOpeningSource, RootPolyShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
-use akita_types::{AkitaCommitmentHint, FlatRingVec, OpeningClaims, RingCommitment};
+use akita_types::{
+    AkitaCommitmentHint, FlatRingVec, LevelParams, MRowLayout, OpeningClaims, RingCommitment,
+};
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
 #[derive(Debug, Clone)]
@@ -147,17 +149,40 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
             .filter(|_| self.polynomials.len() == 1)
     }
 
-    /// Borrow the current single-group fold batch's commitment rows as flat proof storage.
-    pub(crate) fn single_fold_commitment(&self) -> Result<FlatRingVec<CommitF>, AkitaError> {
-        let commitment = self
-            .opening_claims
-            .single_group_commitment()
-            .ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "multi-group fold proving is not supported yet".to_string(),
-                )
-            })?;
-        Ok(FlatRingVec::from_ring_elems(&commitment.u))
+    /// Borrow root fold commitment rows in the scheduled M-row commitment order.
+    pub(crate) fn fold_commitment(
+        &self,
+        params: &LevelParams,
+    ) -> Result<FlatRingVec<CommitF>, AkitaError> {
+        let opening_batch = self.opening_claims.layout()?;
+        if self.opening_claims.num_groups() != opening_batch.num_groups() {
+            return Err(AkitaError::InvalidInput(
+                "fold commitment group count mismatch".to_string(),
+            ));
+        }
+        let mut group_order = (0..opening_batch.num_groups())
+            .map(|group_index| {
+                let range = params.root_commitment_row_range(
+                    &opening_batch,
+                    group_index,
+                    MRowLayout::WithDBlock,
+                )?;
+                Ok((range.start, range.len(), group_index))
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        group_order.sort_by_key(|(start, _, _)| *start);
+
+        let mut rows = Vec::new();
+        for (_, expected, group_index) in group_order {
+            let commitment = self.opening_claims.group_commitment(group_index)?;
+            if commitment.u.len() != expected {
+                return Err(AkitaError::InvalidInput(
+                    "fold commitment row count mismatch".to_string(),
+                ));
+            }
+            rows.extend_from_slice(&commitment.u);
+        }
+        Ok(FlatRingVec::from_ring_elems(&rows))
     }
 
     /// Preserve grouping metadata while replacing the flat polynomial stream.

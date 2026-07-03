@@ -191,14 +191,14 @@ impl AkitaScheduleLookupKey {
         }
     }
 
-    /// Scalar schedule lookup from a single-group opening layout.
+    /// Layout-only schedule lookup from an opening layout.
+    ///
+    /// For grouped layouts this selects the final/new group. Config-owned key
+    /// builders attach frozen precommitted metadata before grouped schedule
+    /// resolution.
     pub fn from_layout(layout: &OpeningClaimsLayout) -> Result<Self, AkitaError> {
-        if layout.num_groups() != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "scalar schedule lookup cannot collapse a multi-group layout; build an explicit grouped key".to_string(),
-            ));
-        }
-        Ok(Self::single(layout.groups()[0]))
+        layout.check()?;
+        Ok(Self::single(layout.root_final_group_layout()?))
     }
 
     /// Number of commitment groups in this schedule key.
@@ -1144,11 +1144,12 @@ mod tests {
     }
 
     #[test]
-    fn from_layout_rejects_multi_group() {
+    fn from_layout_accepts_multi_group_final_group() {
         let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped layout");
-        let err = AkitaScheduleLookupKey::from_layout(&layout)
-            .expect_err("scalar lookup must reject grouped batches");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        let key = AkitaScheduleLookupKey::from_layout(&layout)
+            .expect("layout lookup should accept grouped batches");
+        assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
+        assert!(key.precommitteds.is_empty());
     }
 
     #[test]

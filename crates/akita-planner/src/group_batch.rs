@@ -11,8 +11,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
-    DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, Schedule, Step,
+    DirectStep, FoldStep, LevelParams, MRowLayout, PolynomialGroupLayout, PrecommittedGroupParams,
+    PrecommittedLevelParams, Schedule, Step,
 };
 
 use crate::schedule_params::{
@@ -35,7 +35,7 @@ pub(crate) fn group_root_params_from_layout(
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
     conservative_b_rank: bool,
-) -> Result<GroupRootParams, AkitaError> {
+) -> Result<PrecommittedLevelParams, AkitaError> {
     if conservative_b_rank {
         layout.validate_frozen_precommit(policy.ring_dimension, policy.basis_range.0)?;
     } else {
@@ -166,7 +166,7 @@ pub(crate) fn group_root_params_from_layout(
         fold_linf_cap_config,
     )?;
 
-    Ok(GroupRootParams {
+    Ok(PrecommittedLevelParams {
         layout: *layout,
         a_key,
         b_key,
@@ -183,7 +183,7 @@ struct GroupedRootCandidateCtx<'a> {
     ring_challenge_cfg: &'a SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
     precommitted_d_width: usize,
-    precommitted_groups: &'a [GroupRootParams],
+    precommitted_groups: &'a [PrecommittedLevelParams],
 }
 
 fn checked_score_add(lhs: u128, rhs: u128, context: &'static str) -> Result<u128, AkitaError> {
@@ -280,7 +280,7 @@ pub(crate) fn grouped_root_precommitted_groups(
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
-) -> Result<(Vec<GroupRootParams>, usize), AkitaError> {
+) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
     if key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "grouped root params require at least one precommitted group".to_string(),
