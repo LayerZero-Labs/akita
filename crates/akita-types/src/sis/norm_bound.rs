@@ -13,7 +13,7 @@ use super::decomposition_digits::{
     fold_witness_representable_linf_bounds, fold_witness_verifier_linf_bound, num_digits_fold,
     num_digits_for_bound,
 };
-use crate::DecompositionParams;
+use crate::{DecompositionParams, FoldLinfProtocolBinding};
 
 pub use super::fold_linf_cap::{
     fold_witness_linf_cap_policy, fold_witness_linf_ln_term,
@@ -244,8 +244,9 @@ pub fn fold_witness_linf_digit_plan(
     witness: FoldWitnessNorms,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<FoldWitnessLinfDigitPlan, AkitaError> {
-    let snap_retain_num = u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM);
-    let snap_retain_den = u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN);
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let snap_retain_num = u128::from(binding.snap_min_tstar_retain_num);
+    let snap_retain_den = u128::from(binding.snap_min_tstar_retain_den);
     let (pre_snap_cap, t_star) =
         fold_witness_pre_snap_linf_cap(challenge, witness, r_vars, num_claims, cap_config)?;
     let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);

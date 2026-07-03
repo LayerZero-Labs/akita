@@ -4,8 +4,8 @@
 mod fold_linf_stats_report;
 #[path = "profile/report.rs"]
 mod report;
-#[path = "profile/workload.rs"]
-mod workload;
+#[path = "fold_linf_stats/sample.rs"]
+mod sample;
 
 use std::env;
 
@@ -15,7 +15,7 @@ use akita_types::{
     AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use fold_linf_stats_report::{print_fold_linf_aggregate_report, FoldLinfLevelSample};
-use workload::{run_dense_fold_linf_sample, run_onehot_fold_linf_sample};
+use sample::{run_dense_fold_linf_sample, run_onehot_fold_linf_sample};
 
 type F = fp128::Field;
 
@@ -76,23 +76,29 @@ fn run_mode(mode: &str, nv: usize, iterations: usize, seed_base: u64, max_tstar_
         "fold_linf_stats: mode={mode} nv={nv} iterations={iterations} seed_base={seed_base:#x} max_tstar_reduction={max_tstar_reduction:.2}"
     );
 
-    let samples = match mode {
+    let (samples, field_bits) = match mode {
         "onehot_fp128_d64" => {
             type Cfg = fp128::D64OneHot;
-            collect_samples::<Cfg>(
-                nv,
-                iterations,
-                seed_base,
-                run_onehot_fold_linf_sample::<F, { Cfg::D }, Cfg>,
+            (
+                collect_samples::<Cfg>(
+                    nv,
+                    iterations,
+                    seed_base,
+                    run_onehot_fold_linf_sample::<F, { Cfg::D }, Cfg>,
+                ),
+                Cfg::decomposition().field_bits(),
             )
         }
         "dense_fp128_d64" => {
             type Cfg = fp128::D64Full;
-            collect_samples::<Cfg>(
-                nv,
-                iterations,
-                seed_base,
-                run_dense_fold_linf_sample::<F, { Cfg::D }, Cfg>,
+            (
+                collect_samples::<Cfg>(
+                    nv,
+                    iterations,
+                    seed_base,
+                    run_dense_fold_linf_sample::<F, { Cfg::D }, Cfg>,
+                ),
+                Cfg::decomposition().field_bits(),
             )
         }
         other => {
@@ -102,7 +108,13 @@ fn run_mode(mode: &str, nv: usize, iterations: usize, seed_base: u64, max_tstar_
         }
     };
 
-    print_fold_linf_aggregate_report(mode, iterations as u32, &samples, max_tstar_reduction);
+    print_fold_linf_aggregate_report(
+        mode,
+        iterations as u32,
+        &samples,
+        field_bits,
+        max_tstar_reduction,
+    );
 }
 
 fn main() {

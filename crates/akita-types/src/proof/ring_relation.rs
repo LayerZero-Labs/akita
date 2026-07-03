@@ -46,7 +46,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField, const D: usi
         num_claims,
         num_t_vectors,
     } = opening_counts;
-    let depth_fold = lp.num_digits_fold(num_t_vectors, lp.fold_digit_field_bits())?;
+    let depth_fold = lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?;
     if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
         return Err(AkitaError::InvalidSetup(
             "prepared ring-switch layout has zero width".to_string(),

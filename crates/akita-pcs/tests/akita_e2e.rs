@@ -628,11 +628,8 @@ fn full_d64_prove_verify() {
     });
 }
 
-/// Snap-regenerated `fp128_d64_full` schedules fail root stage-2 sumcheck at
-/// several `nv` keys (e.g. 22, 24, 25) while `nv = 23` still verifies.
-/// Re-enable once the prover/verifier mismatch is fixed.
+/// Snap-regenerated `fp128_d64_full` schedules must verify at production `nv` keys.
 #[test]
-#[ignore = "snap-regen dense fp128_d64 verify fails at nv>=22 boundary (PR #258)"]
 fn full_d64_snap_regen_prove_verify_nv24() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();

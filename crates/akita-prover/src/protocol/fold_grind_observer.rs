@@ -2,17 +2,9 @@
 
 use akita_types::sis::FoldWitnessLinfCapPolicy;
 
-/// One fold-level grind outcome recorded during proving.
+/// Level-static fold-l∞ sizing context shared across grind acceptances at one level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FoldGrindObservation {
-    /// Zero-based fold level index within this prove call (root fold first).
-    pub level_index: u32,
-    /// Wire nonce committed into the proof.
-    pub grind_nonce: u32,
-    /// Number of off-sponge probes before acceptance (includes the winner).
-    pub grind_probe_count: u32,
-    /// Realized centered `‖z‖_inf` on the accepted folded witness.
-    pub observed_linf: u32,
+pub struct FoldGrindLevelMeta {
     /// Worst-case structural envelope `β_inf`.
     pub beta_inf: u128,
     /// Sub-Gaussian tail cap `t*` when tail-bound-with-grind is active.
@@ -30,6 +22,21 @@ pub struct FoldGrindObservation {
     /// Fold arity metadata for cross-run alignment.
     pub r_vars: u32,
     pub num_claims: u32,
+}
+
+/// One fold-level grind outcome recorded during proving.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FoldGrindObservation {
+    /// Zero-based fold level index within this prove call (root fold first).
+    pub level_index: u32,
+    /// Wire nonce committed into the proof.
+    pub grind_nonce: u32,
+    /// Number of off-sponge probes before acceptance (includes the winner).
+    pub grind_probe_count: u32,
+    /// Realized centered `‖z‖_inf` on the accepted folded witness.
+    pub observed_linf: u32,
+    /// Level-static sizing context for this fold level.
+    pub level_meta: FoldGrindLevelMeta,
 }
 
 struct ObserverState {
@@ -102,6 +109,20 @@ mod tests {
     use super::*;
     use akita_types::sis::FoldWitnessLinfCapPolicy;
 
+    fn sample_meta(policy: FoldWitnessLinfCapPolicy, t_star: Option<u128>) -> FoldGrindLevelMeta {
+        FoldGrindLevelMeta {
+            beta_inf: 32,
+            t_star,
+            honest_cap: 32,
+            delta_fold: 2,
+            verifier_linf_bound: 56,
+            policy,
+            log_basis: 4,
+            r_vars: 4,
+            num_claims: 1,
+        }
+    }
+
     #[test]
     fn install_take_roundtrip_records_probe_metrics() {
         let _guard = FoldGrindObserverGuard::install();
@@ -110,30 +131,14 @@ mod tests {
             grind_nonce: 7,
             grind_probe_count: 3,
             observed_linf: 12,
-            beta_inf: 32,
-            t_star: Some(173),
-            honest_cap: 32,
-            delta_fold: 2,
-            verifier_linf_bound: 56,
-            policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
-            log_basis: 4,
-            r_vars: 4,
-            num_claims: 1,
+            level_meta: sample_meta(FoldWitnessLinfCapPolicy::TailBoundWithGrind, Some(173)),
         });
         record_fold_grind_acceptance(FoldGrindObservation {
             level_index: 1,
             grind_nonce: 0,
             grind_probe_count: 1,
             observed_linf: 4,
-            beta_inf: 64,
-            t_star: None,
-            honest_cap: 64,
-            delta_fold: 3,
-            verifier_linf_bound: 120,
-            policy: FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
-            log_basis: 4,
-            r_vars: 3,
-            num_claims: 1,
+            level_meta: sample_meta(FoldWitnessLinfCapPolicy::WorstCaseBetaOnly, None),
         });
         let records = FoldGrindObserverGuard::take();
         assert_eq!(records.len(), 2);
@@ -148,15 +153,7 @@ mod tests {
             grind_nonce: 1,
             grind_probe_count: 1,
             observed_linf: 1,
-            beta_inf: 1,
-            t_star: None,
-            honest_cap: 1,
-            delta_fold: 1,
-            verifier_linf_bound: 1,
-            policy: FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
-            log_basis: 4,
-            r_vars: 0,
-            num_claims: 1,
+            level_meta: sample_meta(FoldWitnessLinfCapPolicy::WorstCaseBetaOnly, None),
         });
         assert!(FoldGrindObserverGuard::take().is_empty());
     }

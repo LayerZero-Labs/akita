@@ -2,7 +2,8 @@
 
 use akita_prover::FoldGrindObservation;
 use akita_types::sis::{
-    fold_witness_verifier_linf_bound, snap_min_tstar_retain_floor, FoldWitnessLinfCapPolicy,
+    fold_witness_verifier_linf_bound, num_digits_for_bound, snap_num_digits_fold_down,
+    FoldWitnessLinfCapPolicy,
 };
 
 #[derive(Clone, Debug)]
@@ -65,38 +66,49 @@ fn snap_retain_rational(max_reduction_fraction: f64) -> (u128, u128) {
     (num.max(1), DEN)
 }
 
-/// Tightest downward digit snap with `z_ver(δ') >= floor` and observed quantiles inside cap.
+/// Production snap candidate when observed quantiles fit the snapped grind cap.
 pub(crate) fn best_snap_below_tstar(
     log_basis: u32,
-    current_delta: usize,
+    field_bits: u32,
+    beta_inf: u128,
     t_star: u128,
     observed_max: u32,
     observed_p90: u32,
     max_tstar_reduction_fraction: f64,
 ) -> Option<SnapCandidate> {
-    if current_delta <= 1 || t_star == 0 {
+    if t_star == 0 {
+        return None;
+    }
+    let pre_snap_cap = beta_inf.min(t_star);
+    let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);
+    let delta_base = num_digits_for_bound(log_cap, field_bits, log_basis);
+    if delta_base <= 1 {
         return None;
     }
     let (retain_num, retain_den) = snap_retain_rational(max_tstar_reduction_fraction);
-    let floor = snap_min_tstar_retain_floor(t_star, retain_num, retain_den);
-    for delta in 1..current_delta {
-        let cap = fold_witness_verifier_linf_bound(log_basis, delta);
-        if cap < floor {
-            continue;
-        }
-        let fits_max = u128::from(observed_max) <= cap;
-        let fits_p90 = u128::from(observed_p90) <= cap;
-        if fits_p90 {
-            return Some(SnapCandidate {
-                delta_fold: delta,
-                verifier_cap: cap,
-                tstar_reduction_fraction: tstar_reduction_fraction(t_star, cap),
-                fits_observed_max: fits_max,
-                fits_p90,
-            });
-        }
+    let (snap_delta, grind_cap) = snap_num_digits_fold_down(
+        log_basis,
+        delta_base,
+        pre_snap_cap,
+        t_star,
+        retain_num,
+        retain_den,
+    );
+    if snap_delta >= delta_base {
+        return None;
     }
-    None
+    let fits_max = u128::from(observed_max) <= grind_cap;
+    let fits_p90 = u128::from(observed_p90) <= grind_cap;
+    if !fits_p90 {
+        return None;
+    }
+    Some(SnapCandidate {
+        delta_fold: snap_delta,
+        verifier_cap: fold_witness_verifier_linf_bound(log_basis, snap_delta),
+        tstar_reduction_fraction: tstar_reduction_fraction(t_star, grind_cap),
+        fits_observed_max: fits_max,
+        fits_p90,
+    })
 }
 
 pub(crate) fn aggregate_fold_linf_samples(
@@ -115,23 +127,23 @@ pub(crate) fn aggregate_fold_linf_samples(
     by_level
         .into_iter()
         .map(|(level_index, obs)| {
-            let first = obs[0];
+            let meta = &obs[0].level_meta;
             let mut observed_values: Vec<u32> = obs.iter().map(|o| o.observed_linf).collect();
             observed_values.sort_unstable();
             let observed_p90 = percentile(&observed_values, 0.9);
 
             FoldLinfLevelAggregate {
                 level_index,
-                r_vars: first.r_vars,
-                num_claims: first.num_claims,
-                policy: first.policy,
-                log_basis: first.log_basis,
+                r_vars: meta.r_vars,
+                num_claims: meta.num_claims,
+                policy: meta.policy,
+                log_basis: meta.log_basis,
                 samples: obs.len(),
-                beta_inf: first.beta_inf,
-                t_star: first.t_star,
-                honest_cap: first.honest_cap,
-                delta_fold: first.delta_fold,
-                verifier_linf_bound: first.verifier_linf_bound,
+                beta_inf: meta.beta_inf,
+                t_star: meta.t_star,
+                honest_cap: meta.honest_cap,
+                delta_fold: meta.delta_fold,
+                verifier_linf_bound: meta.verifier_linf_bound,
                 observed_min: *observed_values.first().unwrap_or(&0),
                 observed_max: *observed_values.last().unwrap_or(&0),
                 observed_p90,
@@ -148,6 +160,7 @@ pub(crate) fn print_fold_linf_aggregate_report(
     label: &str,
     iterations: u32,
     samples: &[FoldLinfLevelSample],
+    field_bits: u32,
     max_tstar_reduction_fraction: f64,
 ) {
     let aggregates = aggregate_fold_linf_samples(samples);
@@ -156,7 +169,7 @@ pub(crate) fn print_fold_linf_aggregate_report(
 
     eprintln!("=== fold-linf stats: {label} ({iterations} prove iterations) ===");
     eprintln!(
-        "snap policy: choose tightest δ' < δ with p90(obs) ≤ z_ver(δ') and z_ver(δ') ≥ {retain_pct:.0}%·t* (≤{drop_pct:.0}% reduction vs t*)"
+        "snap policy: production snap_num_digits_fold_down with retain ≥ {retain_pct:.0}%·t* when p90(obs) ≤ grind_cap (≤{drop_pct:.0}% reduction vs t*)"
     );
     eprintln!(
         "summary: level | r | β | t* | cap | δ | z_ver | obs[max p90 mean] | obs/β obs/t* | grind mean | snap δ' cap | Δvs t* | fits max?"
@@ -166,7 +179,8 @@ pub(crate) fn print_fold_linf_aggregate_report(
         let snap = match (agg.policy, agg.t_star) {
             (FoldWitnessLinfCapPolicy::TailBoundWithGrind, Some(t_star)) => best_snap_below_tstar(
                 agg.log_basis,
-                agg.delta_fold,
+                field_bits,
+                agg.beta_inf,
                 t_star,
                 agg.observed_max,
                 agg.observed_p90,
@@ -233,11 +247,12 @@ pub(crate) fn print_fold_linf_aggregate_report(
     eprintln!("--- per-iteration raw rows ---");
     for sample in samples {
         let o = &sample.observation;
-        let t_star_display = o
+        let meta = &o.level_meta;
+        let t_star_display = meta
             .t_star
             .map(|t| t.to_string())
             .unwrap_or_else(|| "n/a".to_string());
-        let obs_over_tstar = o.t_star.map_or(0.0, |t_star| {
+        let obs_over_tstar = meta.t_star.map_or(0.0, |t_star| {
             if t_star > 0 {
                 o.observed_linf as f64 / t_star as f64
             } else {
@@ -248,13 +263,13 @@ pub(crate) fn print_fold_linf_aggregate_report(
             "iter={} L{} r={} obs={} β={} t*={} cap={} δ={} obs/β={:.4} obs/t*={:.4} grind={} nonce={}",
             sample.iteration,
             o.level_index,
-            o.r_vars,
+            meta.r_vars,
             o.observed_linf,
-            o.beta_inf,
+            meta.beta_inf,
             t_star_display,
-            o.honest_cap,
-            o.delta_fold,
-            o.observed_linf as f64 / o.beta_inf as f64,
+            meta.honest_cap,
+            meta.delta_fold,
+            o.observed_linf as f64 / meta.beta_inf as f64,
             obs_over_tstar,
             o.grind_probe_count,
             o.grind_nonce,
@@ -265,41 +280,34 @@ pub(crate) fn print_fold_linf_aggregate_report(
 #[cfg(test)]
 mod tests {
     use super::best_snap_below_tstar;
-    use akita_types::sis::fold_witness_verifier_linf_bound;
+    use akita_types::sis::snap_num_digits_fold_down;
 
     #[test]
-    fn best_snap_below_tstar_returns_tightest_qualifying_delta() {
+    fn best_snap_below_tstar_matches_production_snap() {
         let log_basis = 2u32;
-        let current_delta = 6usize;
-        let t_star = 739u128;
-        let max_tstar_reduction = 0.9;
-        let floor = akita_types::sis::snap_min_tstar_retain_floor(t_star, 1_000, 10_000);
-        let observed_p90 = 80u32;
-
-        let qualifying: Vec<usize> = (1..current_delta)
-            .filter(|&delta| {
-                let cap = fold_witness_verifier_linf_bound(log_basis, delta);
-                cap >= floor && u128::from(observed_p90) <= cap
-            })
-            .collect();
+        let field_bits = 128u32;
+        let beta_inf = 600u128;
+        let t_star = 600u128;
+        let pre_snap_cap = beta_inf.min(t_star);
+        let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);
+        let delta_base = akita_types::sis::num_digits_for_bound(log_cap, field_bits, log_basis);
+        let (expected_delta, grind_cap) =
+            snap_num_digits_fold_down(log_basis, delta_base, pre_snap_cap, t_star, 1, 2);
         assert!(
-            qualifying.len() >= 2,
-            "test setup: need multiple qualifying δ (floor={floor}, got {qualifying:?})"
+            expected_delta < delta_base,
+            "test setup must allow snap-down"
         );
-
+        let observed_p90 = u32::try_from(grind_cap / 2).expect("fits grind cap");
         let snap = best_snap_below_tstar(
             log_basis,
-            current_delta,
+            field_bits,
+            beta_inf,
             t_star,
             observed_p90,
             observed_p90,
-            max_tstar_reduction,
+            0.5,
         )
-        .expect("expected a snap candidate");
-        assert_eq!(
-            snap.delta_fold,
-            *qualifying.first().expect("non-empty qualifying set"),
-            "must pick tightest δ, not the first downward hit"
-        );
+        .expect("expected production snap candidate");
+        assert_eq!(snap.delta_fold, expected_delta);
     }
 }

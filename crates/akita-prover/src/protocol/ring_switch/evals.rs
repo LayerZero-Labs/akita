@@ -126,7 +126,7 @@ where
     let t_len = segment_lengths.t_len;
     let z_len = segment_lengths.z_len;
     let u_seg_len = segment_lengths.u_len;
-    let depth_fold = lp.num_digits_fold(num_claims, lp.fold_digit_field_bits())?;
+    let depth_fold = lp.num_digits_fold(num_claims, lp.field_bits_for_cache())?;
     let inner_width = block_len * depth_commit;
     let z_base_len = inner_width;
     let n_a = lp.a_key.row_len();
