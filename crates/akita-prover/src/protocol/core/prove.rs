@@ -9,8 +9,8 @@ use crate::compute::{
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::{
-    schedule_terminal_direct_witness_shape, should_reject_grouped_root,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    schedule_terminal_direct_witness_shape, scheduled_commitment_public_len,
+    should_reject_grouped_root, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 
 fn grouped_root_prover_error(message: &'static str) -> AkitaError {
@@ -271,9 +271,13 @@ where
     let root_scheduled = schedule.get_execution_schedule(0)?;
     {
         let commitments = claims.commitments();
+        let expected_len = scheduled_commitment_public_len(
+            &root_scheduled.params,
+            schedule.root_compression.as_ref(),
+        );
         if commitments
             .iter()
-            .any(|commitment| commitment.coeffs().len() != root_scheduled.params.b_key.row_len())
+            .any(|commitment| commitment.coeff_len() != expected_len)
         {
             return Err(AkitaError::InvalidInput(
                 "root commitment row count does not match scheduled root params".to_string(),

@@ -115,3 +115,21 @@ pub(crate) fn append_optional_compression_plan(
         None => bytes.push(0),
     }
 }
+
+/// Scalar field-element length of an uncompressed public commitment payload.
+#[must_use]
+pub fn uncompressed_commitment_public_len(params: &crate::LevelParams) -> usize {
+    params.b_key.row_len().saturating_mul(params.ring_dimension)
+}
+
+/// Scalar field-element length of the public commitment payload implied by
+/// `params` and an optional compression plan.
+#[must_use]
+pub fn scheduled_commitment_public_len(
+    params: &crate::LevelParams,
+    compression: Option<&CommitmentCompressionPlan>,
+) -> usize {
+    compression
+        .map(|plan| plan.public_len)
+        .unwrap_or_else(|| uncompressed_commitment_public_len(params))
+}

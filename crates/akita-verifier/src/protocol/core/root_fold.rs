@@ -1,5 +1,7 @@
 use super::*;
-use akita_types::terminal_witness_segment_layout;
+use akita_types::{
+    scheduled_commitment_public_len, terminal_witness_segment_layout, CommitmentCompressionPlan,
+};
 
 /// Verify the folded-root proof payload for either an intermediate root or the
 /// 1-fold terminal root.
@@ -22,6 +24,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     claims: &OpeningClaims<'_, E, &FlatRingVec<F>>,
     basis: BasisMode,
     root_lp: &LevelParams,
+    root_compression: Option<&CommitmentCompressionPlan>,
     setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
@@ -52,7 +55,7 @@ where
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    if commitment.coeffs().len() != root_lp.b_key.row_len() {
+    if commitment.coeff_len() != scheduled_commitment_public_len(root_lp, root_compression) {
         return Err(AkitaError::InvalidProof);
     }
 

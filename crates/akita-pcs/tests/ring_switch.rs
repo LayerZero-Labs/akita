@@ -105,7 +105,7 @@ mod tests {
     use akita_types::AppendToTranscript;
     use akita_types::{
         ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, FlatRingVec,
-        MRowLayout, OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RingCommitment,
+        MRowLayout, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
         RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};

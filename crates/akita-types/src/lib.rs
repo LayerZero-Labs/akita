@@ -31,7 +31,8 @@ pub use commitment_compression::{
     linearize_raw_ring_rows_to_first_digits, CompressionEvaluation, CompressionLinearization,
 };
 pub use compression_plan::{
-    CommitmentCompressionPlan, CompressionLayerPlan, CompressionMapRole, FoldCompressionPlan,
+    scheduled_commitment_public_len, uncompressed_commitment_public_len, CommitmentCompressionPlan,
+    CompressionLayerPlan, CompressionMapRole, FoldCompressionPlan,
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{

@@ -37,7 +37,9 @@ pub struct CompressionPolicy {
 impl Default for CompressionPolicy {
     fn default() -> Self {
         Self {
-            enabled: true,
+            // Runtime prove/fold replay still wires compressed commitments through
+            // ring relation; keep compression opt-in until that path is complete.
+            enabled: false,
             max_layers: 2,
         }
     }

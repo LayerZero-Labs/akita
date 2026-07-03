@@ -25,8 +25,7 @@ use akita_types::{
     schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint,
     AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, CleartextWitnessShape,
     FlatRingVec, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, RingCommitment, Schedule, SetupContributionMode,
-    Step,
+    PointVariableSelection, PolynomialGroupClaims, Schedule, SetupContributionMode, Step,
 };
 use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;

@@ -24,7 +24,7 @@ use akita_types::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, FlatRingVec,
-    OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RingCommitment,
+    OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 use akita_verifier::CommitmentVerifier;

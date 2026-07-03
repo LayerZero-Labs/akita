@@ -12,7 +12,7 @@ pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, BlockOrder, FlatRingVec, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims, RingCommitment,
+    PolynomialGroupClaims,
 };
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};

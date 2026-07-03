@@ -75,7 +75,7 @@ pub struct PlannerPolicy {
     /// folded-witness digit count. Only consulted at a root level whose
     /// `log_commit_bound == 1`; dense levels use `nonzeros = D`.
     pub onehot_chunk_size: usize,
-    /// Commitment compression policy (enabled by default).
+    /// Commitment compression policy (opt-in until prove/fold replay is complete).
     pub compression: akita_types::CompressionPolicy,
     /// Multi-chunk witness layout settings (`Cfg::chunked_witness_cfg()`).
     ///

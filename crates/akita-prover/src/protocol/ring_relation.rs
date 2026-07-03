@@ -17,7 +17,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingSliceSerializer,
+    gadget_row_scalars, uncompressed_commitment_public_len, AkitaCommitmentHint, FlatDigitBlocks,
+    MRowLayout, RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -434,7 +435,7 @@ impl RingRelationProver {
         let hints = fold_claims.hints().to_vec();
         let mut commitment_rows = Vec::new();
         for group_commitment in fold_claims.commitments() {
-            if group_commitment.coeffs().len() != lp.b_key.row_len() {
+            if group_commitment.coeff_len() != uncompressed_commitment_public_len(&lp) {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
