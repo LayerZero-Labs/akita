@@ -27,37 +27,49 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
 }
 
 #[inline(always)]
-fn add_integer_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
+fn add_tensor_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
     quotient: &mut [F],
-    challenge: &IntegerChallenge,
+    left: &SparseChallenge,
+    right: &SparseChallenge,
     ring: &CyclotomicRing<F, D>,
 ) {
     let rc = ring.coefficients();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let c = F::from_i64(i64::from(coeff));
-        let p = pos as usize;
-        for s in (D - p)..D {
-            quotient[p + s - D] += c * rc[s];
+    for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
+        for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
+            let degree = left_pos as usize + right_pos as usize;
+            let (pos, sign) = if degree < D {
+                (degree, 1i64)
+            } else {
+                (degree - D, -1i64)
+            };
+            let coeff = sign * i64::from(left_coeff) * i64::from(right_coeff);
+            let c = F::from_i64(coeff);
+            for s in (D - pos)..D {
+                quotient[pos + s - D] += c * rc[s];
+            }
         }
     }
 }
 
 fn parallel_high_half_accumulate<F, R, const D: usize>(
     challenges: &Challenges,
-    tensor_products: Option<&[IntegerChallenge]>,
     ring_fn: R,
 ) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + Send + Sync,
     R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
 {
-    let tensor_products = match challenges {
-        Challenges::Tensor { factored: _ } => Some(tensor_products.ok_or_else(|| {
-            AkitaError::InvalidSetup("tensor fold products were not materialized".to_string())
-        })?),
+    let tensor_blocks_per_claim = match challenges {
+        Challenges::Tensor { factored } => {
+            factored.validate::<D>()?;
+            Some(factored.blocks_per_claim()?)
+        }
         Challenges::Sparse { .. } => None,
     };
-    let total = challenges.logical_len();
+    let total = match challenges {
+        Challenges::Tensor { factored } => factored.total_blocks()?,
+        Challenges::Sparse { .. } => challenges.logical_len(),
+    };
     let out = cfg_fold_reduce!(
         0..total,
         || vec![F::zero(); D],
@@ -69,10 +81,19 @@ where
                 Challenges::Sparse {
                     challenges: sparse, ..
                 } => add_sparse_ring_product_high_half::<F, D>(&mut acc, &sparse[i], &ring),
-                Challenges::Tensor { factored: _ } => {
-                    if let Some(products) = tensor_products {
-                        add_integer_ring_product_high_half::<F, D>(&mut acc, &products[i], &ring);
-                    }
+                Challenges::Tensor { factored } => {
+                    let blocks_per_claim = tensor_blocks_per_claim.unwrap_or(0);
+                    let claim_idx = i / blocks_per_claim;
+                    let local_idx = i % blocks_per_claim;
+                    let left_idx = claim_idx * factored.left_len + (local_idx / factored.right_len);
+                    let right_idx =
+                        claim_idx * factored.right_len + (local_idx % factored.right_len);
+                    add_tensor_ring_product_high_half::<F, D>(
+                        &mut acc,
+                        &factored.left[left_idx],
+                        &factored.right[right_idx],
+                        &ring,
+                    );
                 }
             }
             acc
@@ -258,6 +279,8 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
+    let n_b = lp.b_key.row_len();
+    let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
     let expected_t_hat_block_digits = n_a
         .checked_mul(lp.num_digits_open)
@@ -274,16 +297,20 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let n_b_active = lp.n_b_active_for(m_row_layout);
-    let n_d_active = lp.n_d_active_for(m_row_layout);
+    // Terminal layout drops the D-rows from M (and from `y`). All structural
+    // offsets must use `n_d_active`, not `n_d`, to match the verifier.
+    let n_d_active = match m_row_layout {
+        MRowLayout::WithDBlock => n_d,
+        MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks => 0,
+    };
     let num_rows = lp.m_row_count_for(1, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Canonical row layout: consistency (1) | A | optional B | optional D.
+    // Canonical row layout: consistency (1) | A | B | D.
     let a_start = lp.a_start();
     let b_start = lp.b_start()?;
-    let d_start = lp.d_start_for(1, m_row_layout)?;
+    let d_start = lp.d_start(1)?;
 
     if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidProof);
@@ -303,13 +330,13 @@ where
         },
         RingSwitchRelationPlan {
             n_d: n_d_active,
-            n_b: n_b_active,
+            n_b,
             n_a,
             log_basis: lp.log_basis,
         },
     )?;
     if relation_rows.d_cyclic.len() != n_d_active
-        || relation_rows.b_cyclic.len() != n_b_active
+        || relation_rows.b_cyclic.len() != n_b
         || relation_rows.a_quotients.len() != n_a
     {
         return Err(AkitaError::InvalidProof);
@@ -335,7 +362,7 @@ where
         }
     }
     let commitment_cyclic_rows = b_cyclic;
-    if commitment_cyclic_rows.len() != n_b_active {
+    if commitment_cyclic_rows.len() != n_b {
         return Err(AkitaError::InvalidProof);
     }
     let constant_opening_multipliers = ring_multiplier_point.is_constant();
@@ -355,11 +382,6 @@ where
         quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
     };
 
-    let tensor_products = match challenges {
-        Challenges::Tensor { factored } => Some(factored.expand_integer::<D>()?),
-        Challenges::Sparse { .. } => None,
-    };
-    let tensor_products = tensor_products.as_deref();
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
 
@@ -369,9 +391,7 @@ where
             let _span = tracing::info_span!("challenge_fold_row").entered();
             // Consistency row: Σ c_i · e_folded[i] over all (claim, block).
             let quotient =
-                parallel_high_half_accumulate::<F, _, D>(challenges, tensor_products, |i| {
-                    Some(e_folded[i])
-                })?;
+                parallel_high_half_accumulate::<F, _, D>(challenges, |i| Some(e_folded[i]))?;
             let mut quotient = CyclotomicRing::from_slice(&quotient);
             quotient -= consistency_z_quotient;
             result.push(quotient);
@@ -384,13 +404,12 @@ where
             // In a dense single commitment group, claim order is polynomial
             // order. Iterate `(claim, block)` over the challenge space and
             // read the matching committed polynomial block directly.
-            let mut quotient =
-                parallel_high_half_accumulate::<F, _, D>(challenges, tensor_products, |i| {
-                    let claim_idx = i / blocks_per_claim;
-                    let block_idx = i % blocks_per_claim;
-                    let inner_idx = claim_idx * blocks_per_claim + block_idx;
-                    recomposed_inner_rows[inner_idx].get(a_idx).copied()
-                })?;
+            let mut quotient = parallel_high_half_accumulate::<F, _, D>(challenges, |i| {
+                let claim_idx = i / blocks_per_claim;
+                let block_idx = i % blocks_per_claim;
+                let inner_idx = claim_idx * blocks_per_claim + block_idx;
+                recomposed_inner_rows[inner_idx].get(a_idx).copied()
+            })?;
 
             let a_q = a_quotients[a_idx].coefficients();
             for k in 0..D {
@@ -417,4 +436,70 @@ where
     tracing::debug!(other_s = other_time, "compute_r breakdown");
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::test_support::tensor_oracle_challenges;
+    use akita_challenges::SparseChallenge;
+    use akita_field::Prime128OffsetA7F7 as F;
+
+    fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
+            F::from_u64(offset + idx as u64 + 1)
+        }))
+    }
+
+    fn sparse_challenge_as_ring<const D: usize>(
+        challenge: &SparseChallenge,
+    ) -> CyclotomicRing<F, D> {
+        let mut coeffs = [F::zero(); D];
+        for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+            coeffs[pos as usize] += F::from_i64(i64::from(coeff));
+        }
+        CyclotomicRing::from_coefficients(coeffs)
+    }
+
+    fn add_ring_product_reference_high_half<const D: usize>(
+        quotient: &mut [F],
+        challenge: &CyclotomicRing<F, D>,
+        ring: &CyclotomicRing<F, D>,
+    ) {
+        let rc = ring.coefficients();
+        for (p, &c) in challenge.coefficients().iter().enumerate() {
+            for s in (D - p)..D {
+                quotient[p + s - D] += c * rc[s];
+            }
+        }
+    }
+
+    #[test]
+    fn tensor_high_half_streaming_matches_ring_multiplication_reference() {
+        const D: usize = 8;
+        let tensor = tensor_oracle_challenges::<D>();
+        let rings = (0..tensor.total_blocks().unwrap())
+            .map(|idx| (idx != 3).then(|| ring::<D>(10 * idx as u64)))
+            .collect::<Vec<_>>();
+        let challenges = Challenges::Tensor {
+            factored: tensor.clone(),
+        };
+
+        let got = parallel_high_half_accumulate::<F, _, D>(&challenges, |idx| rings[idx]).unwrap();
+        let mut expected = vec![F::zero(); D];
+        for (idx, ring) in rings
+            .iter()
+            .enumerate()
+            .take(tensor.total_blocks().unwrap())
+        {
+            if let Some(ring) = ring {
+                let (_, _, left, right) = tensor.factors_for_logical_block(idx).unwrap();
+                let challenge =
+                    sparse_challenge_as_ring::<D>(left) * sparse_challenge_as_ring::<D>(right);
+                add_ring_product_reference_high_half::<D>(&mut expected, &challenge, ring);
+            }
+        }
+
+        assert_eq!(got, expected);
+    }
 }

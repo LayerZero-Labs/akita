@@ -11,7 +11,6 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
-use akita_types::AppendToTranscript;
 
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, L: FieldCore> {
@@ -124,19 +123,21 @@ where
         let terminal_scheduled = schedule.get_execution_schedule(terminal_level)?;
         terminal_golomb_grind_tail_t_vectors(
             &terminal_scheduled.params,
-            scheduled_m_row_layout(&terminal_scheduled),
+            MRowLayout::WithoutDBlock,
             Some(terminal_direct_witness_shape),
         )?
     };
     let terminal_result = loop {
         let scheduled = schedule.get_execution_schedule(level)?;
-        reject_active_b_side_compression(&scheduled)?;
         scheduled.validate_current_w_len(current_state.w.len())?;
         let level_params = &scheduled.params;
         let level_d = level_params.ring_dimension;
         let is_terminal_level = scheduled.is_terminal;
-        let m_row_layout = scheduled_m_row_layout(&scheduled);
-        let compute_hidden_v = scheduled.compression.v.is_some();
+        let m_row_layout = if is_terminal_level {
+            MRowLayout::WithoutDBlock
+        } else {
+            MRowLayout::WithDBlock
+        };
         let tail_t_vectors = if is_terminal_level {
             terminal_tail_t_vectors
         } else {
@@ -152,8 +153,6 @@ where
                 level_params,
                 m_row_layout,
                 tail_t_vectors,
-                compute_hidden_v,
-                scheduled.current_u_compression.as_ref(),
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("suffix prepare level {level} failed: {err:?}"))
@@ -209,8 +208,6 @@ where
                         level_params,
                         m_row_layout,
                         tail_t_vectors,
-                        compute_hidden_v,
-                        scheduled.current_u_compression.as_ref(),
                     )
                     .map_err(|err| {
                         AkitaError::InvalidInput(format!(
@@ -288,8 +285,6 @@ fn prepare_suffix<F, L, T, C, O, TS, R, const D: usize>(
     level_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-    compute_hidden_v: bool,
-    current_u_compression: Option<&CommitmentCompressionPlan>,
 ) -> Result<PreparedFold<F, L, D>, AkitaError>
 where
     F: FieldCore
@@ -329,17 +324,17 @@ where
     let typed_hint = hint.to_typed::<D>()?;
     let opening_point = &sumcheck_challenges;
 
-    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = <L as ExtField<F>>::EXT_DEGREE != 1;
     let logical_polys = [logical_w];
     let fold_polys = [&w];
     let eor_opening_batch =
-        VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
+        OpeningClaims::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let suffix_commitment = (commitment, typed_hint);
-    let fold_claims = ProverOpeningBatch::new_suffix(
+    let suffix_commitment = (commitment.clone(), typed_hint);
+    let fold_claims = ProverOpeningData::new_suffix(
         opening_point,
         recursive_num_vars,
         &fold_polys,
@@ -361,8 +356,6 @@ where
         BlockOrder::ColumnMajor,
         m_row_layout,
         terminal_tail_t_vectors,
-        compute_hidden_v,
-        current_u_compression,
     )
 }
 
@@ -403,7 +396,7 @@ mod tests {
             final_factor: TestF::one(),
         });
 
-        let opening_batch = OpeningBatchShape::new(0, 1).expect("singleton opening batch");
+        let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
         let err = match compute_trace_target::<TestF, TestF, _, D>(
             &reduction,

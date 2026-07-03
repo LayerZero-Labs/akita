@@ -5,30 +5,34 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     committed_fold_a_role_rank, compute_num_digits_full_field, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_fold,
-    num_digits_open, num_digits_s_commit, rounded_up_collision_norm_t, rounded_up_collision_norm_w,
-    AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    num_digits_open, num_digits_s_commit, rounded_up_collision_linf_t, rounded_up_collision_linf_w,
+    AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_level_bytes,
-    level_proof_bytes_with_compression, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, CommitmentGroupLayout, CommitmentGroupScheduleKey, DecompositionParams,
-    DirectStep, FoldStep, GroupRootParams, LevelParams, LevelProofByteParams, MRowLayout, Schedule,
-    Step,
+    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, DecompositionParams,
+    DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout, PolynomialGroupLayout,
+    PrecommittedGroupParams, Schedule, Step,
 };
 
-use crate::compression::{
-    assign_schedule_compression_plans, build_fold_compression_plans, build_root_compression_plan,
-    compression_suffix_for_fold, CompressionSetupCursor,
-};
+use crate::compression::CompressionSetupCursor;
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
     SuffixState,
 };
 use crate::PlannerPolicy;
-use akita_types::compression_plan_suffix_digits;
+
+fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
+    SisTableKey {
+        min_security_bits: policy.min_sis_security_bits,
+        family: policy.sis_family,
+        ring_dimension: policy.ring_dimension as u32,
+        coeff_linf_bound,
+    }
+}
 
 pub(crate) fn group_root_params_from_layout(
-    layout: &CommitmentGroupLayout,
+    layout: &PrecommittedGroupParams,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
@@ -60,6 +64,7 @@ pub(crate) fn group_root_params_from_layout(
     let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped A width overflow".to_string()))?;
     let (norm_s, min_n_a) = committed_fold_a_role_rank(
+        policy.min_sis_security_bits,
         family,
         d,
         level_decomp,
@@ -69,7 +74,7 @@ pub(crate) fn group_root_params_from_layout(
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
         layout.r_vars,
-        layout.key.num_polynomials,
+        layout.group.num_polynomials(),
         width_s as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no grouped A-role norm".to_string()))?;
@@ -78,23 +83,30 @@ pub(crate) fn group_root_params_from_layout(
             "precommitted group A rank is below grouped root requirement".to_string(),
         ));
     }
-    let a_key = AjtaiKeyParams::try_new(family, layout.n_a, width_s, norm_s, d)?;
+    let a_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        layout.n_a,
+        width_s,
+        norm_s,
+        d,
+    )?;
 
     let b_norm_basis = if conservative_b_rank {
         policy.basis_range.1
     } else {
         layout.log_basis
     };
-    let norm_t = rounded_up_collision_norm_t(family, d, b_norm_basis)
+    let norm_t = rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, b_norm_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("no grouped B-role norm".to_string()))?;
     let width_t = decomposed_t_ring_count(
         layout.n_a,
         num_digits_open,
         num_blocks,
-        layout.key.num_polynomials,
+        layout.group.num_polynomials(),
     )
     .ok_or_else(|| AkitaError::InvalidSetup("grouped B width overflow".to_string()))?;
-    let min_n_b = min_secure_rank(family, d as u32, norm_t, width_t as u64)
+    let min_n_b = min_secure_rank(sis_key(policy, norm_t), width_t as u64)
         .ok_or_else(|| AkitaError::InvalidSetup("no grouped B-role rank".to_string()))?;
     let n_b = if conservative_b_rank {
         if layout.conservative_n_b < min_n_b {
@@ -107,7 +119,14 @@ pub(crate) fn group_root_params_from_layout(
     } else {
         min_n_b
     };
-    let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
+    let b_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        n_b,
+        width_t,
+        norm_t,
+        d,
+    )?;
 
     let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
         &ring_challenge_cfg,
@@ -136,7 +155,7 @@ pub(crate) fn group_root_params_from_layout(
     );
     let num_digits_fold_one = num_digits_fold(
         layout.r_vars,
-        layout.key.num_polynomials,
+        layout.group.num_polynomials(),
         policy.decomposition.field_bits(),
         layout.log_basis,
         challenge,
@@ -145,7 +164,7 @@ pub(crate) fn group_root_params_from_layout(
     )?;
 
     Ok(GroupRootParams {
-        layout: layout.clone(),
+        layout: *layout,
         a_key,
         b_key,
         num_blocks,
@@ -240,9 +259,12 @@ pub(crate) fn grouped_root_direct_witness_len(
         })
     };
 
-    let mut total = group_len(key.final_group.num_polynomials, key.final_group.num_vars)?;
+    let mut total = group_len(
+        key.final_group.num_polynomials(),
+        key.final_group.num_vars(),
+    )?;
     for layout in &key.precommitteds {
-        let precommitted_len = group_len(layout.key.num_polynomials, layout.key.num_vars)?;
+        let precommitted_len = group_len(layout.group.num_polynomials(), layout.group.num_vars())?;
         total = total.checked_add(precommitted_len).ok_or_else(|| {
             AkitaError::InvalidSetup("grouped root-direct witness length overflow".to_string())
         })?;
@@ -364,7 +386,7 @@ pub(crate) fn grouped_root_next_w_len(
     )?;
     for group in &params.precommitted_groups {
         let group_rings = grouped_root_segment_rings(
-            group.layout.key.num_polynomials,
+            group.layout.group.num_polynomials(),
             group.num_blocks,
             group.block_len,
             group.a_key.row_len(),
@@ -421,6 +443,7 @@ fn grouped_root_main_level_params_candidate(
         return Ok(None);
     };
     let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+        policy.min_sis_security_bits,
         family,
         d,
         level_decomp,
@@ -435,19 +458,35 @@ fn grouped_root_main_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
+    let a_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        n_a,
+        width_s,
+        norm_s,
+        d,
+    )?;
 
-    let Some(norm_t) = rounded_up_collision_norm_t(family, d, log_basis) else {
+    let Some(norm_t) =
+        rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, log_basis)
+    else {
         return Ok(None);
     };
     let Some(width_t) = decomposed_t_ring_count(n_a, num_digits_open, num_blocks, main_num_polys)
     else {
         return Ok(None);
     };
-    let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
+    let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
         return Ok(None);
     };
-    let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
+    let b_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        n_b,
+        width_t,
+        norm_t,
+        d,
+    )?;
 
     // Grouped D uses one `w_hat_g` segment per commitment group, not per polynomial.
     let Some(main_d_width) = decomposed_w_ring_count(num_digits_open, num_blocks, 1) else {
@@ -456,13 +495,22 @@ fn grouped_root_main_level_params_candidate(
     let d_width = main_d_width
         .checked_add(ctx.precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped D width overflow".to_string()))?;
-    let Some(norm_w) = rounded_up_collision_norm_w(family, d, log_basis) else {
+    let Some(norm_w) =
+        rounded_up_collision_linf_w(policy.min_sis_security_bits, family, d, log_basis)
+    else {
         return Ok(None);
     };
-    let Some(n_d) = min_secure_rank(family, d as u32, norm_w, d_width as u64) else {
+    let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), d_width as u64) else {
         return Ok(None);
     };
-    let d_key = AjtaiKeyParams::try_new(family, n_d, d_width, norm_w, d)?;
+    let d_key = AjtaiKeyParams::try_new(
+        policy.min_sis_security_bits,
+        family,
+        n_d,
+        d_width,
+        norm_w,
+        d,
+    )?;
 
     let onehot_chunk_size = if decomp.log_commit_bound == 1 {
         policy.onehot_chunk_size
@@ -489,6 +537,9 @@ fn grouped_root_main_level_params_candidate(
         field_bits_hint: 0,
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
+        // Grouped root-direct ships raw witnesses; chunked layout is orthogonal
+        // and not used by the grouped precommit path.
+        witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: ctx.precommitted_groups.to_vec(),
     }
     .with_fold_linf_cap_config(decomp.field_bits(), main_num_polys)?;
@@ -507,8 +558,8 @@ fn compute_grouped_root_direct_level_params(
         grouped_root_precommitted_groups(key, policy, ring_challenge_config, fold_challenge_shape)?;
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let main_num_polys = key.final_group.num_polynomials;
-    let main_num_vars = key.final_group.num_vars;
+    let main_num_polys = key.final_group.num_polynomials();
+    let main_num_vars = key.final_group.num_vars();
     let candidate_ctx = GroupedRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
@@ -591,7 +642,7 @@ pub fn find_group_batch_schedule(
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
     let direct_current_w_len = grouped_root_direct_witness_len(key)?;
     let direct_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.final_group.num_vars,
+        num_vars: key.final_group.num_vars(),
         level: 0,
         current_w_len: direct_current_w_len,
     });
@@ -618,17 +669,17 @@ pub fn find_group_batch_schedule(
     };
 
     let root_current_w_len = 1usize
-        .checked_shl(key.final_group.num_vars as u32)
+        .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("grouped root-fold witness length overflow".to_string())
         })?;
     let fold_challenge_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.final_group.num_vars,
+        num_vars: key.final_group.num_vars(),
         level: 0,
         current_w_len: root_current_w_len,
     });
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
-    let reduced_vars = key.final_group.num_vars.saturating_sub(alpha);
+    let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
         let Some((total_bytes, steps)) = best else {
             return Err(AkitaError::InvalidSetup(
@@ -637,8 +688,8 @@ pub fn find_group_batch_schedule(
         };
         return Ok(Schedule {
             steps,
-            root_compression: None,
             total_bytes,
+            root_compression: None,
         });
     }
 
@@ -652,16 +703,15 @@ pub fn find_group_batch_schedule(
         precommitted_d_width,
         precommitted_groups: &precommitted_groups,
     };
-    let mut compression_cursor = CompressionSetupCursor::default();
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_config,
-        num_vars: key.final_group.num_vars,
-        key: CommitmentGroupScheduleKey::singleton(key.final_group.num_vars),
+        num_vars: key.final_group.num_vars(),
+        key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
     };
     let mut memo = ScheduleMemo::new();
     let total_polys = key.num_polynomials()?;
-    let root_eor_key = CommitmentGroupScheduleKey::new(key.final_group.num_vars, total_polys);
+    let root_eor_key = PolynomialGroupLayout::new(key.final_group.num_vars(), total_polys);
     let initial_witness_len_bits = root_current_w_len
         .checked_mul(field_bits as usize)
         .ok_or_else(|| {
@@ -676,7 +726,7 @@ pub fn find_group_batch_schedule(
             let m_vars = reduced_vars - r_vars;
             let Some(candidate_params) = grouped_root_main_level_params_candidate(
                 &candidate_ctx,
-                key.final_group.num_polynomials,
+                key.final_group.num_polynomials(),
                 candidate_log_basis,
                 m_vars,
                 r_vars,
@@ -687,13 +737,13 @@ pub fn find_group_batch_schedule(
             let next_w_len = grouped_root_next_w_len(
                 field_bits,
                 &candidate_params,
-                key.final_group.num_polynomials,
+                key.final_group.num_polynomials(),
                 MRowLayout::WithDBlock,
             )?;
             let next_w_len_terminal = grouped_root_next_w_len(
                 field_bits,
                 &candidate_params,
-                key.final_group.num_polynomials,
+                key.final_group.num_polynomials(),
                 MRowLayout::WithoutDBlock,
             )?;
             if next_w_len
@@ -706,10 +756,8 @@ pub fn find_group_batch_schedule(
                 continue;
             }
 
-            let root_u_plan =
-                build_root_compression_plan(policy, &candidate_params, &mut compression_cursor)?;
-            let root_u_suffix = compression_plan_suffix_digits(root_u_plan.as_ref());
-            let suffix_probe = derive_optimal_suffix_schedule(
+            let mut compression_cursor = CompressionSetupCursor::default();
+            let suffix = derive_optimal_suffix_schedule(
                 &suffix_ctx,
                 &mut compression_cursor,
                 &mut memo,
@@ -719,11 +767,11 @@ pub fn find_group_batch_schedule(
                     current_witness_len_terminal: next_w_len_terminal,
                     current_lb: candidate_log_basis,
                     depth: 0,
-                    leading_current_u_suffix: root_u_suffix,
+                    leading_current_u_suffix: 0,
                     accumulated_witness_suffix: 0,
                 },
             )?;
-            if suffix_probe.is_empty() {
+            if suffix.is_empty() {
                 continue;
             }
             let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
@@ -739,58 +787,21 @@ pub fn find_group_batch_schedule(
             // A grouped root that is immediately terminal needs a grouped
             // segment-typed witness layout; keep phase-1 schedules on the
             // singleton recursive suffix path.
-            if suffix_probe.best_direct.is_some() && suffix_probe.best_fold_per_lb.is_empty() {
+            if suffix.best_direct.is_some() && suffix.best_fold_per_lb.is_empty() {
                 return Err(AkitaError::InvalidSetup(
                     "grouped terminal root folds are not supported yet; grouped folded schedules require a singleton recursive suffix".to_string(),
                 ));
             }
-            for suffix_probe_fold in suffix_probe.best_fold_per_lb.values() {
-                let successor_is_direct = false;
-                let fold_compression = build_fold_compression_plans(
-                    policy,
-                    &candidate_params,
-                    &suffix_probe_fold.first_fold_params,
-                    successor_is_direct,
-                    &mut compression_cursor,
-                )?;
-                let suffix_digits = compression_suffix_for_fold(&fold_compression);
-                let scheduled_next_w_len = next_w_len
-                    .saturating_add(suffix_digits)
-                    .saturating_add(root_u_suffix);
-                let scheduled_child_terminal = next_w_len_terminal
-                    .saturating_add(suffix_digits)
-                    .saturating_add(root_u_suffix);
-                let child_accumulated = root_u_suffix.saturating_add(suffix_digits);
-                let child_leading =
-                    compression_plan_suffix_digits(fold_compression.next_u.as_ref());
-                let child_suffix = derive_optimal_suffix_schedule(
-                    &suffix_ctx,
-                    &mut compression_cursor,
-                    &mut memo,
-                    SuffixState {
-                        level: 1,
-                        current_witness_len: scheduled_next_w_len,
-                        current_witness_len_terminal: scheduled_child_terminal,
-                        current_lb: candidate_log_basis,
-                        depth: 0,
-                        leading_current_u_suffix: child_leading,
-                        accumulated_witness_suffix: child_accumulated,
-                    },
-                )?;
-                let Some(suffix_fold) = child_suffix.best_fold_per_lb.get(&candidate_log_basis)
-                else {
-                    continue;
-                };
-                let root_proof_size = level_proof_bytes_with_compression(LevelProofByteParams {
-                    base_field_bits: field_bits,
+            for suffix_fold in suffix.best_fold_per_lb.values() {
+                let root_proof_size = level_proof_bytes(
+                    field_bits,
                     challenge_field_bits,
-                    lp: &candidate_params,
-                    next_lp: Some(&suffix_fold.first_fold_params),
-                    next_w_len: scheduled_next_w_len,
-                    layout: MRowLayout::WithDBlock,
-                    fold_compression: Some(&fold_compression),
-                    penultimate_raw_next_u: false,
-                }) + eor_bytes;
+                    &candidate_params,
+                    Some(&suffix_fold.first_fold_params),
+                    next_w_len,
+                    1,
+                    MRowLayout::WithDBlock,
+                ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()
@@ -800,9 +811,9 @@ pub fn find_group_batch_schedule(
                     steps.push(Step::Fold(FoldStep {
                         params: candidate_params.clone(),
                         current_w_len: root_current_w_len,
-                        next_w_len: scheduled_next_w_len,
+                        next_w_len,
                         level_bytes: root_proof_size,
-                        compression: fold_compression,
+                        compression: Default::default(),
                     }));
                     steps.extend(suffix_fold.steps.iter().cloned());
                     best = Some((total, steps));
@@ -811,16 +822,15 @@ pub fn find_group_batch_schedule(
         }
     }
 
-    let Some((total_bytes, mut steps)) = best else {
+    let Some((total_bytes, steps)) = best else {
         return Err(AkitaError::InvalidSetup(
             "main grouped root is not committable".to_string(),
         ));
     };
-    let root_compression = assign_schedule_compression_plans(policy, &mut steps)?;
     Ok(Schedule {
         steps,
-        root_compression,
         total_bytes,
+        root_compression: None,
     })
 }
 
@@ -829,8 +839,8 @@ mod tests {
     use super::*;
     use crate::find_schedule;
     use akita_types::{
-        AkitaScheduleLookupKey, CommitmentGroupScheduleKey, CompressionPolicy, DecompositionParams,
-        SisModulusFamily,
+        AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout, SisModulusFamily,
+        DEFAULT_SIS_SECURITY_BITS,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -842,12 +852,13 @@ mod tests {
                 log_open_bound: Some(8),
             },
             sis_family: SisModulusFamily::Q128,
+            min_sis_security_bits: DEFAULT_SIS_SECURITY_BITS,
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 4,
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
-            compression: CompressionPolicy::default(),
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         }
     }
 
@@ -862,13 +873,13 @@ mod tests {
         TensorChallengeShape::Flat
     }
 
-    fn precommitted(num_polys: usize, num_vars: usize) -> CommitmentGroupLayout {
+    fn precommitted(num_polys: usize, num_vars: usize) -> PrecommittedGroupParams {
         let alpha = flat_policy().ring_dimension.trailing_zeros() as usize;
         let outer = num_vars - alpha;
         let r_vars = outer / 2;
         let m_vars = outer - r_vars;
-        CommitmentGroupLayout {
-            key: CommitmentGroupScheduleKey::new(num_vars, num_polys),
+        PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(num_vars, num_polys),
             m_vars,
             r_vars,
             log_basis: 3,
@@ -878,22 +889,22 @@ mod tests {
     }
 
     fn precommitted_from_policy(
-        key: CommitmentGroupScheduleKey,
+        key: PolynomialGroupLayout,
         policy: &PlannerPolicy,
-    ) -> CommitmentGroupLayout {
+    ) -> PrecommittedGroupParams {
         let schedule =
             crate::find_schedule(key, policy, ring_challenge_config, fold_shape).expect("schedule");
         let params = match schedule.steps.first().expect("schedule step") {
             Step::Fold(fold) => fold.params.clone(),
             Step::Direct(direct) => direct.params.clone().expect("root-direct params"),
         };
-        CommitmentGroupLayout::from_params(key, &params)
+        PrecommittedGroupParams::from_params(key, &params)
     }
 
     #[test]
     fn grouped_root_direct_witness_len_sums_mixed_polynomial_counts() {
         let key = AkitaScheduleLookupKey {
-            final_group: CommitmentGroupScheduleKey::new(20, 3),
+            final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![precommitted(1, 20), precommitted(2, 20)],
         };
 
@@ -918,7 +929,7 @@ mod tests {
 
     #[test]
     fn find_group_batch_schedule_delegates_single_group_to_scalar() {
-        let final_group = CommitmentGroupScheduleKey::new(12, 1);
+        let final_group = PolynomialGroupLayout::new(12, 1);
         let key = AkitaScheduleLookupKey::single(final_group);
         let policy = flat_policy();
 
@@ -937,9 +948,9 @@ mod tests {
         let mut policy = flat_policy();
         policy.decomposition.log_basis = 3;
         policy.basis_range = (4, 4);
-        let pre_key = CommitmentGroupScheduleKey::new(20, 1);
+        let pre_key = PolynomialGroupLayout::new(20, 1);
         let key = AkitaScheduleLookupKey {
-            final_group: CommitmentGroupScheduleKey::new(20, 2),
+            final_group: PolynomialGroupLayout::new(40, 2),
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
@@ -957,9 +968,9 @@ mod tests {
     fn grouped_schedule_can_start_with_fold() {
         let mut policy = flat_policy();
         policy.basis_range = (4, 4);
-        let pre_key = CommitmentGroupScheduleKey::new(20, 1);
+        let pre_key = PolynomialGroupLayout::new(20, 1);
         let key = AkitaScheduleLookupKey {
-            final_group: CommitmentGroupScheduleKey::new(20, 2),
+            final_group: PolynomialGroupLayout::new(40, 2),
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
@@ -969,7 +980,7 @@ mod tests {
             panic!("expected grouped root fold");
         };
 
-        assert_eq!(root.current_w_len, 1usize << key.final_group.num_vars);
+        assert_eq!(root.current_w_len, 1usize << key.final_group.num_vars());
         assert_eq!(
             root.params.precommitted_groups.len(),
             key.precommitteds.len()
@@ -982,7 +993,7 @@ mod tests {
         let mut policy = flat_policy();
         policy.decomposition.log_commit_bound = 8;
         let key = AkitaScheduleLookupKey {
-            final_group: CommitmentGroupScheduleKey::new(20, 2),
+            final_group: PolynomialGroupLayout::new(40, 2),
             precommitteds: vec![precommitted(1, 20)],
         };
 

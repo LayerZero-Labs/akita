@@ -9,8 +9,10 @@
 use akita_field::AkitaError;
 
 use super::decomposition_digits::num_digits_open;
-use super::norm_bound::rounded_up_collision_norm_t;
-use super::{min_secure_rank, SisModulusFamily};
+use super::norm_bound::rounded_up_collision_linf_t;
+use super::{
+    min_secure_rank, sis_table_key_for_linf_bound, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
+};
 use crate::{
     CommitmentCompressionPlan, CompressionLayerPlan, CompressionMapRole, DecompositionParams,
 };
@@ -61,10 +63,20 @@ pub fn secure_compression_output_len(
     if input_digit_len == 0 {
         return None;
     }
-    let collision =
-        rounded_up_collision_norm_t(sis_family, COMPRESSION_LOOKUP_D as usize, log_basis)?;
+    let collision = rounded_up_collision_linf_t(
+        DEFAULT_SIS_SECURITY_BITS,
+        sis_family,
+        COMPRESSION_LOOKUP_D as usize,
+        log_basis,
+    )?;
     let width = input_digit_len.div_ceil(COMPRESSION_LOOKUP_D as usize) as u64;
-    let rank = min_secure_rank(sis_family, COMPRESSION_LOOKUP_D, collision, width)?;
+    let key = sis_table_key_for_linf_bound(
+        DEFAULT_SIS_SECURITY_BITS,
+        sis_family,
+        COMPRESSION_LOOKUP_D,
+        collision,
+    )?;
+    let rank = min_secure_rank(key, width)?;
     Some(rank.saturating_mul(COMPRESSION_LOOKUP_D as usize))
 }
 

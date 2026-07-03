@@ -1,10 +1,10 @@
 //! Contract test for downstream-style custom root commit sources.
 //!
-//! Proves that `commit_with_params` accepts a polynomial type that is not one
-//! of Akita's built-in root representations, with only [`RootCommitSource`] on
-//! `P` and a downstream-owned backend implementing [`RootCommitKernel`] for a
-//! local commit view (orphan-rule-safe: the backend type is local to this test
-//! crate).
+//! Proves that `batched_commit_with_params` accepts a polynomial type that is
+//! not one of Akita's built-in root representations, with only
+//! [`RootCommitSource`] on `P` and a downstream-owned backend implementing
+//! [`RootCommitKernel`] for a local commit view (orphan-rule-safe: the backend
+//! type is local to this test crate).
 
 #![allow(missing_docs)]
 
@@ -19,10 +19,9 @@ use akita_prover::compute::{
     RootCommitSource, RootPolyShape,
 };
 use akita_prover::{
-    batched_commit_with_params, commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup,
-    DensePoly,
+    batched_commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly,
 };
-use akita_types::OpeningBatchShape;
+use akita_types::OpeningClaimsLayout;
 
 type Cfg = fp64::D32Full;
 type F = <Cfg as CommitmentConfig>::Field;
@@ -140,60 +139,14 @@ where
 }
 
 #[test]
-fn custom_commit_source_runs_commit_with_params() {
-    const NUM_VARS: usize = 8;
-    let len = 1usize << NUM_VARS;
-    let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
-    let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
-    assert_commit_source_only(&contract);
-
-    let dense = DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).expect("dense oracle");
-    let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-
-    let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F, D>::generate_with_capacity(NUM_VARS, 1, setup_envelope)
-        .expect("setup");
-    let prepared = ContractCommitBackend
-        .prepare_setup(&setup)
-        .expect("prepared");
-    let expanded = setup.expanded.as_ref();
-    let contract_ctx =
-        OperationCtx::new(&ContractCommitBackend, &prepared, expanded).expect("contract ctx");
-
-    let (contract_commitment, contract_hint) = commit_with_params::<F, D, ContractRootPoly, _>(
-        std::slice::from_ref(&contract),
-        expanded,
-        &contract_ctx,
-        &params,
-    )
-    .expect("contract commit");
-
-    let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
-    let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
-    let (dense_commitment, dense_hint) = commit_with_params::<F, D, DensePoly<F, D>, CpuBackend>(
-        std::slice::from_ref(&dense),
-        expanded,
-        &cpu_ctx,
-        &params,
-    )
-    .expect("dense oracle commit");
-
-    assert_eq!(contract_commitment, dense_commitment);
-    assert_eq!(
-        contract_hint.decomposed_inner_rows,
-        dense_hint.decomposed_inner_rows
-    );
-}
-
-#[test]
 fn custom_commit_source_runs_batched_commit_with_params() {
     const NUM_VARS: usize = 8;
     let len = 1usize << NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
+    assert_commit_source_only(&contract);
     let dense = DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).expect("dense oracle");
-    let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
+    let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
     let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
@@ -226,7 +179,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         )
         .expect("dense batched commit");
 
-    assert_eq!(contract_commitment, dense_commitment);
+    assert_eq!(contract_commitment.u, dense_commitment.u);
     assert_eq!(
         contract_hint.decomposed_inner_rows,
         dense_hint.decomposed_inner_rows

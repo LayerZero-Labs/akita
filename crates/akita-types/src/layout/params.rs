@@ -8,7 +8,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
-use crate::schedule::CommitmentGroupLayout;
+use crate::schedule::PrecommittedGroupParams;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
@@ -28,7 +28,7 @@ pub enum MRowLayout {
     /// Full layout including the D-block (`v = D * e_hat` rows). Used at every
     /// intermediate fold level and at the root when stage-1 runs.
     WithDBlock,
-    /// Omit the D-block from the M-matrix while keeping B rows. Used when the
+    /// Cleartext-witness layout: omit the D-block from the M-matrix. Used when the
     /// D image is either checked by commitment compression or unnecessary for
     /// the terminal cleartext witness.
     WithoutDBlock,
@@ -59,7 +59,7 @@ impl MRowLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupRootParams {
     /// Frozen standalone group layout bound into the grouped root key.
-    pub layout: CommitmentGroupLayout,
+    pub layout: PrecommittedGroupParams,
     /// Inner Ajtai matrix (A) used by this group.
     pub a_key: AjtaiKeyParams,
     /// Outer commitment matrix (B) used by this group.
@@ -173,6 +173,13 @@ pub struct LevelParams {
     /// Optional cached [`crate::sis::num_digits_fold`] for a batched root `num_claims > 1`.
     pub cached_num_digits_fold_claims: usize,
     pub cached_num_digits_fold_value: usize,
+    /// Multi-chunk witness layout for this level (default: single-chunk).
+    ///
+    /// The planner populates this from `policy.witness_chunk` and the level's
+    /// position in the fold recursion; the verifier consumes it as the source of
+    /// truth for the per-level witness column layout. `ChunkedWitnessCfg::default()`
+    /// (single chunk) is byte-identical to the historical layout.
+    pub witness_chunk: crate::witness::ChunkedWitnessCfg,
     /// Precommitted group-local params for a grouped root. Empty for scalar
     /// levels; when non-empty, the top-level fields describe the final/new
     /// group and `d_key` describes the shared D matrix over all group `w_hat`
@@ -216,6 +223,7 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
         }
     }
@@ -237,21 +245,30 @@ impl LevelParams {
         Self {
             ring_dimension,
             log_basis,
-            a_key: AjtaiKeyParams {
-                row_len: n_a,
+            a_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
-            b_key: AjtaiKeyParams {
-                row_len: n_b,
+                n_a,
+                0,
+                0,
+                ring_dimension,
+            ),
+            b_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
-            d_key: AjtaiKeyParams {
-                row_len: n_d,
+                n_b,
+                0,
+                0,
+                ring_dimension,
+            ),
+            d_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
+                n_d,
+                0,
+                0,
+                ring_dimension,
+            ),
             num_blocks: 0,
             block_len: 0,
             m_vars: 0,
@@ -266,6 +283,7 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
         }
     }
@@ -436,7 +454,8 @@ impl LevelParams {
         let policy = self.fold_witness_linf_cap_policy();
         let max_nonce_exclusive = match policy {
             crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
-            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => max_grind_attempts,
+            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
+            | crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => max_grind_attempts,
         };
         let witness_linf_cap = self.fold_witness_linf_cap_for_claims(num_claims)?;
         Ok(crate::sis::FoldWitnessGrindContract {
@@ -462,7 +481,7 @@ impl LevelParams {
 
     pub fn fold_witness_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let cap_config = self.fold_linf_cap_config;
-        if cap_config.policy != crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind {
+        if !cap_config.policy.allows_grind() {
             return Err(AkitaError::InvalidSetup(
                 "fold_witness_linf_tail_bound_sq: deterministic policy has no tail bound"
                     .to_string(),
@@ -473,19 +492,13 @@ impl LevelParams {
                 "fold_witness_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
             ));
         }
-        let num_fold_blocks = self.num_fold_blocks(num_claims)?;
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        let ln_term = crate::sis::fold_witness_linf_ln_term(
-            cap_config.num_fold_coeffs,
-            cap_config.grind_target_accept_num,
-            cap_config.grind_target_accept_den,
-        )?;
-        crate::sis::fold_witness_linf_tail_bound_sq(
-            num_fold_blocks,
-            cap_config.challenge_l2_sq_max,
+        crate::sis::fold_witness_linf_tail_bound_for_config_sq(
+            self.r_vars,
+            num_claims,
             witness_linf_sq,
-            ln_term,
+            &cap_config,
         )
     }
 
@@ -531,12 +544,17 @@ impl LevelParams {
         self
     }
 
-    /// Replace the fold-round challenge shape, returning the updated params.
+    /// Replace the fold-round challenge shape, rebuilding derived fold-linf
+    /// digit/cache state for the new shape.
     #[inline]
-    #[must_use]
-    pub fn with_fold_challenge_shape(mut self, shape: TensorChallengeShape) -> Self {
+    pub fn with_fold_challenge_shape(
+        mut self,
+        shape: TensorChallengeShape,
+    ) -> Result<Self, AkitaError> {
         self.fold_challenge_shape = shape;
-        self
+        let field_bits = self.field_bits_for_cache();
+        let root_num_claims = self.cached_num_digits_fold_claims;
+        self.with_fold_linf_cap_config(field_bits, root_num_claims)
     }
 
     /// Block-select variable count (the `r_vars` of the legacy layout).
@@ -578,6 +596,14 @@ impl LevelParams {
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.onehot_chunk_size);
+        // Chunk binding is appended only when the level is chunked, so
+        // single-chunk descriptors stay byte-for-byte identical to the historical
+        // layout (the flag-off no-op invariant). When chunked, bind the chunk
+        // count and activated-level count into the Fiat-Shamir digest.
+        if self.witness_chunk.num_chunks != 1 {
+            self.witness_chunk.append_descriptor_bytes(bytes);
+        }
+
         if !self.precommitted_groups.is_empty() {
             push_usize(bytes, self.precommitted_groups.len());
             for group in &self.precommitted_groups {
@@ -640,7 +666,7 @@ impl LevelParams {
         }
     }
 
-    /// Active D-block rows for an M-row layout.
+    /// Active D-block rows for an M-row layout (dropped at a terminal fold).
     #[inline]
     pub fn n_d_active_for(&self, layout: MRowLayout) -> usize {
         if layout.has_d_block() {
@@ -669,19 +695,6 @@ impl LevelParams {
             .ok_or_else(Self::m_row_overflow)
     }
 
-    /// Absolute start row of the D block.
-    #[inline]
-    pub fn d_start(&self, num_commitments: usize) -> Result<usize, AkitaError> {
-        let b_rows = self
-            .b_key
-            .row_len()
-            .checked_mul(num_commitments)
-            .ok_or_else(Self::m_row_overflow)?;
-        self.b_start()?
-            .checked_add(b_rows)
-            .ok_or_else(Self::m_row_overflow)
-    }
-
     /// Absolute start row of the D block for a selected M-row layout.
     #[inline]
     pub fn d_start_for(
@@ -696,6 +709,12 @@ impl LevelParams {
         self.b_start()?
             .checked_add(b_rows)
             .ok_or_else(Self::m_row_overflow)
+    }
+
+    /// Absolute start row of the D block.
+    #[inline]
+    pub fn d_start(&self, num_commitments: usize) -> Result<usize, AkitaError> {
+        self.d_start_for(num_commitments, MRowLayout::WithDBlock)
     }
 
     /// Row count for an explicit M-row layout.
@@ -766,24 +785,27 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: self.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.sis_family,
+                self.a_key.min_security_bits(),
+                self.a_key.sis_family(),
                 self.a_key.row_len,
                 inner_width,
-                self.a_key.collision_l2_sq,
+                self.a_key.coeff_linf_bound(),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.sis_family,
+                self.b_key.min_security_bits(),
+                self.b_key.sis_family(),
                 self.b_key.row_len,
                 outer_width,
-                self.b_key.collision_l2_sq,
+                self.b_key.coeff_linf_bound(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.sis_family,
+                self.d_key.min_security_bits(),
+                self.d_key.sis_family(),
                 self.d_key.row_len,
                 d_matrix_width,
-                self.d_key.collision_l2_sq,
+                self.d_key.coeff_linf_bound(),
                 d,
             ),
             num_blocks,
@@ -800,6 +822,9 @@ impl LevelParams {
             field_bits_hint: self.field_bits_hint,
             cached_num_digits_fold_claims: self.cached_num_digits_fold_claims,
             cached_num_digits_fold_value: self.cached_num_digits_fold_value,
+            // `with_decomp` recomputes only the A/B/D widths; the chunk layout is
+            // a property of the witness this level commits, so preserve it.
+            witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
         };
         let field_bits = self.field_bits_for_cache();
@@ -811,39 +836,41 @@ impl LevelParams {
     /// from `other`.
     ///
     /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
-    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_l2_sq`
-    /// is not a layout field** — it is the SIS-floor bucket the rank
-    /// (`row_len`) was sized against — so it is preserved from `self`,
-    /// matching the placement of `row_len` and `sis_family`. Pulling
-    /// `collision_l2_sq` from `other` would lose the audited bucket when
-    /// the layout argument was constructed via
-    /// [`LevelParams::params_only`] (which leaves `collision_l2_sq = 0`)
-    /// or threaded through [`Self::with_decomp`], and would let the SIS
-    /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
+    /// `m_vars`, `r_vars`, and the commit/open digit counts. The audited
+    /// coefficient-L∞ SIS bucket is not a layout field: it is the bucket the
+    /// rank (`row_len`) was sized against, so it is preserved from `self`,
+    /// matching the placement of `row_len` and `sis_family`. Pulling the
+    /// bucket from `other` would lose the audited value when the layout
+    /// argument was constructed via [`LevelParams::params_only`] or threaded
+    /// through [`Self::with_decomp`], and would let the SIS audit at
+    /// [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Result<Self, AkitaError> {
         let d = self.ring_dimension;
         Self {
             ring_dimension: d,
             log_basis: other.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.sis_family,
+                self.a_key.min_security_bits(),
+                self.a_key.sis_family(),
                 self.a_key.row_len,
                 other.a_key.col_len,
-                self.a_key.collision_l2_sq,
+                self.a_key.coeff_linf_bound(),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.sis_family,
+                self.b_key.min_security_bits(),
+                self.b_key.sis_family(),
                 self.b_key.row_len,
                 other.b_key.col_len,
-                self.b_key.collision_l2_sq,
+                self.b_key.coeff_linf_bound(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.sis_family,
+                self.d_key.min_security_bits(),
+                self.d_key.sis_family(),
                 self.d_key.row_len,
                 other.d_key.col_len,
-                self.d_key.collision_l2_sq,
+                self.d_key.coeff_linf_bound(),
                 d,
             ),
             num_blocks: other.num_blocks,
@@ -860,6 +887,9 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            // The chunk layout is a property of the committed witness, sized with
+            // the ranks, so it stays with `self` like the SIS buckets.
+            witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
         }
         .with_fold_linf_cap_config(field_bits, 0)
@@ -900,6 +930,7 @@ fn append_fold_linf_policy_descriptor_bytes(
     bytes.push(match policy {
         crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => 0,
         crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
+        crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => 2,
     });
 }
 
@@ -996,6 +1027,7 @@ mod tests {
         let lp = sample_params_only()
             .with_layout(&sample_layout_lp(), 128)
             .unwrap();
+
         let n_a = lp.a_key.row_len();
         let n_b = lp.b_key.row_len();
         let n_d = lp.d_key.row_len();
@@ -1030,6 +1062,7 @@ mod tests {
             .unwrap();
         let n_a = lp.a_key.row_len();
         let n_b = lp.b_key.row_len();
+        let n_d = lp.d_key.row_len();
 
         for nc in [1usize, 2, 4] {
             for layout in [
@@ -1052,7 +1085,5 @@ mod tests {
                 );
             }
         }
-
-        assert_eq!(lp.d_start(2).unwrap(), 1 + n_a + n_b * 2);
     }
 }

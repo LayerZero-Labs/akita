@@ -60,9 +60,9 @@ jobs:
         with:
           components: clippy
       - name: Clippy (transparent default features)
-        run: cargo clippy --all --all-targets --no-default-features --features parallel,disk-persistence -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
       - name: Clippy (no default features)
-        run: cargo clippy --all --all-targets --no-default-features -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -92,7 +92,7 @@ jobs:
         with:
           components: clippy
       - name: Clippy akita-field jolt-compat
-        run: cargo clippy -p akita-field --all-targets --features jolt-compat -- -D warnings
+        run: cargo clippy -p akita-field --all-targets --release --features jolt-compat -- -D warnings
       - name: Test akita-field jolt-compat
         run: cargo test --release -p akita-field --features jolt-compat
 
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
       - name: Build documentation
-        run: cargo doc -q --no-deps --no-default-features --features parallel,disk-persistence
+        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -122,7 +122,7 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          shared-key: ci-test
+          shared-key: ci-test-release
           add-job-id-key: false
           cache-on-failure: true
       - name: Install cargo-nextest
@@ -136,7 +136,7 @@ jobs:
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
-          cargo nextest run --profile ci --no-default-features --features parallel,disk-persistence \
+          cargo nextest run --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
@@ -172,11 +172,11 @@ jobs:
           cache-on-failure: true
       - name: Drift guard (all-schedules)
         run: |
-          cargo test -p akita-config --features all-schedules generated_schedule_tables_match_find_schedule
+          cargo test --release -p akita-config --features all-schedules generated_schedule_tables_match_find_schedule
       - name: Schedule catalog wiring
         run: |
-          cargo test -p akita-config --no-default-features --test schedule_catalog_feature_off
-          cargo test -p akita-config --features schedules-fp128-d64-onehot,schedules-fp128-d64-full --test schedule_catalog_miswire
+          cargo test --release -p akita-config --no-default-features --test schedule_catalog_feature_off
+          cargo test --release -p akita-config --features schedules-fp128-d64-onehot,schedules-fp128-d64-full --test schedule_catalog_miswire
 
   test-timing:
     name: Test timing

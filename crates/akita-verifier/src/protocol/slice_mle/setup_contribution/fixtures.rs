@@ -8,7 +8,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout,
-    RingRelationSegmentLayout,
+    WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
@@ -29,9 +29,6 @@ pub(crate) struct SetupContributionFixture {
     pub z_block_low_eq: Vec<TestField>,
     pub alpha_pows: Vec<TestField>,
     pub fold_gadget: Vec<TestField>,
-    pub offset_e: usize,
-    pub offset_t: usize,
-    pub offset_z: usize,
 }
 
 pub(crate) struct SetupContributionShape {
@@ -193,11 +190,23 @@ impl SetupContributionFixture {
             n_b: shape.n_b,
             rows,
             num_polys: shape.num_polys_per_segment.iter().sum(),
-            witness_segment_layout: RingRelationSegmentLayout {
-                offset_e,
-                offset_t,
-                offset_z,
-                offset_r,
+            chunk_layout: WitnessLayout {
+                blocks_per_chunk: shape.num_blocks,
+                chunks: vec![WitnessChunkLayout {
+                    offset_z,
+                    offset_e,
+                    offset_t,
+                    offset_u: None,
+                    offset_r: Some(offset_r),
+                    global_block_base: 0,
+                }],
+                chunk_lengths: vec![WitnessChunkLengths {
+                    z_len,
+                    e_len,
+                    t_len,
+                    u_len: None,
+                    r_len: Some(0),
+                }],
             },
         };
 
@@ -224,9 +233,6 @@ impl SetupContributionFixture {
             z_block_low_eq,
             alpha_pows,
             fold_gadget,
-            offset_e,
-            offset_t,
-            offset_z,
         }
     }
 
@@ -239,11 +245,7 @@ impl SetupContributionFixture {
             Some(&self.z_block_low_eq),
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            None,
-            None,
+            &self.prepared.chunk_layout,
         );
         match evaluator
             .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
@@ -265,11 +267,7 @@ impl SetupContributionFixture {
             None,
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            None,
-            None,
+            &self.prepared.chunk_layout,
         );
         match evaluator
             .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Recursive { setup: &self.setup })
@@ -303,11 +301,7 @@ impl SetupContributionFixture {
             Some(&self.z_block_low_eq),
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_e,
-            self.offset_t,
-            self.offset_z,
-            None,
-            None,
+            &self.prepared.chunk_layout,
         );
         let plan = evaluator.prepare().unwrap();
         let bar_omega = plan.materialize_bar_omega();

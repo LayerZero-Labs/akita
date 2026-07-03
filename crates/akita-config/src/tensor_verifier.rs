@@ -71,6 +71,10 @@ pub mod fp128 {
             )
         }
 
+        fn onehot_chunk_size() -> usize {
+            256
+        }
+
         fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
             #[cfg(feature = "schedules-fp128-d64-onehot-tensor")]
             {

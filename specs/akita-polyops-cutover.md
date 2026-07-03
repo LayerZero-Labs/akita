@@ -407,7 +407,7 @@ pub trait RootPoly<F: FieldCore, const D: usize>: Clone + Send + Sync {
     type Opening<'a>
     where
         Self: 'a;
-    type OpeningBatch<'a>
+    type BatchOpening<'a>
     where
         Self: 'a;
     type Tensor<'a, E>
@@ -424,7 +424,7 @@ pub trait RootPoly<F: FieldCore, const D: usize>: Clone + Send + Sync {
 
     fn commit_view(&self) -> Result<Self::Commit<'_>, AkitaError>;
     fn opening_view(&self) -> Result<Self::Opening<'_>, AkitaError>;
-    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatch<'a>, AkitaError>;
+    fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::BatchOpening<'a>, AkitaError>;
     fn tensor_view<E>(&self) -> Result<Self::Tensor<'_, E>, AkitaError>
     where
         E: ExtField<F>;

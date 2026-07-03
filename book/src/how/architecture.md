@@ -60,6 +60,6 @@ Further reading: [Configuration and planning](./configuration.md), [Proving](./p
 | `DensePoly`, `OneHotPoly`, `AkitaPolyOps` | Polynomial backends consumed by the scheme |
 | `BlockOrder` | Root-vs-recursive opening split convention ([`docs/block-order.md`](../../../docs/block-order.md)) |
 | `AkitaBatchedProof`, `AkitaLevelProof`, `AkitaProofStep` | Serialized proof structure (singleton openings are the 1×1 batched case) |
-| `OpeningBatch` | Single-point batch descriptor for batched prove/verify ([`specs/single-point-opening-batch.md`](../../../specs/single-point-opening-batch.md)) |
+| `OpeningClaims` / `OpeningClaimsLayout` | Public single-point opening claims and layout-only batch geometry for prove/verify, setup, and schedule lookup ([`specs/shared-opening-claims-api.md`](../../../specs/shared-opening-claims-api.md)) |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |

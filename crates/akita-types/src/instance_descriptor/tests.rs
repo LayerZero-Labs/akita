@@ -1,8 +1,6 @@
 use super::*;
 use crate::{
-    CleartextWitnessShape, CommitmentCompressionPlan, CompressionLayerPlan, CompressionMapRole,
-    FoldCompressionPlan, FoldStep, LevelParams, OpeningBatchShape, OpeningGroupShape,
-    PointVariableSelection, Step,
+    CleartextWitnessShape, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, Step,
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{Prime32Offset99, Prime64Offset59};
@@ -25,7 +23,7 @@ fn sample_level_params() -> LevelParams {
 }
 
 fn sample_descriptor() -> AkitaInstanceDescriptor {
-    let opening_batch = OpeningBatchShape::new(5, 3).expect("valid opening batch");
+    let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     let schedule = Schedule {
         steps: vec![
             Step::Fold(FoldStep {
@@ -33,7 +31,6 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 current_w_len: 256,
                 next_w_len: 256,
                 level_bytes: 123,
-                compression: Default::default(),
             }),
             Step::Direct(crate::DirectStep {
                 current_w_len: 256,
@@ -42,7 +39,6 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 params: None,
             }),
         ],
-        root_compression: None,
         total_bytes: 155,
     };
 
@@ -60,7 +56,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         },
         PlanSection::from_schedule(&schedule),
-        CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call"),
+        CallSection::from_layout(&opening_batch, BasisMode::Lagrange).expect("call"),
     )
 }
 
@@ -105,29 +101,13 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             221,
             [
-                0xb5, 0x36, 0x82, 0x44, 0x85, 0x8f, 0xd8, 0x47, 0x73, 0x13, 0xbe, 0x43, 0x7e, 0x12,
-                0xc5, 0x4f, 0x09, 0x3c, 0x60, 0xec, 0xc6, 0xe4, 0x25, 0x95, 0x74, 0xb9, 0xbb, 0x45,
-                0x15, 0xdc, 0xa8, 0x88,
+                0x41, 0x91, 0x21, 0x5c, 0x0b, 0x08, 0xe4, 0xac, 0x7c, 0xf0, 0xc5, 0xae, 0x02, 0x4e,
+                0xf5, 0xe4, 0x3d, 0x6f, 0x5b, 0x8e, 0x75, 0x6d, 0xaf, 0x08, 0xff, 0x7c, 0x10, 0x37,
+                0xc1, 0x71, 0x62, 0x54,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
     );
-}
-
-fn sample_compression_plan(role: CompressionMapRole) -> CommitmentCompressionPlan {
-    CommitmentCompressionPlan {
-        raw_len: 256,
-        public_len: 96,
-        suffix_len: 160,
-        padded_suffix_len: 192,
-        layers: vec![CompressionLayerPlan {
-            role,
-            layer: 0,
-            input_len: 256,
-            output_len: 96,
-            setup_offset: 17,
-        }],
-    }
 }
 
 #[test]
@@ -184,9 +164,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-            compression: Default::default(),
         })],
-        root_compression: None,
         total_bytes: 123,
     };
     let schedule_deterministic = Schedule {
@@ -195,9 +173,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-            compression: Default::default(),
         })],
-        root_compression: None,
         total_bytes: 123,
     };
 
@@ -220,9 +196,7 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-            compression: Default::default(),
         })],
-        root_compression: None,
         total_bytes: 123,
     };
     let schedule_tensor = Schedule {
@@ -231,9 +205,7 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-            compression: Default::default(),
         })],
-        root_compression: None,
         total_bytes: 123,
     };
 
@@ -254,9 +226,7 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-            compression: Default::default(),
         })],
-        root_compression: None,
         total_bytes: 123,
     };
     let schedule_tensor = Schedule {
@@ -265,54 +235,13 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-            compression: Default::default(),
         })],
-        root_compression: None,
         total_bytes: 123,
     };
 
     assert_ne!(
         digest_effective_schedule(&schedule_flat),
         digest_effective_schedule(&schedule_tensor)
-    );
-}
-
-#[test]
-fn effective_schedule_digest_binds_commitment_compression_plan() {
-    let schedule_uncompressed = Schedule {
-        steps: vec![Step::Fold(FoldStep {
-            params: sample_level_params(),
-            current_w_len: 256,
-            next_w_len: 256,
-            level_bytes: 123,
-            compression: Default::default(),
-        })],
-        root_compression: None,
-        total_bytes: 123,
-    };
-    let mut schedule_root_compressed = schedule_uncompressed.clone();
-    schedule_root_compressed.root_compression =
-        Some(sample_compression_plan(CompressionMapRole::RootF));
-
-    let mut schedule_fold_compressed = schedule_uncompressed.clone();
-    schedule_fold_compressed.steps[0] = Step::Fold(FoldStep {
-        params: sample_level_params(),
-        current_w_len: 256,
-        next_w_len: 448,
-        level_bytes: 99,
-        compression: FoldCompressionPlan {
-            v: Some(sample_compression_plan(CompressionMapRole::H)),
-            next_u: Some(sample_compression_plan(CompressionMapRole::F)),
-        },
-    });
-
-    assert_ne!(
-        digest_effective_schedule(&schedule_uncompressed),
-        digest_effective_schedule(&schedule_root_compressed)
-    );
-    assert_ne!(
-        digest_effective_schedule(&schedule_uncompressed),
-        digest_effective_schedule(&schedule_fold_compressed)
     );
 }
 
@@ -355,52 +284,40 @@ fn algebra_section_binds_prime_and_extension_shape() {
 
 #[test]
 fn opening_batch_digest_binds_claim_count() {
-    let left = OpeningBatchShape::new(4, 2).expect("left");
-    let right = OpeningBatchShape::new(4, 3).expect("right");
+    let left = OpeningClaimsLayout::new(4, 2).expect("left");
+    let right = OpeningClaimsLayout::new(4, 3).expect("right");
 
-    assert_ne!(digest_opening_batch(&left), digest_opening_batch(&right));
+    assert_ne!(left.opening_batch_digest(), right.opening_batch_digest());
 }
 
 #[test]
 fn opening_batch_digest_binds_group_partition() {
-    let grouped = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
-    let scalar = OpeningBatchShape::new(4, 3).expect("scalar");
+    let grouped = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped");
+    let scalar = OpeningClaimsLayout::new(4, 3).expect("scalar");
 
     assert_ne!(
-        digest_opening_batch(&grouped),
-        digest_opening_batch(&scalar)
+        grouped.opening_batch_digest(),
+        scalar.opening_batch_digest()
     );
 }
 
 #[test]
-fn opening_batch_digest_binds_point_variable_selection_order() {
-    let forward = OpeningBatchShape::from_groups(
-        2,
-        vec![OpeningGroupShape {
-            point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
-            num_polynomials: 1,
-        }],
-    )
-    .expect("forward");
-    let swapped = OpeningBatchShape::from_groups(
-        2,
-        vec![OpeningGroupShape {
-            point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
-            num_polynomials: 1,
-        }],
-    )
-    .expect("swapped");
+fn opening_batch_digest_binds_group_active_vars() {
+    let two_vars =
+        OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(2, 1)]).expect("two vars");
+    let three_vars = OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(3, 1)])
+        .expect("three vars");
 
     assert_ne!(
-        digest_opening_batch(&forward),
-        digest_opening_batch(&swapped)
+        two_vars.opening_batch_digest(),
+        three_vars.opening_batch_digest()
     );
 }
 
 #[test]
 fn call_section_exposes_group_partition() {
-    let opening_batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
-    let call = CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call");
+    let opening_batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped");
+    let call = CallSection::from_layout(&opening_batch, BasisMode::Lagrange).expect("call");
 
     assert_eq!(call.num_polys, 3);
     assert_eq!(call.num_commitment_groups, 2);
@@ -455,7 +372,6 @@ fn effective_schedule_digest_binds_direct_shape() {
             direct_bytes: 8,
             params: None,
         })],
-        root_compression: None,
         total_bytes: 8,
     };
     let schedule_b = Schedule {
@@ -465,7 +381,6 @@ fn effective_schedule_digest_binds_direct_shape() {
             direct_bytes: 9,
             params: None,
         })],
-        root_compression: None,
         total_bytes: 9,
     };
 
@@ -491,7 +406,6 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
             direct_bytes: 0,
             params: Some(sample_level_params()),
         })],
-        root_compression: None,
         total_bytes: 0,
     };
     let schedule_b = Schedule {
@@ -501,7 +415,6 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
             direct_bytes: 0,
             params: Some(other_params),
         })],
-        root_compression: None,
         total_bytes: 0,
     };
 

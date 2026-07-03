@@ -24,7 +24,6 @@ pub fn ring_switch_finalize<F, E, T, const D: usize>(
     lp: &LevelParams,
     gamma: Option<&[E]>,
     m_row_layout: MRowLayout,
-    run_stage1: bool,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -46,7 +45,7 @@ where
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let opening_batch = instance.opening_batch();
-    let num_polys = opening_batch.num_polynomials();
+    let num_polys = opening_batch.num_total_polynomials();
 
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
@@ -62,12 +61,11 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0: Vec<E> = if run_stage1 {
-        (0..num_sc_vars)
+    let tau0: Vec<E> = match m_row_layout {
+        MRowLayout::WithDBlock => (0..num_sc_vars)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-            .collect()
-    } else {
-        Vec::new()
+            .collect(),
+        MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks => Vec::new(),
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -76,7 +74,7 @@ where
     let alpha_evals_y = scalar_powers(alpha, D);
 
     let challenges = &instance.challenges;
-    if gamma.len() != instance.opening_batch().num_polynomials() {
+    if gamma.len() != instance.opening_batch().num_total_polynomials() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
         ));

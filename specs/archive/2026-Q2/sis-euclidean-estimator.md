@@ -4,9 +4,10 @@
 |-------------|-------|
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-05 |
-| Revised     | 2026-06-08 (S5a + S5b done in #155; derived `d·B²` keys) |
-| Status      | proposed |
+| Revised     | 2026-07-01 (superseded by coefficient-`L∞` production SIS tables in #255) |
+| Status      | superseded |
 | PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (branch `quang/s3-s5-sis-estimator-spec`) |
+| Superseded-by | [`specs/sis-linf-table-cutover.md`](../../sis-linf-table-cutover.md) |
 
 ## Summary
 

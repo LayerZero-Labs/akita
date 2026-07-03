@@ -2,8 +2,8 @@
 
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::schedule::CommitmentGroupScheduleKey;
 use crate::sis::compute_num_digits_full_field;
+use crate::PolynomialGroupLayout;
 use crate::{CleartextWitnessShape, LevelParams, MRowLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
@@ -100,7 +100,7 @@ pub fn extension_opening_reduction_level_bytes(
     challenge_field_bits: u32,
     extension_opening_width: usize,
     fold_level: usize,
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     current_w_len: usize,
 ) -> Result<usize, AkitaError> {
     if extension_opening_width <= 1 {
@@ -108,8 +108,8 @@ pub fn extension_opening_reduction_level_bytes(
     }
     let (partials, opening_vars) = if fold_level == 0 {
         (
-            extension_opening_width.saturating_mul(key.num_polynomials),
-            key.num_vars,
+            extension_opening_width.saturating_mul(key.num_polynomials()),
+            key.num_vars(),
         )
     } else {
         (

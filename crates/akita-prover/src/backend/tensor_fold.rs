@@ -1,30 +1,25 @@
-use akita_challenges::{IntegerChallenge, SparseChallenge, TensorChallenges as TensorChallengeSet};
+use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::AkitaError;
 
-pub(crate) fn materialize_tensor_challenges<const D: usize>(
+pub(crate) fn validate_tensor_blocks<const D: usize>(
     tensor: &TensorChallengeSet,
-) -> Result<(Vec<IntegerChallenge>, usize), AkitaError> {
-    let blocks_per_claim = tensor
-        .left_len
-        .checked_mul(tensor.right_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))?;
-    let expected_blocks = tensor
-        .num_claims
-        .checked_mul(blocks_per_claim)
-        .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))?;
-    let challenges = tensor.expand_integer::<D>()?;
-    if challenges.len() != expected_blocks {
+    expected_blocks: usize,
+) -> Result<usize, AkitaError> {
+    tensor.validate::<D>()?;
+    let blocks_per_claim = tensor.blocks_per_claim()?;
+    let actual_blocks = tensor.total_blocks()?;
+    if actual_blocks != expected_blocks {
         return Err(AkitaError::InvalidSize {
             expected: expected_blocks,
-            actual: challenges.len(),
+            actual: actual_blocks,
         });
     }
-    Ok((challenges, blocks_per_claim))
+    Ok(blocks_per_claim)
 }
 
-pub(crate) fn integer_mul_acc_i64<const D: usize>(
+pub(crate) fn sparse_i8_mul_acc_i64<const D: usize>(
     digit_plane: &[i8; D],
-    challenge: &IntegerChallenge,
+    challenge: &SparseChallenge,
     acc: &mut [i64; D],
 ) {
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
@@ -40,9 +35,27 @@ pub(crate) fn integer_mul_acc_i64<const D: usize>(
     }
 }
 
-pub(crate) fn fill_rotated_integer_challenge<const D: usize>(
+pub(crate) fn sparse_i64_mul_acc_i64<const D: usize>(
+    input: &[i64; D],
+    challenge: &SparseChallenge,
+    acc: &mut [i64; D],
+) {
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let p = pos as usize;
+        let split = D - p;
+        let coeff = i64::from(coeff);
+        for i in 0..split {
+            acc[i + p] += coeff * input[i];
+        }
+        for i in split..D {
+            acc[i - split] -= coeff * input[i];
+        }
+    }
+}
+
+pub(crate) fn fill_rotated_sparse_challenge_i64<const D: usize>(
     table: &mut [[i64; D]],
-    challenge: &IntegerChallenge,
+    challenge: &SparseChallenge,
 ) {
     debug_assert!(D.is_power_of_two());
     debug_assert!(table.len() >= D);
@@ -58,16 +71,6 @@ pub(crate) fn fill_rotated_integer_challenge<const D: usize>(
             *dst = -*src;
         }
     }
-}
-
-pub(crate) fn fill_rotated_tensor_challenge<const D: usize>(
-    table: &mut [[i64; D]],
-    left: &SparseChallenge,
-    right: &SparseChallenge,
-) -> Result<(), AkitaError> {
-    let challenge = IntegerChallenge::tensor_product::<D>(left, right)?;
-    fill_rotated_integer_challenge::<D>(table, &challenge);
-    Ok(())
 }
 
 pub(crate) fn narrow_tensor_accum_to_i32<const D: usize>(

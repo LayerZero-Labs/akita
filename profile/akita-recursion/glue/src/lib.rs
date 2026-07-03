@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, FlatRingVec, RingCommitment,
-    SetupContributionMode, SetupPrefixVerifierRegistry, VerifierOpeningBatch,
+    AkitaVerifierSetup, FlatMatrix, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
+    RingCommitment, SetupContributionMode, SetupPrefixVerifierRegistry,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
@@ -86,8 +86,8 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     pub opening_point: Vec<F>,
     /// Claimed opening value at `opening_point`.
     pub opening: F,
-    /// Single committed-poly group: one flat commitment payload per (poly, point) pair.
-    pub commitment: FlatRingVec<F>,
+    /// Single committed-poly group: one ring commitment per (poly, point) pair.
+    pub commitment: RingCommitment<F, D>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
     /// Proof shape descriptor; needed to deserialize `proof` without
@@ -107,13 +107,18 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> VerifierOpeningBatch<'static, F, &'a FlatRingVec<F>> {
-        VerifierOpeningBatch::from_groups(
+    ) -> OpeningClaims<'static, F, &'a RingCommitment<F, D>> {
+        let point_vars = PointVariableSelection::prefix(
+            usize::try_from(self.num_vars).expect("recursion blob num_vars fits usize"),
+            self.opening_point.len(),
+        )
+        .expect("singleton recursion opening point covers all variables");
+        OpeningClaims::from_groups(
             self.opening_point.clone(),
-            vec![CommitmentGroup {
-                claims: openings.to_vec(),
-                commitment: &self.commitment,
-            }],
+            vec![
+                PolynomialGroupClaims::new(point_vars, openings.to_vec(), &self.commitment)
+                    .expect("singleton recursion opening batch has one evaluation"),
+            ],
         )
         .expect("singleton recursion opening batch is valid")
     }
@@ -401,7 +406,6 @@ where
             BLOB_VALIDATE,
             &(),
         )?;
-        let commitment = FlatRingVec::from_commitment(&commitment);
         let verifier_setup = decode_setup(&mut rest)?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
             &mut rest,

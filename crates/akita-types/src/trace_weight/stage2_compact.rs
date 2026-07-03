@@ -24,6 +24,7 @@ fn layout() -> TraceWeightLayout {
         num_digits_open: 2,
         r_vars: 1,
         log_basis: 3,
+        chunk: crate::TraceChunkLayout::single(),
     }
 }
 

@@ -28,3 +28,6 @@ pub use recursive::{
 };
 pub use ring_switch::{RingSwitchQuotientView, RingSwitchRelationView};
 pub use sparse_ring::{SparseRingBatchView, SparseRingBlockEntry, SparseRingPoly, SparseRingView};
+
+#[cfg(test)]
+pub(crate) mod test_support;

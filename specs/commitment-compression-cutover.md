@@ -3,28 +3,21 @@
 Status: draft planning spec.
 
 This spec maps the PR stack for removing the current tiered-commitment
-implementation and replacing it with commitment compression. It also records
-the revised plan to bring back the useful part of tiering as a root-only
-commitment compression feature.
+implementation and replacing it with commitment compression.
 
 The PR stack should have three semantic PRs:
 
 1. Delete tiered commitment as implemented today.
-2. Introduce commitment compression. Compress `v` at every fold. Compress
-   B-side `u` commitments through a flat public payload. Reintroduce the old
-   B-shrinking idea as root B slicing, enabled by default for the compressed
-   root fold.
+2. Introduce commitment compression: compress `v` at every fold and compress
+   next-level `u` at every non-penultimate fold.
 3. Finish the terminal-tail cutover: remove the final recursive `u` and bind
    terminal `t` directly, with a terminal M-row layout that drops both D and B
    commitment rows.
 
-The design goal is proof-size reduction without giving up the old setup-prefix
-win. The current tiered implementation was primarily a setup-size and setup-scan
-optimization for the `B` matrix. It changes the protocol shape, adds a special
-`B' -> F` relation, and still sends a ring-shaped commitment. That shape should
-be removed. The useful idea should return inside commitment compression, where
-the larger raw B image is hidden, decomposed, and compressed to a small flat
-public payload.
+The design goal is proof-size reduction. The current tiered implementation was
+primarily a setup-size / setup-scan optimization for the `B` matrix. It changes
+the protocol shape, adds a `B' -> F` relation, and still sends a ring-shaped
+commitment. That is too ad hoc to compose with a cleaner compression layer.
 
 ## Motivation
 
@@ -80,32 +73,6 @@ public commitment shape. It could shrink the number of public rows, but it could
 not break the `D = 64` row-size floor. Commitment compression needs a public
 payload with an arbitrary number of field coordinates.
 
-## Revised Naming
-
-Do not use "tiered" for the new feature. The old feature name now means the
-deleted opt-in mode.
-
-Use these names instead:
-
-- **Root B slicing** means splitting the root `t_hat` columns into slices and
-  reusing one smaller root `B` matrix on each slice.
-- **Raw B image** means the list of ring outputs produced by those root `B`
-  applications before decomposition and compression.
-- **B compression digits** means the hidden decomposition of the raw B image.
-  This replaces names such as `u_concat` and `u_hat_concat`.
-- **Compressed root `u`** means the final public flat payload after applying
-  one or two `F_i` compression maps to the B compression digits.
-- **Root B-prefix bound** means the planner contract
-  `stored_root_B_footprint <= root_A_footprint`.
-
-The name "root B slicing" is intentionally narrow. It says which matrix is
-changed, where the feature is allowed, and what the planner does. It does not
-pretend this is a separate mode.
-
-The old name `u_concat` should not appear in live PR2 code. If a code name is
-needed, prefer a name that says what the data is, such as
-`b_image_digits`, `raw_b_image`, or `b_compression_digits`.
-
 There is parallel runtime ring-dimension work in flight:
 
 - PR #227, `quang/runtime-ring-cutover`, is the collapsed incomplete attempt.
@@ -126,19 +93,9 @@ does not promise backward compatibility here, and keeping both mechanisms would
 make the relation, setup contribution, schedule tables, and terminal path harder
 to reason about.
 
-This stack does not keep a separate "tiered" mode. Root B slicing is part of
-the compressed root fold policy. It is not a sibling config such as
-`D64OneHotTiered`.
-
-This stack does not apply B slicing at every recursive level in PR2. The
-default sliced-B rule is root-fold only. Recursive `u` compression may still use
-ordinary B-side compression with a base-prefix and suffix split. If recursive B
-slicing is ever useful, it should be a later planner feature with the same
-shape contract and separate measurements.
-
 This stack does not initially optimize every possible commitment occurrence.
-The safe order is to fix commitment compression, make root B slicing first class
-inside the compressed root fold, then do the terminal-tail `t` optimization.
+The safe order is to compress `v` first, then compress non-penultimate `u`, then
+do the terminal-tail `t` optimization.
 
 This stack should not fork the SIS/security logic from the in-flight direct
 L-infinity estimator work. Compression sizing should go through a single
@@ -180,24 +137,19 @@ The relation for the fold enforces the raw `D` image and the compression chain.
 This should include the penultimate fold. The penultimate fold still has a real
 `v` commitment for that fold, so the `v` proof-size win remains available.
 
-### B-side commitment `u`
+### Next-witness commitment `u`
 
-`u` is the public commitment produced by the B side. There are two cases.
-
-The root fold uses root B slicing by default. The planner splits the root
-`t_hat` columns into slices and reuses one smaller root `B` matrix on each
-slice. This produces several raw B image ring rows. Those rows are hidden,
-decomposed, and compressed by one or two `F_i` maps. The verifier sees only the
-compressed root `u`.
-
-Ordinary recursive folds use the base-prefix model. The compression suffix is
-appended to the next recursive witness, but it is not part of the vector hit by
-the raw `B` commitment.
+`u` is the public commitment carried into the next recursive level. The
+compression suffix is appended to the next recursive witness, but it is not part
+of the vector hit by the raw `B` commitment. This is the same structural idea as
+the current tiered commitment: one relation computes a raw commitment over the
+folded witness payload, and a second relation binds/compresses the hidden raw
+commitment image.
 
 This removes the apparent self-reference. The raw `B` image is defined only on
 the base folded witness, not on the newly appended compression suffix.
 
-The ordinary recursive model is:
+The intended model should be:
 
 ```text
 w_next = base_next_witness || compression_suffix || padding
@@ -221,59 +173,17 @@ The implementation therefore needs a two-part next-witness layout:
 - a compression suffix that is checked by compression rows;
 - schedule-visible padding to align the physical flat witness to ring elements.
 
-### Root B Slicing
-
-Root B slicing is the replacement for the useful part of tiered commitment. It
-is not optional in the compressed root-fold profile.
-
-The planner must choose a root slice count `s >= 1`. For `s = 1`, root B
-slicing is inactive. For `s > 1`, the planner splits the root `t_hat` columns
-into `s` equal slices and stores one B matrix for a single slice:
-
-```text
-raw_b_image_0 = B_slice * t_hat_0
-raw_b_image_1 = B_slice * t_hat_1
-...
-raw_b_image_{s-1} = B_slice * t_hat_{s-1}
-
-b_compression_digits = Decompose(raw_b_image_0 || ... || raw_b_image_{s-1})
-public root u = F0 * b_compression_digits                    // one layer
-public root u = F1 * Decompose(F0 * b_compression_digits)    // two layers
-```
-
-The stored B matrix is `B_slice`, not the logical block-diagonal matrix. The
-setup contribution must scan the stored B slice once and fold the slice weights
-into that scan. This preserves the setup-prefix win.
-
-The compressed root-fold profile has a hard planner contract:
-
-```text
-stored_root_B_footprint <= root_A_footprint
-```
-
-Here `stored_root_B_footprint = n_b_slice * width_t_slice`, where
-`width_t_slice = width_t / s`. The planner must size `n_b_slice` from the same
-SIS security API it uses for ordinary B. The planner should search feasible
-slice counts and choose the cheapest candidate that satisfies the bound after
-pricing public bytes, hidden B compression digits, padding, setup rows, and
-relation work.
-
-If no feasible sliced root candidate satisfies the bound for the compressed
-root-fold profile, the planner must reject that profile. It must not silently
-fall back to a root B matrix larger than A.
-
 ### Root user commitment
 
 The root user commitment is also a B-side `u`. It should be compressed in PR2.
-This is not a later optional optimization. When the compressed root-fold profile
-is active, it uses root B slicing by default.
+This is not a later optional optimization.
 
-The root equations are the sliced B equations above, with the user's committed
-witness providing the root `t_hat` data:
+The root equations are the same as the recursive `u` equations, with the root
+committed witness as the base prefix:
 
 ```text
-raw_root_u = B_slice * each root t_hat slice
-f_root_0 = Decompose(all raw_root_u slice images)
+raw_root_u = B_root * committed_root_witness
+f_root_0 = Decompose(raw_root_u)
 f_root_1 = Decompose(F_root_0 * f_root_0)       // present only for two layers
 public root u = F_root_0 * f_root_0             // one-layer plan
 public root u = F_root_1 * f_root_1             // two-layer plan
@@ -306,12 +216,11 @@ Definitions:
 
 The PR2 policy should be:
 
-| Fold level | Public `v` | Public B-side `u` |
-| ---------- | ---------- | ------------------ |
-| Root fold | compressed | compressed, with root B slicing by default |
-| Non-penultimate recursive fold | compressed | compressed, ordinary base-prefix model |
-| Penultimate fold | compressed | raw, temporarily |
-| Terminal `Direct` | none | none |
+| Fold level | Compress `v`? | Compress next `u`? | Send raw next `u`? |
+| ---------- | ------------- | ------------------ | ------------------ |
+| Non-penultimate fold | yes | yes | no |
+| Penultimate fold | yes | no | yes, temporarily |
+| Terminal `Direct` | no fold `v` | no next `u` | no |
 
 The reason to stop `u` compression at the penultimate fold is that the next
 witness is the terminal witness. We should not pay to construct and prove a
@@ -347,10 +256,6 @@ if successor_is_direct {
     u_plan = compress_u(...)
 }
 ```
-
-At the root, the planner must also choose the root B slicing plan before it
-prices root compression. The root candidate is valid for the compressed
-root-fold profile only if it satisfies the root B-prefix bound.
 
 At runtime, use the same fact that already exists on the expanded schedule.
 `Schedule::level_schedule` sets `ExecutionSchedule::is_terminal` by checking
@@ -437,7 +342,7 @@ witness, after the ring-switch quotient segment.
 Current terminal/intermediate witness construction is effectively:
 
 ```text
-z_hat || e_hat || t_hat || r_hat
+z_hat || e_hat || t_hat || optional tiered u_concat || r_hat
 ```
 
 The new shape should be:
@@ -445,10 +350,6 @@ The new shape should be:
 ```text
 z_hat || e_hat || t_hat || r_hat || compression_suffix || padding
 ```
-
-For a sliced root B commitment, the compression suffix contains the B
-compression digits and any intermediate digits from the second compression
-layer. It does not contain a live `u_concat` segment.
 
 The suffix is unstructured and may not be a multiple of the current ring
 dimension. The implementation must make padding explicit. Today
@@ -513,57 +414,29 @@ Minimal planner additions:
 1. Add a `CompressionPolicy` derived from config:
    - enabled/disabled;
    - max layers;
-   - root B slicing enabled for the compressed root-fold profile;
    - basis / digit policy;
    - target security bits from the existing security policy;
    - whether `u` compression is allowed on penultimate folds, fixed false for
      this stack.
-2. Add a schedule-visible root B slicing plan:
-   - slice count;
-   - stored B slice rows and columns;
-   - raw B image length;
-   - B compression digit length;
-   - hidden suffix padded length;
-   - public compressed root `u` length;
-   - security certificate or sizing trace for the stored B slice and each
-     active `F_i` compression map.
-3. Add a schedule-visible `CompressionPlan` for each fold:
+2. Add a schedule-visible `CompressionPlan` for each fold:
    - `v_plan`;
    - `u_plan`;
    - hidden suffix logical length;
    - hidden suffix padded physical length;
    - public compressed field-element length;
    - security certificate or sizing trace sufficient for diagnostics.
-4. Price candidate levels using the compression plan:
+3. Price candidate levels using the compression plan:
    - public bytes for compressed `v`;
    - public bytes for compressed `u`, except penultimate;
    - extra witness bytes/rows caused by suffix and padding;
    - extra setup contribution rows for compression matrices;
    - verifier work for compression relation rows.
-5. When the DP branch suffix is terminal direct, price `u_plan = None`.
+4. When the DP branch suffix is terminal direct, price `u_plan = None`.
    In PR2, still price the existing raw final `u` bytes and rows. In PR3,
    drop those bytes and switch terminal sizing to the layout with no B or D
    rows.
    This must be keyed off the DP successor-is-`Direct` branch, not a later
    post-processing scan.
-
-The root planner must enforce the root B-prefix bound for the compressed
-root-fold profile:
-
-```text
-stored_root_B_footprint <= root_A_footprint
-```
-
-The planner should search feasible root slice counts. A feasible slice count
-must divide the root `t_hat` repeat axis so each slice has the same shape. For
-each candidate, the planner recomputes the B rank at the sliced width. It then
-prices the stored B slice, the raw B image, the B compression digits, the
-compression maps, suffix padding, and public payload bytes. The chosen candidate
-must be the cheapest candidate that satisfies the root B-prefix bound.
-
-If the policy says root B slicing is required and no candidate satisfies the
-bound, the planner must return an error for that profile. It must not emit a
-compressed root-fold schedule whose stored root B prefix is larger than A.
 
 The planner should not perform an expensive global scan to identify
 penultimate levels. The penultimate fact is already local in the DP transition
@@ -652,16 +525,6 @@ D * e_hat - G * h0 = 0
 B * base_next_witness - G * f0 = 0
 ```
 
-For root B slicing, the B equation is the sliced form:
-
-```text
-B_slice * t_hat_j - G * f0_j = 0       for each root slice j
-```
-
-The verifier must evaluate the stored `B_slice` setup prefix once and combine
-the slice weights. It must not materialize or scan the full logical
-block-diagonal B matrix.
-
 The compression rows bind the suffix to the public compressed payloads:
 
 ```text
@@ -676,10 +539,6 @@ F1 * f1 = public_u                         // two layers
 
 For PR2, the penultimate fold still uses raw `u`, so it does not have `f0`,
 `f1`, or `F_i` rows. PR3 removes that raw final `u` instead of compressing it.
-
-For PR2, root B slicing is allowed only at the root fold. Recursive folds may
-use ordinary B-side compression, but they must not introduce a second sliced-B
-mode under a different name.
 
 The verifier should evaluate all active `F_i` and `H_i` setup views through one
 streaming scalar setup evaluator. It should not allocate the full outer product
@@ -708,7 +567,7 @@ clear semantic effect and leaves the code in a coherent state.
 | PR | Branch | Worktree | Semantic change |
 | -- | ------ | -------- | --------------- |
 | 1 | `quang/remove-tiered-commitment` | `../akita-remove-tiered-commitment` | Delete tiered commitment; reorder M layout to `consistency \| A \| B \| D`; remove dead M public-block scaffolding; rename witness `num_public_rows` → `num_z_segments`. |
-| 2 | `quang/commitment-compression` | `../akita-commitment-compression` | Add compressed commitments and root B slicing. Compress `v` on every fold. Compress B-side `u` through flat payloads. Enforce the root B-prefix bound for the compressed root fold. Preserve raw final `u` temporarily. |
+| 2 | `quang/commitment-compression` | `../akita-commitment-compression` | Add compressed commitments: compressed `v` on every fold, compressed `u` on every non-penultimate fold, raw final `u` preserved temporarily. |
 | 3 | `quang/terminal-t-no-final-u` | `../akita-terminal-t-no-final-u` | Remove the final recursive `u`; bind terminal `t`; rename/update terminal M-row layout to drop both B and D. |
 
 PR2 is the largest PR. It should still be one PR if possible because splitting
@@ -723,11 +582,9 @@ Suggested internal milestones for PR2:
    estimates exist, but compression can still be disabled.
 2. `v` compression works end-to-end on every fold, including the penultimate
    fold.
-3. Root B slicing works end-to-end with compressed root `u`, and the planner
-   enforces `stored_root_B_footprint <= root_A_footprint`.
-4. Non-penultimate `u` compression works end-to-end with the base-prefix /
+3. Non-penultimate `u` compression works end-to-end with the base-prefix /
    compression-suffix witness split.
-5. Profile and CI coverage are enabled for the compressed verifier-optimized
+4. Profile and CI coverage are enabled for the compressed verifier-optimized
    profile, while the penultimate raw `u` remains unchanged until PR3.
 
 These milestones are review checkpoints, not merge points. PR2 should not merge
@@ -854,16 +711,14 @@ Acceptance tests:
 
 Purpose: introduce the new proof-size mechanism while preserving the existing
 terminal raw `u` behavior. After this PR, the root commitment and steady-state
-recursive folds use compressed public commitments. The compressed root fold also
-uses root B slicing by default, and the planner enforces the root B-prefix
-bound. The penultimate fold still sends the final raw `u`.
+recursive folds use compressed public commitments, but the penultimate fold
+still sends the final raw `u`.
 
 Commitment policy:
 
 | Fold level | Public `v` | Public next `u` |
 | ---------- | ---------- | --------------- |
-| Root fold | compressed | compressed with root B slicing |
-| Non-penultimate recursive fold | compressed | compressed |
+| Non-penultimate fold | compressed | compressed |
 | Penultimate fold | compressed | raw, uncompressed |
 | Terminal `Direct` | none | none |
 
@@ -884,16 +739,9 @@ Expected implementation surface:
     reject malformed lengths without panicking.
 - Planner and schedules:
   - add `CompressionPolicy` with `max_layers = 2`;
-  - add root B slicing to the compressed root-fold policy;
-  - rename any new live implementation surface away from "tiered";
-  - use names such as root B slicing, raw B image, and B compression digits;
   - add per-fold `CompressionPlan { v_plan, u_plan, suffix_len, padded_len,
     public_len, sizing_certificate }`;
   - add a root compression plan for the public root `u`;
-  - add a root B slicing plan with slice count, stored B slice dimensions, raw
-    B image length, and B compression digit length;
-  - enforce `stored_root_B_footprint <= root_A_footprint` for compressed root
-    schedules;
   - compute plans for `v` on every fold;
   - compute plans for `u` only when the successor is another fold;
   - keep penultimate raw `u` pricing in PR2;
@@ -914,17 +762,13 @@ Expected implementation surface:
 - Witness layout:
   - append compression witness data after the ring-switch quotient segment:
     `z_hat || e_hat || t_hat || r_hat || compression_suffix || padding`;
-  - include root B compression digits in that suffix for sliced root B
-    commitments;
   - `B` applies only to the base folded witness prefix;
   - compression rows bind the appended suffix to the hidden raw commitment
     images;
   - padding is schedule-visible and constrained/checked as zero.
 - Prover:
-  - compute sliced raw root B images from root `t_hat` slices, decompose them,
-    and emit compressed public root `u`;
-  - scan or materialize only the stored root B slice, not a full block-diagonal
-    B matrix;
+  - compute raw root `u = B_root * committed_root_witness`, decompose it, and
+    emit compressed public root `u`;
   - compute raw `v = D * e_hat`, decompose it, and emit compressed public `v`;
   - compute raw non-penultimate `u = B * base_next_witness`, decompose it, and
     emit compressed public `u`;
@@ -934,9 +778,6 @@ Expected implementation surface:
     labels.
 - Verifier:
   - reconstruct expected payload lengths from the schedule;
-  - verify the root B-prefix bound from schedule data;
-  - evaluate sliced root B rows by scanning the stored B slice once and folding
-    the slice weights;
   - verify compressed root `u` relation claims through the fused stage-2
     relation path used for B-side compression;
   - verify compressed `v`/`u` relation claims through the fused stage-2
@@ -954,8 +795,6 @@ Expected implementation surface:
   - do not add a separate compression sumcheck in PR2.
 - Proof-size accounting:
   - replace root commitment bytes with compressed root `u` bytes;
-  - charge the hidden B compression digits and padding from root B slicing;
-  - charge the stored root B slice, not the full logical block-diagonal B;
   - replace `v_bytes = n_d * D * field_bytes` with compressed `v` bytes when
     `v_plan` is present;
   - replace next-commit bytes with compressed `u` bytes for non-penultimate
@@ -964,10 +803,6 @@ Expected implementation surface:
   - charge compression suffix and extra sumcheck bytes.
 - Tests/benches/docs:
   - add root commitment compression e2e coverage;
-  - add planner tests that root B slicing enforces
-    `stored_root_B_footprint <= root_A_footprint`;
-  - add tests that malformed schedules cannot claim the compressed root-fold
-    profile while storing root B larger than A;
   - add planner tests for penultimate behavior;
   - add tamper tests for compressed root `u`;
   - add tamper tests for compressed `v` and non-penultimate compressed `u`;
@@ -1056,8 +891,7 @@ Recommended rollout:
 1. During PR2, keep compression behind an explicit config/profile until the
    compressed verifier-optimized profile is green.
 2. At the end of PR2, compression should be on for that verifier-optimized
-   profile, root B slicing should be on by default for the root fold, and raw
-   final `u` should still be present.
+   profile, with raw final `u` still present.
 3. At the end of PR3, remove the raw final `u` from that profile as part of
    terminal-tail cutover.
 4. Do not keep tiered as an alternative production profile.
@@ -1112,23 +946,19 @@ The following choices are now locked for PR2 and PR3.
    does not add a separate compression sumcheck.
 3. PR2 uses a shared scalar compression setup prefix with typed logical views
    for `H0`, `H1`, `F0`, and `F1`.
-4. PR2 uses root B slicing by default for the compressed root-fold profile.
-5. PR2 must enforce the root B-prefix bound:
-   `stored_root_B_footprint <= root_A_footprint`.
-6. PR2 compresses `v` at every fold and compresses recursive `u` only when the
-   successor is another fold. The penultimate fold keeps raw `u` temporarily.
-7. PR2 compresses the root user commitment as a B-side `u`.
-8. PR2 must not keep "tiered" as a live feature name or config name.
-9. PR3 fully removes the final recursive `u`. It does not compress that `u`.
-10. PR3 renames the M-row layout variants to `WithCommitmentBlocks` and
+4. PR2 compresses `v` at every fold and compresses `u` only when the successor
+   is another fold. The penultimate fold keeps raw `u` temporarily.
+5. PR2 compresses the root user commitment as a B-side `u`.
+6. PR3 fully removes the final recursive `u`. It does not compress that `u`.
+7. PR3 renames the M-row layout variants to `WithCommitmentBlocks` and
    `WithoutCommitmentBlocks`.
-11. `WithCommitmentBlocks` means `consistency | A | B | D`.
+8. `WithCommitmentBlocks` means `consistency | A | B | D`.
    `WithoutCommitmentBlocks` means `consistency | A`.
-12. The initial compression depth cap is `max_compression_layers = 2`, and the
+9. The initial compression depth cap is `max_compression_layers = 2`, and the
    planner evaluates `0..=2`.
-13. PR2 uses scalar/unstructured compression maps. Small ring dimensions such as
+10. PR2 uses scalar/unstructured compression maps. Small ring dimensions such as
    `D = 2`, `D = 4`, or `D = 8` are future work.
-14. Stage-2 trace/provider unification is out of scope for PR2. It can be done
+11. Stage-2 trace/provider unification is out of scope for PR2. It can be done
    at the end of PR3 if it is small, or as PR4 otherwise.
 
 The following points still need care during implementation.
@@ -1175,11 +1005,6 @@ The following points still need care during implementation.
    sibling like the old tiered mode. The exact config name can be chosen during
    PR2.
 
-9. Recursive B slicing.
-   PR2 should not add recursive B slicing. The sliced-B mechanism is root-fold
-   only in this stack. If measurements later show recursive slicing is useful,
-   add it as a planner extension with the same B-prefix bound.
-
 ## Problematic Assumptions to Avoid
 
 - Do not assume a ring commitment can be "small" below one ring row. It cannot.
@@ -1201,11 +1026,6 @@ The following points still need care during implementation.
   setup, security, and quotient handling.
 - Do not compress the final recursive `u`. PR2 keeps it raw temporarily; PR3
   removes it rather than compressing it.
-- Do not reintroduce `tiered`, `u_concat`, `f_key`, or `tier_split` as live PR2
-  names. Use root B slicing, raw B image, and B compression digits.
-- Do not let the compressed root-fold profile use a stored root B prefix larger
-  than A. If the root B-prefix bound cannot be met, reject that profile.
-- Do not apply B slicing below the root fold in PR2.
 - Do not keep tiered and compression live together unless there is a strong,
   measured reason. The relation and terminal path already show the bloat.
 - Do not treat the local small-instance sweep as final production sizing. It is
@@ -1225,12 +1045,6 @@ bytes saved, but the production planner must price it exactly.
 
 The penultimate fold should still save on `v`, while avoiding the bad trade of
 compressing a final `u` that the terminal tail should not need.
-
-Root B slicing should also recover the old verifier setup-prefix win at the
-root. The stored root B prefix should no longer be the largest setup prefix in
-the compressed root-fold profile. The planner contract makes A the upper bound
-for stored root B, while commitment compression keeps the larger raw B image off
-the public wire.
 
 ## Implementation Surface
 

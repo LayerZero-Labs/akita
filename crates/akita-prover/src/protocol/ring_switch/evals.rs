@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
@@ -129,13 +130,25 @@ where
     let n_a = lp.a_key.row_len();
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
-    let n_b_active = lp.n_b_active_for(m_row_layout);
-    let n_d_active = lp.n_d_active_for(m_row_layout);
+    // Terminal layout drops the D-block from the M-matrix entirely; offsets
+    // and per-row gates must use 0 for the n_d position.
+    let n_d_active = match m_row_layout {
+        MRowLayout::WithDBlock => n_d,
+        MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks => 0,
+    };
     let rows = lp.m_row_count_for(1, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
+    // Chunked layout replicates the `z` segment once per window; `e`/`t` are
+    // partitioned (their totals are unchanged). `num_chunks = 1` is the
+    // single-chunk case.
+    validate_chunked_witness_cfg(lp)?;
+    let num_chunks = lp.witness_chunk.num_chunks;
+    let z_cols_total = z_len
+        .checked_mul(num_chunks)
+        .ok_or_else(|| AkitaError::InvalidSetup("chunked Z width overflow".to_string()))?;
     let total_cols = w_len
         .checked_add(t_len)
-        .and_then(|cols| cols.checked_add(z_len))
+        .and_then(|cols| cols.checked_add(z_cols_total))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
 
@@ -196,10 +209,10 @@ where
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
 
-    // Canonical row layout: consistency (1) | A | optional B | optional D.
+    // Canonical row layout: consistency (1) | A | B | D.
     let a_start = lp.a_start();
     let b_start = lp.b_start()?;
-    let d_start = lp.d_start_for(1, m_row_layout)?;
+    let d_start = lp.d_start(1)?;
     let a_weights = &eq_tau1[a_start..(a_start + n_a)];
     let consistency_weight = eq_tau1[0];
     let t_compound_per_block = n_a * depth_open;
@@ -241,7 +254,7 @@ where
                 block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
             let local_col = t_vector_idx * t_cols_per_vector + phys_claim_offset;
             let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g1_open[digit_idx];
-            let commitment_weights = &eq_tau1[b_start..(b_start + n_b_active)];
+            let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
@@ -291,9 +304,20 @@ where
         })
         .collect();
 
-    out.extend(z_segment);
-    out.extend(w_segment);
-    out.extend(t_segment);
+    // Chunked column layout `[z|e_i|t_i]…[r]`: `z` is replicated per window
+    // and `e`/`t` are partitioned by global block (same per-cell values as the
+    // flat segments, only repositioned).
+    let blocks_per_chunk = num_blocks / num_chunks;
+    for i in 0..num_chunks {
+        out.extend_from_slice(&z_segment);
+        let block_lo = i * blocks_per_chunk;
+        for outer in w_segment.chunks_exact(num_blocks) {
+            out.extend_from_slice(&outer[block_lo..block_lo + blocks_per_chunk]);
+        }
+        for outer in t_segment.chunks_exact(num_blocks) {
+            out.extend_from_slice(&outer[block_lo..block_lo + blocks_per_chunk]);
+        }
+    }
     out.extend(r_tail);
     out.resize(x_len, E::zero());
     Ok(out)

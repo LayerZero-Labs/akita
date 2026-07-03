@@ -72,7 +72,7 @@ where
 pub(super) fn onehot_accumulate_tensor<E, const D: usize>(
     blocks: &[&[E]],
     tensor: &TensorChallengeSet,
-    num_blocks: usize,
+    _num_blocks: usize,
     block_len: usize,
 ) -> Result<Vec<[i64; D]>, AkitaError>
 where
@@ -95,25 +95,39 @@ where
             let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i64; D]; len];
+            let mut tmp = vec![[0i64; D]; len];
             let mut rotated = vec![[0i64; D]; D];
 
-            for (block_idx, entries) in blocks.iter().enumerate().take(num_blocks) {
-                let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
-                let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
-                if lo >= hi {
-                    continue;
-                }
-
-                let (_, _, left, right) = tensor.factors_for_logical_block(block_idx)?;
-                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right)?;
-
-                for entry in &entries[lo..hi] {
-                    let dst = &mut acc[entry.pos_in_block() - pos_start];
-                    for &ci in entry.coeffs() {
-                        let rot = &rotated[ci as usize];
-                        for k in 0..D {
-                            dst[k] += rot[k];
+            for claim_idx in 0..tensor.num_claims {
+                for left_idx in 0..tensor.left_len {
+                    tmp.fill([0i64; D]);
+                    for right_idx in 0..tensor.right_len {
+                        let block_idx = claim_idx * tensor.left_len * tensor.right_len
+                            + left_idx * tensor.right_len
+                            + right_idx;
+                        let entries = blocks[block_idx];
+                        let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
+                        let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
+                        if lo >= hi {
+                            continue;
                         }
+
+                        let right = &tensor.right[claim_idx * tensor.right_len + right_idx];
+                        fill_rotated_sparse_challenge_i64::<D>(&mut rotated, right);
+
+                        for entry in &entries[lo..hi] {
+                            let dst = &mut tmp[entry.pos_in_block() - pos_start];
+                            for &ci in entry.coeffs() {
+                                let rot = &rotated[ci as usize];
+                                for k in 0..D {
+                                    dst[k] += rot[k];
+                                }
+                            }
+                        }
+                    }
+                    let left = &tensor.left[claim_idx * tensor.left_len + left_idx];
+                    for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
+                        sparse_i64_mul_acc_i64::<D>(src, left, dst);
                     }
                 }
             }

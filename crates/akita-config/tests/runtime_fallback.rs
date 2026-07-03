@@ -16,13 +16,13 @@
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::{find_schedule, PlannerPolicy};
-use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey, CompressionPolicy};
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 /// A one-point 2-poly key that no shipped table carries (shipped tables only
 /// hold singleton / 4-batched keys), so it forces the DP fallback path on both
 /// prover and verifier.
-fn table_miss_key(num_vars: usize) -> CommitmentGroupScheduleKey {
-    CommitmentGroupScheduleKey::new(num_vars, 2)
+fn table_miss_key(num_vars: usize) -> PolynomialGroupLayout {
+    PolynomialGroupLayout::new(num_vars, 2)
 }
 
 fn assert_schedule_eq(label: &str, lhs: &akita_types::Schedule, rhs: &akita_types::Schedule) {
@@ -46,10 +46,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
     let _policy = policy_of::<Cfg>();
     let table_has_key = Cfg::schedule_catalog()
         .and_then(|table| {
-            akita_planner::generated::table_entry(
-                table,
-                akita_planner::generated_schedule_lookup_key(key),
-            )
+            akita_planner::generated::table_entry(table, &AkitaScheduleLookupKey::single(key))
         })
         .is_some();
     assert!(
@@ -84,12 +81,13 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_family: Cfg::sis_modulus_family(),
+        min_sis_security_bits: akita_types::DEFAULT_SIS_SECURITY_BITS,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
-        compression: CompressionPolicy::default(),
+        witness_chunk: Cfg::chunked_witness_cfg(),
     };
     assert_eq!(
         policy, expected,
@@ -113,9 +111,9 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     // panicking. Large-but-bounded
     // `num_vars` must terminate (no unbounded blow-up) and return a result.
     let adversarial = [
-        CommitmentGroupScheduleKey::new(10, 0),
-        CommitmentGroupScheduleKey::new(0, 1),
-        CommitmentGroupScheduleKey::new(40, 1),
+        PolynomialGroupLayout::new(10, 0),
+        PolynomialGroupLayout::new(0, 1),
+        PolynomialGroupLayout::new(40, 1),
     ];
     for key in adversarial {
         // Must return without panicking; either branch (Ok/Err) is fine.

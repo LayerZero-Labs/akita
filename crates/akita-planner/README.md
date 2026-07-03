@@ -18,22 +18,25 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
-`key: CommitmentGroupScheduleKey` describes the supported scalar same-point root
-opening shape with two fields:
+`key: AkitaScheduleLookupKey` describes the supported root opening shape. Scalar
+same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
+`precommitteds` empty:
 
 - `num_vars`: the number of Boolean variables in the opened polynomial domain
   (shared opening-point arity).
 - `num_polynomials`: the number of polynomials in the single commitment group,
   opened at the shared point (one claim per polynomial).
 
-Root witness multiplicities are not stored in the key. For the scalar
-same-point batch, the `t` and `w` multiplicities are just `num_polynomials` and
-the `z` multiplicity is always `1`; call sites pass those directly where the
-width helpers need them.
+Grouped roots use the same lookup key with any earlier groups recorded as
+`PrecommittedGroupParams` in `precommitteds`. For the scalar same-point batch,
+the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
+multiplicity is always `1`; grouped roots derive those counts from
+`final_group` plus `precommitteds`.
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 
 - Ring dimension and SIS modulus family.
+- Minimum SIS security floor in bits.
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
 - Ring-subfield norm bound.
@@ -60,7 +63,7 @@ For a fixed field, ring dimension, decomposition policy, and opening shape, the 
 - `r_vars`: the number of block-index variables, which determines `num_blocks = 2^r`.
 - `m_vars`: the number of variables inside each block.
 
-Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, collision bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
+Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
 
 Conceptually, a candidate level answers two questions:
 
@@ -118,10 +121,20 @@ For each level candidate, the planner derives the SIS layout in the same order:
 
 1. Compute the decomposition for the candidate `log_basis`.
 2. Compute the relevant digit counts for commitment and opening.
-3. Compute the collision norm bucket for each role.
+3. Compute the coefficient-`L∞` bucket for each role.
 4. Compute the decomposed matrix width for each role.
 5. Ask the SIS floor table for the minimum secure rank.
-6. Build `AjtaiKeyParams` with the audited rank, width, collision bucket, SIS family, and ring dimension.
+6. Build `AjtaiKeyParams` with the audited rank, width, coefficient-`L∞` bucket, SIS family, ring dimension, and security floor.
+
+Production SIS lookups use `SisTableKey`:
+
+```text
+(min_security_bits, sis_family, ring_dimension, coeff_linf_bound)
+```
+
+Only the 138-bit floor is generated today. The floor is part of `PlannerPolicy`,
+catalog identity, generated table expansion, and descriptor bytes, so a schedule
+generated for one SIS floor cannot be silently reused under another floor.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 

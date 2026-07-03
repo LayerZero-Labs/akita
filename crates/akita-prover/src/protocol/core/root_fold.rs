@@ -41,12 +41,10 @@ where
 fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningData<'_, E, P, F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-    compute_hidden_v: bool,
-    current_u_compression: Option<&CommitmentCompressionPlan>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
@@ -74,16 +72,17 @@ where
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
-    let opening_num_vars = opening_batch.num_vars();
+    let opening_claims = claims.opening_claims();
+    let opening_batch = opening_claims.layout()?;
+    let num_claims = opening_batch.num_total_polynomials();
+    let opening_num_vars = opening_batch.max_num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = root_tensor_projection_enabled::<F, E, D>(opening_num_vars);
 
-    if claims.point().len() > opening_num_vars {
+    if opening_claims.point().len() > opening_num_vars {
         return Err(AkitaError::InvalidPointDimension {
             expected: opening_num_vars,
-            actual: claims.point().len(),
+            actual: opening_claims.point().len(),
         });
     }
     let flat_polys = claims.flat_polys();
@@ -94,8 +93,8 @@ where
     }
 
     let eor_opening_batch =
-        VerifierOpeningBatch::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
-    let non_eor_protocol_point = claims.point().to_vec();
+        OpeningClaims::with_padded_point(opening_claims.point(), opening_num_vars, num_claims)?;
+    let non_eor_protocol_point = opening_claims.point().to_vec();
     prepare_fold_inner::<F, E, T, P, _, C, O, TS, R, D>(
         stack,
         needs_extension_reduction,
@@ -112,8 +111,6 @@ where
         BlockOrder::RowMajor,
         m_row_layout,
         terminal_tail_t_vectors,
-        compute_hidden_v,
-        current_u_compression,
     )
 }
 
@@ -143,7 +140,7 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningData<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -185,10 +182,9 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
+    let opening_batch = claims.opening_claims().layout()?;
+    let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params;
-    reject_active_b_side_compression(scheduled)?;
 
     if claims.flat_polys().len() != num_claims {
         return Err(AkitaError::InvalidInput(
@@ -203,10 +199,8 @@ where
         transcript,
         claims,
         root_params,
-        scheduled_m_row_layout(scheduled),
+        MRowLayout::WithDBlock,
         None,
-        scheduled.compression.v.is_some(),
-        scheduled.current_u_compression.as_ref(),
         basis,
     )?;
 
@@ -251,7 +245,7 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningData<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
     terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
@@ -294,10 +288,9 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
+    let opening_batch = claims.opening_claims().layout()?;
+    let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params;
-    reject_active_b_side_compression(scheduled)?;
 
     if claims.flat_polys().len() != num_claims {
         return Err(AkitaError::InvalidInput(
@@ -307,10 +300,9 @@ where
 
     claims.append_to_transcript::<T>(transcript)?;
 
-    let m_row_layout = scheduled_m_row_layout(scheduled);
     let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
         root_params,
-        m_row_layout,
+        MRowLayout::WithoutDBlock,
         Some(terminal_direct_witness_shape),
     )?;
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R, D>(
@@ -318,10 +310,8 @@ where
         transcript,
         claims,
         root_params,
-        m_row_layout,
+        MRowLayout::WithoutDBlock,
         terminal_tail_t_vectors,
-        scheduled.compression.v.is_some(),
-        scheduled.current_u_compression.as_ref(),
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();

@@ -19,9 +19,9 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: &VerifierOpeningBatch<'_, E, &FlatRingVec<F>>,
+    claims: &OpeningClaims<'_, E, &FlatRingVec<F>>,
     basis: BasisMode,
-    scheduled: &ExecutionSchedule,
+    root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
@@ -31,30 +31,10 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let root_lp = &scheduled.params;
-    reject_active_b_side_compression(scheduled)?;
     validate_level_dispatch::<D>(root_lp)?;
-    if proof.fold_m_row_layout().is_none() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let m_row_layout = scheduled_m_row_layout(scheduled);
+    let m_row_layout = proof.fold_m_row_layout().ok_or(AkitaError::InvalidProof)?;
     let extension_opening_reduction = proof.fold_extension_opening_reduction();
-    let (v_typed, compressed_v_payload) = match (m_row_layout, scheduled.compression.v.as_ref()) {
-        (MRowLayout::WithDBlock, None) => (proof.fold_v::<D>()?.to_vec(), None),
-        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, Some(plan)) => {
-            let AkitaBatchedRootProof::Fold(fold) = proof else {
-                return Err(AkitaError::InvalidProof);
-            };
-            if fold.v.coeff_len() != plan.public_len {
-                return Err(AkitaError::InvalidProof);
-            }
-            (Vec::new(), Some(&fold.v))
-        }
-        (MRowLayout::WithoutDBlock | MRowLayout::WithoutCommitmentBlocks, None) => {
-            (Vec::new(), None)
-        }
-        (MRowLayout::WithDBlock, Some(_)) => return Err(AkitaError::InvalidProof),
-    };
+    let v_typed = proof.fold_v::<D>()?;
     let next_fold_level_params = match proof {
         AkitaBatchedRootProof::Fold(_) => next_fold_level_params.ok_or(AkitaError::InvalidProof)?,
         AkitaBatchedRootProof::Terminal(_) => root_lp,
@@ -65,28 +45,16 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let openings = claims.claims();
-    let opening_batch = claims.to_shape();
+    let openings = claims.flat_evaluations();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let shared_opening_point = claims.point();
-    let num_claims = opening_batch.num_polynomials();
+    let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let (commitment_rows, compressed_current_u_payload) =
-        if let Some(plan) = scheduled.current_u_compression.as_ref() {
-            if commitment.coeff_len() != plan.public_len {
-                return Err(AkitaError::InvalidProof);
-            }
-            (&[][..], Some(commitment))
-        } else {
-            let rows = commitment
-                .as_ring_slice::<D>()
-                .map_err(|_| AkitaError::InvalidProof)?;
-            if rows.len() != root_lp.b_key.row_len() {
-                return Err(AkitaError::InvalidProof);
-            }
-            (rows, None)
-        };
+    if commitment.coeffs().len() != root_lp.b_key.row_len() {
+        return Err(AkitaError::InvalidProof);
+    }
 
     claims.append_to_transcript::<F, T>(transcript)?;
     if extension_opening_reduction.is_none() {
@@ -141,7 +109,7 @@ where
         )?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, &openings)?;
+        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
     let trace_eval_target = eor_trace_final
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
@@ -150,13 +118,25 @@ where
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_polynomials()])
+            Ok(vec![shared_factor; opening_batch.num_total_polynomials()])
         })
         .transpose()?;
 
     let w_len = match proof {
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
-        AkitaBatchedRootProof::Fold(_) => scheduled.next_w_len,
+        AkitaBatchedRootProof::Fold(_) => {
+            // Chunked levels commit a wider (replicated-ẑ) next witness; size it
+            // with the per-level chunk count (`num_chunks = 1` is unchanged).
+            akita_types::w_ring_element_count_for_chunks(
+                F::modulus_bits(),
+                root_lp,
+                opening_batch.num_total_polynomials(),
+                akita_types::MRowLayout::WithDBlock,
+                root_lp.witness_chunk.num_chunks,
+            )?
+            .checked_mul(D)
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
+        }
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     let terminal_replay = match proof {
@@ -182,23 +162,22 @@ where
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
     let fold_grind_nonce = proof.fold_grind_nonce()?;
-    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+    let replay_opening_batch = OpeningClaims::from_groups(
         shared_opening_point,
-        opening_batch.clone(),
-        vec![CommitmentGroup {
-            claims: openings,
-            commitment: commitment_rows,
-        }],
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(
+                opening_batch.max_num_vars(),
+                opening_batch.max_num_vars(),
+            )?,
+            openings,
+            commitment.clone(),
+        )?],
     )?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed,
-        v_compression: scheduled.compression.v.as_ref(),
-        compressed_v_payload,
-        current_u_compression: scheduled.current_u_compression.as_ref(),
-        compressed_current_u_payload,
+        v: v_typed.to_vec(),
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),

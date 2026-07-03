@@ -7,12 +7,13 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, MulBase};
 use std::iter::repeat_n;
 
 /// Build the RHS vector `y` matching the M row layout:
-/// consistency (zero) | A (zeros) | optional B (`commitment_rows`) | optional D (`v`).
+/// consistency (zero) | A (zeros) | B (`commitment_rows`) | D (`v`).
 ///
 /// Public-output rows bind through the fused trace term, not `y`.
 ///
-/// `commit_rows_per_group` is the active B row count per commitment bundle.
-/// It may be zero for layouts that omit B rows.
+/// `commit_rows_per_group` is the B row count per commitment bundle
+/// (`b_key.row_len()`). The number of commitment bundles is inferred from
+/// `commitment_rows.len() / commit_rows_per_group`.
 ///
 /// # Errors
 ///
@@ -34,14 +35,8 @@ where
             actual: v.len(),
         });
     }
-    if commit_rows_per_group == 0 {
-        if !commitment_rows.is_empty() {
-            return Err(AkitaError::InvalidSize {
-                expected: 0,
-                actual: commitment_rows.len(),
-            });
-        }
-    } else if commitment_rows.is_empty()
+    if commit_rows_per_group == 0
+        || commitment_rows.is_empty()
         || !commitment_rows.len().is_multiple_of(commit_rows_per_group)
     {
         return Err(AkitaError::InvalidSize {

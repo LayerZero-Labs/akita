@@ -31,7 +31,7 @@ fn run_single_onehot(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
@@ -64,7 +64,7 @@ fn run_single_onehot(nv: usize) {
         let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::commit(&setup, commit_input, &stack)
+        >>::batched_commit(&setup, commit_input, &stack)
         .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
@@ -122,7 +122,7 @@ fn run_single_dense(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = DenseCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
 
@@ -149,7 +149,7 @@ fn run_single_dense(nv: usize) {
         let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::commit(&setup, commit_input, &stack)
+        >>::batched_commit(&setup, commit_input, &stack)
         .expect("commit");
 
         let poly_refs: [&DensePoly<F, DENSE_D>; 1] = [&poly];
@@ -253,7 +253,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
@@ -286,7 +286,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::commit(&setup, commit_input, &stack)
+        >>::batched_commit(&setup, commit_input, &stack)
         .expect("commit with oversized setup");
 
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];

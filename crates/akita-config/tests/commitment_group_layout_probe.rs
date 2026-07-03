@@ -8,8 +8,8 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_planner::{find_schedule, PlannerPolicy};
-use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
-use akita_types::{CommitmentGroupScheduleKey, LevelParams, Step};
+use akita_types::sis::{min_secure_rank, rounded_up_collision_linf_t, SisTableKey};
+use akita_types::{LevelParams, PolynomialGroupLayout, Step};
 
 type Cfg = fp128::D64OneHot;
 
@@ -38,7 +38,7 @@ fn layout_summary(
     num_vars: usize,
     max_basis: u32,
 ) -> Result<LayoutSummary, AkitaError> {
-    let key = CommitmentGroupScheduleKey::new(num_vars, 1);
+    let key = PolynomialGroupLayout::new(num_vars, 1);
     let schedule = find_schedule(
         key,
         policy,
@@ -47,12 +47,20 @@ fn layout_summary(
     )?;
     let params = root_params(&schedule)?;
     let b_width = params.b_key.col_len();
-    let norm_at_lmax = rounded_up_collision_norm_t(Cfg::sis_modulus_family(), Cfg::D, max_basis)
-        .ok_or_else(|| AkitaError::InvalidSetup("B norm overflow".to_string()))?;
-    let conservative_n_b = min_secure_rank(
+    let norm_at_lmax = rounded_up_collision_linf_t(
+        policy.min_sis_security_bits,
         Cfg::sis_modulus_family(),
-        Cfg::D as u32,
-        norm_at_lmax,
+        Cfg::D,
+        max_basis,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("B norm overflow".to_string()))?;
+    let conservative_n_b = min_secure_rank(
+        SisTableKey {
+            min_security_bits: policy.min_sis_security_bits,
+            family: Cfg::sis_modulus_family(),
+            ring_dimension: Cfg::D as u32,
+            coeff_linf_bound: norm_at_lmax,
+        },
         b_width as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("B rank lookup failed".to_string()))?;
