@@ -1,8 +1,8 @@
 use crate::api::CommitmentWithHint;
 use crate::compute::{RootOpeningSource, RootPolyShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_transcript::labels::ABSORB_BATCH_SHAPE;
 use akita_transcript::Transcript;
-use akita_types::opening_claims::append_claims_shape_to_transcript;
 use akita_types::{
     AkitaCommitmentHint, AppendToTranscript, FlatRingVec, OpeningClaims, RingCommitment,
 };
@@ -138,11 +138,21 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         T: Transcript<CommitF>,
     {
         let claims = self.opening_claims();
-        append_claims_shape_to_transcript::<CommitF, T, _, _>(
-            claims.groups(),
-            claims.num_vars(),
-            transcript,
-        )?;
+        let groups = claims.groups();
+        let num_polynomials = groups
+            .iter()
+            .map(|group| group.num_evaluations())
+            .sum::<usize>();
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &claims.num_vars());
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &num_polynomials);
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &groups.len());
+        for group in groups {
+            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_evaluations());
+            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.point_vars().num_vars());
+            for &index in group.point_vars().indices() {
+                transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
+            }
+        }
         for commitment in self.commitments() {
             commitment
                 .append_to_transcript(akita_transcript::labels::ABSORB_COMMITMENT, transcript);

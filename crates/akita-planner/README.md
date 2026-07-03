@@ -18,18 +18,20 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
-`key: CommitmentGroupScheduleKey` describes the supported scalar same-point root
-opening shape with two fields:
+`key: AkitaScheduleLookupKey` describes the supported root opening shape. Scalar
+same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
+`precommitteds` empty:
 
 - `num_vars`: the number of Boolean variables in the opened polynomial domain
   (shared opening-point arity).
 - `num_polynomials`: the number of polynomials in the single commitment group,
   opened at the shared point (one claim per polynomial).
 
-Root witness multiplicities are not stored in the key. For the scalar
-same-point batch, the `t` and `w` multiplicities are just `num_polynomials` and
-the `z` multiplicity is always `1`; call sites pass those directly where the
-width helpers need them.
+Grouped roots use the same lookup key with any earlier groups recorded as
+`PrecommittedGroupParams` in `precommitteds`. For the scalar same-point batch,
+the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
+multiplicity is always `1`; grouped roots derive those counts from
+`final_group` plus `precommitteds`.
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 

@@ -68,6 +68,10 @@ impl PointVariableSelection {
         self.indices.len()
     }
 
+    fn is_prefix(&self) -> bool {
+        self.indices.iter().copied().eq(0..self.indices.len())
+    }
+
     fn check(&self, point_len: usize) -> Result<(), AkitaError> {
         let mut seen = BTreeSet::new();
         for &index in &self.indices {
@@ -360,6 +364,12 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 return Err(AkitaError::InvalidProof);
             }
             group.point_vars.check(point_len)?;
+            if !group.point_vars.is_prefix() {
+                return Err(AkitaError::InvalidInput(
+                    "custom point-variable routing is not supported by instance descriptors"
+                        .to_string(),
+                ));
+            }
             max_group_vars = max_group_vars.max(group.point_vars.num_vars());
         }
         if max_group_vars != point_len {
@@ -521,11 +531,21 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         T: Transcript<TranscriptF>,
     {
         self.check()?;
-        append_claims_shape_to_transcript::<TranscriptF, T, F, C>(
-            &self.groups,
-            self.num_vars(),
-            transcript,
-        )?;
+        let num_polynomials = self
+            .groups
+            .iter()
+            .map(PolynomialGroupClaims::num_evaluations)
+            .sum::<usize>();
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_vars());
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &num_polynomials);
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.groups.len());
+        for group in &self.groups {
+            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_evaluations());
+            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.point_vars().num_vars());
+            for &index in group.point_vars().indices() {
+                transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
+            }
+        }
         for group in &self.groups {
             group
                 .commitment
@@ -537,33 +557,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         }
         Ok(())
     }
-}
-
-/// Absorb claim routing, preserving explicit point-variable selections.
-pub fn append_claims_shape_to_transcript<F, T, V, C>(
-    groups: &[PolynomialGroupClaims<'_, V, C>],
-    num_vars: usize,
-    transcript: &mut T,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    let num_polynomials = groups
-        .iter()
-        .map(PolynomialGroupClaims::num_evaluations)
-        .sum::<usize>();
-    transcript.append_serde(ABSORB_BATCH_SHAPE, &num_vars);
-    transcript.append_serde(ABSORB_BATCH_SHAPE, &num_polynomials);
-    transcript.append_serde(ABSORB_BATCH_SHAPE, &groups.len());
-    for group in groups {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_evaluations());
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &group.point_vars().num_vars());
-        for &index in group.point_vars().indices() {
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
-        }
-    }
-    Ok(())
 }
 
 /// Sample gamma coefficients for the one public row.

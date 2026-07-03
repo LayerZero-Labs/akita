@@ -38,6 +38,17 @@ dead_patterns=(
   'sis_policy\.rs'
   'schedule_policy\.rs'
   '_with_policy'
+  'OpeningBatch\b'
+  'OpeningBatchShape'
+  'OpeningGroupShape'
+  'OpeningBatchLimits'
+  'VerifierOpeningBatch'
+  'ProverOpeningBatch'
+  'ProverCommitmentGroup'
+  'CommitmentGroupScheduleKey'
+  'CommitmentGroupLayout'
+  'GeneratedCommitmentGroup'
+  'GeneratedScheduleLookupKey'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
@@ -47,7 +58,10 @@ live_specs=(
   specs/setup-layout-repack.md
   specs/eor-streamed-prover.md
   specs/packed-sumcheck.md
+  specs/schedule-catalog-ownership.md
   specs/planner-incidence-generalization.md
+  specs/multi-group-batching.md
+  specs/akita-pcs-crate-decomposition.md
   specs/akita-field-refactor.md
   specs/crt-ntt-prime-profiles.md
   specs/eor-sumcheck-prover-acceleration.md

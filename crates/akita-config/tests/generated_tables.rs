@@ -15,8 +15,8 @@
 //! identical:
 //!
 //! - **table-backed** via [`table_backed_expanded`] after one full-catalog audit
-//!   for scalar schedules, or `Cfg::runtime_schedule` for grouped-root
-//!   schedules (each expands compact rows through the canonical walker);
+//!   for scalar schedules, or direct catalog-entry expansion for grouped-root
+//!   schedules under `all-schedules`;
 //! - **regenerated** via `family.regen` / `family.regen_group_batch`, which runs
 //!   the pure DP from scratch.
 //!
@@ -227,12 +227,41 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
     }
 }
 
+#[cfg(feature = "all-schedules")]
+fn table_backed_group_batch_schedule(
+    family: &GeneratedFamily,
+    catalog: akita_planner::GeneratedScheduleTable,
+    key: &AkitaScheduleLookupKey,
+) -> Result<Schedule, AkitaError> {
+    if let Some(entry) = table_entry(catalog, key) {
+        return schedule_from_entry(
+            entry,
+            key,
+            &(family.policy)(),
+            family.ring_challenge_config,
+            family.fold_challenge_shape_at_level,
+        );
+    }
+    (family.regen_group_batch)(key.clone())
+}
+
+#[cfg(not(feature = "all-schedules"))]
 fn table_backed_group_batch_schedule<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
     Cfg::runtime_schedule(key.clone())
 }
 
+#[cfg(feature = "all-schedules")]
+fn resolve_family_group_batch_schedule(
+    family: &GeneratedFamily,
+    catalog: akita_planner::GeneratedScheduleTable,
+    key: &AkitaScheduleLookupKey,
+) -> Result<Schedule, AkitaError> {
+    table_backed_group_batch_schedule(family, catalog, key)
+}
+
+#[cfg(not(feature = "all-schedules"))]
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
     key: &AkitaScheduleLookupKey,
@@ -483,6 +512,38 @@ fn check_scalar_keys(
     }
 }
 
+#[cfg(feature = "all-schedules")]
+fn compare_group_batch_key(
+    family: &GeneratedFamily,
+    catalog: akita_planner::GeneratedScheduleTable,
+    key: &AkitaScheduleLookupKey,
+) -> Option<Mismatch> {
+    let table_backed =
+        resolve_family_group_batch_schedule(family, catalog, key).unwrap_or_else(|e| {
+            panic!(
+                "table-backed grouped schedule failed for family {} key={key:?}: {e}",
+                family.module_name
+            )
+        });
+    let regenerated = (family.regen_group_batch)(key.clone()).unwrap_or_else(|e| {
+        panic!(
+            "grouped DP regen failed for family {} key={key:?}: {e}",
+            family.module_name
+        )
+    });
+
+    if schedules_equal(&table_backed, &regenerated) {
+        return None;
+    }
+    Some(Mismatch {
+        family: family.module_name,
+        key: format!("group-batch {key:?}"),
+        table_backed: render_schedule(&table_backed),
+        regenerated: render_schedule(&regenerated),
+    })
+}
+
+#[cfg(not(feature = "all-schedules"))]
 fn compare_group_batch_key(
     family: &GeneratedFamily,
     key: &AkitaScheduleLookupKey,
@@ -511,6 +572,50 @@ fn compare_group_batch_key(
     })
 }
 
+#[cfg(feature = "all-schedules")]
+fn check_group_batch_keys(
+    family: &GeneratedFamily,
+    catalog: akita_planner::GeneratedScheduleTable,
+    keys: &[AkitaScheduleLookupKey],
+    into: &mut Vec<Mismatch>,
+) {
+    if keys.is_empty() {
+        return;
+    }
+
+    let workers = worker_count();
+    if workers > 1 && keys.len() >= 2 * workers {
+        let chunk_size = keys.len().div_ceil(workers);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = keys
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        let mut local = Vec::new();
+                        for key in chunk {
+                            if let Some(mismatch) = compare_group_batch_key(family, catalog, key) {
+                                local.push(mismatch);
+                            }
+                        }
+                        local
+                    })
+                })
+                .collect();
+            for handle in handles {
+                into.extend(handle.join().expect("worker thread panicked"));
+            }
+        });
+        return;
+    }
+
+    for key in keys {
+        if let Some(mismatch) = compare_group_batch_key(family, catalog, key) {
+            into.push(mismatch);
+        }
+    }
+}
+
+#[cfg(not(feature = "all-schedules"))]
 fn check_group_batch_keys(
     family: &GeneratedFamily,
     keys: &[AkitaScheduleLookupKey],
@@ -572,7 +677,7 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
         check_scalar_keys(family, &keys, catalog, into);
         if family.emit_group_batch {
             assert_family_group_batch_table_hit(family, &group_batch_keys);
-            check_group_batch_keys(family, &group_batch_keys, into);
+            check_group_batch_keys(family, catalog, &group_batch_keys, into);
         }
     }
     #[cfg(not(feature = "all-schedules"))]

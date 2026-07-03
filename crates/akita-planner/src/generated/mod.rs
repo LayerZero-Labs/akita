@@ -181,28 +181,9 @@ pub fn runtime_schedule_key_cmp(
         .then_with(|| {
             left.precommitteds
                 .iter()
-                .map(runtime_precommitted_group_sort_key)
-                .cmp(
-                    right
-                        .precommitteds
-                        .iter()
-                        .map(runtime_precommitted_group_sort_key),
-                )
+                .map(precommitted_group_sort_key)
+                .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
         })
-}
-
-fn runtime_precommitted_group_sort_key(
-    key: &akita_types::PrecommittedGroupParams,
-) -> (usize, usize, usize, usize, u32, usize, usize) {
-    (
-        key.group.num_vars(),
-        key.group.num_polynomials(),
-        key.m_vars,
-        key.r_vars,
-        key.log_basis,
-        key.n_a,
-        key.conservative_n_b,
-    )
 }
 
 fn precommitted_groups_cmp(
@@ -213,15 +194,7 @@ fn precommitted_groups_cmp(
         .iter()
         .zip(runtime)
         .map(|(left, right)| {
-            precommitted_group_sort_key(left).cmp(&(
-                right.group.num_vars(),
-                right.group.num_polynomials(),
-                right.m_vars,
-                right.r_vars,
-                right.log_basis,
-                right.n_a,
-                right.conservative_n_b,
-            ))
+            precommitted_group_sort_key(left).cmp(&precommitted_group_sort_key(right))
         })
         .find(|ord| *ord != std::cmp::Ordering::Equal)
         .unwrap_or(std::cmp::Ordering::Equal)

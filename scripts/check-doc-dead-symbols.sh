@@ -29,15 +29,32 @@ dead_patterns=(
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
+removed_api_patterns=(
+  'OpeningBatch\b'
+  'OpeningBatchShape'
+  'OpeningGroupShape'
+  'OpeningBatchLimits'
+  'VerifierOpeningBatch'
+  'ProverOpeningBatch'
+  'ProverCommitmentGroup'
+  'CommitmentGroupScheduleKey'
+  'CommitmentGroupLayout'
+  'GeneratedCommitmentGroup'
+  'GeneratedScheduleLookupKey'
+)
+
+api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"
+
 scan_file() {
   local f="$1"
+  local search_pattern="$2"
   if [[ ! -f "$f" ]]; then
     return 0
   fi
   if head -n 8 "$f" | grep -qi 'historical snapshot'; then
     return 0
   fi
-  rg -n "$pattern" "$f" 2>/dev/null || true
+  rg -n "$search_pattern" "$f" 2>/dev/null || true
 }
 
 # Meta / intentionally descriptive docs (cite removed names on purpose).
@@ -51,7 +68,7 @@ for f in docs/*.md; do
       continue 2
     fi
   done
-  hit="$(scan_file "$f")"
+  hit="$(scan_file "$f" "$pattern")"
   if [[ -n "$hit" ]]; then
     matches+="$hit"$'\n'
   fi
@@ -64,4 +81,24 @@ if [[ -n "$matches" ]]; then
   exit 1
 fi
 
-echo "No dead symbol references in docs/."
+api_paths=(book/src docs)
+for f in crates/*/README.md; do
+  if [[ -f "$f" ]]; then
+    api_paths+=("$f")
+  fi
+done
+
+api_matches="$(rg -n \
+  --glob '*.md' \
+  --glob '!**/archive/**' \
+  --glob '!**/generated/**' \
+  "$api_pattern" "${api_paths[@]}" 2>/dev/null || true)"
+
+if [[ -n "$api_matches" ]]; then
+  echo "Deleted public API references in live docs. Review:" >&2
+  echo >&2
+  echo "$api_matches" >&2
+  exit 1
+fi
+
+echo "No dead symbol references in docs/ or deleted public API references in live docs."
