@@ -11,11 +11,11 @@ use akita_field::AkitaError;
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, PolynomialGroupLayout, Schedule};
 
 use crate::catalog_identity::validate_catalog_identity;
+use crate::find_group_batch_schedule;
 use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{table_entry, GeneratedScheduleTable, GeneratedScheduleTableEntry};
 use crate::schedule_params::validate_policy_witness_chunk;
 use crate::PlannerPolicy;
-use crate::find_group_batch_schedule;
 
 /// Resolve the runtime [`Schedule`] using an explicit optional catalog.
 pub fn resolve_schedule(

@@ -658,12 +658,8 @@ mod tests {
 
     fn prefix_claims(num_vars: usize, evals: usize) -> OpeningClaims<'static, F, ()> {
         let point_vars = PointVariableSelection::prefix(num_vars, num_vars).expect("prefix");
-        let group = PolynomialGroupClaims::new(
-            point_vars,
-            vec![F::zero(); evals],
-            (),
-        )
-        .expect("group");
+        let group =
+            PolynomialGroupClaims::new(point_vars, vec![F::zero(); evals], ()).expect("group");
         OpeningClaims::from_groups(vec![F::zero(); num_vars], vec![group]).expect("claims")
     }
 

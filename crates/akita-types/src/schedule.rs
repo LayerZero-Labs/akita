@@ -229,11 +229,6 @@ impl AkitaScheduleLookupKey {
         }
         for layout in &self.precommitteds {
             layout.validate()?;
-            if layout.group.num_vars() == 0 {
-                return Err(AkitaError::InvalidSetup(
-                    "schedule lookup key dimensions must be at least 1".to_string(),
-                ));
-            }
             if layout.group.num_vars() > self.final_group.num_vars() / 2 {
                 return Err(AkitaError::InvalidInput(
                     "grouped root requires precommitted groups to have at most half the final num_vars"

@@ -116,7 +116,11 @@ where
         &opening_batch,
         Cfg::TIERED_COMMITMENT,
         setup_contribution_mode,
-        Some(flat_polys.iter().any(|poly| poly.onehot_chunk_size().is_none())),
+        Some(
+            flat_polys
+                .iter()
+                .any(|poly| poly.onehot_chunk_size().is_none()),
+        ),
     ) {
         return Err(reason.into_prover_error());
     }

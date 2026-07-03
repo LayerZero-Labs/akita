@@ -14,10 +14,10 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, grouped_root_rejection, root_direct_schedule,
-    root_tensor_projection_enabled, schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingCommitment, Schedule,
-    SetupContributionMode, Step,
+    root_tensor_projection_enabled, schedule_root_fold_step, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
+    CleartextWitnessProof, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    RingCommitment, Schedule, SetupContributionMode, Step,
 };
 use std::array::from_fn;
 
@@ -30,13 +30,17 @@ where
     if D == 0 || !D.is_power_of_two() || !evals.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }
-    if !evals.len().is_multiple_of(D) {
-        return Err(AkitaError::InvalidProof);
-    }
+    // Borrow flat coeffs as fixed-width ring rows: tail slots in the final row
+    // are zero-filled when `evals.len()` is not a multiple of `D`. Root-direct
+    // verify validates witness length before calling here; padding keeps this
+    // helper aligned with the runtime-ring view where `D` is a local packing
+    // width, not a protocol-wide invariant on flat vector length.
     Ok(evals
         .chunks(D)
         .map(|chunk| {
-            CyclotomicRing::from_coefficients(from_fn(|idx| chunk[idx]))
+            CyclotomicRing::from_coefficients(from_fn(|idx| {
+                chunk.get(idx).copied().unwrap_or_else(F::zero)
+            }))
         })
         .collect())
 }
