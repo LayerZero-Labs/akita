@@ -348,7 +348,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningBatchShape,
+        gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningClaimsLayout,
         RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SisModulusFamily,
         WitnessLayout,
     };
@@ -398,13 +398,13 @@ mod tests {
         m_row_layout: MRowLayout,
         num_polys: usize,
     ) -> Result<WitnessLayout, AkitaError> {
-        let opening_batch = OpeningBatchShape::new(32, num_polys)?;
+        let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
         let opening_point = RingOpeningPoint {
             a: vec![F::zero(); lp.block_len],
             b: vec![F::zero(); lp.num_blocks],
         };
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let num_claims = opening_batch.num_polynomials();
+        let num_claims = opening_batch.num_total_polynomials();
         let challenges = akita_challenges::Challenges::Sparse {
             challenges: Vec::new(),
             num_blocks_per_claim: lp.num_blocks,

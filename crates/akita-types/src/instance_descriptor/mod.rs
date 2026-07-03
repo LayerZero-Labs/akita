@@ -21,10 +21,10 @@ pub use fold_linf_binding::{
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
-use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
+use crate::descriptor_bytes::{push_usize, sis_family_tag};
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, DecompositionParams, LevelParams,
-    OpeningBatchShape, Schedule, SisModulusFamily,
+    OpeningClaimsLayout, Schedule, SisModulusFamily,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
@@ -227,50 +227,44 @@ pub struct CallSection {
     pub basis_mode: BasisMode,
     /// Common opening-point arity.
     pub opening_point_arity: u32,
-    /// Digest of normalized batch opening_batch.
+    /// Digest of normalized opening layout.
     pub opening_batch_digest: DescriptorDigest,
 }
 
 impl CallSection {
-    /// Build call fields from normalized public opening_batch.
+    /// Build call fields from normalized public opening layout.
     ///
     /// # Errors
     ///
     /// Returns an error if a count does not fit the descriptor's fixed-width
     /// integer fields.
-    pub fn from_opening_batch(
-        opening_batch: &OpeningBatchShape,
+    pub fn from_layout(
+        layout: &OpeningClaimsLayout,
         basis_mode: BasisMode,
     ) -> Result<Self, AkitaError> {
-        opening_batch.check()?;
-        let num_polys_per_commitment_group = opening_batch
-            .groups
+        layout.check()?;
+        let num_polys_per_commitment_group = layout
+            .groups()
             .iter()
-            .map(|group| usize_to_u32(group.num_polynomials, "num_polys_per_commitment_group"))
+            .map(|group| usize_to_u32(group.num_polynomials(), "num_polys_per_commitment_group"))
             .collect::<Result<Vec<_>, _>>()?;
-        let point_variable_selections = opening_batch
-            .groups
+        let point_variable_selections = layout
+            .groups()
             .iter()
             .map(|group| {
-                group
-                    .point_vars
-                    .indices()
-                    .iter()
-                    .map(|&index| usize_to_u32(index, "point_variable_selection"))
+                (0..group.num_vars())
+                    .map(|index| usize_to_u32(index, "point_variable_selection"))
                     .collect::<Result<Vec<_>, _>>()
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            num_polys: usize_to_u32(opening_batch.num_polynomials(), "num_polys")?,
-            num_commitment_groups: usize_to_u32(
-                opening_batch.num_commitment_groups(),
-                "num_commitment_groups",
-            )?,
+            num_polys: usize_to_u32(layout.num_total_polynomials(), "num_polys")?,
+            num_commitment_groups: usize_to_u32(layout.num_groups(), "num_commitment_groups")?,
             num_polys_per_commitment_group,
             point_variable_selections,
             basis_mode,
-            opening_point_arity: usize_to_u32(opening_batch.num_vars(), "opening_point_arity")?,
-            opening_batch_digest: digest_opening_batch(opening_batch),
+            opening_point_arity: usize_to_u32(layout.max_num_vars(), "opening_point_arity")?,
+            opening_batch_digest: layout.opening_batch_digest(),
         })
     }
 }
@@ -286,19 +280,6 @@ pub fn digest_serializable<S: AkitaSerialize>(
     let mut bytes = Vec::with_capacity(value.uncompressed_size());
     value.serialize_uncompressed(&mut bytes)?;
     Ok(blake2b_256(&bytes))
-}
-
-/// Digest the normalized opening-batch summary.
-pub fn digest_opening_batch(summary: &OpeningBatchShape) -> DescriptorDigest {
-    let mut bytes = Vec::new();
-    push_usize(&mut bytes, summary.num_vars());
-    push_usize(&mut bytes, summary.num_polynomials());
-    push_usize(&mut bytes, summary.num_commitment_groups());
-    for group in &summary.groups {
-        push_usize(&mut bytes, group.num_polynomials);
-        push_usize_vec(&mut bytes, group.point_vars.indices());
-    }
-    blake2b_256(&bytes)
 }
 
 /// Digest a normalized list of commitment level parameters.

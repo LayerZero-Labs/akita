@@ -117,10 +117,10 @@ fn regen_diff_vs_shipped_tables() {
             }
 
             if new.total_bytes != old.total_bytes || structure_changed {
-                let num_polys = key.num_polynomials;
+                let num_polys = key.num_polynomials();
                 all_changed.push(ChangedKey {
                     family: family.module_name,
-                    num_vars: key.num_vars,
+                    num_vars: key.num_vars(),
                     num_polys,
                     old_bytes: old.total_bytes,
                     new_bytes: new.total_bytes,

@@ -14,8 +14,8 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
-    FlatDigitBlocks, FpExtEncoding, LevelParams, OpeningBatchShape, RingCommitment,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, FlatDigitBlocks, FpExtEncoding, LevelParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, RingCommitment,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -380,15 +380,15 @@ where
 ///
 /// Propagates [`CommitmentConfig::get_params_for_prove`].
 fn should_transform_root_commitment<Cfg, const D: usize>(
-    opening_batch: &OpeningBatchShape,
+    layout: &OpeningClaimsLayout,
 ) -> Result<bool, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
-    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(opening_batch.num_vars()) {
+    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(layout.max_num_vars()) {
         return Ok(false);
     }
-    let schedule = Cfg::get_params_for_prove(opening_batch)?;
+    let schedule = Cfg::get_params_for_prove(layout)?;
     Ok(schedule_root_fold_step(&schedule).is_some())
 }
 
@@ -398,14 +398,14 @@ fn should_transform_final_group_commitment<Cfg, const D: usize>(
 where
     Cfg: CommitmentConfig,
 {
-    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(key.final_group.num_vars) {
+    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(key.final_group.num_vars()) {
         return Ok(false);
     }
     let schedule = Cfg::runtime_schedule(key.clone())?;
     Ok(schedule_root_fold_step(&schedule).is_some())
 }
 
-/// Validate a batched commitment request and derive its `OpeningBatchShape`.
+/// Validate a batched commitment request and derive its `OpeningClaimsLayout`.
 ///
 /// The input slice is one commitment group at the shared opening point.
 /// Polynomials may have smaller natural arity than the shared padded batch
@@ -418,7 +418,7 @@ where
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<F>,
-) -> Result<OpeningBatchShape, AkitaError>
+) -> Result<OpeningClaimsLayout, AkitaError>
 where
     F: FieldCore,
     P: RootPolyShape<F, D>,
@@ -450,12 +450,12 @@ where
         )));
     }
 
-    OpeningBatchShape::new(padded_num_vars, polys.len())
+    OpeningClaimsLayout::new(padded_num_vars, polys.len())
 }
 
 fn precommitted_layouts_from_keys<Cfg>(
-    precommitteds: Vec<CommitmentGroupScheduleKey>,
-) -> Result<Vec<CommitmentGroupLayout>, AkitaError>
+    precommitteds: Vec<PolynomialGroupLayout>,
+) -> Result<Vec<PrecommittedGroupParams>, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
@@ -468,9 +468,9 @@ where
         .into_iter()
         .map(|key| {
             key.validate()?;
-            let opening_batch = OpeningBatchShape::new(key.num_vars, key.num_polynomials)?;
-            let params = <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(&opening_batch)?;
-            Ok(CommitmentGroupLayout::from_params(key, &params))
+            let layout = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
+            let params = <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(&layout)?;
+            Ok(PrecommittedGroupParams::from_params(key, &params))
         })
         .collect()
 }
@@ -478,18 +478,15 @@ where
 fn final_group_key_from_polys<Cfg, const D: usize, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<Cfg::Field>,
-    precommitteds: Vec<CommitmentGroupScheduleKey>,
+    precommitteds: Vec<PolynomialGroupLayout>,
 ) -> Result<AkitaScheduleLookupKey, AkitaError>
 where
     Cfg: CommitmentConfig,
     P: RootPolyShape<Cfg::Field, D>,
 {
-    let opening_batch = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, setup)?;
+    let layout = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, setup)?;
     let key = AkitaScheduleLookupKey {
-        final_group: CommitmentGroupScheduleKey::new(
-            opening_batch.num_vars(),
-            opening_batch.num_polynomials(),
-        ),
+        final_group: layout.groups()[0],
         precommitteds: precommitted_layouts_from_keys::<Cfg>(precommitteds)?,
     };
     key.validate()?;
@@ -560,9 +557,9 @@ where
     P: RootCommitPoly<Cfg::Field, D>,
     B: RootCommitBackend<Cfg::Field, P, Cfg::ExtField, D>,
 {
-    let opening_batch = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
-    let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
-    let transform_root = should_transform_root_commitment::<Cfg, D>(&opening_batch)?;
+    let layout = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
+    let params = Cfg::get_params_for_batched_commitment(&layout)?;
+    let transform_root = should_transform_root_commitment::<Cfg, D>(&layout)?;
     commit_with_selected_params::<Cfg, D, P, B>(polys, expanded, stack, &params, transform_root)
 }
 
@@ -581,7 +578,7 @@ pub fn commit_final_group<Cfg, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B, D>,
-    precommitteds: Vec<CommitmentGroupScheduleKey>,
+    precommitteds: Vec<PolynomialGroupLayout>,
 ) -> Result<CommitmentWithHint<Cfg::Field, D>, AkitaError>
 where
     Cfg: CommitmentConfig,

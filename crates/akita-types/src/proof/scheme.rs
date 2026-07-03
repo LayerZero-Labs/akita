@@ -1,6 +1,6 @@
 //! Shared commitment-scheme API contracts.
 
-use crate::{AppendToTranscript, BasisMode, SetupContributionMode, VerifierOpeningBatch};
+use crate::{AppendToTranscript, BasisMode, OpeningClaims, SetupContributionMode};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use std::borrow::Cow;
@@ -34,7 +34,7 @@ where
     /// Verify a fused batched opening proof at one shared opening point.
     ///
     /// The root layout and Fiat-Shamir batching are derived from the normalized
-    /// [`VerifierOpeningBatch`] built from `claims` (single shared point, no multipoint).
+    /// [`OpeningClaims`] built from `claims` (single shared point, no multipoint).
     ///
     /// # Errors
     ///
@@ -44,7 +44,7 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierOpeningBatch<'_, Self::ExtField, &Self::Commitment>,
+        claims: OpeningClaims<'_, Self::ExtField, &Self::Commitment>,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError>;

@@ -97,8 +97,7 @@ mod tests {
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
     use akita_prover::{
-        ComputeBackendSetup, CpuBackend, DensePoly, ProverCommitmentGroup, ProverOpeningBatch,
-        RingRelationProver,
+        ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
@@ -106,7 +105,8 @@ mod tests {
     use akita_types::AppendToTranscript;
     use akita_types::{
         ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder, MRowLayout,
-        PointVariableSelection, RingCommitment, RingMultiplierOpeningPoint,
+        OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RingCommitment,
+        RingMultiplierOpeningPoint,
     };
     use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -120,16 +120,18 @@ mod tests {
         polynomials: &'a [&'a P],
         commitment: &'a RingCommitment<F, D>,
         hint: AkitaCommitmentHint<F, D>,
-    ) -> ProverOpeningBatch<'a, F, P, F, D> {
-        ProverOpeningBatch {
-            point: point.into(),
-            groups: vec![ProverCommitmentGroup {
-                point_vars: PointVariableSelection::prefix(point.len(), point.len())
-                    .expect("full-point prover group"),
-                polynomials,
-                commitment: (commitment.clone(), hint),
-            }],
-        }
+    ) -> ProverOpeningData<'a, F, P, F, D> {
+        let group = PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(point.len(), point.len())
+                .expect("full-point prover group"),
+            vec![F::zero(); polynomials.len()],
+            commitment.clone(),
+        )
+        .expect("valid prover claims group");
+        let opening_claims =
+            OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+        ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+            .expect("valid prover opening data")
     }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
@@ -278,7 +280,7 @@ mod tests {
         const NV: usize = 12;
 
         let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("lp");
 
@@ -416,7 +418,7 @@ mod tests {
         const NV: usize = 12;
 
         let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("lp");
 
@@ -585,7 +587,7 @@ mod tests {
         const NV: usize = 12;
 
         let level_params = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("commitment layout");
 
@@ -875,7 +877,7 @@ mod tests {
         const NV: usize = 12;
 
         let level_params = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(NV, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
         )
         .expect("commitment layout");
 

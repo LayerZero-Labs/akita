@@ -7,12 +7,12 @@ use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSourc
 use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
-pub(super) use akita_prover::{ProverCommitmentGroup, ProverOpeningBatch};
+pub(super) use akita_prover::ProverOpeningData;
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, BlockOrder, CommitmentGroup, PointVariableSelection, RingCommitment,
-    VerifierOpeningBatch,
+    BasisMode, BlockOrder, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
+    RingCommitment,
 };
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
@@ -67,29 +67,32 @@ pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, cons
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
     hint: AkitaCommitmentHint<CommitF, D>,
-) -> ProverOpeningBatch<'a, FF, P, CommitF, D> {
-    ProverOpeningBatch {
-        point: point.into(),
-        groups: vec![ProverCommitmentGroup {
-            point_vars: PointVariableSelection::prefix(point.len(), point.len())
-                .expect("full-point prover group"),
-            polynomials,
-            commitment: (commitment.clone(), hint),
-        }],
-    }
+) -> ProverOpeningData<'a, FF, P, CommitF, D> {
+    let group = PolynomialGroupClaims::new(
+        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        vec![FF::zero(); polynomials.len()],
+        commitment.clone(),
+    )
+    .expect("valid prover claims group");
+    let opening_claims =
+        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+        .expect("valid prover opening data")
 }
 
 pub(super) fn verify_input<'a, FF: FieldCore, C>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
-) -> VerifierOpeningBatch<'static, FF, &'a C> {
-    VerifierOpeningBatch::from_groups(
+) -> OpeningClaims<'static, FF, &'a C> {
+    OpeningClaims::from_groups(
         point.to_vec(),
-        vec![CommitmentGroup {
-            claims: openings.to_vec(),
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
+            openings.to_vec(),
             commitment,
-        }],
+        )
+        .expect("valid verifier claims group")],
     )
     .expect("valid verifier input")
 }

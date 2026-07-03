@@ -8,7 +8,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
-use crate::schedule::CommitmentGroupLayout;
+use crate::schedule::PrecommittedGroupParams;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
@@ -40,7 +40,7 @@ pub enum MRowLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupRootParams {
     /// Frozen standalone group layout bound into the grouped root key.
-    pub layout: CommitmentGroupLayout,
+    pub layout: PrecommittedGroupParams,
     /// Inner Ajtai matrix (A) used by this group.
     pub a_key: AjtaiKeyParams,
     /// Outer commitment matrix (B) used by this group.

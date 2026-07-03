@@ -10,7 +10,7 @@ use crate::proof::{
     setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
     AkitaCommitmentHint, FlatRingVec, RingCommitment,
 };
-use crate::{LevelParams, OpeningBatchShape};
+use crate::{LevelParams, OpeningClaimsLayout};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -747,15 +747,15 @@ where
 /// Return the packed role widths `(W_A, W_B, W_D)` for one active level shape.
 fn active_setup_role_widths(
     level_params: &LevelParams,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
 ) -> Result<(usize, usize, usize), AkitaError> {
     level_params.reject_grouped_root("active_setup_role_widths")?;
     let w_a = level_params
         .block_len
         .checked_mul(level_params.num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
-    let num_claims = opening_batch.num_polynomials();
-    let max_group_poly_count = opening_batch.num_polynomials();
+    let num_claims = opening_batch.num_total_polynomials();
+    let max_group_poly_count = opening_batch.num_total_polynomials();
     let w_d = num_claims
         .checked_mul(level_params.num_blocks)
         .and_then(|n| n.checked_mul(level_params.num_digits_open))
@@ -771,7 +771,7 @@ fn active_setup_role_widths(
 /// Active packed setup footprint in ring slots: `max(n_a W_A, n_b W_B, n_d W_D)`.
 fn active_setup_ring_slots(
     level_params: &LevelParams,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
     let (w_a, w_b, w_d) = active_setup_role_widths(level_params, opening_batch)?;
     let a_slots = level_params
@@ -795,7 +795,7 @@ fn active_setup_ring_slots(
 /// Active flat coefficient count `N_active^F = D_setup * N_active^R`.
 pub fn active_setup_field_len(
     level_params: &LevelParams,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     d_setup: usize,
 ) -> Result<usize, AkitaError> {
     active_setup_ring_slots(level_params, opening_batch)?
@@ -942,7 +942,7 @@ fn read_limited_usize<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LevelParams, OpeningBatchShape, SisModulusFamily};
+    use crate::{LevelParams, OpeningClaimsLayout, SisModulusFamily};
     use akita_challenges::SparseChallengeConfig;
 
     fn sample_level_params() -> LevelParams {
@@ -965,7 +965,7 @@ mod tests {
     #[test]
     fn active_setup_field_len_matches_packed_role_maximum() {
         let lp = sample_level_params();
-        let opening_batch = OpeningBatchShape::new(5, 3).expect("opening batch");
+        let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
         let (w_a, w_b, w_d) = active_setup_role_widths(&lp, &opening_batch).expect("widths");
         let expected_ring_slots = lp
             .a_key
