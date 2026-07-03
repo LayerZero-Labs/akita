@@ -56,6 +56,21 @@ pub fn fold_witness_verifier_linf_bound(log_basis: u32, num_digits_fold: usize) 
     balanced_digit_abs_max(log_basis, num_digits_fold.max(1))
 }
 
+/// Signed coefficient interval represented by `num_digits_fold` balanced
+/// base-`2^log_basis` digits, returned as `(negative_abs_reach, positive_reach)`.
+#[inline]
+#[must_use]
+pub fn fold_witness_representable_linf_bounds(
+    log_basis: u32,
+    num_digits_fold: usize,
+) -> (u128, u128) {
+    let num_digits_fold = num_digits_fold.max(1);
+    (
+        balanced_digit_abs_max(log_basis, num_digits_fold),
+        balanced_digit_max(log_basis, num_digits_fold),
+    )
+}
+
 /// Maximum positive value representable by `num_digits` balanced base-`b`
 /// digits, where `b = 2^log_basis`. Each balanced digit lies in
 /// `[-b/2, b/2 - 1]`; the max positive value is the geometric series

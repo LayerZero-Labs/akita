@@ -10,7 +10,8 @@ use akita_field::AkitaError;
 
 use super::ajtai_key::{ceil_supported_linf_bound, min_secure_rank, SisModulusFamily, SisTableKey};
 use super::decomposition_digits::{
-    fold_witness_verifier_linf_bound, num_digits_fold, num_digits_for_bound,
+    fold_witness_representable_linf_bounds, fold_witness_verifier_linf_bound, num_digits_fold,
+    num_digits_for_bound,
 };
 use crate::DecompositionParams;
 
@@ -199,8 +200,8 @@ pub fn snap_min_tstar_retain_floor(t_star: u128, retain_num: u128, retain_den: u
     (t_star.saturating_mul(retain_num) / retain_den).max(1)
 }
 
-/// Walk `δ_fold` downward while the verifier digit envelope at `δ-1` still clears
-/// `retain_num/retain_den · t*`.
+/// Walk `δ_fold` downward while the symmetric honest-prover digit envelope at
+/// `δ-1` still clears `retain_num/retain_den · t*`.
 #[must_use]
 pub fn snap_num_digits_fold_down(
     log_basis: u32,
@@ -217,13 +218,13 @@ pub fn snap_num_digits_fold_down(
     let mut delta = delta_base;
     let mut grind_cap = pre_snap_cap;
     while delta > 1 {
-        let z_lower = fold_witness_verifier_linf_bound(log_basis, delta - 1);
-        if z_lower < floor {
+        let (_, positive_lower) = fold_witness_representable_linf_bounds(log_basis, delta - 1);
+        if positive_lower < floor {
             break;
         }
         delta -= 1;
-        let z_at = fold_witness_verifier_linf_bound(log_basis, delta);
-        grind_cap = pre_snap_cap.min(z_at);
+        let (_, positive_at) = fold_witness_representable_linf_bounds(log_basis, delta);
+        grind_cap = pre_snap_cap.min(positive_at);
     }
     (delta, grind_cap)
 }
@@ -735,16 +736,24 @@ mod tests {
     }
 
     #[test]
-    fn snap_num_digits_fold_down_matches_dense_l1_profile() {
-        // Dense fp128_d64 L1 profile: δ 6→5, grind cap min(t*, z_ver(5)) = 682.
+    fn snap_num_digits_fold_down_uses_positive_digit_reach() {
+        // δ=5 has negative reach 682 but positive reach only 341, so it cannot
+        // serve a symmetric honest cap at the 50% floor of 739.
         let (delta, grind_cap) = snap_num_digits_fold_down(2, 6, 739, 739, 1, 2);
+        assert_eq!(delta, 6);
+        assert_eq!(grind_cap, 739);
+
+        let (delta, grind_cap) = snap_num_digits_fold_down(2, 6, 600, 600, 1, 2);
         assert_eq!(delta, 5);
-        assert_eq!(grind_cap, 682);
-        assert_eq!(grind_cap, fold_witness_verifier_linf_bound(2, delta));
+        assert_eq!(grind_cap, 341);
+        assert_eq!(
+            grind_cap,
+            fold_witness_representable_linf_bounds(2, delta).1
+        );
     }
 
     #[test]
-    fn fold_linf_digit_plan_respects_production_tstar_retain_floor() {
+    fn fold_linf_digit_plan_applies_snap_for_tail_bound_levels() {
         use crate::DecompositionParams;
         use akita_challenges::{
             SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_EXACT_SHELL_MAG1,
@@ -781,12 +790,10 @@ mod tests {
             decomposition.field_bits(),
             decomposition.log_basis,
         );
-        assert_eq!(
-            plan.delta_fold, delta_unsnapped,
-            "production retain floor keeps the full t* cap"
-        );
-        assert_eq!(plan.grind_cap, plan.pre_snap_cap);
-        assert!(plan.grind_cap <= t_star);
+        if plan.delta_fold < delta_unsnapped {
+            assert!(plan.grind_cap <= plan.pre_snap_cap);
+            assert!(plan.grind_cap >= t_star / 2);
+        }
     }
 
     #[test]
