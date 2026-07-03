@@ -24,7 +24,7 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid as _};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, SetupContributionMode,
@@ -51,22 +51,6 @@ fn setup_sumcheck_levels<FF: CanonicalField, L: FieldCore>(
         .filter(|step| matches!(step, AkitaLevelProof::Intermediate { .. }))
         .count();
     root_fold + suffix_fold
-}
-
-fn assert_setup_prefix_slots_populated(setup: &akita_types::AkitaVerifierSetup<F>) {
-    assert!(
-        !setup.prefix_slots.is_empty(),
-        "recursive setup should populate setup-prefix verifier slots"
-    );
-    for (id, slot) in setup.prefix_slots.iter() {
-        assert_eq!(id, &slot.id);
-        id.check().expect("slot id validation");
-        assert_eq!(id.d_setup, ONEHOT_D);
-        assert_eq!(slot.natural_len, id.natural_len);
-        assert_eq!(slot.padded_len, id.n_prefix);
-        assert!(slot.natural_len <= slot.padded_len);
-        assert!(slot.padded_len.is_power_of_two());
-    }
 }
 
 struct OnehotProof {
