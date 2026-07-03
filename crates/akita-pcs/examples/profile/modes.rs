@@ -42,6 +42,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan));
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     title: &str,
@@ -160,7 +161,43 @@ struct ProfileMode {
     run: ProfileModeRunner,
 }
 
-const PROFILE_MODES: &[ProfileMode] = &[
+const PROFILE_CI_MODES: &[ProfileMode] = &[
+    ProfileMode {
+        name: "dense_fp128_d64",
+        run: run_profile_dense_fp128_d64,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64",
+        run: run_profile_onehot_fp128_d64,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_tensor",
+        run: run_profile_onehot_fp128_d64_tensor,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk_w2r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk_w4r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w4r2,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w8r2,
+    },
+    ProfileMode {
+        name: "onehot_fp32_d128",
+        run: run_profile_onehot_fp32_d128,
+    },
+    ProfileMode {
+        name: "onehot_fp64_d128",
+        run: run_profile_onehot_fp64_d128,
+    },
+];
+
+#[cfg(not(feature = "profile-ci"))]
+const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "dense_fp128_d32",
         run: run_profile_dense_fp128_d32,
@@ -185,14 +222,10 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d128",
         run: run_profile_onehot_fp128_d128,
     },
-    // Direct comparison mode from the tensor-verifier branch. The generated
-    // tensor preset is D64-only, so this is intentionally not part of the D32
-    // benchmark matrix or `AKITA_MODE=all` sweep.
     ProfileMode {
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
-    // Chunked relation (distributed prover witness layout on leading fold levels).
     ProfileMode {
         name: "onehot_fp128_d64_multi_chunk_w2r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
@@ -205,8 +238,6 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d64_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_d64_multi_chunk_w8r2,
     },
-    // Tiered second-tier commitment (F). Only tiers with a batch (B > A), so
-    // run with `AKITA_NUM_POLYS=16` or more; excluded from the `all` sweep.
     ProfileMode {
         name: "onehot_fp128_d64_tiered",
         run: run_profile_onehot_fp128_d64_tiered,
@@ -243,15 +274,22 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp64_d64",
         run: run_profile_onehot_fp64_d64,
     },
-    // Smallest securable fp64 one-hot family under honest committed-fold
-    // pricing (fp64 ships generated tables only at D128/D256; D32/D64 no
-    // longer fold securely). This is the fp64 cell the profile-bench matrix
-    // tracks.
     ProfileMode {
         name: "onehot_fp64_d128",
         run: run_profile_onehot_fp64_d128,
     },
 ];
+
+fn profile_modes() -> &'static [ProfileMode] {
+    #[cfg(feature = "profile-ci")]
+    {
+        PROFILE_CI_MODES
+    }
+    #[cfg(not(feature = "profile-ci"))]
+    {
+        PROFILE_ALL_MODES
+    }
+}
 
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
@@ -311,6 +349,7 @@ fn small_field_onehot_title(field_label: &str, d: usize, nv: usize, num_polys: u
     }
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn small_field_dense_title(field_label: &str, d: usize) -> String {
     let schedule = small_field_schedule_source(d);
     format!("=== dense_{field_label}_d{d} ({field_label}, D={d}, {schedule}) ===")
@@ -395,6 +434,7 @@ fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tensor", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp128_d64_tiered(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHotTiered;
     let prime = fp128_prime_label();
@@ -405,6 +445,7 @@ fn run_profile_onehot_fp128_d64_tiered(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tiered", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp128_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32Full;
     assert_singleton_mode("dense_fp128_d32", num_polys);
@@ -416,12 +457,14 @@ fn run_profile_dense_fp128_d32(nv: usize, num_polys: usize) {
     );
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp128_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32OneHot;
     let title = fp128_onehot_title(32, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d32", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp128_d128(nv: usize, num_polys: usize) {
     type Cfg = fp128::D128Full;
     assert_singleton_mode("dense_fp128_d128", num_polys);
@@ -435,18 +478,21 @@ fn run_profile_dense_fp128_d128(nv: usize, num_polys: usize) {
     );
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp128_d128(nv: usize, num_polys: usize) {
     type Cfg = fp128::D128OneHot;
     let title = fp128_onehot_title(128, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d128", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp32_d64(nv: usize, num_polys: usize) {
     type Cfg = fp32::D64OneHot;
     let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
     run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d64", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
     type Cfg = fp32::D64Full;
     assert_singleton_mode("dense_fp32_d64", num_polys);
@@ -454,6 +500,7 @@ fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
     run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d64", &title, nv);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp32_d128(nv: usize, num_polys: usize) {
     type Cfg = fp32::D128Full;
     assert_singleton_mode("dense_fp32_d128", num_polys);
@@ -467,12 +514,14 @@ fn run_profile_onehot_fp32_d128(nv: usize, num_polys: usize) {
     run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d128", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp64_d32(nv: usize, num_polys: usize) {
     type Cfg = fp64::D32OneHot;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
     run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64_d32", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_onehot_fp64_d64(nv: usize, num_polys: usize) {
     type Cfg = fp64::D64OneHot;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
@@ -485,6 +534,7 @@ fn run_profile_onehot_fp64_d128(nv: usize, num_polys: usize) {
     run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64_d128", &title, nv, num_polys);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp64_d32(nv: usize, num_polys: usize) {
     type Cfg = fp64::D32Full;
     assert_singleton_mode("dense_fp64_d32", num_polys);
@@ -492,6 +542,7 @@ fn run_profile_dense_fp64_d32(nv: usize, num_polys: usize) {
     run_dense_mode_for::<fp64::Field, { Cfg::D }, Cfg>("dense_fp64_d32", &title, nv);
 }
 
+#[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp64_d64(nv: usize, num_polys: usize) {
     type Cfg = fp64::D64Full;
     assert_singleton_mode("dense_fp64_d64", num_polys);
@@ -500,14 +551,12 @@ fn run_profile_dense_fp64_d64(nv: usize, num_polys: usize) {
 }
 
 pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
-    let profile_mode = PROFILE_MODES
+    let modes = profile_modes();
+    let profile_mode = modes
         .iter()
         .find(|entry| entry.name == mode)
         .unwrap_or_else(|| {
-            let mut known_modes = PROFILE_MODES
-                .iter()
-                .map(|entry| entry.name)
-                .collect::<Vec<_>>();
+            let mut known_modes = modes.iter().map(|entry| entry.name).collect::<Vec<_>>();
             known_modes.push("all");
             tracing::error!(
                 mode,
@@ -520,7 +569,7 @@ pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
 }
 
 pub(crate) fn run_all_profile_modes(nv: usize) {
-    for entry in PROFILE_MODES {
+    for entry in profile_modes() {
         if EXCLUDED_FROM_ALL_SWEEP.contains(&entry.name) {
             continue;
         }
