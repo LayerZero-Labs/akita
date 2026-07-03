@@ -11,8 +11,7 @@ use akita_prover::{AkitaProverSetup, CommitmentProver, DensePoly, OneHotPoly, Pr
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, FlatRingVec,
-    OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RingCommitment,
-    SetupContributionMode,
+    OpeningClaims, PointVariableSelection, PolynomialGroupClaims, SetupContributionMode,
 };
 use akita_verifier::CommitmentVerifier;
 use criterion::measurement::WallTime;

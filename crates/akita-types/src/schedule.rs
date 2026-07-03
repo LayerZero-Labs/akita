@@ -767,7 +767,7 @@ mod tests {
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, CompressionMapRole,
+        AkitaStage2Proof, CleartextWitnessProof, CompressionLayerPlan, CompressionMapRole,
         ExtensionOpeningReductionProof, FlatRingVec, MRowLayout, SisModulusFamily,
         TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
     };

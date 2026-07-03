@@ -1061,8 +1061,6 @@ mod tests {
             .with_layout(&sample_layout_lp(), 128)
             .unwrap();
         let n_a = lp.a_key.row_len();
-        let n_b = lp.b_key.row_len();
-        let n_d = lp.d_key.row_len();
 
         for nc in [1usize, 2, 4] {
             for layout in [
