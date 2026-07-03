@@ -12,7 +12,7 @@ use std::env;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, OpeningBatchShape,
+    AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use fold_linf_stats_report::{print_fold_linf_aggregate_report, FoldLinfLevelSample};
 use workload::{run_dense_fold_linf_sample, run_onehot_fold_linf_sample};
@@ -34,7 +34,7 @@ fn env_f64(name: &str, default: f64) -> f64 {
 }
 
 fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> LevelParams {
-    let opening_batch = OpeningBatchShape::new(nv, 1).expect("singleton opening");
+    let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("singleton opening");
     Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout")
 }
 
@@ -51,7 +51,7 @@ fn collect_samples<Cfg: CommitmentConfig<Field = F>>(
 ) -> Vec<FoldLinfLevelSample> {
     let layout = resolve_layout::<Cfg>(nv);
     let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        CommitmentGroupScheduleKey::singleton(nv),
+        PolynomialGroupLayout::singleton(nv),
     ))
     .expect("schedule");
     report::print_layout(&layout, 1, Cfg::decomposition().field_bits());

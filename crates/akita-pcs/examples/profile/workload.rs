@@ -1050,7 +1050,7 @@ where
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
 
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
+    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_commit(
         &setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
@@ -1166,7 +1166,7 @@ where
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
 
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
+    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_commit(
         &setup,
         std::slice::from_ref(&poly),
         &stack,
