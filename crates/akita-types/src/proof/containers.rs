@@ -428,8 +428,8 @@ impl<'a, F> RingView<'a, F> {
     }
 
     /// Absorb this view's coefficients into `transcript` using the D-free flat
-    /// encoding — byte-identical to the typed
-    /// [`RingCommitment::append_to_transcript`] path.
+    /// encoding, byte-identical to the typed
+    /// [`Commitment::append_to_transcript`] path.
     ///
     /// The `ring_dim` stored in this view is used directly; no external dimension
     /// is needed since `RingView` always carries a valid, non-zero `ring_dim`.

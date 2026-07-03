@@ -354,7 +354,7 @@ where
     // cleared together on the `pad_base_evals` (recursive-suffix) path and
     // written together otherwise; `prove_fold` selects the root vs recursive
     // `build_*_stage2_trace_table` branch on `row_coefficients.is_some()`, so a
-    // split here would silently mis-scale the trace table. Preserve the exact
+    // split here would silently scale the trace table incorrectly. Preserve the exact
     // branch wiring and assert the two stay coupled to `pad_base_evals`.
     let row_coefficients = if pad_base_evals {
         None

@@ -16,7 +16,7 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommitmentGroup, FlatMatrix, RingCommitment, SetupContributionMode,
+    AkitaVerifierSetup, Commitment, CommitmentGroup, FlatMatrix, SetupContributionMode,
     SetupPrefixVerifierRegistry, VerifierOpeningBatch,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
@@ -182,6 +182,13 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        let num_commitment_coeffs = u64::try_from(self.commitment.rows().coeff_len()).map_err(
+            |_| SerializationError::LengthLimitExceeded {
+                len: self.commitment.rows().coeff_len() as u64,
+                max: usize::MAX,
+            },
+        )?;
+        num_commitment_coeffs.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
@@ -201,6 +208,7 @@ where
             + setup_mode_to_u8(self.setup_contribution_mode).serialized_size(BLOB_COMPRESS)
             + self.opening_point.serialized_size(BLOB_COMPRESS)
             + self.opening.serialized_size(BLOB_COMPRESS)
+            + (self.commitment.rows().coeff_len() as u64).serialized_size(BLOB_COMPRESS)
             + self.commitment.serialized_size(BLOB_COMPRESS)
             + self.verifier_setup.serialized_size(BLOB_COMPRESS)
             + self.proof_shape.serialized_size(BLOB_COMPRESS)
@@ -395,11 +403,13 @@ where
         let opening_point =
             Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        let commitment = RingCommitment::<F, D>::deserialize_with_mode(
+        let num_commitment_coeffs =
+            Self::decode_capped_len(&mut rest, MAX_SETUP_MATRIX_FIELD_ELEMENTS)?;
+        let commitment = Commitment::<F>::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,
-            &(),
+            &num_commitment_coeffs,
         )?;
         let verifier_setup = decode_setup(&mut rest)?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(

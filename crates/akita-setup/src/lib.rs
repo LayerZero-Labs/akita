@@ -56,8 +56,7 @@ fn setup_gen_ring_dim<Cfg: CommitmentConfig>() -> usize {
 /// matrix expansion.
 ///
 /// The prover setup artifact is D-free; the setup-time generation ring
-/// dimension `gen_ring_dim` is derived from `Cfg`'s schedule policy (see
-/// [`setup_gen_ring_dim`]).
+/// dimension `gen_ring_dim` is derived from `Cfg`'s schedule policy.
 ///
 /// # Errors
 ///
