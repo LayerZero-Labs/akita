@@ -127,6 +127,20 @@ jobs:
           cache-on-failure: true
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
+      # TEMPORARY: investigating CI build-time bottleneck (see PR description).
+      # Remove this step and the artifact upload once the slow crate/link phase is identified.
+      - name: Build timings report
+        if: matrix.shard == 1
+        run: |
+          cargo test --no-run --profile ci-test --no-default-features \
+            --features parallel,disk-persistence --timings
+      - name: Upload timings report
+        if: matrix.shard == 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cargo-timings
+          path: target/cargo-timings/
+          retention-days: 7
       - name: Run tests
         env:
           SHARD_INDEX: ${{ matrix.shard }}
