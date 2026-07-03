@@ -79,7 +79,7 @@ pub fn best_snap_below_tstar(
     }
     let (retain_num, retain_den) = snap_retain_rational(max_tstar_reduction_fraction);
     let floor = snap_min_tstar_retain_floor(t_star, retain_num, retain_den);
-    for delta in (1..current_delta).rev() {
+    for delta in 1..current_delta {
         let cap = fold_witness_verifier_linf_bound(log_basis, delta);
         if cap < floor {
             continue;
@@ -251,6 +251,48 @@ pub fn print_fold_linf_aggregate_report(
             obs_over_tstar,
             o.grind_probe_count,
             o.grind_nonce,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::best_snap_below_tstar;
+    use akita_types::sis::fold_witness_verifier_linf_bound;
+
+    #[test]
+    fn best_snap_below_tstar_returns_tightest_qualifying_delta() {
+        let log_basis = 2u32;
+        let current_delta = 6usize;
+        let t_star = 739u128;
+        let max_tstar_reduction = 0.9;
+        let floor = akita_types::sis::snap_min_tstar_retain_floor(t_star, 1_000, 10_000);
+        let observed_p90 = 80u32;
+
+        let qualifying: Vec<usize> = (1..current_delta)
+            .filter(|&delta| {
+                let cap = fold_witness_verifier_linf_bound(log_basis, delta);
+                cap >= floor && u128::from(observed_p90) <= cap
+            })
+            .collect();
+        assert!(
+            qualifying.len() >= 2,
+            "test setup: need multiple qualifying δ (floor={floor}, got {qualifying:?})"
+        );
+
+        let snap = best_snap_below_tstar(
+            log_basis,
+            current_delta,
+            t_star,
+            observed_p90,
+            observed_p90,
+            max_tstar_reduction,
+        )
+        .expect("expected a snap candidate");
+        assert_eq!(
+            snap.delta_fold,
+            *qualifying.first().expect("non-empty qualifying set"),
+            "must pick tightest δ, not the first downward hit"
         );
     }
 }
