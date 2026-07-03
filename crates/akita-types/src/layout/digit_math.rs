@@ -195,32 +195,12 @@ mod tests {
                 .1,
         )
         .unwrap();
-        let snap_num = u128::from(crate::sis::FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM);
-        let snap_den = u128::from(crate::sis::FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN);
-        let singleton_plan = fold_witness_linf_digit_plan(
-            5,
-            1,
-            128,
-            3,
-            fold_challenge,
-            fold_witness,
-            &cap_config,
-            snap_num,
-            snap_den,
-        )
-        .expect("singleton fold plan");
-        let batched_plan = fold_witness_linf_digit_plan(
-            5,
-            4,
-            128,
-            3,
-            fold_challenge,
-            fold_witness,
-            &cap_config,
-            snap_num,
-            snap_den,
-        )
-        .expect("batched fold plan");
+        let singleton_plan =
+            fold_witness_linf_digit_plan(5, 1, 128, 3, fold_challenge, fold_witness, &cap_config)
+                .expect("singleton fold plan");
+        let batched_plan =
+            fold_witness_linf_digit_plan(5, 4, 128, 3, fold_challenge, fold_witness, &cap_config)
+                .expect("batched fold plan");
         assert!(
             batched_plan.pre_snap_cap > singleton_plan.pre_snap_cap,
             "pre-snap fold witness cap must grow with batched num_claims"

@@ -33,10 +33,7 @@
 
 use akita_field::AkitaError;
 
-use super::fold_linf_cap::{
-    FoldWitnessLinfCapConfig, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
-};
+use super::fold_linf_cap::FoldWitnessLinfCapConfig;
 use super::norm_bound::{fold_witness_linf_digit_plan, FoldChallengeNorms, FoldWitnessNorms};
 use crate::DecompositionParams;
 
@@ -229,8 +226,6 @@ pub fn num_digits_fold(
         challenge,
         witness,
         &cap_config,
-        u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM),
-        u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN),
     )?;
     if plan.grind_cap == 0 {
         return Err(AkitaError::InvalidSetup(

@@ -242,9 +242,9 @@ pub fn fold_witness_linf_digit_plan(
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
     cap_config: &FoldWitnessLinfCapConfig,
-    snap_retain_num: u128,
-    snap_retain_den: u128,
 ) -> Result<FoldWitnessLinfDigitPlan, AkitaError> {
+    let snap_retain_num = u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM);
+    let snap_retain_den = u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN);
     let (pre_snap_cap, t_star) =
         fold_witness_pre_snap_linf_cap(challenge, witness, r_vars, num_claims, cap_config)?;
     let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);
@@ -292,15 +292,7 @@ pub fn fold_witness_honest_prover_linf_cap(
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<u128, AkitaError> {
     Ok(fold_witness_linf_digit_plan(
-        r_vars,
-        num_claims,
-        field_bits,
-        log_basis,
-        challenge,
-        witness,
-        cap_config,
-        u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM),
-        u128::from(FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN),
+        r_vars, num_claims, field_bits, log_basis, challenge, witness, cap_config,
     )?
     .grind_cap)
 }
@@ -781,8 +773,6 @@ mod tests {
             challenge,
             witness,
             &cap_config,
-            1,
-            2,
         )
         .unwrap();
         let t_star = plan.t_star.expect("tail-bound level should expose t*");
