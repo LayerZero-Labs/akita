@@ -15,9 +15,11 @@ use super::decomposition_digits::{
 use crate::DecompositionParams;
 
 pub use super::fold_linf_cap::{
-    fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,
-    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+    fold_witness_linf_cap_policy, fold_witness_linf_ln_term,
+    fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
+    fold_witness_linf_tensor_tail_bound_sq, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    MAX_FOLD_GRIND_ATTEMPTS,
 };
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
@@ -165,24 +167,18 @@ pub fn fold_witness_honest_prover_linf_cap(
             "fold_witness_honest_prover_linf_cap: folded-witness bound β = 0".to_string(),
         ));
     }
-    let num_fold_blocks = (num_claims as u128)
-        .checked_mul(1u128 << r_vars)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "fold_witness_honest_prover_linf_cap: num_fold_blocks overflows u128".to_string(),
-            )
-        })?;
     let witness_linf_sq = witness
         .infinity_norm()
         .saturating_mul(witness.infinity_norm());
     match cap_config.policy {
         FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok(beta),
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
-            let t_sq = fold_witness_linf_tail_bound_sq(
-                num_fold_blocks,
-                cap_config.challenge_l2_sq_max,
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
+            let t_sq = fold_witness_linf_tail_bound_for_config_sq(
+                r_vars,
+                num_claims,
                 witness_linf_sq,
-                cap_config.grind_union_ln,
+                cap_config,
             )?;
             Ok(beta.min(isqrt_ceil(t_sq)))
         }

@@ -15,17 +15,18 @@ use akita_verifier::CommitmentVerifier;
 use common::*;
 
 const TENSOR_D: usize = D64OneHotTensor::D;
-const TENSOR_K: usize = TENSOR_D;
 
 fn run_single_onehot_tensor(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
+        let tensor_k = D64OneHotTensor::onehot_chunk_size();
         let layout = D64OneHotTensor::get_params_for_batched_commitment(
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
-        assert_eq!(total_ring * TENSOR_K, 1usize << nv);
+        let total_field = layout.num_blocks * layout.block_len * TENSOR_D;
+        assert_eq!(total_field, 1usize << nv);
+        let total_chunks = total_field / tensor_k;
         assert_eq!(
             layout.fold_challenge_shape,
             akita_challenges::TensorChallengeShape::Tensor,
@@ -33,10 +34,10 @@ fn run_single_onehot_tensor(nv: usize) {
         );
 
         let mut rng = StdRng::seed_from_u64(0xfeed_d00d_0000 + nv as u64);
-        let indices: Vec<Option<u8>> = (0..total_ring)
-            .map(|_| Some(rng.gen_range(0..TENSOR_K) as u8))
+        let indices: Vec<Option<u8>> = (0..total_chunks)
+            .map(|_| Some(rng.gen_range(0..tensor_k) as u8))
             .collect();
-        let poly = OneHotPoly::<F, TENSOR_D, u8>::new(TENSOR_K, indices).expect("onehot poly");
+        let poly = OneHotPoly::<F, TENSOR_D, u8>::new(tensor_k, indices).expect("onehot poly");
 
         let pt = random_point(nv, 0xc0ff_ee00 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
@@ -206,26 +207,23 @@ fn round_trip_proof(proof: &AkitaBatchedProof<F, F>) -> AkitaBatchedProof<F, F> 
     .expect("deserialize")
 }
 
-// Deferred (D128-tensor follow-up): the tensor fold challenge applies an `ω²`
-// factor to the effective challenge L1 mass, and under the safe
-// `onehot_chunk_size = 1` default (`nonzeros = D`) the A-role collision pushes
-// the D64 tensor family past its secure threshold, so every level degrades to
-// cleartext and no tensor-shaped root fold is emitted. Re-enable once the tensor
-// family is migrated to D=128.
+// Keep one small active root tensor proof/verify case. The larger sizes remain
+// opt-in because this test uses the full PCS setup/prove/verify path.
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
 fn single_onehot_tensor_nv15() {
     run_single_onehot_tensor(15);
 }
 
+// Deferred larger tensor e2e cases. The active nv15 test above covers the root
+// tensor proof/verify path; these remain useful local stress tests.
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
+#[ignore = "larger tensor e2e stress test; nv15 covers active root tensor proof/verify"]
 fn single_onehot_tensor_nv20() {
     run_single_onehot_tensor(20);
 }
 
 #[test]
-#[ignore = "D64 one-hot tensor degrades to cleartext under onehot_chunk_size=1; pending D128 tensor migration"]
+#[ignore = "larger tensor e2e stress test; nv15 covers active root tensor proof/verify"]
 fn single_onehot_tensor_nv22() {
     run_single_onehot_tensor(22);
 }

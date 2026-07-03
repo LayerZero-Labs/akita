@@ -1003,3 +1003,12 @@ fn all_proof_optimized_presets_use_shared_ring_challenge() {
     // routes through the shared policy.
     assert_preset_uses_shared_ring_challenge::<crate::tensor_verifier::fp128::D64OneHotTensor>();
 }
+
+#[test]
+fn tensor_onehot_preset_keeps_d64_onehot_chunk_size() {
+    assert_eq!(
+        crate::tensor_verifier::fp128::D64OneHotTensor::onehot_chunk_size(),
+        fp128::D64OneHot::onehot_chunk_size(),
+        "tensor verifier preset must preserve the D64 one-hot witness sparsity envelope"
+    );
+}
