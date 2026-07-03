@@ -229,8 +229,9 @@ where
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
         >,
-    CpuBackend:
-        ComputeBackendSetup<FF> + RootCommitBackend<FF, P, Cfg::ExtField, D> + RecursiveProveBackend<FF, P, Cfg::ExtField, D>,
+    CpuBackend: ComputeBackendSetup<FF>
+        + RootCommitBackend<FF, P, Cfg::ExtField, D>
+        + RecursiveProveBackend<FF, P, Cfg::ExtField, D>,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
@@ -347,7 +348,12 @@ where
     };
 
     let setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1).unwrap();
-    run_fold_linf_prove_verify::<FF, OneHotPoly<FF, D, u8>, D, Cfg>(&setup, &onehot_poly, &pt, opening)
+    run_fold_linf_prove_verify::<FF, OneHotPoly<FF, D, u8>, D, Cfg>(
+        &setup,
+        &onehot_poly,
+        &pt,
+        opening,
+    )
 }
 
 pub fn run_dense_fold_linf_sample<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
