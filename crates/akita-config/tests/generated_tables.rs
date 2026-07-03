@@ -130,21 +130,6 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "all-schedules")]
-fn grouped_keys_from_catalog(
-    catalog: akita_planner::GeneratedScheduleTable,
-) -> Vec<AkitaScheduleLookupKey> {
-    catalog
-        .entries
-        .iter()
-        .filter(|entry| !entry.precommitteds.is_empty())
-        .map(|entry| AkitaScheduleLookupKey {
-            final_group: entry.final_group,
-            precommitteds: entry.precommitteds.to_vec(),
-        })
-        .collect()
-}
-
-#[cfg(feature = "all-schedules")]
 fn family_catalog(
     family: &GeneratedFamily,
     keys: &[PolynomialGroupLayout],
@@ -183,7 +168,6 @@ fn family_catalog(
     }
 }
 
-#[cfg(not(feature = "all-schedules"))]
 fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     module_name: &str,
     keys: &[AkitaScheduleLookupKey],
@@ -206,7 +190,6 @@ fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
     );
 }
 
-#[cfg(not(feature = "all-schedules"))]
 fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaScheduleLookupKey]) {
     match family.module_name {
         "fp128_d128_full" => {
@@ -580,9 +563,15 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     #[cfg(feature = "all-schedules")]
     {
         let catalog = family_catalog(family, &keys);
-        let group_batch_keys = grouped_keys_from_catalog(catalog);
+        let group_batch_keys = (family.group_batch_keys)(family).unwrap_or_else(|e| {
+            panic!(
+                "family {} grouped key enumeration failed: {e}",
+                family.module_name
+            )
+        });
         check_scalar_keys(family, &keys, catalog, into);
         if family.emit_group_batch {
+            assert_family_group_batch_table_hit(family, &group_batch_keys);
             check_group_batch_keys(family, &group_batch_keys, into);
         }
     }
