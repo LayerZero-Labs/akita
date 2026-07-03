@@ -463,4 +463,24 @@ mod tests {
             RingVec::from_ring_elems(&typed).coeffs()
         );
     }
+
+    #[test]
+    fn nested_role_dims_relation_y_coeff_len_matches_per_segment_widths() {
+        let dims = CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 32,
+        };
+        assert!(dims.nests());
+        let layout = RelationYLayout {
+            n_d: 2,
+            commit_rows_per_group: 3,
+            b_inner_rows_per_group: 1,
+            n_a: 4,
+        };
+        let coeff_len = relation_y_coeff_len(dims, layout, 1).expect("coeff len");
+        let expected = 128 + 2 * 32 + 3 * 64 + 64 + 4 * 128;
+        assert_eq!(coeff_len, expected);
+        assert_eq!(relation_y_row_count(layout, 1), 1 + 2 + 3 + 1 + 4);
+    }
 }

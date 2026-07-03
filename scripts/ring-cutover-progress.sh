@@ -103,6 +103,29 @@ else
   echo "  none"
 fi
 
+echo
+echo "== forbidden F2 level-wrap in fold suffix orchestration (target: none) =="
+f2_suffix_files=(
+  crates/akita-verifier/src/protocol/core/suffix.rs
+  crates/akita-prover/src/protocol/core/suffix.rs
+)
+f2_hits=""
+for f in "${f2_suffix_files[@]}"; do
+  if [[ ! -f "$f" ]]; then
+    continue
+  fi
+  hits="$(rg -n 'dispatch_ring_dim_result!' "$f" 2>/dev/null \
+    | grep -vE '^[0-9]+:\s*//' || true)"
+  if [[ -n "$hits" ]]; then
+    f2_hits+=$'\n'"$hits"
+  fi
+done
+if [[ -n "$f2_hits" ]]; then
+  echo "$f2_hits"
+else
+  echo "  none"
+fi
+
 strip_test_mods() {
   # Drop inline #[cfg(test)] mod bodies (by convention at file bottom) so
   # test-only helpers do not count as violations. Out-of-line `mod tests;`
@@ -131,7 +154,7 @@ echo "== discriminator violations: const-D fn taking schedule types =="
 pv="$(count_violations crates/akita-prover/src)"
 vv="$(count_violations crates/akita-verifier/src)"
 echo "  akita-prover:   $pv   (target: 0 at merge)"
-echo "  akita-verifier: $vv   (transitional; must not grow; baseline 14 on 2026-07-02)"
+echo "  akita-verifier: $vv   (target: 0 at merge)"
 if [[ "$mode" == "report" && "$pv" -gt 0 ]]; then
   echo "  -- prover violation sites --"
   for f in $(rg -U --multiline-dotall \
@@ -163,6 +186,11 @@ fi
   if [[ -n "$banned_hits" ]]; then
     echo
     echo "MERGE GATE FAIL: banned bridge/facade names present." >&2
+    fail=1
+  fi
+  if [[ -n "$f2_hits" ]]; then
+    echo
+    echo "MERGE GATE FAIL: forbidden F2 level-wrap pattern in suffix orchestration." >&2
     fail=1
   fi
   if [[ "$fail" -eq 1 ]]; then

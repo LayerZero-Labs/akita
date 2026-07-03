@@ -123,7 +123,7 @@ pub use schedule::{
     DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, Step,
 };
 pub use schedule_context::{
-    CommitmentRingDims, LevelShape, RingDimPlan, RingLevelContext, RingRole,
+    validate_role_dims, CommitmentRingDims, LevelShape, RingDimPlan, RingLevelContext, RingRole,
     ValidatedScheduleContext, MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
