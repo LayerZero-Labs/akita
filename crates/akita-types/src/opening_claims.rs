@@ -1,5 +1,6 @@
 //! Public opening claims and layout-only opening geometry.
 
+use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_usize, push_usize_vec};
 use crate::instance_descriptor::DescriptorDigest;
 use crate::proof::scheme::OpeningPoints;
@@ -29,6 +30,31 @@ pub const GROUPED_ROOT_DENSE_UNSUPPORTED: &str =
 /// Grouped root prove/verify is not implemented yet.
 pub const GROUPED_ROOT_UNSUPPORTED: &str =
     "multi-group root batching is not supported yet; see specs/multi-group-batching.md";
+
+/// Return the grouped-root rejection message, if the layout should be rejected.
+///
+/// `includes_dense_polynomial` is `Some(true)` when the prover knows the batch
+/// includes a dense polynomial; verifier callers pass `None` and skip the check.
+pub fn should_reject_grouped_root(
+    layout: &OpeningClaimsLayout,
+    tiered_commitment: bool,
+    setup_contribution_mode: SetupContributionMode,
+    includes_dense_polynomial: Option<bool>,
+) -> Option<&'static str> {
+    if layout.num_groups() <= 1 {
+        return None;
+    }
+    if tiered_commitment {
+        return Some(GROUPED_ROOT_TIERED_UNSUPPORTED);
+    }
+    if setup_contribution_mode == SetupContributionMode::Recursive {
+        return Some(GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED);
+    }
+    if includes_dense_polynomial == Some(true) {
+        return Some(GROUPED_ROOT_DENSE_UNSUPPORTED);
+    }
+    Some(GROUPED_ROOT_UNSUPPORTED)
+}
 
 /// Ordered coordinate selection into an opening batch's shared point.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,8 +262,11 @@ impl OpeningClaimsLayout {
         blake2b_256(&bytes)
     }
 
-    /// Absorb normalized layout shape into the transcript.
-    pub fn append_to_transcript<F, T>(&self, transcript: &mut T) -> Result<(), AkitaError>
+    /// Absorb normalized batch-shape fields into the transcript.
+    pub fn append_batch_shape_to_transcript<F, T>(
+        &self,
+        transcript: &mut T,
+    ) -> Result<(), AkitaError>
     where
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
@@ -471,21 +500,21 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 
     /// Structural view for setup, planner, and config code.
-    pub fn layout(&self) -> OpeningClaimsLayout {
-        OpeningClaimsLayout {
-            groups: self
-                .groups
+    pub fn layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        self.check()?;
+        OpeningClaimsLayout::from_groups(
+            self.groups
                 .iter()
                 .map(|group| {
                     PolynomialGroupLayout::new(group.point_vars.num_vars(), group.evaluations.len())
                 })
                 .collect(),
-        }
+        )
     }
 
     /// Layout digest for this claim set.
-    pub fn opening_batch_digest(&self) -> DescriptorDigest {
-        self.layout().opening_batch_digest()
+    pub fn opening_batch_digest(&self) -> Result<DescriptorDigest, AkitaError> {
+        Ok(self.layout()?.opening_batch_digest())
     }
 }
 
@@ -542,22 +571,8 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         C: AppendToTranscript<TranscriptF>,
         T: Transcript<TranscriptF>,
     {
-        self.check()?;
-        let num_polynomials = self
-            .groups
-            .iter()
-            .map(PolynomialGroupClaims::num_evaluations)
-            .sum::<usize>();
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_vars());
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &num_polynomials);
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.groups.len());
-        for group in &self.groups {
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_evaluations());
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.point_vars().num_vars());
-            for &index in group.point_vars().indices() {
-                transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
-            }
-        }
+        self.layout()?
+            .append_batch_shape_to_transcript::<TranscriptF, T>(transcript)?;
         for group in &self.groups {
             group
                 .commitment
@@ -595,4 +610,83 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime128OffsetA7F7;
+
+    type F = Prime128OffsetA7F7;
+
+    fn prefix_claims(num_vars: usize, evals: usize) -> OpeningClaims<'static, F, ()> {
+        let point_vars = PointVariableSelection::prefix(num_vars, num_vars).expect("prefix");
+        let group =
+            PolynomialGroupClaims::new(point_vars, vec![F::zero(); evals], ()).expect("group");
+        OpeningClaims::from_groups(vec![F::zero(); num_vars], vec![group]).expect("claims")
+    }
+
+    #[test]
+    fn check_rejects_duplicate_point_indices() {
+        let err = PointVariableSelection::new(vec![0, 0], 2).expect_err("duplicate index");
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn check_rejects_out_of_range_point_indices() {
+        let err = PointVariableSelection::new(vec![2], 2).expect_err("out of range");
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn check_rejects_non_prefix_routing() {
+        let point_vars = PointVariableSelection::new(vec![1, 0], 2).expect("custom routing");
+        let group = PolynomialGroupClaims::new(point_vars, vec![F::zero()], ()).expect("group");
+        let err = OpeningClaims::from_groups(vec![F::zero(), F::zero()], vec![group])
+            .expect_err("non-prefix routing");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn check_rejects_short_point_relative_to_max_group_vars() {
+        let claims = prefix_claims(3, 1);
+        let short_point = vec![F::zero(); 2];
+        let err = OpeningClaims::from_groups(short_point, claims.groups().to_vec())
+            .expect_err("short point");
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn layout_digest_matches_layout_view() {
+        let claims = prefix_claims(4, 2);
+        assert_eq!(
+            claims.opening_batch_digest().expect("claims digest"),
+            claims.layout().expect("layout").opening_batch_digest()
+        );
+    }
+
+    #[test]
+    fn with_padded_point_rejects_longer_point() {
+        let err = OpeningClaims::with_padded_point(&[F::zero(); 3], 2, 1)
+            .expect_err("point longer than num_vars");
+        assert!(matches!(err, AkitaError::InvalidPointDimension { .. }));
+    }
+
+    #[test]
+    fn should_reject_grouped_root_returns_canonical_messages() {
+        let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
+        assert_eq!(
+            should_reject_grouped_root(&layout, false, SetupContributionMode::Direct, None),
+            Some(GROUPED_ROOT_UNSUPPORTED)
+        );
+        assert_eq!(
+            should_reject_grouped_root(
+                &OpeningClaimsLayout::new(4, 1).expect("single group"),
+                true,
+                SetupContributionMode::Direct,
+                None,
+            ),
+            None
+        );
+    }
 }
