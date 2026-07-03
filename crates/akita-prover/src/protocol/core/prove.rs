@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::commitment::validate_onehot_chunk_size_for_params;
+use crate::api::commitment::validate_batched_onehot_chunk_size_for_params;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
@@ -173,7 +173,10 @@ where
         None => None,
     }
     .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
-    validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(&flat_polys, root_commit_params)?;
+    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(
+        &flat_polys,
+        root_commit_params,
+    )?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         expanded.as_ref(),
