@@ -79,27 +79,15 @@ where
 
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
     validate_commit_outer_input_nonempty(outer_input.len())?;
-    let u: Vec<CyclotomicRing<F, D>> = if commit_layout.f_key.is_some() {
-        // Tiered: u_final = F·decompose(blockdiag(B')·t̂). ZK blinding of the F
-        // tier is a non-goal; tiered proofs are exercised non-zk.
-        crate::api::commitment::tiered_commit_u_final::<F, D, B>(
-            backend,
-            prepared,
-            commit_layout,
-            &outer_input,
-        )?
-    } else {
-        let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-            prepared,
-            commit_layout.b_key.row_len(),
-            &outer_input,
-            commit_layout.log_basis,
-        )?;
-        if u.len() != commit_layout.b_key.row_len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        u
-    };
+    let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+        prepared,
+        commit_layout.b_key.row_len(),
+        &outer_input,
+        commit_layout.log_basis,
+    )?;
+    if u.len() != commit_layout.b_key.row_len() {
+        return Err(AkitaError::InvalidProof);
+    }
     let hint = {
         AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
             inner.decomposed_inner_rows,

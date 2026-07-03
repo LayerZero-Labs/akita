@@ -15,10 +15,6 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::collections::BTreeSet;
 
-/// Tiered presets cannot open multi-group root batches yet.
-pub const GROUPED_ROOT_TIERED_UNSUPPORTED: &str =
-    "tiered multi-group root batching is not supported; see specs/multi-group-batching.md";
-
 /// Recursive setup contribution cannot open multi-group root batches yet.
 pub const GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED: &str =
     "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md";
@@ -37,15 +33,11 @@ pub const GROUPED_ROOT_UNSUPPORTED: &str =
 /// includes a dense polynomial; verifier callers pass `None` and skip the check.
 pub fn should_reject_grouped_root(
     layout: &OpeningClaimsLayout,
-    tiered_commitment: bool,
     setup_contribution_mode: SetupContributionMode,
     includes_dense_polynomial: Option<bool>,
 ) -> Option<&'static str> {
     if layout.num_groups() <= 1 {
         return None;
-    }
-    if tiered_commitment {
-        return Some(GROUPED_ROOT_TIERED_UNSUPPORTED);
     }
     if setup_contribution_mode == SetupContributionMode::Recursive {
         return Some(GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED);
@@ -676,13 +668,12 @@ mod tests {
     fn should_reject_grouped_root_returns_canonical_messages() {
         let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
         assert_eq!(
-            should_reject_grouped_root(&layout, false, SetupContributionMode::Direct, None),
+            should_reject_grouped_root(&layout, SetupContributionMode::Direct, None),
             Some(GROUPED_ROOT_UNSUPPORTED)
         );
         assert_eq!(
             should_reject_grouped_root(
                 &OpeningClaimsLayout::new(4, 1).expect("single group"),
-                true,
                 SetupContributionMode::Direct,
                 None,
             ),

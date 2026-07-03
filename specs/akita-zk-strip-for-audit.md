@@ -193,7 +193,7 @@ cargo test -p akita-config --no-default-features --test schedule_catalog_feature
 `single_poly_tensor_e2e.rs`, and the ~24 inline `#[cfg(feature="zk")]` test
 modules. **Tests kept** (transparent): the 7 core e2e files (`akita_e2e.rs`,
 `batched_aggregated_e2e.rs`, `heterogeneous_prove_e2e.rs`,
-`recursive_setup_e2e.rs`, `single_poly_e2e.rs`, `tiered_e2e.rs`) and ~44
+`recursive_setup_e2e.rs`, `single_poly_e2e.rs`) and ~44
 unconditional test files.
 
 ### Performance

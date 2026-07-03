@@ -87,7 +87,6 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
-        tiered: Cfg::TIERED_COMMITMENT,
         witness_chunk: Cfg::chunked_witness_cfg(),
     };
     assert_eq!(
@@ -102,7 +101,7 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D32OneHot>();
     assert_policy_matches_cfg::<fp128::D64Full>();
     assert_policy_matches_cfg::<fp128::D128Full>();
-    assert_policy_matches_cfg::<fp128::D64OneHotTiered>();
+    assert_policy_matches_cfg::<fp128::D64OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
 }
 

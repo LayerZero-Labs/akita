@@ -70,16 +70,6 @@ pub struct PlannerPolicy {
     /// folded-witness digit count. Only consulted at a root level whose
     /// `log_commit_bound == 1`; dense levels use `nonzeros = D`.
     pub onehot_chunk_size: usize,
-    /// Enable the tiered second commitment matrix `F` (`Cfg::TIERED_COMMITMENT`).
-    ///
-    /// When `true`, [`schedule_params`] is allowed to reuse a smaller first-tier
-    /// matrix `B` across `f` witness slices and size a second-tier matrix `F`
-    /// per level whose first-tier footprint would otherwise exceed `A`. When
-    /// `false`, every level emits `tier_split == 1` / `f_key == None` and the
-    /// layout is identical to the historical single-tier scheme. Also keys the
-    /// tiered schedule catalog so a tiered policy never aliases a
-    /// non-tiered table.
-    pub tiered: bool,
     /// Multi-chunk witness layout settings (`Cfg::chunked_witness_cfg()`).
     ///
     /// Drives chunked-vs-single-chunk witness pricing in the DP and is embedded
