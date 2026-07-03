@@ -30,6 +30,17 @@ pub const MAX_FOLD_LEVELS: usize = 16;
 /// Ring dimensions supported by runtime dispatch.
 pub const SUPPORTED_RING_DIMS: [usize; 4] = [32, 64, 128, 256];
 
+/// Which Ajtai / protocol matrix role a buffer belongs to at one fold level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingRole {
+    /// A-role (`d_a`): fold witness, row coefficients, ring-switch geometry.
+    Inner,
+    /// B-role (`d_b`): sent commitment rows, COMMIT segment of `y`.
+    Outer,
+    /// D-role (`d_d`): opening digits, D-block rows `v`.
+    Opening,
+}
+
 /// Per-fold ring dimensions by protocol role.
 ///
 /// Invariant when nested: `opening | outer | inner` (`d_d | d_b | d_a`).
@@ -98,6 +109,16 @@ impl CommitmentRingDims {
             )))
         }
     }
+
+    /// Ring dimension for `role`.
+    #[must_use]
+    pub const fn dim_for(self, role: RingRole) -> usize {
+        match role {
+            RingRole::Inner => self.inner,
+            RingRole::Outer => self.outer,
+            RingRole::Opening => self.opening,
+        }
+    }
 }
 
 /// Per-level runtime ring geometry for prove / verify orchestration.
@@ -138,7 +159,7 @@ impl RingDimPlan {
                 )));
             };
             let lp = &step.params;
-            let dims = CommitmentRingDims::uniform(lp.ring_dimension);
+            let dims = lp.role_dims();
             validate_role_dims(dims)?;
             if !seed.gen_ring_dim.is_multiple_of(dims.inner) {
                 return Err(AkitaError::InvalidSetup(format!(
@@ -440,14 +461,6 @@ fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
     if !dims.nests() {
         return Err(AkitaError::InvalidSetup(
             "per-role ring dims must satisfy d_d | d_b | d_a".into(),
-        ));
-    }
-    // Per-block distinct role execution is intentionally not active yet. The
-    // plan carries role dimensions now so that later slices can relax this
-    // check in one place when the kernels honor distinct d_a / d_b / d_d.
-    if dims.inner != dims.outer || dims.outer != dims.opening {
-        return Err(AkitaError::InvalidSetup(
-            "per-block execution is not enabled: d_a, d_b, d_d must be equal".into(),
         ));
     }
     Ok(())

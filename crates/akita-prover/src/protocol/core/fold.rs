@@ -522,23 +522,13 @@ where
         m_row_layout,
     )?;
 
-    let relation_claim = dispatch_ring_dim_result!(ring_d, |D| {
-        if !prepared_fold.commitment.can_decode_vec(ring_d) {
-            return Err(AkitaError::InvalidProof);
-        }
-        let commitment_u = prepared_fold.commitment.try_to_vec::<D>()?;
-        let relation_rows = if is_terminal_fold {
-            &[][..]
-        } else {
-            prepared_fold.instance.v_trusted::<D>()?
-        };
-        relation_claim_from_rows_extension::<F, E, D>(
-            &rs.tau1,
-            rs.alpha,
-            relation_rows,
-            &commitment_u,
-        )
-    })?;
+    let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
+        prepared_fold.instance.role_dims(),
+        &rs.tau1,
+        rs.alpha,
+        prepared_fold.instance.v(),
+        &prepared_fold.commitment,
+    )?;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
         (None, vec![E::zero(); rs.col_bits + rs.ring_bits], E::zero())
     } else {

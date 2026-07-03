@@ -56,7 +56,10 @@ pub use levels::{
     AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
     TerminalLevelProof,
 };
-pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
+pub use relation::{
+    assemble_relation_y, generate_y, relation_claim_from_rows, relation_claim_from_rows_extension,
+    relation_claim_from_rows_extension_at_dims, RelationYLayout,
+};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,

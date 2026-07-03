@@ -20,7 +20,10 @@ use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
-use akita_types::{dispatch_ring_dim_result, CommitmentRingDims, RingVec, RingView};
+use akita_types::{
+    assemble_relation_y, dispatch_ring_dim_result, CommitmentRingDims, RelationYLayout, RingVec,
+    RingView,
+};
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, MRowLayout};
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -32,7 +35,6 @@ use std::time::Instant;
 mod relation_quotient;
 mod repeated_b;
 
-pub use akita_types::generate_y;
 pub use relation_quotient::{compute_relation_quotient, RelationQuotientShape};
 
 fn absorb_terminal_e_folded_fields<F, T>(
@@ -609,31 +611,24 @@ impl RingRelationProver {
                 terminal_tail_t_vectors,
             )?;
 
-        // `y` spans roles (D rows | COMMIT rows | B_inner zeros | A zeros); it
-        // stays fused under the single uniform dimension until the mixed-row
-        // split gives each row group its own dimension.
-        //
-        // Terminal levels drop the D-block from M entirely, so `y` must
-        // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
-        // `v` slice with `n_d_active = 0` so `generate_y` emits
-        // `[consistency | commitment_rows | A-zeros]` (no D-block).
-        let uniform_d = dims.uniform_dim()?;
-        let y = dispatch_ring_dim_result!(uniform_d, |D_UNIFORM| {
-            let v_typed = v.as_ring_slice::<D_UNIFORM>()?;
-            let (y_v_slice, n_d_active) = match m_row_layout {
-                MRowLayout::WithDBlock => (v_typed, d_row_len),
-                MRowLayout::WithoutDBlock => (&[][..], 0usize),
-            };
-            let y_typed = generate_y::<F, D_UNIFORM>(
-                y_v_slice,
-                commitment_rows.as_ring_slice::<D_UNIFORM>()?,
-                n_d_active,
-                effective_commit_rows,
+        // `y` spans roles (D rows | COMMIT rows | B_inner zeros | A zeros).
+        // Terminal levels drop the D-block from M entirely, so `n_d` is zero
+        // and `v` stays empty.
+        let n_d_active = match m_row_layout {
+            MRowLayout::WithDBlock => d_row_len,
+            MRowLayout::WithoutDBlock => 0,
+        };
+        let y = assemble_relation_y::<F>(
+            dims,
+            RelationYLayout {
+                n_d: n_d_active,
+                commit_rows_per_group: effective_commit_rows,
                 b_inner_rows_per_group,
                 n_a,
-            )?;
-            Ok::<_, AkitaError>(RingVec::from_ring_elems(&y_typed))
-        })?;
+            },
+            &v,
+            &commitment_rows,
+        )?;
 
         let instance = RingRelationInstance::new(
             m_row_layout,
@@ -645,7 +640,7 @@ impl RingRelationProver {
             row_coefficient_rings,
             y,
             v,
-            uniform_d,
+            dims,
         )?;
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness::from_flat_parts(
@@ -655,7 +650,7 @@ impl RingRelationProver {
             e_hat,
             e_folded,
             flattened_hint,
-            uniform_d,
+            dims.uniform_dim()?,
         );
         Ok((instance, witness))
     }

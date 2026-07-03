@@ -110,15 +110,18 @@ fn conservative_config_allows_independent_precommitted_groups() {
 
 #[test]
 fn group_batch_schedule_preserves_precommitted_order() {
-    const NV: usize = 16;
+    const PRE_NV: usize = 8;
+    const FINAL_NV: usize = PRE_NV * 2;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 2;
     const MAIN_SIZE: usize = 3;
 
-    let pre_a_key = akita_types::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
-    let pre_b_key = akita_types::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
-    let pre_a_opening_batch = OpeningClaimsLayout::new(NV, PRE_A_SIZE).expect("precommit A batch");
-    let pre_b_opening_batch = OpeningClaimsLayout::new(NV, PRE_B_SIZE).expect("precommit B batch");
+    let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
+    let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
+    let pre_a_opening_batch =
+        OpeningClaimsLayout::new(PRE_NV, PRE_A_SIZE).expect("precommit A batch");
+    let pre_b_opening_batch =
+        OpeningClaimsLayout::new(PRE_NV, PRE_B_SIZE).expect("precommit B batch");
     let pre_a_layout =
         ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
             .expect("precommit A layout");
@@ -131,36 +134,40 @@ fn group_batch_schedule_preserves_precommitted_order() {
         debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4002),
     ];
 
-    with_conservative_commit_stack(NV, PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE, |setup, stack| {
-        ConservativeCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
-        ConservativeCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
-        let pre_a_frozen =
-            akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
-        let pre_b_frozen =
-            akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
-        let grouped_key = akita_types::AkitaScheduleLookupKey {
-            final_group: akita_types::PolynomialGroupLayout::new(NV, MAIN_SIZE),
-            precommitteds: vec![pre_a_frozen, pre_b_frozen],
-        };
+    with_conservative_commit_stack(
+        FINAL_NV,
+        PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE,
+        |setup, stack| {
+            ConservativeCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
+            ConservativeCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
+            let pre_a_frozen =
+                akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
+            let pre_b_frozen =
+                akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
+            let grouped_key = akita_types::AkitaScheduleLookupKey {
+                final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
+                precommitteds: vec![pre_a_frozen, pre_b_frozen],
+            };
 
-        let schedule =
-            OneHotCfg::runtime_schedule(grouped_key.clone()).expect("grouped runtime schedule");
-        let root = grouped_root_params(&schedule);
-        let main_params = OneHotCfg::get_params_for_grouped_batched_commitment(&grouped_key)
-            .expect("main grouped commit params");
+            let schedule =
+                OneHotCfg::runtime_schedule(grouped_key.clone()).expect("grouped runtime schedule");
+            let root = grouped_root_params(&schedule);
+            let main_params = OneHotCfg::get_params_for_grouped_batched_commitment(&grouped_key)
+                .expect("main grouped commit params");
 
-        assert_eq!(grouped_key.num_commitment_groups(), 3);
-        assert_eq!(
-            grouped_key
-                .num_polynomials()
-                .expect("grouped polynomial count"),
-            PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE
-        );
-        assert_eq!(main_params, *root);
-        assert_eq!(root.precommitted_groups.len(), 2);
-        assert_eq!(root.precommitted_groups[0].layout, pre_a_frozen);
-        assert_eq!(root.precommitted_groups[1].layout, pre_b_frozen);
-    });
+            assert_eq!(grouped_key.num_commitment_groups(), 3);
+            assert_eq!(
+                grouped_key
+                    .num_polynomials()
+                    .expect("grouped polynomial count"),
+                PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE
+            );
+            assert_eq!(main_params, *root);
+            assert_eq!(root.precommitted_groups.len(), 2);
+            assert_eq!(root.precommitted_groups[0].layout, pre_a_frozen);
+            assert_eq!(root.precommitted_groups[1].layout, pre_b_frozen);
+        },
+    );
 }
 
 #[test]

@@ -9,6 +9,7 @@ use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
 use crate::schedule::PrecommittedGroupParams;
+use crate::schedule_context::CommitmentRingDims;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
@@ -182,6 +183,15 @@ pub struct LevelParams {
 }
 
 impl LevelParams {
+    /// Per-role ring dimensions at this level.
+    ///
+    /// Uniform schedules use `d_a = d_b = d_d = ring_dimension`. The planner
+    /// may populate divergent roles later via [`Self::with_role_dims`].
+    #[must_use]
+    pub fn role_dims(&self) -> CommitmentRingDims {
+        CommitmentRingDims::uniform(self.ring_dimension)
+    }
+
     /// Synthetic `LevelParams` carrying only a terminal-direct's `log_basis`.
     ///
     /// `scheduled_next_level_params` returns this stub when the next step

@@ -5,7 +5,7 @@ use crate::compute::{
 };
 use akita_challenges::{
     grind_probe_permutation, preview_folding_challenges, sample_folding_challenges,
-    stage1_fold_challenge_labels, Challenges,
+    stage1_fold_challenge_labels, Challenges, SparseChallengeConfig, TensorChallengeShape,
 };
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -197,7 +197,9 @@ fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
     polys: &[&P],
-    lp: &LevelParams,
+    num_blocks: usize,
+    stage1_config: &SparseChallengeConfig,
+    fold_challenge_shape: TensorChallengeShape,
     num_claims: usize,
     tail_t_vectors: Option<usize>,
     ring_d: usize,
@@ -223,10 +225,10 @@ where
         let challenges = preview_folding_challenges(
             transcript,
             ring_d,
-            lp.num_blocks,
+            num_blocks,
             num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
+            stage1_config,
+            &fold_challenge_shape,
             labels,
             nonce,
         )?;
@@ -250,10 +252,10 @@ where
         let challenges = sample_folding_challenges::<F, T>(
             transcript,
             ring_d,
-            lp.num_blocks,
+            num_blocks,
             num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
+            stage1_config,
+            &fold_challenge_shape,
             labels,
             nonce,
         )?;
@@ -303,13 +305,19 @@ where
     let fold_probe_params = FoldProbeParams::from_level(lp);
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
 
+    let num_blocks = lp.num_blocks;
+    let stage1_config = &lp.stage1_config;
+    let fold_challenge_shape = lp.fold_challenge_shape;
+
     akita_types::dispatch_ring_dim_result!(ring_d, |D| {
         sample_fold_decompose_witness_at_dim::<F, P, B, T, D>(
             backend,
             prepared,
             transcript,
             polys,
-            lp,
+            num_blocks,
+            stage1_config,
+            fold_challenge_shape,
             num_claims,
             tail_t_vectors,
             ring_d,

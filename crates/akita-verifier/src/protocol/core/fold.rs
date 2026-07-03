@@ -398,7 +398,7 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let commitment_rows = commitment.as_ring_slice::<D>()?;
+    let _ = commitment.as_ring_slice::<D>()?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
             opening_shape.num_total_polynomials(),
@@ -406,7 +406,7 @@ where
         )?,
         prepared.fold_grind_nonce,
     )?;
-    let v_rings = prepared.v.as_ring_slice::<D>()?;
+    prepared.v.as_ring_slice::<D>()?;
     let stage1_challenges = derive_stage1_challenges::<F, T>(
         transcript,
         prepared.v.coeffs(),
@@ -421,22 +421,22 @@ where
         RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
             &prepared.row_coefficients,
         )?;
+    let role_dims = prepared.lp.role_dims();
     let n_d_active = match prepared.m_row_layout {
         MRowLayout::WithDBlock => prepared.lp.d_key.row_len(),
         MRowLayout::WithoutDBlock => 0,
     };
-    let y_v_slice = match prepared.m_row_layout {
-        MRowLayout::WithDBlock => v_rings,
-        MRowLayout::WithoutDBlock => &[],
-    };
-    let relation_y = RingVec::from_ring_elems(&generate_y::<F, D>(
-        y_v_slice,
-        commitment_rows,
-        n_d_active,
-        prepared.lp.effective_commit_rows(),
-        prepared.lp.b_inner_rows_per_group(),
-        prepared.lp.a_key.row_len(),
-    )?);
+    let relation_y = assemble_relation_y::<F>(
+        role_dims,
+        RelationYLayout {
+            n_d: n_d_active,
+            commit_rows_per_group: prepared.lp.effective_commit_rows(),
+            b_inner_rows_per_group: prepared.lp.b_inner_rows_per_group(),
+            n_a: prepared.lp.a_key.row_len(),
+        },
+        &prepared.v,
+        commitment,
+    )?;
     let relation_instance = RingRelationInstance::new(
         prepared.m_row_layout,
         stage1_challenges,
@@ -446,8 +446,8 @@ where
         gamma,
         row_coefficient_rings,
         relation_y,
-        RingVec::from_ring_elems(v_rings),
-        prepared.lp.ring_dimension,
+        prepared.v,
+        role_dims,
     )?;
     relation_instance.check_v_shape_for_level(prepared.lp)?;
     let ring_switch_replay = RingSwitchReplay {
@@ -480,11 +480,12 @@ where
             )?
         }
     };
-    let relation_claim = relation_claim_from_rows_extension::<F, E, D>(
+    let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
+        relation_instance.role_dims(),
         &rs.tau1,
         rs.alpha,
-        relation_instance.v_trusted::<D>()?,
-        commitment_rows,
+        relation_instance.v(),
+        commitment,
     )?;
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
     let is_terminal_stage2 = matches!(prepared.stage2, AkitaStage2Proof::Terminal(_));

@@ -1,5 +1,6 @@
 //! Runtime-to-const-generic dispatch shared by prover and verifier.
 
+use crate::schedule_context::{CommitmentRingDims, RingRole};
 use crate::LevelParams;
 use akita_field::AkitaError;
 
@@ -18,18 +19,33 @@ pub fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {
     Ok(D.trailing_zeros() as usize)
 }
 
-/// Validate that schedule level params match the dispatched ring dimension.
+/// Validate that schedule level params match the dispatched A-role (`d_a`).
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] when `lp.ring_dimension != D`.
+/// Returns [`AkitaError::InvalidSetup`] when `lp.role_dims().d_a() != D`.
 #[inline]
 pub fn validate_level_dispatch<const D: usize>(lp: &LevelParams) -> Result<usize, AkitaError> {
+    validate_role_dispatch::<D>(lp.role_dims(), RingRole::Inner)
+}
+
+/// Validate that `dims.dim_for(role) == D` for a kernel dispatch arm.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] on dimension mismatch.
+#[inline]
+pub fn validate_role_dispatch<const D: usize>(
+    dims: CommitmentRingDims,
+    role: RingRole,
+) -> Result<usize, AkitaError> {
     let ring_bits = validate_ring_dispatch::<D>()?;
-    if lp.ring_dimension != D {
-        return Err(AkitaError::InvalidSetup(
-            "LevelParams ring dimension does not match prover dispatch".to_string(),
-        ));
+    if dims.dim_for(role) != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "role {:?} ring dimension {} does not match dispatch D={D}",
+            role,
+            dims.dim_for(role)
+        )));
     }
     Ok(ring_bits)
 }

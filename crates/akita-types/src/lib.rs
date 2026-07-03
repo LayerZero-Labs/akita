@@ -7,7 +7,7 @@
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
-pub use dispatch::{validate_level_dispatch, validate_ring_dispatch};
+pub use dispatch::{validate_level_dispatch, validate_ring_dispatch, validate_role_dispatch};
 pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod golomb_rice;
@@ -76,32 +76,33 @@ pub use proof::{
 };
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
-    append_claim_values_to_transcript, build_segment_typed_witness,
+    append_claim_values_to_transcript, assemble_relation_y, build_segment_typed_witness,
     decode_terminal_z_golomb_payload, derive_public_matrix_flat, e_folded_segment_bytes,
     emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
     expand_segment_typed_to_i8_digits, folded_root_supports_opening_shape, generate_y,
     i8_digits_to_bytes, padded_scalar_batch_num_vars, padded_setup_prefix_len,
     prepare_opening_point, relation_claim_from_rows, relation_claim_from_rows_extension,
-    ring_relation_segment_lengths, ring_subfield_packed_extension_opening_point,
-    root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
-    segment_typed_witness_shape, segment_typed_witness_upper_bound_bytes,
-    segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_level_params,
-    setup_prefix_slot_id, tail_golomb_rice_z_params, tail_segment_layout,
-    tail_segment_multiplicities_from_layout, terminal_e_hat_bytes_from_blocks,
-    terminal_golomb_grind_tail_t_vectors, terminal_witness_segment_layout,
-    terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
-    validate_batched_inputs, validate_public_matrix_matches_seed,
-    validate_scalar_point_matches_poly_arity, validate_segment_typed_z_payload,
-    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedFoldRoot,
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
-    AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage1StageShape, AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup,
-    CleartextWitnessProof, CleartextWitnessShape, Commitment, CommitmentVerifier, DigitBlockIter,
-    DigitBlocks, DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape,
-    LevelProofShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints, PointVariableSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
-    PublicMatrixSeed, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
+    relation_claim_from_rows_extension_at_dims, ring_relation_segment_lengths,
+    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
+    sample_public_matrix_seed, sample_public_row_coefficients, segment_typed_witness_shape,
+    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
+    select_setup_prefix_slot, setup_prefix_level_params, setup_prefix_slot_id,
+    tail_golomb_rice_z_params, tail_segment_layout, tail_segment_multiplicities_from_layout,
+    terminal_e_hat_bytes_from_blocks, terminal_golomb_grind_tail_t_vectors,
+    terminal_witness_segment_layout, terminal_witness_segment_layout_from_counts,
+    terminal_witness_transcript_parts, validate_batched_inputs,
+    validate_public_matrix_matches_seed, validate_scalar_point_matches_poly_arity,
+    validate_segment_typed_z_payload, z_fold_decoded_from_segment,
+    z_fold_encoding_stats_from_segment, AkitaBatchedFoldRoot, AkitaBatchedProof,
+    AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaProofStepShape,
+    AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage1StageShape,
+    AkitaStage2Proof, AkitaTerminalStage2Proof, AkitaVerifierSetup, CleartextWitnessProof,
+    CleartextWitnessShape, Commitment, CommitmentVerifier, DigitBlockIter, DigitBlocks, DummyProof,
+    ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, LevelProofShape, OpeningClaims,
+    OpeningClaimsLayout, OpeningPoints, PointVariableSelection, PolynomialGroupClaims,
+    PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixSeed,
+    RelationOnlyStage2Inputs, RelationYLayout, RingCommitment, RingMultiplierOpeningPoint,
     RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView,
     SegmentTypedWitness, SegmentTypedWitnessShape, SetupMatrixEnvelope, SetupPrefixProverRegistry,
     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
@@ -122,8 +123,8 @@ pub use schedule::{
     DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, Step,
 };
 pub use schedule_context::{
-    CommitmentRingDims, LevelShape, RingDimPlan, RingLevelContext, ValidatedScheduleContext,
-    MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
+    CommitmentRingDims, LevelShape, RingDimPlan, RingLevelContext, RingRole,
+    ValidatedScheduleContext, MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use setup_geometry::{

@@ -51,6 +51,14 @@ jobs:
       - name: Enforce Rust file line cap (zero exceptions)
         run: scripts/check-rust-file-lines.sh --no-baseline
 
+  ring-cutover-merge-gate:
+    name: Runtime ring cutover merge gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Prover orchestration spine + discriminator gate
+        run: ./scripts/ring-cutover-progress.sh --merge-gate
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

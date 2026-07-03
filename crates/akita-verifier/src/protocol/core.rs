@@ -30,8 +30,9 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
-    append_claim_values_to_transcript, build_trace_claim_root, ensure_trace_stage2_supported,
-    generate_y, prepare_opening_point, relation_claim_from_rows_extension, reorder_stage1_coords,
+    append_claim_values_to_transcript, assemble_relation_y, build_trace_claim_root,
+    ensure_trace_stage2_supported, prepare_opening_point,
+    relation_claim_from_rows_extension_at_dims, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
     sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, trace_terms_recursive,
@@ -40,9 +41,10 @@ use akita_types::{
     BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
     ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding, LevelParams,
     MRowLayout, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PreparedOpeningPoint, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingVec, Schedule, SetupContributionMode,
-    SetupSumcheckProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, TraceClaim,
+    PreparedOpeningPoint, RelationOnlyStage2Inputs, RelationYLayout, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
+    SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
