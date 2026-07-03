@@ -409,7 +409,7 @@ mod tests {
                 &tau1,
                 alpha,
                 lp.a_key.row_len(),
-                &instance.v_trusted::<D>().expect("v"),
+                instance.v_trusted::<D>().expect("v"),
                 &commitment
                     .rows()
                     .try_to_vec::<D>()
@@ -550,7 +550,7 @@ mod tests {
                 &tau1,
                 alpha,
                 lp.a_key.row_len(),
-                &instance.v_trusted::<D>().expect("v"),
+                instance.v_trusted::<D>().expect("v"),
                 &commitment
                     .rows()
                     .try_to_vec::<D>()
