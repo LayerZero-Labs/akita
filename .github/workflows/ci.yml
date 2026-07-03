@@ -107,35 +107,8 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  build-nextest-archive:
-    name: Build nextest archive
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-        with:
-          cache: false
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          shared-key: ci-test
-          add-job-id-key: false
-          cache-on-failure: true
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
-      - name: Build nextest archive
-        run: cargo nextest archive --profile ci --release --no-default-features --features parallel,disk-persistence --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
-      - name: Upload nextest archive
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ci-nextest-archive
-          path: ${{ runner.temp }}/nextest-archive.tar.zst
-          if-no-files-found: error
-          retention-days: 7
-
   test:
     name: Test (${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [build-nextest-archive]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -146,13 +119,14 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           cache: false
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: ci-test-release
+          add-job-id-key: false
+          cache-on-failure: true
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
-      - name: Download nextest archive
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: ci-nextest-archive
-          path: ${{ runner.temp }}
       - name: Run tests
         env:
           SHARD_INDEX: ${{ matrix.shard }}
@@ -162,7 +136,7 @@ jobs:
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
-          cargo nextest run --profile ci --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst" \
+          cargo nextest run --profile ci --release --no-default-features --features parallel,disk-persistence \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
