@@ -254,16 +254,14 @@ pub fn fold_witness_linf_digit_plan(
             FoldWitnessLinfCapPolicy::TailBoundWithGrind
             | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
             Some(t),
-        ) if snap_retain_den > 0 => {
-            snap_num_digits_fold_down(
-                log_basis,
-                delta_base,
-                pre_snap_cap,
-                t,
-                snap_retain_num,
-                snap_retain_den,
-            )
-        }
+        ) if snap_retain_den > 0 => snap_num_digits_fold_down(
+            log_basis,
+            delta_base,
+            pre_snap_cap,
+            t,
+            snap_retain_num,
+            snap_retain_den,
+        ),
         _ => (delta_base, pre_snap_cap),
     };
     Ok(FoldWitnessLinfDigitPlan {

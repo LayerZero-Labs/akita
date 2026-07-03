@@ -11,7 +11,9 @@ use std::env;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, OpeningBatchShape};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, OpeningBatchShape,
+};
 use fold_linf_stats_report::{print_fold_linf_aggregate_report, FoldLinfLevelSample};
 use workload::{run_dense_fold_linf_sample, run_onehot_fold_linf_sample};
 
@@ -40,7 +42,12 @@ fn collect_samples<Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     iterations: usize,
     seed_base: u64,
-    sample: fn(usize, &LevelParams, &akita_types::Schedule, u64) -> Vec<akita_prover::FoldGrindObservation>,
+    sample: fn(
+        usize,
+        &LevelParams,
+        &akita_types::Schedule,
+        u64,
+    ) -> Vec<akita_prover::FoldGrindObservation>,
 ) -> Vec<FoldLinfLevelSample> {
     let layout = resolve_layout::<Cfg>(nv);
     let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
@@ -64,13 +71,7 @@ fn collect_samples<Cfg: CommitmentConfig<Field = F>>(
     samples
 }
 
-fn run_mode(
-    mode: &str,
-    nv: usize,
-    iterations: usize,
-    seed_base: u64,
-    max_tstar_reduction: f64,
-) {
+fn run_mode(mode: &str, nv: usize, iterations: usize, seed_base: u64, max_tstar_reduction: f64) {
     eprintln!(
         "fold_linf_stats: mode={mode} nv={nv} iterations={iterations} seed_base={seed_base:#x} max_tstar_reduction={max_tstar_reduction:.2}"
     );
@@ -78,11 +79,21 @@ fn run_mode(
     let samples = match mode {
         "onehot_fp128_d64" => {
             type Cfg = fp128::D64OneHot;
-            collect_samples::<Cfg>(nv, iterations, seed_base, run_onehot_fold_linf_sample::<F, { Cfg::D }, Cfg>)
+            collect_samples::<Cfg>(
+                nv,
+                iterations,
+                seed_base,
+                run_onehot_fold_linf_sample::<F, { Cfg::D }, Cfg>,
+            )
         }
         "dense_fp128_d64" => {
             type Cfg = fp128::D64Full;
-            collect_samples::<Cfg>(nv, iterations, seed_base, run_dense_fold_linf_sample::<F, { Cfg::D }, Cfg>)
+            collect_samples::<Cfg>(
+                nv,
+                iterations,
+                seed_base,
+                run_dense_fold_linf_sample::<F, { Cfg::D }, Cfg>,
+            )
         }
         other => {
             eprintln!("unsupported AKITA_MODE for fold_linf_stats: {other}");

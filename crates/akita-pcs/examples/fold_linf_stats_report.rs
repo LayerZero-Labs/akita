@@ -133,16 +133,10 @@ pub fn aggregate_fold_linf_samples(samples: &[FoldLinfLevelSample]) -> Vec<FoldL
                 observed_min: *observed_values.first().unwrap_or(&0),
                 observed_max: *observed_values.last().unwrap_or(&0),
                 observed_p90,
-                observed_sum: obs
-                    .iter()
-                    .map(|o| u128::from(o.observed_linf))
-                    .sum(),
+                observed_sum: obs.iter().map(|o| u128::from(o.observed_linf)).sum(),
                 grind_probe_min: obs.iter().map(|o| o.grind_probe_count).min().unwrap_or(0),
                 grind_probe_max: obs.iter().map(|o| o.grind_probe_count).max().unwrap_or(0),
-                grind_probe_sum: obs
-                    .iter()
-                    .map(|o| u64::from(o.grind_probe_count))
-                    .sum(),
+                grind_probe_sum: obs.iter().map(|o| u64::from(o.grind_probe_count)).sum(),
             }
         })
         .collect()

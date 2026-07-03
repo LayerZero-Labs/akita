@@ -168,8 +168,8 @@ mod tests {
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
-        use akita_challenges::{D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2};
         use crate::sis::fold_witness_linf_digit_plan;
+        use akita_challenges::{D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2};
         let stage1_config = SparseChallengeConfig::ExactShell {
             count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
             count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,

@@ -81,9 +81,7 @@ impl Drop for FoldGrindObserverGuard {
 }
 
 pub(crate) fn next_fold_grind_level_index() -> u32 {
-    FOLD_GRIND_OBSERVER.with(|cell| {
-        u32::try_from(cell.borrow().records.len()).unwrap_or(u32::MAX)
-    })
+    FOLD_GRIND_OBSERVER.with(|cell| u32::try_from(cell.borrow().records.len()).unwrap_or(u32::MAX))
 }
 
 pub(crate) fn record_fold_grind_acceptance(observation: FoldGrindObservation) {
