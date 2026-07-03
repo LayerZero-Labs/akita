@@ -6,13 +6,13 @@ use akita_types::sis::{
 };
 
 #[derive(Clone, Debug)]
-pub struct FoldLinfLevelSample {
+pub(crate) struct FoldLinfLevelSample {
     pub iteration: u32,
     pub observation: FoldGrindObservation,
 }
 
 #[derive(Clone, Debug)]
-pub struct SnapCandidate {
+pub(crate) struct SnapCandidate {
     pub delta_fold: usize,
     pub verifier_cap: u128,
     pub tstar_reduction_fraction: f64,
@@ -21,7 +21,7 @@ pub struct SnapCandidate {
 }
 
 #[derive(Clone, Debug)]
-pub struct FoldLinfLevelAggregate {
+pub(crate) struct FoldLinfLevelAggregate {
     pub level_index: u32,
     pub r_vars: u32,
     pub num_claims: u32,
@@ -66,7 +66,7 @@ fn snap_retain_rational(max_reduction_fraction: f64) -> (u128, u128) {
 }
 
 /// Tightest downward digit snap with `z_ver(δ') >= floor` and observed quantiles inside cap.
-pub fn best_snap_below_tstar(
+pub(crate) fn best_snap_below_tstar(
     log_basis: u32,
     current_delta: usize,
     t_star: u128,
@@ -99,7 +99,9 @@ pub fn best_snap_below_tstar(
     None
 }
 
-pub fn aggregate_fold_linf_samples(samples: &[FoldLinfLevelSample]) -> Vec<FoldLinfLevelAggregate> {
+pub(crate) fn aggregate_fold_linf_samples(
+    samples: &[FoldLinfLevelSample],
+) -> Vec<FoldLinfLevelAggregate> {
     use std::collections::BTreeMap;
 
     let mut by_level: BTreeMap<u32, Vec<&FoldGrindObservation>> = BTreeMap::new();
@@ -142,7 +144,7 @@ pub fn aggregate_fold_linf_samples(samples: &[FoldLinfLevelSample]) -> Vec<FoldL
         .collect()
 }
 
-pub fn print_fold_linf_aggregate_report(
+pub(crate) fn print_fold_linf_aggregate_report(
     label: &str,
     iterations: u32,
     samples: &[FoldLinfLevelSample],
@@ -183,11 +185,12 @@ pub fn print_fold_linf_aggregate_report(
             },
             |s| {
                 format!(
-                    "δ'={} cap={} Δt*={:.1}% max_ok={}",
+                    "δ'={} cap={} Δt*={:.1}% max_ok={} p90_ok={}",
                     s.delta_fold,
                     s.verifier_cap,
                     s.tstar_reduction_fraction * 100.0,
-                    s.fits_observed_max
+                    s.fits_observed_max,
+                    s.fits_p90
                 )
             },
         );
@@ -205,21 +208,25 @@ pub fn print_fold_linf_aggregate_report(
         });
 
         eprintln!(
-            "L{} | r={} {:?} | β={} t*={} cap={} δ={} z_ver={} | obs max={} p90={} mean={:.1} | obs/β={:.4} obs/t*={:.4} | grind mean={:.2} | {snap_line}",
+            "L{} | r={} claims={} {:?} | β={} t*={} cap={} δ={} z_ver={} | obs min={} max={} p90={} mean={:.1} | obs/β={:.4} obs/t*={:.4} | grind mean={:.2} min={} max={} | {snap_line}",
             agg.level_index,
             agg.r_vars,
+            agg.num_claims,
             agg.policy,
             agg.beta_inf,
             t_star_display,
             agg.honest_cap,
             agg.delta_fold,
             agg.verifier_linf_bound,
+            agg.observed_min,
             agg.observed_max,
             agg.observed_p90,
             agg.observed_sum as f64 / agg.samples as f64,
             agg.observed_max as f64 / agg.beta_inf as f64,
             obs_over_tstar,
             agg.grind_probe_sum as f64 / agg.samples as f64,
+            agg.grind_probe_min,
+            agg.grind_probe_max,
         );
     }
 

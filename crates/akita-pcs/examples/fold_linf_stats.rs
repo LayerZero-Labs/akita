@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![allow(missing_docs, dead_code)]
 
 #[path = "fold_linf_stats/report.rs"]
 mod fold_linf_stats_report;
