@@ -174,10 +174,10 @@ impl RingDimPlan {
                 )));
             }
             if let Some(Step::Fold(next)) = schedule.steps.get(level + 1) {
-                let next_ring_d = next.params.ring_dimension;
+                let next_ring_d = next.params.role_dims().d_a();
                 if next_ring_d == 0 || !step.next_w_len.is_multiple_of(next_ring_d) {
                     return Err(AkitaError::InvalidSetup(format!(
-                        "next witness length {} is not divisible by next ring dimension {next_ring_d}",
+                        "next witness length {} is not divisible by next fold ring d_a={next_ring_d}",
                         step.next_w_len,
                     )));
                 }

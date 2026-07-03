@@ -136,6 +136,20 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     })
 }
 
+fn record_ntt_profile_on_prepared<F: FieldCore>(
+    prepared: &CpuPreparedSetup<F>,
+    key: NttCacheKey,
+    profile: CrtI8CapacityProfile,
+) -> Result<(), AkitaError> {
+    prepared
+        .ntt_i8_capacity_by_ring_d
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("NTT profile lock poisoned".into()))?
+        .entry(key.ring_d)
+        .or_insert(profile);
+    Ok(())
+}
+
 fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
@@ -143,18 +157,26 @@ fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     let profile = akita_types::dispatch_ring_dim_result!(key.ring_d, |RING_D| {
         selected_crt_i8_capacity_profile::<F, RING_D>()
     })?;
-    let slot = build_ntt_slot_for_key(prepared.expanded.as_ref(), key)?;
-    prepared
+    if prepared
         .shared_ntt
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
-        .insert(key, Arc::new(slot));
-    prepared
-        .ntt_i8_capacity_by_ring_d
+        .contains_key(&key)
+    {
+        return record_ntt_profile_on_prepared(prepared, key, profile);
+    }
+    let slot = build_ntt_slot_for_key(prepared.expanded.as_ref(), key)?;
+    let mut cache = prepared
+        .shared_ntt
         .lock()
-        .map_err(|_| AkitaError::InvalidSetup("NTT profile lock poisoned".into()))?
-        .insert(key.ring_d, profile);
-    Ok(())
+        .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+    if cache.contains_key(&key) {
+        drop(cache);
+        return record_ntt_profile_on_prepared(prepared, key, profile);
+    }
+    cache.insert(key, Arc::new(slot));
+    drop(cache);
+    record_ntt_profile_on_prepared(prepared, key, profile)
 }
 
 fn register_setup_contract_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(

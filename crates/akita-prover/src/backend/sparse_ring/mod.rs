@@ -11,7 +11,8 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_types::embed_ring_subfield_vector;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::compute::{
@@ -25,6 +26,9 @@ mod ops;
 pub use ops::{SparseRingBatchView, SparseRingView};
 
 mod tensor_fold;
+
+type SparseLayoutCacheKey = (usize, usize);
+type SparseBlockCache = Arc<Mutex<HashMap<SparseLayoutCacheKey, Arc<SparseRingBlocks>>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
@@ -211,9 +215,8 @@ pub struct SparseRingPoly<F: FieldCore> {
     /// authority — kernels validate at their own dimension.
     total_ring_elems: usize,
     coeffs: Vec<SparseRingCoeff>,
-    /// Cached per-block layout, keyed by the `(ring_d, block_len)` pair it was
-    /// built for.
-    block_cache: OnceLock<((usize, usize), SparseRingBlocks)>,
+    /// Cached per-block layouts keyed by `(ring_d, block_len)`.
+    block_cache: SparseBlockCache,
     _marker: core::marker::PhantomData<F>,
 }
 
@@ -352,20 +355,24 @@ impl<F: FieldCore> SparseRingPoly<F> {
             num_vars,
             total_ring_elems,
             coeffs: packed,
-            block_cache: OnceLock::new(),
+            block_cache: Arc::new(Mutex::new(HashMap::new())),
             _marker: core::marker::PhantomData,
         })
     }
 
-    fn blocks_for(&self, ring_d: usize, block_len: usize) -> Result<&SparseRingBlocks, AkitaError> {
-        if let Some((cached_key, blocks)) = self.block_cache.get() {
-            if *cached_key == (ring_d, block_len) {
-                return Ok(blocks);
-            }
-            let (cached_ring_d, cached_len) = *cached_key;
-            return Err(AkitaError::InvalidInput(format!(
-                "SparseRingPoly was first used with ring_d={cached_ring_d}, block_len={cached_len} but is now used with ring_d={ring_d}, block_len={block_len}"
-            )));
+    fn blocks_for(
+        &self,
+        ring_d: usize,
+        block_len: usize,
+    ) -> Result<Arc<SparseRingBlocks>, AkitaError> {
+        let key = (ring_d, block_len);
+        if let Some(blocks) = self
+            .block_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("sparse block cache lock poisoned".into()))?
+            .get(&key)
+        {
+            return Ok(Arc::clone(blocks));
         }
         let ring_elems_at_d = 1usize
             .checked_shl(self.num_vars as u32)
@@ -374,10 +381,13 @@ impl<F: FieldCore> SparseRingPoly<F> {
             .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
         let built =
             SparseRingBlocks::from_coeffs(&self.coeffs, ring_d, ring_elems_at_d, block_len)?;
-        let (_, blocks) = self
+        let mut cache = self
             .block_cache
-            .get_or_init(|| ((ring_d, block_len), built));
-        Ok(blocks)
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("sparse block cache lock poisoned".into()))?;
+        Ok(Arc::clone(
+            cache.entry(key).or_insert_with(|| Arc::new(built)),
+        ))
     }
 
     /// Total number of variables (`log2(total field evaluation slots)`).
@@ -497,7 +507,7 @@ where
         let num_blocks = challenges.len().min(blocks.num_blocks());
         let inner_width = block_len * num_digits;
         let coeff_accum =
-            sparse_accumulate::<D>(blocks, challenges, num_blocks, inner_width, num_digits);
+            sparse_accumulate::<D>(&blocks, challenges, num_blocks, inner_width, num_digits);
         let modulus = (-F::one()).to_canonical_u128() + 1;
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
@@ -970,6 +980,24 @@ mod tests {
         .unwrap();
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn sparse_ring_poly_caches_multiple_runtime_layouts() {
+        let sparse = SparseRingPoly::<F>::from_signed_coeffs(
+            8,
+            32,
+            8,
+            vec![(0, 1, 1), (1, 3, -1), (7, 31, 1)],
+        )
+        .unwrap();
+
+        let d32_blocks = sparse.blocks_for(32, 4).unwrap();
+        let d64_blocks = sparse.blocks_for(64, 2).unwrap();
+
+        assert_eq!(d32_blocks.num_blocks(), 2);
+        assert_eq!(d64_blocks.num_blocks(), 2);
+        assert_eq!(sparse.block_cache.lock().unwrap().len(), 2);
     }
 
     #[test]

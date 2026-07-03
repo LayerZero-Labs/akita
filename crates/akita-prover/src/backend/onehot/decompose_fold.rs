@@ -83,10 +83,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         F: CanonicalField,
     {
         let total_blocks = challenges.len();
+        let cached_blocks = polys
+            .iter()
+            .map(|poly| poly.blocks_for(D, block_len).ok())
+            .collect::<Option<Vec<_>>>()?;
         let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(total_blocks);
-        for poly in polys {
-            let (_, cached) = poly.block_cache.get()?;
-            let OneHotBlocks::SingleChunk(blocks) = cached else {
+        for cached in &cached_blocks {
+            let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
                 return None;
             };
             for i in 0..blocks.num_blocks() {
@@ -116,10 +119,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         F: CanonicalField,
     {
         let total_blocks = challenges.len();
+        let cached_blocks = polys
+            .iter()
+            .map(|poly| poly.blocks_for(D, block_len).ok())
+            .collect::<Option<Vec<_>>>()?;
         let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(total_blocks);
-        for poly in polys {
-            let (_, cached) = poly.block_cache.get()?;
-            let OneHotBlocks::MultiChunk(blocks) = cached else {
+        for cached in &cached_blocks {
+            let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
                 return None;
             };
             for i in 0..blocks.num_blocks() {
@@ -149,18 +155,12 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     where
         F: CanonicalField,
     {
-        for poly in polys {
-            poly.blocks_for(D, block_len).expect(
-                "OneHotPoly::decompose_fold_batched_tensor_onehot: invalid block_len for one polynomial",
-            );
-        }
         let Some(first) = polys.first() else {
             return Ok(None);
         };
-        let (_, first_blocks) = first
-            .block_cache
-            .get()
-            .expect("block cache was just built above");
+        let first_blocks = first
+            .blocks_for(D, block_len)
+            .expect("OneHotPoly::decompose_fold_batched_tensor_onehot: invalid block_len for first polynomial");
         let expected_blocks = tensor
             .left_len
             .checked_mul(tensor.right_len)
@@ -169,12 +169,15 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         validate_tensor_blocks::<D>(tensor, expected_blocks)?;
         let modulus = (-F::one()).to_canonical_u128() + 1;
 
-        let witness = match first_blocks {
+        let cached_blocks = polys
+            .iter()
+            .map(|poly| poly.blocks_for(D, block_len))
+            .collect::<Result<Vec<_>, _>>()?;
+        let witness = match first_blocks.as_ref() {
             OneHotBlocks::SingleChunk(_) => {
                 let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for poly in polys {
-                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
-                    let OneHotBlocks::SingleChunk(blocks) = cached else {
+                for cached in &cached_blocks {
+                    let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
                         return Ok(None);
                     };
                     for i in 0..blocks.num_blocks() {
@@ -202,9 +205,8 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             }
             OneHotBlocks::MultiChunk(_) => {
                 let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for poly in polys {
-                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
-                    let OneHotBlocks::MultiChunk(blocks) = cached else {
+                for cached in &cached_blocks {
+                    let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
                         return Ok(None);
                     };
                     for i in 0..blocks.num_blocks() {

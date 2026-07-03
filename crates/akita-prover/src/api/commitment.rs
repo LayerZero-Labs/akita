@@ -14,9 +14,9 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     dispatch_ring_dim_result, root_tensor_projection_enabled, schedule_root_fold_step,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment,
-    CommitmentRingDims, DigitBlocks, FpExtEncoding, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, PrecommittedGroupParams, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, DigitBlocks,
+    FpExtEncoding, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupParams, GROUPED_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -442,7 +442,7 @@ where
     // Per-role ring dimensions for this level: the inner commit digits are
     // A-role data, the outer `B·t̂` rows are B-role data. The mixed-row spec
     // feeds diverging dims here (uniform today).
-    let dims = CommitmentRingDims::uniform(params.ring_dimension);
+    let dims = params.role_dims();
     let plan = CommitInnerPlan::from_level(params);
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_blocks,

@@ -180,6 +180,33 @@ fn onehot_poly_rejects_non_divisible_k_d() {
 }
 
 #[test]
+fn onehot_poly_caches_multiple_runtime_layouts() {
+    type F = Prime24Offset3;
+    let poly = OneHotPoly::<F>::new(
+        32,
+        32,
+        vec![
+            Some(0usize),
+            Some(7),
+            None,
+            Some(31),
+            Some(3),
+            None,
+            Some(12),
+            Some(1),
+        ],
+    )
+    .unwrap();
+
+    let d32_blocks = poly.blocks_for(32, 4).unwrap();
+    let d64_blocks = poly.blocks_for(64, 2).unwrap();
+
+    assert_eq!(d32_blocks.num_blocks(), 2);
+    assert_eq!(d64_blocks.num_blocks(), 2);
+    assert_eq!(poly.block_cache.lock().unwrap().len(), 2);
+}
+
+#[test]
 fn tensor_column_partials_match_dense_reference() {
     type F = Prime24Offset3;
     type E = FpExt4<F>;

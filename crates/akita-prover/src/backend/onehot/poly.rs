@@ -1,19 +1,18 @@
 use super::*;
 
-/// Cache slot for the tensor-projected sparse root polynomial: the
-/// `(ring_d, width)` key it was built at plus the shared polynomial.
-pub(crate) type TensorRootCacheSlot<F> = ((usize, usize), Arc<SparseRingPoly<F>>);
+type LayoutCacheKey = (usize, usize);
+type OneHotBlockCache = Arc<Mutex<HashMap<LayoutCacheKey, Arc<OneHotBlocks>>>>;
+type TensorRootCache<F> = Arc<Mutex<HashMap<LayoutCacheKey, Arc<SparseRingPoly<F>>>>>;
 
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
 /// The polynomial is stored layout-agnostically as the flat list of hot
 /// indices supplied at construction. Each op takes `block_len` at call time
-/// and the per-block bucketing is materialized lazily on the first call and
-/// cached for subsequent calls (as a `((ring_d, block_len), OneHotBlocks)`
-/// pair inside a `OnceLock`). That mirrors how [`DensePoly`](crate::DensePoly) accepts `block_len` per op,
-/// and keeps `OneHotPoly` free of the commit-layout parameters it used to
-/// bake in at construction.
+/// and the per-block bucketing is materialized lazily per `(ring_d, block_len)`.
+/// That mirrors how [`DensePoly`](crate::DensePoly) accepts `block_len` per op
+/// and keeps `OneHotPoly` free of the commit-layout parameters it used to bake
+/// in at construction.
 ///
 /// Storage is D-free: the per-chunk hot indices are flat logical data, and
 /// the ring dimension is a view selected at kernel entry (each ring-shaped
@@ -30,12 +29,10 @@ pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
     /// Ring-element count at the CONSTRUCTION dimension; metadata, not
     /// authority — kernels validate at their own dimension.
     pub(crate) total_ring_elems: usize,
-    /// Cached per-block layout, keyed by the `(ring_d, block_len)` pair it was
-    /// built for.
-    pub(crate) block_cache: OnceLock<((usize, usize), OneHotBlocks)>,
-    /// Cached tensor-projected sparse root polynomial, keyed by the
-    /// `(ring_d, width)` pair it was built at.
-    pub(crate) tensor_root_cache: OnceLock<TensorRootCacheSlot<F>>,
+    /// Cached per-block layouts keyed by `(ring_d, block_len)`.
+    pub(crate) block_cache: OneHotBlockCache,
+    /// Cached tensor-projected sparse root polynomials keyed by `(ring_d, width)`.
+    pub(crate) tensor_root_cache: TensorRootCache<F>,
     pub(crate) _marker: PhantomData<(F, I)>,
 }
 
@@ -107,8 +104,8 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             onehot_k,
             indices,
             total_ring_elems,
-            block_cache: OnceLock::new(),
-            tensor_root_cache: OnceLock::new(),
+            block_cache: Arc::new(Mutex::new(HashMap::new())),
+            tensor_root_cache: Arc::new(Mutex::new(HashMap::new())),
             _marker: PhantomData,
         })
     }
@@ -162,28 +159,21 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         Ok(evals)
     }
 
-    /// Return cached per-block storage, building it on first call for
-    /// `(ring_d, block_len)`.
-    ///
-    /// Subsequent calls must pass the same `(ring_d, block_len)` pair;
-    /// differing keys are rejected rather than silently rebuilt because they
-    /// indicate a layout mismatch between ops on the same polynomial.
+    /// Return cached per-block storage, building it on first call for the
+    /// requested `(ring_d, block_len)` view.
     pub(super) fn blocks_for(
         &self,
         ring_d: usize,
         block_len: usize,
-    ) -> Result<&OneHotBlocks, AkitaError> {
-        // Fast path: cache already built for this `(ring_d, block_len)`.
-        if let Some((cached_key, blocks)) = self.block_cache.get() {
-            if *cached_key == (ring_d, block_len) {
-                return Ok(blocks);
-            }
-            let (cached_ring_d, cached_len) = *cached_key;
-            return Err(AkitaError::InvalidInput(format!(
-                "OneHotPoly was first used with ring_d={cached_ring_d}, block_len={cached_len} \
-                 but is now being used with ring_d={ring_d}, block_len={block_len}; all ops on \
-                 the same polynomial must share a single layout"
-            )));
+    ) -> Result<Arc<OneHotBlocks>, AkitaError> {
+        let key = (ring_d, block_len);
+        if let Some(blocks) = self
+            .block_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot block cache lock poisoned".into()))?
+            .get(&key)
+        {
+            return Ok(Arc::clone(blocks));
         }
         // Slow path: build blocks and install them. Validate `ring_d` and
         // `block_len` *before* building so the error path is cheap.
@@ -217,21 +207,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 tracing::debug_span!("OneHotPoly::build_blocks", ring_d, block_len).entered();
             self.build_blocks_inner(ring_d, block_len, ring_elems_at_d)?
         };
-        let (cached_key, blocks) = self
+        let mut cache = self
             .block_cache
-            .get_or_init(|| ((ring_d, block_len), built));
-        if *cached_key != (ring_d, block_len) {
-            // A concurrent caller installed a different key before our
-            // closure ran. Report the mismatch instead of silently accepting
-            // the mismatched cache.
-            let (cached_ring_d, cached_len) = *cached_key;
-            return Err(AkitaError::InvalidInput(format!(
-                "OneHotPoly was first used with ring_d={cached_ring_d}, block_len={cached_len} \
-                 but is now being used with ring_d={ring_d}, block_len={block_len}; all ops on \
-                 the same polynomial must share a single layout"
-            )));
-        }
-        Ok(blocks)
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot block cache lock poisoned".into()))?;
+        Ok(Arc::clone(
+            cache.entry(key).or_insert_with(|| Arc::new(built)),
+        ))
     }
 
     /// Sparse fast path for `tensor_extension_column_partials_batch`.
@@ -407,10 +389,14 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         let half = D / double_width;
         let step = D / double_width;
         let total_ring_elems = total_evals / D;
-        if let Some((cached_key, poly)) = self.tensor_root_cache.get() {
-            if *cached_key == (D, width) {
-                return Ok(Arc::clone(poly));
-            }
+        let key = (D, width);
+        if let Some(poly) = self
+            .tensor_root_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?
+            .get(&key)
+        {
+            return Ok(Arc::clone(poly));
         }
         let mut coeffs = Vec::with_capacity(self.indices.len() * width.min(2));
 
@@ -475,13 +461,11 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             SparseRingPoly::<F>::from_packed_coeffs(self.num_vars, D, total_ring_elems, coeffs)
         }?;
         let poly = Arc::new(poly);
-        let _ = self.tensor_root_cache.set(((D, width), Arc::clone(&poly)));
-        if let Some((cached_key, cached_poly)) = self.tensor_root_cache.get() {
-            if *cached_key == (D, width) {
-                return Ok(Arc::clone(cached_poly));
-            }
-        }
-        Ok(poly)
+        let mut cache = self
+            .tensor_root_cache
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?;
+        Ok(Arc::clone(cache.entry(key).or_insert(poly)))
     }
 
     pub(super) fn tensor_packing_shape<E>(&self) -> Result<(usize, usize), AkitaError>

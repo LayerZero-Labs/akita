@@ -339,7 +339,7 @@ where
             .blocks_for(D, block_len)
             .expect("OneHotPoly::fold_blocks: invalid block_len for this polynomial");
         let num_blocks = blocks.num_blocks();
-        match blocks {
+        match blocks.as_ref() {
             OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_blocks)
                 .map(|i| fold_onehot_block(flat.block(i), scalars, block_len))
                 .collect(),
@@ -358,7 +358,7 @@ where
             .blocks_for(D, block_len)
             .expect("OneHotPoly::fold_blocks_ring: invalid block_len for this polynomial");
         let num_blocks = blocks.num_blocks();
-        match blocks {
+        match blocks.as_ref() {
             OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_blocks)
                 .map(|i| fold_onehot_block_ring(flat.block(i), scalars, block_len))
                 .collect(),
@@ -766,7 +766,7 @@ where
         let blocks = self
             .blocks_for(D, block_len)
             .expect("OneHotPoly::decompose_fold: invalid block_len for this polynomial");
-        match blocks {
+        match blocks.as_ref() {
             OneHotBlocks::SingleChunk(blocks) => self.decompose_fold_onehot::<SingleChunkEntry, D>(
                 blocks, challenges, block_len, num_digits,
             ),
@@ -784,19 +784,11 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F>> {
-        // Materialize per-poly block caches up front so every poly agrees on
-        // `block_len` before we touch the batched kernels.
-        for poly in polys {
-            poly.blocks_for(D, block_len).expect(
-                "OneHotPoly::decompose_fold_batched: invalid block_len for one of the polynomials",
-            );
-        }
         let first = polys.first()?;
-        let (_, first_blocks) = first
-            .block_cache
-            .get()
-            .expect("block cache was just built above");
-        match first_blocks {
+        let first_blocks = first
+            .blocks_for(D, block_len)
+            .expect("OneHotPoly::decompose_fold_batched: invalid block_len for first polynomial");
+        match first_blocks.as_ref() {
             OneHotBlocks::SingleChunk(_) => Self::decompose_fold_batched_single_chunk_onehot::<D>(
                 polys, challenges, block_len, num_digits,
             ),
