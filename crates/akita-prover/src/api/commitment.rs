@@ -993,12 +993,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::FlatDigitBlocks;
     use crate::kernels::linear::check_decomposed_rows_i8_match;
     use crate::{AkitaProverSetup, MultilinearPolynomial, OneHotPoly};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
     use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
-    use DigitBlocks;
 
     type F = Fp64<4294967197>;
     const D: usize = 32;
@@ -1010,7 +1010,7 @@ mod tests {
     ) -> CommitInnerWitness<F> {
         CommitInnerWitness::from_parts(
             vec![vec![CyclotomicRing::<F, D>::zero(); rows_per_block]; recomposed_blocks],
-            DigitBlocks::zeroed(block_sizes, D).expect("valid flat digit blocks"),
+            FlatDigitBlocks::<D>::zeroed(block_sizes).expect("valid flat digit blocks"),
         )
     }
 
