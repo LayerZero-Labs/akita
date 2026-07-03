@@ -73,7 +73,7 @@ where
     R: DigitRowsComputeBackend<F>,
 {
     let opening_claims = claims.opening_claims();
-    let opening_batch = opening_claims.layout();
+    let opening_batch = opening_claims.layout()?;
     let num_claims = opening_batch.num_total_polynomials();
     let opening_num_vars = opening_batch.max_num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
@@ -182,7 +182,7 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.opening_claims().layout();
+    let opening_batch = claims.opening_claims().layout()?;
     let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params;
 
@@ -288,7 +288,7 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.opening_claims().layout();
+    let opening_batch = claims.opening_claims().layout()?;
     let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params;
 

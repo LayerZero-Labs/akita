@@ -306,7 +306,7 @@ where
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = fold_claims.opening_claims().layout();
+    let opening_batch = fold_claims.opening_claims().layout()?;
     let fold_polys = fold_claims.flat_polys();
     let tensor = stack.tensor();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
