@@ -433,15 +433,21 @@ impl<'a, F> RingView<'a, F> {
     ///
     /// The `ring_dim` stored in this view is used directly; no external dimension
     /// is needed since `RingView` always carries a valid, non-zero `ring_dim`.
-    pub fn append_flat_to_transcript<T>(&self, label: &[u8], transcript: &mut T)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] if flat absorption fails (should not
+    /// occur when [`RingView::new`] invariants hold).
+    pub fn append_flat_to_transcript<T>(
+        &self,
+        label: &[u8],
+        transcript: &mut T,
+    ) -> Result<(), AkitaError>
     where
         F: FieldCore + AkitaSerialize + CanonicalField,
         T: Transcript<F>,
     {
-        // RingView invariant: ring_dim > 0 and coeffs.len() is a multiple of
-        // ring_dim, so the free function cannot fail here.
         append_flat_coefficients(label, self.coeffs, self.ring_dim, transcript)
-            .expect("RingView invariant guarantees valid flat absorption");
     }
 }
 

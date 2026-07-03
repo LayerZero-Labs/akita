@@ -465,7 +465,8 @@ fn flat_absorption_free_fn_and_ring_view_match_typed() {
         let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
         let rv = RingVec::from_ring_elems(&elems);
         let view = rv.view().expect("ring_dim = D is valid");
-        view.append_flat_to_transcript(ABSORB_LABEL, &mut t);
+        view.append_flat_to_transcript(ABSORB_LABEL, &mut t)
+            .expect("ring view invariants hold in test");
         t.challenge_bytes(CHALLENGE_LABEL, CHALLENGE_LEN)
     };
     assert_eq!(

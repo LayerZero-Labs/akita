@@ -190,6 +190,82 @@ where
     Ok((global, per_chunk))
 }
 
+/// Grind loop for one compile-time ring dimension: one dispatch arm, no per-nonce rematch.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup>,
+    transcript: &mut T,
+    polys: &[&P],
+    lp: &LevelParams,
+    num_claims: usize,
+    tail_t_vectors: Option<usize>,
+    ring_d: usize,
+    contract: &FoldWitnessGrindContract,
+    witness_linf_cap: u128,
+    fold_probe_params: FoldProbeParams,
+    probe_nonces: &[u32],
+) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, D>,
+    B: crate::compute::ComputeBackendSetup<F>
+        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
+{
+    let point_indices = (0..polys.len()).collect::<Vec<_>>();
+    let labels = stage1_fold_challenge_labels();
+    let mut grind_probe_count = 0u32;
+    for &nonce in probe_nonces {
+        grind_probe_count = grind_probe_count.saturating_add(1);
+        let challenges = preview_folding_challenges(
+            transcript,
+            ring_d,
+            lp.num_blocks,
+            num_claims,
+            &lp.stage1_config,
+            &lp.fold_challenge_shape,
+            labels,
+            nonce,
+        )?;
+        let (witness, z_per_chunk) = fold_probe_witness_kernel::<F, P, B, D>(
+            backend,
+            prepared,
+            &challenges,
+            polys,
+            &point_indices,
+            fold_probe_params,
+        )?;
+        if !accepts_fold_witness::<F>(contract, &witness, ring_d, witness_linf_cap, tail_t_vectors)
+        {
+            continue;
+        }
+        let z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>> = z_per_chunk
+            .into_iter()
+            .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
+            .collect();
+        super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);
+        let challenges = sample_folding_challenges::<F, T>(
+            transcript,
+            ring_d,
+            lp.num_blocks,
+            num_claims,
+            &lp.stage1_config,
+            &lp.fold_challenge_shape,
+            labels,
+            nonce,
+        )?;
+        return Ok((witness, z_folded_centered_per_chunk, challenges, nonce));
+    }
+
+    Err(AkitaError::InvalidInput(format!(
+        "fold grind exceeded {} attempts (threshold={})",
+        contract.max_nonce_exclusive, contract.witness_linf_cap
+    )))
+}
+
 /// Probe fold challenges off-sponge, accept the first witness under `t*`, then commit.
 ///
 /// Plain presets probe `nonce = 0, 1, …` (minimum accepting nonce). ZK presets
@@ -220,73 +296,29 @@ where
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     // A-role fold dimension; per-role split attaches here (mixed-row spec).
-    // The grind loop is D-free: every use below goes through the runtime
-    // `ring_d`, and each probe's point fold dispatches per attempt.
     let ring_d = lp.ring_dimension;
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
     let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;
-    let point_indices = (0..polys.len()).collect::<Vec<_>>();
     let fold_probe_params = FoldProbeParams::from_level(lp);
-    let labels = stage1_fold_challenge_labels();
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
 
-    let mut grind_probe_count = 0u32;
-    for nonce in probe_nonces {
-        grind_probe_count = grind_probe_count.saturating_add(1);
-        let challenges = preview_folding_challenges(
+    akita_types::dispatch_ring_dim_result!(ring_d, |D| {
+        sample_fold_decompose_witness_at_dim::<F, P, B, T, D>(
+            backend,
+            prepared,
             transcript,
-            ring_d,
-            lp.num_blocks,
+            polys,
+            lp,
             num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
-            labels,
-            nonce,
-        )?;
-        let (witness, z_folded_centered_per_chunk) =
-            akita_types::dispatch_ring_dim_result!(ring_d, |D| {
-                let (witness, z_per_chunk) = fold_probe_witness_kernel::<F, P, B, D>(
-                    backend,
-                    prepared,
-                    &challenges,
-                    polys,
-                    &point_indices,
-                    fold_probe_params,
-                )?;
-                let z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>> = z_per_chunk
-                    .into_iter()
-                    .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
-                    .collect();
-                Ok((witness, z_folded_centered_per_chunk))
-            })?;
-        if !accepts_fold_witness::<F>(
-            &contract,
-            &witness,
-            ring_d,
-            witness_linf_cap,
             tail_t_vectors,
-        ) {
-            continue;
-        }
-        super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);
-        let challenges = sample_folding_challenges::<F, T>(
-            transcript,
             ring_d,
-            lp.num_blocks,
-            num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
-            labels,
-            nonce,
-        )?;
-        return Ok((witness, z_folded_centered_per_chunk, challenges, nonce));
-    }
-
-    Err(AkitaError::InvalidInput(format!(
-        "fold grind exceeded {} attempts (threshold={})",
-        contract.max_nonce_exclusive, contract.witness_linf_cap
-    )))
+            &contract,
+            witness_linf_cap,
+            fold_probe_params,
+            &probe_nonces,
+        )
+    })
 }
 
 #[cfg(test)]

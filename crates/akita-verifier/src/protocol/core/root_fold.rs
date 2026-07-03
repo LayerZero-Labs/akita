@@ -68,7 +68,7 @@ where
     // `OpeningClaims::append_to_transcript`, whose generic commitment
     // path required a typed `RingCommitment: AppendToTranscript`.
     opening_batch.append_to_transcript::<F, T>(transcript)?;
-    commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript);
+    commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript)?;
     for coord in shared_opening_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
     }
