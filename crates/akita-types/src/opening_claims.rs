@@ -4,12 +4,9 @@ use crate::descriptor_bytes::{push_usize, push_usize_vec};
 use crate::instance_descriptor::DescriptorDigest;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupSeed;
-use crate::AppendToTranscript;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_transcript::labels::{
-    ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, CHALLENGE_EVAL_BATCH,
-};
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
+use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::collections::BTreeSet;
@@ -530,43 +527,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             .first()
             .filter(|_| self.groups.len() == 1)
             .map(PolynomialGroupClaims::commitment)
-    }
-}
-
-impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
-    /// Absorb the normalized batch shape, commitments, and shared point.
-    pub fn append_to_transcript<TranscriptF, T>(&self, transcript: &mut T) -> Result<(), AkitaError>
-    where
-        TranscriptF: FieldCore + CanonicalField,
-        F: ExtField<TranscriptF>,
-        C: AppendToTranscript<TranscriptF>,
-        T: Transcript<TranscriptF>,
-    {
-        self.check()?;
-        let num_polynomials = self
-            .groups
-            .iter()
-            .map(PolynomialGroupClaims::num_evaluations)
-            .sum::<usize>();
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_vars());
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &num_polynomials);
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.groups.len());
-        for group in &self.groups {
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_evaluations());
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.point_vars().num_vars());
-            for &index in group.point_vars().indices() {
-                transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
-            }
-        }
-        for group in &self.groups {
-            group
-                .commitment
-                .append_to_transcript(ABSORB_COMMITMENT, transcript);
-        }
-        for coord in self.point() {
-            append_ext_field::<TranscriptF, F, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
-        }
-        Ok(())
     }
 }
 
