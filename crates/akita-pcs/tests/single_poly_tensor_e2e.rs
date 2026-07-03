@@ -57,7 +57,7 @@ fn run_single_onehot_tensor(nv: usize) {
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
-            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
+            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::batched_commit(
                 &setup,
                 commit_input,
                 &stack,
@@ -145,7 +145,7 @@ fn run_single_dense_tensor(nv: usize) {
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
-            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
+            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::batched_commit(
                 &setup,
                 commit_input,
                 &stack,

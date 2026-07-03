@@ -341,7 +341,8 @@ fn run() -> Result<(), String> {
     );
 
     let t0 = Instant::now();
-    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+    let (commitment, hint) =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
         &prover_setup,
         std::slice::from_ref(&onehot_poly),
         &stack,

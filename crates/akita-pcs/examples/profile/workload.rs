@@ -425,7 +425,7 @@ fn run_prove<
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
+    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_commit(
         setup,
         std::slice::from_ref(poly),
         stack,
@@ -849,7 +849,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&setup, &polys, &stack).unwrap();
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_commit(&setup, &polys, &stack)
+            .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());

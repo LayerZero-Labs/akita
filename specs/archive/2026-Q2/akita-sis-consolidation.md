@@ -4,8 +4,9 @@
 |-----------|----------------------------------|
 | Author(s) | Omid Bodaghi, Cursor agent draft |
 | Created   | 2026-06-02                       |
-| Status    | proposed                         |
+| Status    | superseded                       |
 | PR        |                                  |
+| Superseded-by | [`specs/sis-linf-table-cutover.md`](../../sis-linf-table-cutover.md) |
 
 ## Summary
 

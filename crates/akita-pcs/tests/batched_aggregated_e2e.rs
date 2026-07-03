@@ -85,7 +85,7 @@ mod non_zk_aggregated_cases {
             let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
-            >>::commit(&setup, &polys, &stack)
+            >>::batched_commit(&setup, &polys, &stack)
             .expect("grouped commit");
             let commitments = [commitment];
             let hints = vec![hint];
@@ -190,7 +190,7 @@ mod non_zk_aggregated_cases {
             >>::setup_verifier(&setup);
 
             let (commitments, hints) =
-                <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::commit(
+                <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
                     &setup, &polys, &stack,
                 )
                 .map(|(commitment, hint)| (vec![commitment], vec![hint]))
@@ -331,7 +331,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::commit(&setup, &polys, &stack)
+        >>::batched_commit(&setup, &polys, &stack)
         .expect("mixed aggregated commit");
         let commitments = [commitment];
         let hints = vec![hint];

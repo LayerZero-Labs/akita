@@ -22,7 +22,7 @@ pub(crate) fn sis_max_widths(
     d: u32,
     coeff_linf_bound: u128,
 ) -> Option<&'static [u64]> {
-    if min_security_bits != 138 {
+    if min_security_bits != 128 {
         return None;
     }
     match family {
