@@ -23,7 +23,8 @@ use super::slice_mle::{
     SetupEvaluator, SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
     ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
-use super::{validate_log_basis, validate_ring_dispatch};
+use super::validate_log_basis;
+use akita_types::validate_ring_dispatch;
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
 mod tensor_challenges;

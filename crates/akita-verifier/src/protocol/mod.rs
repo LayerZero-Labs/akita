@@ -11,11 +11,6 @@ pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, R
 pub(crate) use slice_mle::{SetupEvalPlan, SetupEvaluator};
 
 #[inline]
-pub(crate) fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {
-    akita_types::validate_ring_dispatch::<D>()
-}
-
-#[inline]
 pub(crate) fn validate_log_basis(log_basis: u32) -> Result<(), AkitaError> {
     if log_basis == 0 || log_basis >= 128 {
         return Err(AkitaError::InvalidSetup(

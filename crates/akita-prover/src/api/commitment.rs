@@ -560,7 +560,7 @@ where
 ///
 /// Root tensor projection only applies when the field tower admits it and the
 /// config-selected schedule starts with a fold. The ring dimension is the
-/// prove schedule's root fold `ring_dimension` — the same schedule-derived
+/// prove schedule's root fold A-role dimension — the same schedule-derived
 /// value `prepare_root` uses when it makes the matching prove-side decision.
 ///
 /// # Errors
@@ -579,7 +579,7 @@ where
     let Some(root_fold) = schedule_root_fold_step(&schedule) else {
         return Ok(None);
     };
-    let ring_d = root_fold.params.ring_dimension;
+    let ring_d = root_fold.params.role_dims().d_a();
     Ok(root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
         ring_d,
         opening_batch.max_num_vars(),
@@ -756,10 +756,11 @@ where
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     let (commitment, hint) =
-        if should_transform_group_commitment::<Cfg>(&key, params.ring_dimension)? {
+        if should_transform_group_commitment::<Cfg>(&key, params.role_dims().d_a())? {
             // A-role tensor-projection operation at the group layout's ring
             // dimension.
-            let transformed = dispatch_ring_dim_result!(params.ring_dimension, |D| {
+            let transform_d = params.role_dims().d_a();
+            let transformed = dispatch_ring_dim_result!(transform_d, |D| {
                 polys
                     .iter()
                     .map(|poly| {
@@ -881,8 +882,9 @@ where
     let params = Cfg::get_params_for_grouped_batched_commitment(&schedule_key)?;
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-    if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.ring_dimension)? {
-        let transformed = dispatch_ring_dim_result!(params.ring_dimension, |D| {
+    if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {
+        let transform_d = params.role_dims().d_a();
+        let transformed = dispatch_ring_dim_result!(transform_d, |D| {
             polys
                 .iter()
                 .map(|poly| {

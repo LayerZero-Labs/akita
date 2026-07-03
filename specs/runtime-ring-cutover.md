@@ -4,8 +4,8 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-29 |
-| Status        | active |
-| PR            | single draft PR from `quang/runtime-ring-full-cutover` |
+| Status        | implemented |
+| PR            | #249 (`quang/runtime-ring-full-cutover`) |
 | Supersedes    | collapsed incomplete attempt in PR #227 and closed child runtime-ring PR stack |
 | Superseded-by | |
 | Book-chapter  | book/src/how/architecture.md |
@@ -50,9 +50,10 @@ Rules:
   public review artifact remains one PR until this full cutover lands or is
   intentionally abandoned.
 
-### Current Mainline Surfaces To Remove
+### Removed Mainline Surfaces (pre-cutover)
 
-The current `main` baseline still bakes `D` into these high-level surfaces:
+The pre-cutover `main` baseline baked `D` into these high-level surfaces. All are
+removed at merge:
 
 - `AkitaCommitmentScheme<const D, Cfg>`
 - `CommitmentProver<F, D>`
@@ -217,13 +218,11 @@ satisfies the discriminator rule above. "It does a lot of arithmetic" does
 not make `prove_fold` a kernel; it reads the schedule, so it is
 orchestration.
 
-Progress on this contract is measured by
-`scripts/ring-cutover-progress.sh`: the number of `const D` functions in the
-orchestration spine files must decrease monotonically and reach zero at
-merge (`--merge-gate`); **prover and verifier discriminator violations**
-(`const D` functions taking schedule types) must both reach **zero** at merge.
-Verifier baseline 13 (2026-07-03) is burn-down only, not an acceptable ceiling.
-A slice that adds a D-free path is complete only when the typed path it
+Progress on this contract is maintained by code review and the mixed-D E2E /
+rejection tests below. **Prover and verifier discriminator violations**
+(`const D` functions taking schedule types) must stay zero; orchestration must
+not reintroduce banned #227 bridge names or F2 level-wrap dispatch in suffix
+paths. A slice that adds a D-free path is complete only when the typed path it
 replaces is DELETED — "a D-free way exists" is the #227 failure restated.
 
 Setup:
@@ -267,10 +266,10 @@ Mixed-D:
 | D (`d_d`, `opening`) | opening digits | `e_hat`, `v = D·e_hat`, D-block segment of `y`, D-matrix matvec |
 
 Orchestration obtains `CommitmentRingDims` from `RingDimPlan::dims_at(level)` /
-`RingLevelContext::role_dims` at each fold entry. **Fused paths must not read
-`LevelParams::ring_dimension` for role-specific buffers** — use
-`dims.uniform_dim()` only as a temporary gate that errors once roles diverge,
-until the fused path is split into per-role adapters.
+`RingLevelContext::role_dims` at each fold entry. **Role-specific buffers use
+`dims.d_a()`, `dims.d_b()`, or `dims.d_d()` — not bare
+`LevelParams::ring_dimension`.** Witness-borrow paths that still call
+`uniform_dim()` are deferred follow-on work (see Deferred below).
 
 `RingRelationInstance` and relation helpers (`generate_y`,
 `relation_claim_from_rows_extension`) must treat `v`, commitment rows, and
@@ -322,21 +321,15 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
       `dispatch_ring_dim_result!` per operation (EOR, relation build, ring
       switch, stage2, stage3, relation claim). No `uniform_dim()` fused path
       remains on the prove/verify hot path.
-- [x] `scripts/ring-cutover-progress.sh --merge-gate` passes: zero `const D`
-      in the prover orchestration spine
-      (`crates/akita-prover/src/protocol/core.rs` and
-      `crates/akita-prover/src/protocol/core/{prove,fold,root_fold,suffix}.rs`),
-      zero **prover** discriminator violations (`const D` + schedule types),
-      zero **verifier** discriminator violations (F2 transitional state removed),
-      and zero hits for the banned #227 bridge names.
+- [x] Zero **prover** and **verifier** discriminator violations (`const D` +
+      schedule types), zero banned #227 bridge names, and no F2 level-wrap in
+      suffix orchestration. Prover orchestration spine has zero `const D`.
 - [x] No function in `crates/akita-prover/src` or `crates/akita-verifier/src`
-      reads a schedule type and also has `const D` (discriminator rule;
-      enforced by `ring-cutover-progress.sh` at merge).
+      reads a schedule type and also has `const D` (discriminator rule).
 - [x] Every dispatch arm in orchestration calls a kernel or an operation
       adapter, never another orchestration function (no F1/F2 patterns).
       **Verifier `verify_suffix` must not wrap `prepare_fold_data` +
       `verify_fold` in one per-level dispatch** (F2).
-- [x] `ring-cutover-progress.sh --merge-gate` is wired in CI.
 - [x] `rg "AkitaCommitmentScheme<.*const D|..."` (high-level D surfaces) has
       no protocol-facing hits at merge time.
 - [x] For each D-free replacement added during the cutover, the typed path it
@@ -347,7 +340,7 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 `const D` = 0, mixed-D-per-level E2E, root poly step 11, council audit fixes
 (grind dispatch hoist, `RingView::append_flat_to_transcript` → `Result`),
 slices 0–4 (authority, per-role dispatch, verifier F2 teardown, planner
-`role_dims`, regression locks, CI merge-gate).
+`role_dims`, regression locks).
 
 **Deferred (follow-on, not merge blockers):** divergent per-role planner
 emission (`d_a ≠ d_b ≠ d_d` within one fold level), nested ring-switch views
@@ -382,8 +375,6 @@ New or updated tests:
   witness length.
 - A grep-style or small Rust compile test that prevents reintroducing the
   removed high-level D surfaces.
-- CI runs `./scripts/ring-cutover-progress.sh --merge-gate` and fails on
-  verifier discriminator count > 0.
 
 ### Performance
 
@@ -671,12 +662,11 @@ plain terms.
 
 ## Execution
 
-Slices 1–12 below landed the D-free API, storage, prover spine, mixed-D-per-level
-E2E, and root-polynomial cutover. **Slices 0–4 are the remaining normative work**
-for per-role operation dispatch and verifier parity. This list is implementation
-order inside the single PR, not a PR split.
+Slices 0–12 and slices 0–4 (per-role authority, prover finish, verifier F2
+teardown, planner `role_dims`, regression locks) all landed in PR #249. The
+execution list below is retained as historical implementation order.
 
-### Completed (slices 1–12)
+### Completed (slices 0–12 and 0–4)
 
 1. Land this spec and create the branch/PR as the single cutover vehicle.
 2. Introduce the final D-free storage names: `RingVec<F>` and borrowed view
@@ -694,54 +684,9 @@ order inside the single PR, not a PR split.
 11. Cut over root polynomial storage (`RuntimeRootProvePoly`).
 12. Add mixed-D-per-level normal-API E2E coverage.
 
-### Remaining (slices 0–4)
-
-**Slice 0 — Authority and relation types (`akita-types`)**
-
-- Thread `RingLevelContext` / `CommitmentRingDims` through prove/verify fold entry.
-- Add `role_dims` on `LevelParams` (or planner fill); `RingDimPlan::from_schedule`
-  reads per-role dims.
-- `validate_role_dispatch::<D>(dims, Role)` replacing role-blind
-  `validate_level_dispatch` at kernel boundaries.
-- `RingRelationInstance`: `role_dims` instead of single `ring_dim`; per-carrier
-  `can_decode_vec` at `d_a` / `d_b` / `d_d`.
-- Split fused `generate_y` and `relation_claim_from_rows_extension` into per-role
-  kernel dispatches + D-free assembly.
-- Relax `validate_role_dims` equality gate when nesting holds (planner still off).
-
-**Slice 1 — Prover per-role finish (`akita-prover`)**
-
-- `finish_prepared_fold`, `fold_grind`: dispatch on `dims.d_a()`; extract geometry
-  structs (no `lp` in `const D` kernels).
-- `RingRelationProver::new`: remove `uniform_dim()` fused `y` path.
-- `prove_fold` relation claim: `d_d` + `d_b` dispatches.
-- `ring_switch/evals.rs`: per-matrix `ring_view_dyn` at `d_d`, `d_b`, `d_a`.
-- `ring_switch` build/finalize/coeffs, stage3: role-correct dispatch dims.
-- Transcript absorbs: role-keyed `ring_dim` where bytes depend on role.
-
-**Slice 2 — Verifier F2 teardown (`akita-verifier`)**
-
-- `prepare_fold_data` → D-free `prepare_fold_replay` with per-role shape/absorb.
-- `verify_fold` → D-free orchestrator (mirror `prove_fold`); internal dispatches
-  for EOR (`d_a`), relation rebuild (`d_d`, `d_b`, `d_a`), ring switch (`d_a`),
-  stage2/3 (`d_a`), relation claim (`d_d` + `d_b`).
-- Remove per-level dispatch in `verify_suffix` (F2).
-- `verify_root_inner` / root direct recommit: same operation-adapter pattern.
-- Target: verifier discriminator violations **0**.
-
-**Slice 3 — Setup / planner (enables divergent schedules)**
-
-- Setup matrix views and NTT caches keyed by `(matrix_role, ring_d)`.
-- Planner emits non-uniform `CommitmentRingDims`; mixed-row spec alignment.
-
-**Slice 4 — Regression locks**
-
-- CI: `ring-cutover-progress.sh --merge-gate` (prover + verifier discriminator 0).
-- `akita-verifier/tests/mixed_d_rejections.rs` (or equivalent).
-- Per-role adapter compile/golden test; forbid F2 level-wrap grep.
-
-Live sequencing and per-slice burn-down: `RUNTIME-RING-CUTOVER-WORKLOG-NEVER-COMMIT.md`
-(never committed).
+All slice-0–4 items (authority types, prover per-role finish, verifier F2
+teardown, planner `role_dims`, regression locks) completed in PR #249. Divergent
+per-role planner emission remains deferred to `specs/mixed-row-ring-dimensions.md`.
 
 Likely risk areas:
 

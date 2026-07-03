@@ -8,8 +8,9 @@ use akita_config::test_support::mixed_d_per_level_schedule;
 use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
-    validate_role_dispatch, CleartextWitnessShape, CommitmentRingDims, DirectStep, FoldStep,
-    LevelParams, RingDimPlan, RingRole, RingView, Schedule, Step, ValidatedScheduleContext,
+    validate_role_dims, validate_role_dispatch, CleartextWitnessShape, CommitmentRingDims,
+    DirectStep, FoldStep, LevelParams, RingDimPlan, RingRole, RingView, Schedule, Step,
+    ValidatedScheduleContext,
 };
 
 type Envelope = fp128::D128Full;
@@ -31,6 +32,7 @@ fn nested_role_dims_reject_non_nesting() {
         opening: 32,
     };
     assert!(!bad.nests());
+    validate_role_dims(bad).expect_err("non-nesting role dims rejected");
 }
 
 #[test]

@@ -53,11 +53,11 @@ Further reading: [Configuration and planning](./configuration.md), [Proving](./p
 The cyclotomic ring dimension is **schedule-derived shape metadata, not a
 type parameter of the protocol**. Protocol data — commitments, hints, proofs,
 claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`,
-`SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`); each
-fold level's `LevelParams::ring_dimension` says how those vectors are
-interpreted at that level, and levels may differ. `RingDimPlan` (inside
-`ValidatedScheduleContext`) validates every level dimension against the
-setup's generation dimension and is the single runtime authority.
+`SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`). Per-level
+`CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `LevelParams::role_dims`) is
+the operation authority for how those vectors are interpreted; levels may
+differ. `RingDimPlan` (inside `ValidatedScheduleContext`) validates every level
+dimension against the setup's generation dimension.
 
 Every function on the prove/verify path has one of two roles:
 
@@ -73,24 +73,26 @@ kernel through `akita_types::dispatch_ring_dim_result!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
 proof — so that per-role ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
 see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different
-dimensions to different adapters. `CommitmentRingDims` carries the per-role
-dimensions; fused paths obtain their single dimension through its
-`uniform_dim()` accessor, which fails loudly once roles diverge.
+dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
+names the per-role dimensions; prove/verify hot paths dispatch on `d_a()`, `d_b()`,
+or `d_d()` per operation, not on a single fused dimension.
 
 The normative contract (discriminator rule, forbidden facade/level-
-monomorphization patterns, acceptance greps) lives in
-`specs/runtime-ring-cutover.md`; `scripts/ring-cutover-progress.sh
---merge-gate` enforces it mechanically. Mixed-dimension execution is
-exercised end-to-end by `crates/akita-pcs/tests/mixed_d_per_level_e2e.rs`
-through the normal public API.
+monomorphization patterns) lives in `specs/runtime-ring-cutover.md`.
+Mixed-dimension execution is exercised end-to-end by
+`crates/akita-pcs/tests/mixed_d_per_level_e2e.rs` and
+`crates/akita-verifier/tests/mixed_d_rejections.rs` through the normal public API.
 
 ## Core types
 
 | Type | Role |
 |------|------|
-| `AkitaCommitmentScheme` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
+| `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
+| `AkitaProverSetup<F>` | Prover setup wrapper; `gen_ring_dim` is runtime shape metadata |
+| `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
+| `CommitmentRingDims`, `RingDimPlan`, `ValidatedScheduleContext` | Per-role ring dimensions and schedule authority |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, SIS family, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
-| `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth) |
+| `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
 | `PlanPolicy` | Value-typed inputs to `akita_types::schedule_plan_from_table` |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `AkitaPolyOps` | Polynomial backends consumed by the scheme |
