@@ -5,6 +5,7 @@
 //! generated schedule/SIS data shared by prover, verifier, and planner code.
 
 mod commitment_compression;
+mod compression_plan;
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
@@ -28,6 +29,9 @@ pub mod witness;
 pub use commitment_compression::{
     decomposition_digits_per_scalar, evaluate_commitment_compression, linearize_compression_chain,
     linearize_raw_ring_rows_to_first_digits, CompressionEvaluation, CompressionLinearization,
+};
+pub use compression_plan::{
+    CommitmentCompressionPlan, CompressionLayerPlan, CompressionMapRole, FoldCompressionPlan,
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
@@ -121,8 +125,7 @@ pub use schedule::{
     schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CommitmentCompressionPlan, CompressionLayerPlan, CompressionMapRole, DirectStep,
-    ExecutionSchedule, FoldCompressionPlan, FoldStep, PrecommittedGroupParams, Schedule, Step,
+    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{

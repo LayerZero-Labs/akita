@@ -1,5 +1,8 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
+use crate::compression_plan::{
+    append_optional_compression_plan, CommitmentCompressionPlan, FoldCompressionPlan,
+};
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_field::{AkitaError, CanonicalField};
@@ -260,120 +263,6 @@ pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
 /// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
 pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
     (-F::one()).to_canonical_u128() + 1
-}
-
-/// Compression map role for a scalar commitment-compression layer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CompressionMapRole {
-    /// `H_i` map on the D-side opening commitment `v`.
-    H,
-    /// `F_i` map on a recursive B-side next-witness commitment `u`.
-    F,
-    /// `F_i` map on the root B-side user commitment.
-    RootF,
-}
-
-impl CompressionMapRole {
-    pub(crate) fn descriptor_tag(self) -> u8 {
-        match self {
-            Self::H => 0,
-            Self::F => 1,
-            Self::RootF => 2,
-        }
-    }
-}
-
-/// One scalar compression map layer.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CompressionLayerPlan {
-    /// Logical role of the matrix view.
-    pub role: CompressionMapRole,
-    /// Layer index inside this role, e.g. `0` for `H0`.
-    pub layer: usize,
-    /// Input digit length in scalar field elements.
-    pub input_len: usize,
-    /// Output length in scalar field elements.
-    pub output_len: usize,
-    /// Offset into the shared scalar compression setup prefix.
-    pub setup_offset: usize,
-}
-
-impl CompressionLayerPlan {
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(self.role.descriptor_tag());
-        push_usize(bytes, self.layer);
-        push_usize(bytes, self.input_len);
-        push_usize(bytes, self.output_len);
-        push_usize(bytes, self.setup_offset);
-    }
-}
-
-/// Compression plan for one public commitment payload.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CommitmentCompressionPlan {
-    /// Raw uncompressed public payload length in scalar field elements.
-    pub raw_len: usize,
-    /// Final compressed public payload length in scalar field elements.
-    pub public_len: usize,
-    /// Logical hidden suffix length needed by this commitment.
-    pub suffix_len: usize,
-    /// Physical hidden suffix length after padding.
-    pub padded_suffix_len: usize,
-    /// Active scalar compression map layers.
-    pub layers: Vec<CompressionLayerPlan>,
-}
-
-impl CommitmentCompressionPlan {
-    /// Return whether this plan has no active compression.
-    pub fn is_empty(&self) -> bool {
-        self.layers.is_empty()
-    }
-
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        push_usize(bytes, self.raw_len);
-        push_usize(bytes, self.public_len);
-        push_usize(bytes, self.suffix_len);
-        push_usize(bytes, self.padded_suffix_len);
-        push_usize(bytes, self.layers.len());
-        for layer in &self.layers {
-            layer.append_descriptor_bytes(bytes);
-        }
-    }
-}
-
-/// Fold-local compression plan.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct FoldCompressionPlan {
-    /// D-side `v` compression for this fold.
-    pub v: Option<CommitmentCompressionPlan>,
-    /// B-side next-witness `u` compression for this fold. `None` on the
-    /// penultimate fold in PR2.
-    pub next_u: Option<CommitmentCompressionPlan>,
-}
-
-impl FoldCompressionPlan {
-    /// Return true when neither `v` nor next `u` is compressed.
-    pub fn is_empty(&self) -> bool {
-        self.v.is_none() && self.next_u.is_none()
-    }
-
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        append_optional_compression_plan(bytes, self.v.as_ref());
-        append_optional_compression_plan(bytes, self.next_u.as_ref());
-    }
-}
-
-pub(crate) fn append_optional_compression_plan(
-    bytes: &mut Vec<u8>,
-    plan: Option<&CommitmentCompressionPlan>,
-) {
-    match plan {
-        Some(plan) => {
-            bytes.push(1);
-            plan.append_descriptor_bytes(bytes);
-        }
-        None => bytes.push(0),
-    }
 }
 
 /// Total ring elements in a recursive witness polynomial for an explicit
@@ -878,8 +767,9 @@ mod tests {
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-        MRowLayout, SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+        AkitaStage2Proof, CleartextWitnessProof, CompressionMapRole,
+        ExtensionOpeningReductionProof, FlatRingVec, MRowLayout, SisModulusFamily,
+        TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;

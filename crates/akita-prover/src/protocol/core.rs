@@ -49,7 +49,7 @@ use akita_types::{
     AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
     AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder, CleartextWitnessProof,
     ExecutionSchedule, ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout,
-    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RingCommitment,
+    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
     RingMultiplierOpeningPoint, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
     SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
