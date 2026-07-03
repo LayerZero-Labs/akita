@@ -325,8 +325,8 @@ random `alpha`; the dominant step is the setup-contribution scan whose length is
 `required = max(A,B,D)` footprints
 ([`setup_contribution.rs:371`](crates/akita-types/src/setup_contribution.rs)).
 
-The SIS sizing is monotone in width: `min_secure_rank(family, d, collision,
-width)` is non-decreasing in `width`
+The SIS sizing is monotone in width: `min_secure_rank(SisTableKey, width)` is
+non-decreasing in `width`
 ([`crates/akita-types/src/sis/ajtai_key.rs`](crates/akita-types/src/sis/ajtai_key.rs)).
 So a narrower `B` can take a **smaller rank** `n_b`, shrinking the footprint
 super-linearly in `f`.
@@ -430,14 +430,14 @@ if !policy.tiered || b_footprint <= a_footprint {
     // smallest first: pick the smallest f with b_foot' <= a_footprint
     for f in feasible_powers_of_two(num_blocks * t_vectors) {
         width_t' = width_t / f;                                  // shrink B width
-        n_b'     = min_secure_rank(family, d, norm_t, width_t'); // rank may drop
+        n_b'     = min_secure_rank(key_t, width_t');             // rank may drop
         b_foot'  = n_b' * width_t';
         // F commits decompose(u_1 ‖ … ‖ u_f): width = f * n_b' * delta_open_F,
         // entries are balanced digits → digit-range collision bucket (norm_t).
         // F is very small (commits to u, not t̂); no f_foot <= a_footprint check.
         width_F  = f * n_b' * delta_open;                         // delta_open at this level
-        norm_F   = rounded_up_collision_norm_t(family, d, log_basis);
-        n_F      = min_secure_rank(family, d, norm_F, width_F);
+        norm_F   = rounded_up_collision_linf_t(min_security_bits, family, d, log_basis);
+        n_F      = min_secure_rank(key_F, width_F);
         // accept the smallest f with b_foot' <= a_footprint
     }
     // store: b_key' = AjtaiKeyParams::try_new(family, n_b', width_t', norm_t, d)
@@ -461,9 +461,9 @@ Notes and edge cases:
   usually takes a smaller one — this is the "reduce its rank" the motivation
   calls out, achieved for free by re-querying the SIS floor at the smaller
   width.
-- **`F` collision bucket.** `F` consumes balanced base-`2^log_basis` digits of
+- **`F` coefficient bucket.** `F` consumes balanced base-`2^log_basis` digits of
   `u_concat`, so its collision bound is the digit-range
-  `rounded_up_collision_norm_t` (`2^log_basis − 1` rounded to a bucket) — the
+  `rounded_up_collision_linf_t` (`2^log_basis − 1` rounded to a bucket) — the
   same bound the `B`/`D` roles already use. This is the crucial point that keeps
   `F` cheap: it is an ordinary Ajtai matrix over small digits, not over the
   large ring images `u_i`.

@@ -125,7 +125,7 @@ fn prove_onehot_with_setup_mode(
     let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
         F,
         ONEHOT_D,
-    >>::commit(&setup, commit_input, &stack)
+    >>::batched_commit(&setup, commit_input, &stack)
     .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
