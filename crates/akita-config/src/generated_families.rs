@@ -17,8 +17,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_planner::{find_group_batch_schedule, find_schedule, EmitSpec, PlannerPolicy};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey,
-    OpeningBatchShape, Schedule,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupParams, Schedule,
 };
 
 use crate::conservative_commitment::conservative_commit_params;
@@ -54,17 +54,17 @@ pub struct GeneratedFamily {
     pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any shipped table
     /// (`find_schedule(key, &policy_of::<Cfg>(), …)`).
-    pub regen: fn(CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError>,
+    pub regen: fn(PolynomialGroupLayout) -> Result<Schedule, AkitaError>,
     /// Pure grouped DP regeneration that ignores any shipped table.
     pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
-    /// Whether this family ships grouped-root generated tables.
+    /// Whether this family ships grouped-root rows in its generated table.
     pub emit_group_batch: bool,
     /// Grouped-root keys enumerated for this generated family.
     pub group_batch_keys: fn(&GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError>,
     /// `Cfg::runtime_schedule(key)` — the table fast path when an entry
     /// exists, falling through to the DP otherwise. Used by diagnostic
     /// comparisons against the shipped table.
-    pub table_backed: fn(CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError>,
+    pub table_backed: fn(PolynomialGroupLayout) -> Result<Schedule, AkitaError>,
     pub policy: fn() -> PlannerPolicy,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -72,20 +72,15 @@ pub struct GeneratedFamily {
 
 /// Build the ordered key cross-product emitted for `family`.
 ///
-/// The order matches what `gen_schedule_tables` writes to disk: all
-/// singleton keys first, then each batched `num_polys` block, each block
-/// ordered by `num_vars` ascending. Drift-guard tests assert positional
-/// equality against the shipped table, so this ordering doubles as the
-/// canonical row order.
+/// Scalar keys emitted for `family`. The emitter combines these with grouped
+/// keys and sorts the unified catalog by the generated schedule lookup order.
 ///
 /// # Errors
 ///
 /// Returns an error if the synthetic opening batch fails to build
 /// or the lookup-key derivation fails (both indicate a malformed
 /// `(min_num_vars, max_num_vars)` range).
-pub fn family_keys(
-    family: &GeneratedFamily,
-) -> Result<Vec<CommitmentGroupScheduleKey>, AkitaError> {
+pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
     let mut keys = Vec::with_capacity(
         family
             .num_polys
@@ -94,17 +89,15 @@ pub fn family_keys(
     );
     for &num_polys in family.num_polys {
         for nv in family.min_num_vars..=family.max_num_vars {
-            let opening_batch = OpeningBatchShape::new(nv, num_polys)?;
-            keys.push(CommitmentGroupScheduleKey::new_from_opening_batch(
-                &opening_batch,
-            )?);
+            let opening_batch = OpeningClaimsLayout::new(nv, num_polys)?;
+            keys.push(AkitaScheduleLookupKey::from_layout(&opening_batch)?.final_group);
         }
     }
     Ok(keys)
 }
 
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
-fn regen<Cfg: CommitmentConfig>(key: CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
+fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {
     find_schedule(
         key,
         &policy_of::<Cfg>(),
@@ -127,9 +120,7 @@ fn regen_group_batch<Cfg: CommitmentConfig>(
 
 /// Table-backed resolution for `Cfg` — table hit when present, otherwise
 /// the DP fallback baked into `runtime_schedule`.
-fn table_backed<Cfg: CommitmentConfig>(
-    key: CommitmentGroupScheduleKey,
-) -> Result<Schedule, AkitaError> {
+fn table_backed<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {
     Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
 }
 
@@ -152,16 +143,16 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         .max(policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize + 1);
     let mut keys = Vec::new();
     for main in family_keys(family)? {
-        let pre_num_vars = main.num_vars / 2;
+        let pre_num_vars = main.num_vars() / 2;
         if pre_num_vars < min_precommitted_num_vars {
             continue;
         }
-        let patterns = precommitted_group_patterns(main.num_polynomials);
+        let patterns = precommitted_group_patterns(main.num_polynomials());
         for pattern in patterns {
             let mut precommitteds = Vec::with_capacity(pattern.len());
             let mut supported = true;
             for &num_polys in &pattern {
-                let pre_key = CommitmentGroupScheduleKey::new(pre_num_vars, num_polys);
+                let pre_key = PolynomialGroupLayout::new(pre_num_vars, num_polys);
                 let params = match conservative_commit_params::<Cfg>(&pre_key) {
                     Ok(params) => params,
                     Err(_) => {
@@ -169,7 +160,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
                         break;
                     }
                 };
-                precommitteds.push(CommitmentGroupLayout::from_params(pre_key, &params));
+                precommitteds.push(PrecommittedGroupParams::from_params(pre_key, &params));
             }
             if !supported {
                 continue;
@@ -183,7 +174,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
             }
         }
     }
-    keys.sort_by(akita_planner::runtime_group_batch_key_cmp);
+    keys.sort_by(akita_planner::runtime_schedule_key_cmp);
     Ok(keys)
 }
 
@@ -330,6 +321,41 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         1,
         50,
         tensor_verifier::fp128::D64OneHotTensor
+    ),
+    // Multi-chunk (distributed-prover) companions of the D64 families. Same
+    // `(num_vars, num_polynomials)` keys as their siblings; schedules differ
+    // because the policy prices the chunked witness layout.
+    family_row!(
+        "fp128_d64_onehot_multi_chunk",
+        "FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-onehot-multi-chunk",
+        1,
+        50,
+        fp128::D64OneHotMultiChunk
+    ),
+    family_row!(
+        "fp128_d64_onehot_multi_chunk_w2r2",
+        "FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES",
+        "fp128-d64-onehot-multi-chunk-w2r2",
+        1,
+        50,
+        fp128::D64OneHotMultiChunkW2R2
+    ),
+    family_row!(
+        "fp128_d64_onehot_multi_chunk_w4r2",
+        "FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES",
+        "fp128-d64-onehot-multi-chunk-w4r2",
+        1,
+        50,
+        fp128::D64OneHotMultiChunkW4R2
+    ),
+    family_row!(
+        "fp128_d64_full_multi_chunk",
+        "FP128_D64_FULL_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-full-multi-chunk",
+        1,
+        50,
+        fp128::D64FullMultiChunk
     ),
     // Tiered companion of `fp128_d64_onehot`
     family_row!(

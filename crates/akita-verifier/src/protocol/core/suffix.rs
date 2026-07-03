@@ -1,6 +1,6 @@
 use super::*;
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{terminal_witness_segment_layout, OpeningBatchShape};
+use akita_types::{terminal_witness_segment_layout, OpeningClaimsLayout};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -57,7 +57,7 @@ where
         .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
+    let opening_batch = OpeningClaimsLayout::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
     let row_coefficients = vec![L::one()];
     let FoldEorReplay {
@@ -88,14 +88,28 @@ where
 
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
-        None => w_ring_element_count_with_counts_for_layout::<F>(
-            lp,
-            num_claims,
-            num_claims,
-            MRowLayout::WithDBlock,
-        )?
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        None => {
+            let nc = lp.witness_chunk.num_chunks;
+            let ring = if nc > 1 {
+                akita_types::w_ring_element_count_for_chunks(
+                    F::modulus_bits(),
+                    lp,
+                    num_claims,
+                    MRowLayout::WithDBlock,
+                    nc,
+                )?
+            } else {
+                w_ring_element_count_with_counts_for_layout::<F>(
+                    lp,
+                    num_claims,
+                    num_claims,
+                    MRowLayout::WithDBlock,
+                )?
+            };
+            ring.checked_mul(D).ok_or_else(|| {
+                AkitaError::InvalidSetup("next witness length overflow".to_string())
+            })?
+        }
     };
     let terminal_replay = if proof.final_w_len().is_some() {
         let layout =
@@ -126,13 +140,16 @@ where
     };
 
     let fold_grind_nonce = proof.fold_grind_nonce();
-    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+    let replay_opening_batch = OpeningClaims::from_groups(
         current_state.opening_point.as_slice(),
-        opening_batch,
-        vec![CommitmentGroup {
-            claims: openings,
-            commitment: commitment_u,
-        }],
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(
+                opening_batch.max_num_vars(),
+                current_state.opening_point.len(),
+            )?,
+            openings,
+            commitment_u,
+        )?],
     )?;
     Ok(PreparedFoldReplay {
         lp,
@@ -223,16 +240,27 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let computed_next_w_len = w_ring_element_count_with_counts_for_layout::<F>(
-                    current_lp,
-                    1,
-                    1,
-                    MRowLayout::WithDBlock,
-                )?
-                .checked_mul(level_d)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("next witness length overflow".to_string())
-                })?;
+                let next_chunks = current_lp.witness_chunk.num_chunks;
+                let computed_next_w_ring = if next_chunks > 1 {
+                    akita_types::w_ring_element_count_for_chunks(
+                        F::modulus_bits(),
+                        current_lp,
+                        1,
+                        MRowLayout::WithDBlock,
+                        next_chunks,
+                    )?
+                } else {
+                    w_ring_element_count_with_counts_for_layout::<F>(
+                        current_lp,
+                        1,
+                        1,
+                        MRowLayout::WithDBlock,
+                    )?
+                };
+                let computed_next_w_len =
+                    computed_next_w_ring.checked_mul(level_d).ok_or_else(|| {
+                        AkitaError::InvalidSetup("next witness length overflow".to_string())
+                    })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
                 current_state = SuffixVerifierState {
                     opening_point: challenges,

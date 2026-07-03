@@ -113,7 +113,7 @@ where
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
 
@@ -135,12 +135,13 @@ where
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .expect("commit");
+    let (commitment, hint) =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commit");
 
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
     let commitments = [commitment];
@@ -187,7 +188,7 @@ where
     assert_eq!(Cfg::D, D);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     // The committed poly's one-hot chunk size must match the config's required
@@ -227,12 +228,13 @@ where
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .expect("commit");
+    let (commitment, hint) =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, D, usize>; 1] = [&poly];
     let commitments = [commitment];
@@ -285,7 +287,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     assert!(commit_batch >= 1);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let polys: Vec<DensePoly<F, D>> = (0..commit_batch)
@@ -318,8 +320,10 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
     let (commitment, hint) =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
-            .expect("batched commit");
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+            &setup, &polys, &stack,
+        )
+        .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
@@ -417,8 +421,10 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
     let (commitment, hint) =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
-            .expect("batched onehot commit");
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+            &setup, &polys, &stack,
+        )
+        .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];

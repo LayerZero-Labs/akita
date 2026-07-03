@@ -48,7 +48,7 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let opening_batch =
-            akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch");
+            akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
         let layout = TieredCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         assert!(
             layout.f_key.is_some(),
@@ -75,7 +75,9 @@ fn run_tiered_singleton(nv: usize, mode: SetupContributionMode) {
         let (commitment, hint) = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
             TIERED_D,
-        >>::commit(&setup, std::slice::from_ref(&poly), &stack)
+        >>::batched_commit(
+            &setup, std::slice::from_ref(&poly), &stack
+        )
         .expect("commit");
         assert_eq!(
             commitment.u.len(),
@@ -137,7 +139,7 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let opening_batch =
-            akita_types::OpeningBatchShape::new(nv, num_polys).expect("same-point opening_batch");
+            akita_types::OpeningClaimsLayout::new(nv, num_polys).expect("same-point opening_batch");
         let layout = TieredCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         assert!(
             layout.f_key.is_some(),
@@ -170,7 +172,7 @@ fn run_tiered_batch(nv: usize, num_polys: usize, mode: SetupContributionMode) {
         let (commitment, hint) = <AkitaCommitmentScheme<TIERED_D, TieredCfg> as CommitmentProver<
             F,
             TIERED_D,
-        >>::commit(&setup, &polys, &stack)
+        >>::batched_commit(&setup, &polys, &stack)
         .expect("commit");
 
         let poly_refs: Vec<&OneHotPoly<F, TIERED_D, u8>> = polys.iter().collect();

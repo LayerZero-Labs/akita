@@ -15,10 +15,12 @@ use super::decomposition_digits::{
 use crate::DecompositionParams;
 
 pub use super::fold_linf_cap::{
-    fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,
-    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+    fold_witness_linf_cap_policy, fold_witness_linf_ln_term,
+    fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
+    fold_witness_linf_tensor_tail_bound_sq, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
+    MAX_FOLD_GRIND_ATTEMPTS,
 };
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
@@ -169,24 +171,18 @@ fn fold_witness_pre_snap_linf_cap(
             "fold_witness_honest_prover_linf_cap: folded-witness bound β = 0".to_string(),
         ));
     }
-    let num_fold_blocks = (num_claims as u128)
-        .checked_mul(1u128 << r_vars)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "fold_witness_honest_prover_linf_cap: num_fold_blocks overflows u128".to_string(),
-            )
-        })?;
     let witness_linf_sq = witness
         .infinity_norm()
         .saturating_mul(witness.infinity_norm());
     match cap_config.policy {
         FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok((beta, None)),
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind => {
-            let t_sq = fold_witness_linf_tail_bound_sq(
-                num_fold_blocks,
-                cap_config.challenge_l2_sq_max,
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
+            let t_sq = fold_witness_linf_tail_bound_for_config_sq(
+                r_vars,
+                num_claims,
                 witness_linf_sq,
-                cap_config.grind_union_ln,
+                cap_config,
             )?;
             let t_star = isqrt_ceil(t_sq);
             Ok((beta.min(t_star), Some(t_star)))
@@ -245,7 +241,11 @@ pub fn fold_witness_linf_digit_plan(
     let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);
     let delta_base = num_digits_for_bound(log_cap, field_bits, log_basis);
     let (delta_fold, grind_cap) = match (cap_config.policy, t_star) {
-        (FoldWitnessLinfCapPolicy::TailBoundWithGrind, Some(t)) if snap_retain_den > 0 => {
+        (
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind
+            | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
+            Some(t),
+        ) if snap_retain_den > 0 => {
             snap_num_digits_fold_down(
                 log_basis,
                 delta_base,

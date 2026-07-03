@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
-    CleartextWitnessShape, FoldStep, LevelParams, OpeningBatchShape, OpeningGroupShape,
-    PointVariableSelection, Step,
+    CleartextWitnessShape, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, Step,
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{Prime32Offset99, Prime64Offset59};
@@ -24,7 +23,7 @@ fn sample_level_params() -> LevelParams {
 }
 
 fn sample_descriptor() -> AkitaInstanceDescriptor {
-    let opening_batch = OpeningBatchShape::new(5, 3).expect("valid opening batch");
+    let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     let schedule = Schedule {
         steps: vec![
             Step::Fold(FoldStep {
@@ -57,7 +56,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         },
         PlanSection::from_schedule(&schedule),
-        CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call"),
+        CallSection::from_layout(&opening_batch, BasisMode::Lagrange).expect("call"),
     )
 }
 
@@ -285,52 +284,40 @@ fn algebra_section_binds_prime_and_extension_shape() {
 
 #[test]
 fn opening_batch_digest_binds_claim_count() {
-    let left = OpeningBatchShape::new(4, 2).expect("left");
-    let right = OpeningBatchShape::new(4, 3).expect("right");
+    let left = OpeningClaimsLayout::new(4, 2).expect("left");
+    let right = OpeningClaimsLayout::new(4, 3).expect("right");
 
-    assert_ne!(digest_opening_batch(&left), digest_opening_batch(&right));
+    assert_ne!(left.opening_batch_digest(), right.opening_batch_digest());
 }
 
 #[test]
 fn opening_batch_digest_binds_group_partition() {
-    let grouped = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
-    let scalar = OpeningBatchShape::new(4, 3).expect("scalar");
+    let grouped = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped");
+    let scalar = OpeningClaimsLayout::new(4, 3).expect("scalar");
 
     assert_ne!(
-        digest_opening_batch(&grouped),
-        digest_opening_batch(&scalar)
+        grouped.opening_batch_digest(),
+        scalar.opening_batch_digest()
     );
 }
 
 #[test]
-fn opening_batch_digest_binds_point_variable_selection_order() {
-    let forward = OpeningBatchShape::from_groups(
-        2,
-        vec![OpeningGroupShape {
-            point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
-            num_polynomials: 1,
-        }],
-    )
-    .expect("forward");
-    let swapped = OpeningBatchShape::from_groups(
-        2,
-        vec![OpeningGroupShape {
-            point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
-            num_polynomials: 1,
-        }],
-    )
-    .expect("swapped");
+fn opening_batch_digest_binds_group_active_vars() {
+    let two_vars =
+        OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(2, 1)]).expect("two vars");
+    let three_vars = OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(3, 1)])
+        .expect("three vars");
 
     assert_ne!(
-        digest_opening_batch(&forward),
-        digest_opening_batch(&swapped)
+        two_vars.opening_batch_digest(),
+        three_vars.opening_batch_digest()
     );
 }
 
 #[test]
 fn call_section_exposes_group_partition() {
-    let opening_batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
-    let call = CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call");
+    let opening_batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped");
+    let call = CallSection::from_layout(&opening_batch, BasisMode::Lagrange).expect("call");
 
     assert_eq!(call.num_polys, 3);
     assert_eq!(call.num_commitment_groups, 2);

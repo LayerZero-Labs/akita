@@ -177,13 +177,15 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     }
 
     fn get_params_for_prove(
-        opening_batch: &OpeningBatchShape,
+        opening_batch: &OpeningClaimsLayout,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp =
-            scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_polynomials())?;
+        let lp = scale_batched_root_layout_unchecked(
+            &Self::root_lp(),
+            opening_batch.num_total_polynomials(),
+        )?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            opening_batch.num_polynomials(),
+            opening_batch.num_total_polynomials(),
             1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;
@@ -191,8 +193,8 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         let witness_shape = akita_types::segment_typed_witness_shape(
             &lp,
             Self::Field::modulus_bits(),
-            opening_batch.num_polynomials(),
-            opening_batch.num_polynomials(),
+            opening_batch.num_total_polynomials(),
+            opening_batch.num_total_polynomials(),
             1,
             1,
         )?;
@@ -267,10 +269,12 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     }
 
     fn get_params_for_prove(
-        opening_batch: &OpeningBatchShape,
+        opening_batch: &OpeningClaimsLayout,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp =
-            scale_batched_root_layout_unchecked(&Self::root_lp(), opening_batch.num_polynomials())?;
+        let lp = scale_batched_root_layout_unchecked(
+            &Self::root_lp(),
+            opening_batch.num_total_polynomials(),
+        )?;
         // Single-fold schedule: the root IS the terminal fold, so its
         // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
@@ -278,7 +282,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         // length.
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
-            opening_batch.num_polynomials(),
+            opening_batch.num_total_polynomials(),
             1,
             akita_types::MRowLayout::WithoutDBlock,
         )?;
@@ -286,8 +290,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let witness_shape = akita_types::segment_typed_witness_shape(
             &lp,
             Self::Field::modulus_bits(),
-            opening_batch.num_polynomials(),
-            opening_batch.num_polynomials(),
+            opening_batch.num_total_polynomials(),
+            opening_batch.num_total_polynomials(),
             1,
             1,
         )?;
@@ -361,7 +365,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
         &setup,
         std::slice::from_ref(&poly),
         &stack,
@@ -521,7 +525,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
             .expect("stack");
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
         &setup,
         &[poly_a.clone(), poly_b.clone()],
         &stack,
@@ -635,7 +639,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
             .expect("stack");
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
         &setup,
         &[poly_a.clone(), poly_b.clone()],
         &stack,
@@ -733,7 +737,8 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let polys = [poly.clone(), poly];
     let poly_refs = [&polys[0], &polys[1]];
     let (commitment, hint) =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(&setup, &polys, &stack).unwrap();
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(&setup, &polys, &stack)
+            .unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_a];
 

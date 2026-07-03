@@ -15,7 +15,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::AkitaProverSetup;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::{CommitmentProver, ProverCommitmentGroup, ProverOpeningBatch};
+use akita_prover::{CommitmentProver, ProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
@@ -23,10 +23,10 @@ use akita_types::{
     schedule_terminal_direct_witness_shape, CleartextWitnessProof, CleartextWitnessShape, Schedule,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommitmentGroup,
-    PointVariableSelection, RingCommitment, VerifierOpeningBatch,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, OpeningClaims,
+    PointVariableSelection, PolynomialGroupClaims, RingCommitment,
 };
-use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey};
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -47,7 +47,7 @@ const D32_TEST_NV: usize = 12;
 
 fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
     let opening_batch =
-        akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch");
+        akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     Cfg::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 const SMALL_FIELD_TEST_NV: usize = 8;
@@ -157,29 +157,32 @@ fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, const D: usize>
     polynomials: &'a [&'a P],
     commitment: &'a RingCommitment<CommitF, D>,
     hint: AkitaCommitmentHint<CommitF, D>,
-) -> ProverOpeningBatch<'a, FF, P, CommitF, D> {
-    ProverOpeningBatch {
-        point: point.into(),
-        groups: vec![ProverCommitmentGroup {
-            point_vars: PointVariableSelection::prefix(point.len(), point.len())
-                .expect("full-point prover group"),
-            polynomials,
-            commitment: (commitment.clone(), hint),
-        }],
-    }
+) -> ProverOpeningData<'a, FF, P, CommitF, D> {
+    let group = PolynomialGroupClaims::new(
+        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        vec![FF::zero(); polynomials.len()],
+        commitment.clone(),
+    )
+    .expect("valid prover claims group");
+    let opening_claims =
+        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+        .expect("valid prover opening data")
 }
 
 fn verify_input<'a, FF: FieldCore, C>(
     point: &[FF],
     openings: &[FF],
     commitment: &'a C,
-) -> VerifierOpeningBatch<'static, FF, &'a C> {
-    VerifierOpeningBatch::from_groups(
+) -> OpeningClaims<'static, FF, &'a C> {
+    OpeningClaims::from_groups(
         point.to_vec(),
-        vec![CommitmentGroup {
-            claims: openings.to_vec(),
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
+            openings.to_vec(),
             commitment,
-        }],
+        )
+        .expect("valid verifier claims group")],
     )
     .expect("valid verifier input")
 }
@@ -277,7 +280,7 @@ where
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
     let (commitment, hint) =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::commit(
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -405,6 +408,117 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
     );
 }
 
+/// End-to-end chunked prove→verify: the multi-chunk preset stamps
+/// `num_chunks = 8` on the two leading fold levels (NV=16 ⇒ 64 blocks each).
+/// The single prover assembles the modified `[zᵢ|eᵢ|t̂ᵢ]…|r̂` relation and the
+/// verifier evaluates the chunked row-MLE; the proof must verify.
+#[test]
+fn chunked_multi_chunk_prove_verify() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::D64FullMultiChunk;
+        const D: usize = Cfg::D;
+        const NV: usize = 16;
+
+        // Confirm the schedule actually activates chunking on the leading folds.
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(NV),
+        ))
+        .expect("multi-chunk schedule");
+        let chunked_levels = plan
+            .steps
+            .iter()
+            .filter(|s| {
+                matches!(s, akita_types::Step::Fold(f) if f.params.witness_chunk.num_chunks > 1)
+            })
+            .count();
+        assert!(
+            chunked_levels >= 1,
+            "multi-chunk preset must produce at least one chunked fold level"
+        );
+
+        let layout = singleton_layout::<Cfg>(NV);
+        let mut rng = StdRng::seed_from_u64(0x6b1d_c0de);
+        let evals: Vec<F> = (0..1usize << NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).unwrap();
+        let pt = random_point::<F>(NV);
+        let expected_opening = opening_from_poly(&poly, &pt, &layout);
+
+        let setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+            )
+            .unwrap();
+
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let hints = vec![hint];
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_chunked_e2e");
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitment,
+                hints.into_iter().next().unwrap(),
+            ),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        )
+        .unwrap();
+
+        let proof_bytes = proof.size();
+        assert!(proof_bytes > 0, "chunked proof must be non-empty");
+        assert_eq!(
+            batched_total_fold_levels(&proof),
+            plan.num_fold_levels(),
+            "chunked proof level count must match the schedule"
+        );
+
+        let verifier_setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_chunked_e2e");
+        let openings = [expected_opening];
+        let verify_result =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&pt[..], &openings[..], &commitment),
+                BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
+            );
+        assert!(
+            verify_result.is_ok(),
+            "chunked verification must pass: {:?}",
+            verify_result.err()
+        );
+
+        tracing::info!(
+            chunked_levels,
+            proof_bytes,
+            plan_total_bytes = plan.total_bytes,
+            "chunked-d64/nv16 e2e"
+        );
+    });
+}
+
 #[test]
 fn full_d64_prove_verify() {
     init_rayon_pool();
@@ -439,12 +553,13 @@ fn full_d64_prove_verify() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+            )
+            .unwrap();
 
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let commitments = [commitment];
@@ -476,7 +591,7 @@ fn full_d64_prove_verify() {
         assert!(total_fold_levels > 0, "proof must have at least one level");
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            CommitmentGroupScheduleKey::singleton(FULL_TEST_NV),
+            PolynomialGroupLayout::singleton(FULL_TEST_NV),
         ))
         .expect("schedule plan");
         assert_eq!(total_fold_levels, plan.num_fold_levels());
@@ -589,7 +704,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
-        let opening_batch = akita_types::OpeningBatchShape::new(NV, 2).expect("opening_batch");
+        let opening_batch = akita_types::OpeningClaimsLayout::new(NV, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
@@ -627,10 +742,11 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup, &polys, &stack,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                &setup, &polys, &stack,
+            )
+            .unwrap();
         let commitments = [commitment];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
@@ -677,7 +793,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(FULL_TEST_NV, b"akita_e2e/terminal-trace-tamper");
         let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            CommitmentGroupScheduleKey::singleton(FULL_TEST_NV),
+            PolynomialGroupLayout::singleton(FULL_TEST_NV),
         ))
         .expect("runtime schedule");
         let terminal_params = schedule
@@ -720,7 +836,7 @@ fn full_d32_prove_verify() {
             make_dense_fixture::<F, D, Cfg>(D32_TEST_NV, b"akita_e2e/full-d32");
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            CommitmentGroupScheduleKey::singleton(D32_TEST_NV),
+            PolynomialGroupLayout::singleton(D32_TEST_NV),
         ))
         .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -824,7 +940,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let nv = TINY_DIRECT_TEST_NV;
         let plan = {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-                CommitmentGroupScheduleKey::singleton(nv),
+                PolynomialGroupLayout::singleton(nv),
             ))
             .expect("schedule plan");
             assert_eq!(
@@ -856,12 +972,13 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+            )
+            .unwrap();
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [opening];
@@ -907,7 +1024,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let (recomputed_commitment, _) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
             D,
-        >>::commit(
+        >>::batched_commit(
             &setup, std::slice::from_ref(&reconstructed), &stack
         )
         .expect("recompute commitment from direct witness");
@@ -957,7 +1074,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
             make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-full-mixed");
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            CommitmentGroupScheduleKey::singleton(nv),
+            PolynomialGroupLayout::singleton(nv),
         ))
         .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -1041,12 +1158,13 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup,
-            std::slice::from_ref(&onehot_poly),
-            &stack,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                &setup,
+                std::slice::from_ref(&onehot_poly),
+                &stack,
+            )
+            .unwrap();
 
         let poly_refs: [&OneHotPoly<F, D>; 1] = [&onehot_poly];
         let commitments = [commitment];
@@ -1080,7 +1198,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                 .expect("deserialize adaptive onehot proof");
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            CommitmentGroupScheduleKey::singleton(nv),
+            PolynomialGroupLayout::singleton(nv),
         ))
         .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -1140,7 +1258,7 @@ fn batched_onehot_same_point_round_trip() {
         const NV: usize = 20;
 
         let nv = NV;
-        let opening_batch = akita_types::OpeningBatchShape::new(nv, 2).expect("opening_batch");
+        let opening_batch = akita_types::OpeningClaimsLayout::new(nv, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
@@ -1180,12 +1298,13 @@ fn batched_onehot_same_point_round_trip() {
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let commit_bundle = [poly_a.clone(), poly_b.clone()];
-        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup,
-            &commit_bundle,
-            &stack,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                &setup,
+                &commit_bundle,
+                &stack,
+            )
+            .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -1303,10 +1422,11 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         .expect("stack");
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup, &polys, &stack,
-        )
-        .unwrap();
+        let (commitment, hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                &setup, &polys, &stack,
+            )
+            .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 

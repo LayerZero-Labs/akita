@@ -13,14 +13,80 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::sis::{
-    min_secure_rank, rounded_up_collision_linf_t, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
-};
+#[cfg(test)]
+use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentGroupScheduleKey,
-    DecompositionParams, LevelParams, OpeningBatchShape, Schedule, SetupMatrixEnvelope,
-    SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
+    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
+
+/// Define a multi-chunk companion preset that delegates every layout-affecting
+/// parameter to a base `Cfg` and overrides only the multi-chunk witness config
+/// and the shipped schedule catalog.
+///
+/// The companion shares the base's field, ring dimension, decomposition,
+/// challenge config, and SIS family, so its `_multi_chunk` table enumerates the
+/// same `(num_vars, num_polynomials)` keys as its sibling; the schedules differ
+/// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
+macro_rules! impl_multi_chunk_companion {
+    ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident) => {
+        impl $crate::CommitmentConfig for $cfg {
+            type Field = <$base as $crate::CommitmentConfig>::Field;
+            type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
+            const D: usize = <$base as $crate::CommitmentConfig>::D;
+            const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
+            const TIERED_COMMITMENT: bool = <$base as $crate::CommitmentConfig>::TIERED_COMMITMENT;
+
+            fn decomposition() -> akita_types::DecompositionParams {
+                <$base as $crate::CommitmentConfig>::decomposition()
+            }
+            fn ring_challenge_config(
+                d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+                <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
+            }
+            fn fold_challenge_shape_at_level(
+                inputs: akita_types::AkitaScheduleInputs,
+            ) -> akita_challenges::TensorChallengeShape {
+                <$base as $crate::CommitmentConfig>::fold_challenge_shape_at_level(inputs)
+            }
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                <$base as $crate::CommitmentConfig>::sis_modulus_family()
+            }
+            fn ring_subfield_embedding_norm_bound() -> u32 {
+                <$base as $crate::CommitmentConfig>::ring_subfield_embedding_norm_bound()
+            }
+            fn max_setup_matrix_size(
+                max_num_vars: usize,
+                max_num_batched_polys: usize,
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<$cfg>(
+                    max_num_vars,
+                    max_num_batched_polys,
+                )
+            }
+            fn basis_range() -> (u32, u32) {
+                <$base as $crate::CommitmentConfig>::basis_range()
+            }
+            fn onehot_chunk_size() -> usize {
+                <$base as $crate::CommitmentConfig>::onehot_chunk_size()
+            }
+            fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+                $profile.cfg()
+            }
+            fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+                #[cfg(feature = $feat)]
+                {
+                    Some(akita_schedules::$table())
+                }
+                #[cfg(not(feature = $feat))]
+                {
+                    None
+                }
+            }
+        }
+    };
+}
 
 pub mod conservative_commitment;
 pub mod generated_families;
@@ -56,6 +122,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         tiered: Cfg::TIERED_COMMITMENT,
+        witness_chunk: Cfg::chunked_witness_cfg(),
     }
 }
 
@@ -199,6 +266,16 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         1
     }
 
+    /// Multi-chunk witness layout parameters for schedule planning and (future)
+    /// prover orchestration.
+    ///
+    /// Default is single-chunk ([`ChunkedWitnessCfg::default`]), which leaves
+    /// every schedule byte-identical to the historical layout. Distributed-prover
+    /// presets override this to price the chunked witness layout.
+    fn chunked_witness_cfg() -> ChunkedWitnessCfg {
+        ChunkedWitnessCfg::default()
+    }
+
     /// Optional shipped schedule catalog for this preset.
     ///
     /// Presets with generated tables override this when the matching
@@ -254,140 +331,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         }
     }
 
-    /// Schedule used to derive the standalone conservative layout for `commit_group`.
-    ///
-    /// The group layout is planned at the minimum configured root basis, then
-    /// its B rank is widened separately by [`Self::get_params_for_group_commit`].
-    ///
-    /// # Errors
-    ///
-    /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
-    /// or unsupported SIS buckets.
-    fn group_commit_schedule(key: &CommitmentGroupScheduleKey) -> Result<Schedule, AkitaError> {
-        if Self::TIERED_COMMITMENT {
-            return Err(AkitaError::InvalidSetup(
-                "tiered standalone commitment groups are not supported; see specs/multi-group-batching.md"
-                    .to_string(),
-            ));
-        }
-        if Self::decomposition().log_commit_bound != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "standalone commitment groups require a one-hot config".to_string(),
-            ));
-        }
-        if key.num_polynomials == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "standalone commitment group key must contain at least one polynomial".to_string(),
-            ));
-        }
-        key.validate()?;
-
-        let (min_basis, _) = Self::basis_range();
-        let mut policy = policy_of::<Self>();
-        policy.basis_range = (min_basis, min_basis);
-        policy.decomposition.log_basis = min_basis;
-        akita_planner::find_schedule(
-            *key,
-            &policy,
-            Self::ring_challenge_config,
-            Self::fold_challenge_shape_at_level,
-        )
-    }
-
-    /// Whether `commit_group`'s own min-basis schedule starts with a root fold.
-    ///
-    /// This is deliberately derived from [`Self::group_commit_schedule`], not the
-    /// normal prove schedule, because standalone precommit may be valid for a
-    /// conservative layout even when the runtime prove schedule has a different
-    /// shape or is unavailable.
-    fn group_commit_schedule_starts_with_fold(
-        key: &CommitmentGroupScheduleKey,
-    ) -> Result<bool, AkitaError> {
-        Ok(matches!(
-            Self::group_commit_schedule(key)?.steps.first(),
-            Some(Step::Fold(_))
-        ))
-    }
-
-    /// Standalone conservative layout used by `commit_group`.
-    ///
-    /// The group layout is planned at the minimum configured root basis, then
-    /// its B rank is widened for the maximum configured root basis.
-    ///
-    /// # Errors
-    ///
-    /// Returns `InvalidSetup` for dense or tiered configs, malformed group keys,
-    /// unsupported SIS buckets, or schedules without root commit params.
-    fn get_params_for_group_commit(
-        key: &CommitmentGroupScheduleKey,
-    ) -> Result<LevelParams, AkitaError> {
-        let (min_basis, max_basis) = Self::basis_range();
-        let mut params =
-            Self::group_commit_schedule(key).and_then(|schedule| match schedule.steps.first() {
-                Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-                Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "root-direct group schedule is missing commit params".to_string(),
-                    )
-                }),
-                None => Err(AkitaError::InvalidSetup(
-                    "group commit schedule has no steps".to_string(),
-                )),
-            })?;
-        if params.log_basis != min_basis {
-            return Err(AkitaError::InvalidSetup(
-                "group commit planner did not use the minimum configured log_basis".to_string(),
-            ));
-        }
-
-        let conservative_norm = rounded_up_collision_linf_t(
-            DEFAULT_SIS_SECURITY_BITS,
-            Self::sis_modulus_family(),
-            Self::D,
-            max_basis,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "no conservative B-role norm for standalone commitment group".to_string(),
-            )
-        })?;
-        let conservative_n_b = min_secure_rank(
-            SisTableKey {
-                min_security_bits: DEFAULT_SIS_SECURITY_BITS,
-                family: Self::sis_modulus_family(),
-                ring_dimension: Self::D as u32,
-                coeff_linf_bound: conservative_norm,
-            },
-            params.b_key.col_len() as u64,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "no conservative B-role rank for standalone commitment group".to_string(),
-            )
-        })?;
-        params.b_key = AjtaiKeyParams::try_new(
-            DEFAULT_SIS_SECURITY_BITS,
-            Self::sis_modulus_family(),
-            conservative_n_b,
-            params.b_key.col_len(),
-            conservative_norm,
-            Self::D,
-        )?;
-        Ok(params)
-    }
-
     /// Schedule consumed by the prove/verify root path.
     /// Default: expand the resolved table entry; error on miss.
     ///
     /// # Errors
     ///
-    /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
-    fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
-        Self::runtime_schedule(AkitaScheduleLookupKey::single(key))
+    /// `InvalidSetup` if no schedule-table entry exists for `layout`.
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+        Self::runtime_schedule(AkitaScheduleLookupKey::from_layout(layout)?)
     }
 
-    /// Root commit layout the `batched_prove` flow uses for `opening_batch`,
+    /// Root commit layout the `batched_prove` flow uses for `layout`,
     /// read off the runtime schedule's first step (the root Fold params or
     /// the root-direct's commit slot). Same layout per-point commits use,
     /// so they stay compatible with the batched prove root.
@@ -402,9 +356,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
     /// schedule lacks a commit (the uncommittable edge case).
     fn get_params_for_batched_commitment(
-        opening_batch: &OpeningBatchShape,
+        layout: &OpeningClaimsLayout,
     ) -> Result<LevelParams, AkitaError> {
-        let schedule = Self::get_params_for_prove(opening_batch)?;
+        let schedule = Self::get_params_for_prove(layout)?;
         match schedule.steps.first() {
             Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
             Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
@@ -605,7 +559,7 @@ mod fp128_policy_tests {
     ) {
         for &num_vars in num_vars_values {
             let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-                CommitmentGroupScheduleKey::singleton(num_vars),
+                PolynomialGroupLayout::singleton(num_vars),
             ))
             .unwrap();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
@@ -657,7 +611,7 @@ mod fp128_policy_tests {
             2
         );
 
-        let opening_batch = OpeningBatchShape::new(20, 1).expect("singleton opening batch");
+        let opening_batch = OpeningClaimsLayout::new(20, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
@@ -671,7 +625,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_family_selector_uses_generated_singleton_plans() {
-        let key = CommitmentGroupScheduleKey::singleton(32);
+        let key = PolynomialGroupLayout::singleton(32);
 
         let full = fp128::best_full_schedule(key)
             .expect("selector should resolve full schedules")
@@ -689,7 +643,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_family_selector_supports_batched_keys() {
-        let key = CommitmentGroupScheduleKey::new(30, 4);
+        let key = PolynomialGroupLayout::new(30, 4);
 
         let selection = fp128::best_onehot_schedule(key)
             .expect("selector should resolve batched onehot schedules")

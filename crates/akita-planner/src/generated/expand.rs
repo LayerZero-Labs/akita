@@ -17,8 +17,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedGroupBatchScheduleTableEntry,
-    GeneratedScheduleTableEntry, GeneratedStep,
+    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
@@ -335,6 +334,11 @@ impl GeneratedFoldStep {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            // The chunk layout depends on the step's role (fold vs root-direct
+            // commit), which the caller knows; default here and let the caller
+            // (`schedule_from_entry`) stamp the per-level value for fold steps so
+            // a root-direct commit stays single-chunk.
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups: Vec::new(),
         };
         params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
@@ -498,6 +502,7 @@ impl GeneratedFoldStep {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
         };
         params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)
@@ -552,18 +557,6 @@ impl GeneratedScheduleTableEntry {
     /// # Errors
     ///
     /// Returns an error when any invariant is violated.
-    pub fn validate(&self) -> Result<(), AkitaError> {
-        validate_generated_steps(self.steps)
-    }
-}
-
-impl GeneratedGroupBatchScheduleTableEntry {
-    /// Validate the structural invariants shared with scalar generated entries.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the step list is empty, has a non-terminal direct
-    /// step, or does not end in a direct step.
     pub fn validate(&self) -> Result<(), AkitaError> {
         validate_generated_steps(self.steps)
     }

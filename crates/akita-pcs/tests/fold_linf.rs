@@ -27,7 +27,7 @@ struct TailBoundGrindFixture {
 
 fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> TailBoundGrindFixture {
     let layout = OneHotCfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     assert_eq!(
@@ -46,7 +46,7 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+    let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
         &setup,
         std::slice::from_ref(&poly),
         &stack,
@@ -160,7 +160,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
     run_on_large_stack(|| {
         let num_vars = FOLD_LINF_E2E_NV;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x61_61);
@@ -177,7 +177,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         )
         .expect("stack");
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,

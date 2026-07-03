@@ -8,7 +8,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
-use crate::schedule::CommitmentGroupLayout;
+use crate::schedule::PrecommittedGroupParams;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
@@ -40,7 +40,7 @@ pub enum MRowLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupRootParams {
     /// Frozen standalone group layout bound into the grouped root key.
-    pub layout: CommitmentGroupLayout,
+    pub layout: PrecommittedGroupParams,
     /// Inner Ajtai matrix (A) used by this group.
     pub a_key: AjtaiKeyParams,
     /// Outer commitment matrix (B) used by this group.
@@ -167,6 +167,13 @@ pub struct LevelParams {
     /// Optional cached [`crate::sis::num_digits_fold`] for a batched root `num_claims > 1`.
     pub cached_num_digits_fold_claims: usize,
     pub cached_num_digits_fold_value: usize,
+    /// Multi-chunk witness layout for this level (default: single-chunk).
+    ///
+    /// The planner populates this from `policy.witness_chunk` and the level's
+    /// position in the fold recursion; the verifier consumes it as the source of
+    /// truth for the per-level witness column layout. `ChunkedWitnessCfg::default()`
+    /// (single chunk) is byte-identical to the historical layout.
+    pub witness_chunk: crate::witness::ChunkedWitnessCfg,
     /// Precommitted group-local params for a grouped root. Empty for scalar
     /// levels; when non-empty, the top-level fields describe the final/new
     /// group and `d_key` describes the shared D matrix over all group `w_hat`
@@ -212,6 +219,7 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
         }
     }
@@ -273,6 +281,7 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
         }
     }
@@ -445,7 +454,8 @@ impl LevelParams {
         let policy = self.fold_witness_linf_cap_policy();
         let max_nonce_exclusive = match policy {
             crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
-            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => max_grind_attempts,
+            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
+            | crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => max_grind_attempts,
         };
         let witness_linf_cap = self.fold_witness_linf_cap_for_claims(num_claims)?;
         Ok(crate::sis::FoldWitnessGrindContract {
@@ -471,7 +481,7 @@ impl LevelParams {
 
     pub fn fold_witness_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let cap_config = self.fold_linf_cap_config;
-        if cap_config.policy != crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind {
+        if !cap_config.policy.allows_grind() {
             return Err(AkitaError::InvalidSetup(
                 "fold_witness_linf_tail_bound_sq: deterministic policy has no tail bound"
                     .to_string(),
@@ -482,19 +492,13 @@ impl LevelParams {
                 "fold_witness_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
             ));
         }
-        let num_fold_blocks = self.num_fold_blocks(num_claims)?;
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        let ln_term = crate::sis::fold_witness_linf_ln_term(
-            cap_config.num_fold_coeffs,
-            cap_config.grind_target_accept_num,
-            cap_config.grind_target_accept_den,
-        )?;
-        crate::sis::fold_witness_linf_tail_bound_sq(
-            num_fold_blocks,
-            cap_config.challenge_l2_sq_max,
+        crate::sis::fold_witness_linf_tail_bound_for_config_sq(
+            self.r_vars,
+            num_claims,
             witness_linf_sq,
-            ln_term,
+            &cap_config,
         )
     }
 
@@ -540,12 +544,17 @@ impl LevelParams {
         self
     }
 
-    /// Replace the fold-round challenge shape, returning the updated params.
+    /// Replace the fold-round challenge shape, rebuilding derived fold-linf
+    /// digit/cache state for the new shape.
     #[inline]
-    #[must_use]
-    pub fn with_fold_challenge_shape(mut self, shape: TensorChallengeShape) -> Self {
+    pub fn with_fold_challenge_shape(
+        mut self,
+        shape: TensorChallengeShape,
+    ) -> Result<Self, AkitaError> {
         self.fold_challenge_shape = shape;
-        self
+        let field_bits = self.field_bits_for_cache();
+        let root_num_claims = self.cached_num_digits_fold_claims;
+        self.with_fold_linf_cap_config(field_bits, root_num_claims)
     }
 
     /// Block-select variable count (the `r_vars` of the legacy layout).
@@ -600,6 +609,13 @@ impl LevelParams {
                 }
                 None => bytes.push(0),
             }
+        }
+        // Chunk binding is appended only when the level is chunked, so
+        // single-chunk descriptors stay byte-for-byte identical to the historical
+        // layout (the flag-off no-op invariant). When chunked, bind the chunk
+        // count and activated-level count into the Fiat-Shamir digest.
+        if self.witness_chunk.num_chunks != 1 {
+            self.witness_chunk.append_descriptor_bytes(bytes);
         }
         if !self.precommitted_groups.is_empty() {
             push_usize(bytes, self.precommitted_groups.len());
@@ -880,6 +896,9 @@ impl LevelParams {
             field_bits_hint: self.field_bits_hint,
             cached_num_digits_fold_claims: self.cached_num_digits_fold_claims,
             cached_num_digits_fold_value: self.cached_num_digits_fold_value,
+            // `with_decomp` recomputes only the A/B/D widths; the chunk layout is
+            // a property of the witness this level commits, so preserve it.
+            witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
         };
         let field_bits = self.field_bits_for_cache();
@@ -947,6 +966,9 @@ impl LevelParams {
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            // The chunk layout is a property of the committed witness, sized with
+            // the ranks, so it stays with `self` like the SIS buckets.
+            witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
         }
         .with_fold_linf_cap_config(field_bits, 0)
@@ -987,6 +1009,7 @@ fn append_fold_linf_policy_descriptor_bytes(
     bytes.push(match policy {
         crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => 0,
         crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
+        crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => 2,
     });
 }
 

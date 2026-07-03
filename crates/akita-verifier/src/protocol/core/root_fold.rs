@@ -19,7 +19,7 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: &VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: &OpeningClaims<'_, E, &RingCommitment<F, D>>,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
@@ -45,10 +45,10 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let openings = claims.claims();
-    let opening_batch = claims.to_shape();
+    let openings = claims.flat_evaluations();
+    let opening_batch = claims.layout();
     let shared_opening_point = claims.point();
-    let num_claims = opening_batch.num_polynomials();
+    let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -109,7 +109,7 @@ where
         )?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, &openings)?;
+        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
     let trace_eval_target = eor_trace_final
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
@@ -118,20 +118,25 @@ where
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_polynomials()])
+            Ok(vec![shared_factor; opening_batch.num_total_polynomials()])
         })
         .transpose()?;
 
     let w_len = match proof {
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
-        AkitaBatchedRootProof::Fold(_) => w_ring_element_count_with_counts_for_layout::<F>(
-            root_lp,
-            opening_batch.num_polynomials(),
-            1,
-            MRowLayout::WithDBlock,
-        )?
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        AkitaBatchedRootProof::Fold(_) => {
+            // Chunked levels commit a wider (replicated-ẑ) next witness; size it
+            // with the per-level chunk count (`num_chunks = 1` is unchanged).
+            akita_types::w_ring_element_count_for_chunks(
+                F::modulus_bits(),
+                root_lp,
+                opening_batch.num_total_polynomials(),
+                akita_types::MRowLayout::WithDBlock,
+                root_lp.witness_chunk.num_chunks,
+            )?
+            .checked_mul(D)
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
+        }
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     let terminal_replay = match proof {
@@ -157,13 +162,16 @@ where
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
     let fold_grind_nonce = proof.fold_grind_nonce()?;
-    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+    let replay_opening_batch = OpeningClaims::from_groups(
         shared_opening_point,
-        opening_batch.clone(),
-        vec![CommitmentGroup {
-            claims: openings,
-            commitment: commitment.u.as_slice(),
-        }],
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(
+                opening_batch.max_num_vars(),
+                opening_batch.max_num_vars(),
+            )?,
+            openings,
+            commitment.u.as_slice(),
+        )?],
     )?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,

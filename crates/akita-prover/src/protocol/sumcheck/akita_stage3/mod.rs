@@ -379,25 +379,14 @@ where
 {
     let alpha_pows = scalar_powers(alpha, D);
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
-    let num_t_vectors = relation.opening_batch().num_polynomials();
+    let num_t_vectors = relation.opening_batch().num_total_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
         lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
         lp.log_basis,
     );
-    let layout = relation.segment_layout(lp)?;
-    let plan = SetupContributionPlan::prepare(
-        &inputs,
-        x_challenges,
-        None,
-        None,
-        &fold_gadget,
-        layout.offset_e,
-        layout.offset_t,
-        layout.offset_z,
-        layout.offset_u,
-        None,
-        None,
-    )?;
+    let layout = relation.segment_layout(lp, None)?;
+    let plan =
+        SetupContributionPlan::prepare(&inputs, x_challenges, None, None, &fold_gadget, &layout)?;
     let required = plan.required();
     let bar_omega = plan.materialize_bar_omega();
     Ok((required, bar_omega, alpha_pows.to_vec()))
@@ -414,7 +403,7 @@ where
     E: FieldCore,
 {
     let opening_batch = relation.opening_batch();
-    let num_polynomials = opening_batch.num_polynomials();
+    let num_polynomials = opening_batch.num_total_polynomials();
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;

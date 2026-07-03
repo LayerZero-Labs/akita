@@ -331,7 +331,7 @@ where
     let logical_polys = [logical_w];
     let fold_polys = [&w];
     let eor_opening_batch =
-        VerifierOpeningBatch::with_padded_point(opening_point, opening_point.len(), 1)?;
+        OpeningClaims::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
     let commitment_u = commitment.as_ring_slice::<D>()?;
     let suffix_commitment = (
@@ -340,7 +340,7 @@ where
         },
         typed_hint,
     );
-    let fold_claims = ProverOpeningBatch::new_suffix(
+    let fold_claims = ProverOpeningData::new_suffix(
         opening_point,
         recursive_num_vars,
         &fold_polys,
@@ -402,7 +402,7 @@ mod tests {
             final_factor: TestF::one(),
         });
 
-        let opening_batch = OpeningBatchShape::new(0, 1).expect("singleton opening batch");
+        let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
         let err = match compute_trace_target::<TestF, TestF, _, D>(
             &reduction,

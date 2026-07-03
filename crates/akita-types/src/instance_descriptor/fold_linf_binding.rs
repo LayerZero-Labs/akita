@@ -22,7 +22,7 @@ pub const FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE: u8 = 1;
 /// Fold-l∞ rejection protocol identity bound into every transcript preamble.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoldLinfProtocolBinding {
-    /// Tail-bound formula tag (`3` = integer `t*` with digit snap-down vs `t*`).
+    /// Tail-bound formula tag (`3` = flat/tensor integer `t*` with digit snap-down vs `t*`).
     pub formula_tag: u8,
     /// Per-challenge grind acceptance target `p_grind = NUM / DEN` in the union bound.
     pub grind_target_accept_prob_num: u32,

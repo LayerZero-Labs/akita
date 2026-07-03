@@ -77,7 +77,7 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, C, T, const D: usize>(
     challenge_point: &[C],
     openings: &[C],
     row_coefficients: &[C],
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &LevelParams,
     block_order: BlockOrder,
@@ -89,7 +89,7 @@ where
     C: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let num_claims = opening_batch.num_polynomials();
+    let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims || row_coefficients.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -101,15 +101,15 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let shape = eor_reduction_shape::<F, C>(
-            opening_batch.num_vars(),
+            opening_batch.max_num_vars(),
             reduction.partials.len(),
             num_claims,
         )?;
-        if challenge_point.len() > opening_batch.num_vars() {
+        if challenge_point.len() > opening_batch.max_num_vars() {
             return Err(AkitaError::InvalidProof);
         }
         let mut eor_point = challenge_point.to_vec();
-        eor_point.resize(opening_batch.num_vars(), C::zero());
+        eor_point.resize(opening_batch.max_num_vars(), C::zero());
         for (claim_idx, opening) in openings.iter().copied().enumerate().take(num_claims) {
             let partial_start = claim_idx * shape.width;
             let partial_end = partial_start + shape.width;
@@ -184,8 +184,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<
     pub(in crate::protocol::core) m_row_layout: MRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) v: Vec<CyclotomicRing<F, D>>,
-    pub(in crate::protocol::core) opening_batch:
-        VerifierOpeningBatch<'a, E, &'a [CyclotomicRing<F, D>]>,
+    pub(in crate::protocol::core) opening_batch: OpeningClaims<'a, E, &'a [CyclotomicRing<F, D>]>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) ring_opening_point: RingOpeningPoint<F>,
     pub(in crate::protocol::core) ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
@@ -386,7 +385,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let opening_shape = prepared.opening_batch.to_shape();
+    let opening_shape = prepared.opening_batch.layout();
     let commitment_rows = prepared
         .opening_batch
         .single_group_commitment()
@@ -394,7 +393,7 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
-            opening_shape.num_polynomials(),
+            opening_shape.num_total_polynomials(),
             FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
         )?,
         prepared.fold_grind_nonce,
@@ -403,7 +402,7 @@ where
         transcript,
         &prepared.v,
         prepared.lp.num_blocks,
-        opening_shape.num_polynomials(),
+        opening_shape.num_total_polynomials(),
         prepared.lp,
         prepared.m_row_layout,
         prepared.fold_grind_nonce,
@@ -489,10 +488,10 @@ where
     let trace_wire = if prepared.trace_prepared_point.is_none() {
         None
     } else if prepared.trace_block_opening.is_none() {
-        let segment = relation_instance.segment_layout(prepared.lp)?;
+        let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
-            &segment,
+            &segment_layout,
             rs.col_bits,
             rs.ring_bits,
             prepared.lp.num_blocks,
@@ -513,15 +512,15 @@ where
             )?,
         })
     } else {
-        let segment = relation_instance.segment_layout(prepared.lp)?;
+        let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
         let num_trace_blocks = relation_instance
             .opening_batch()
-            .num_polynomials()
+            .num_total_polynomials()
             .checked_mul(prepared.lp.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
-            &segment,
+            &segment_layout,
             rs.col_bits,
             rs.ring_bits,
             num_trace_blocks,
