@@ -428,7 +428,7 @@ impl RingRelationProver {
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
-        let opening_batch = fold_claims.opening_claims().layout();
+        let opening_batch = fold_claims.opening_claims().layout()?;
         let polys = fold_claims.flat_polys();
         let group_sizes = opening_batch.group_sizes();
         let hints = fold_claims.hints().to_vec();

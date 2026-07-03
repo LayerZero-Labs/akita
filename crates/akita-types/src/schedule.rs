@@ -654,6 +654,21 @@ pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
     }
 }
 
+/// Root commit layout read from the first step of a grouped runtime schedule.
+pub fn grouped_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
+    match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+        Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "grouped root-direct schedule is missing commit params".to_string(),
+            )
+        }),
+        None => Err(AkitaError::InvalidSetup(
+            "grouped schedule has no steps".to_string(),
+        )),
+    }
+}
+
 /// Return the terminal direct witness shape from a runtime schedule.
 ///
 /// # Errors

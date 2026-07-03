@@ -65,7 +65,7 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let opening_batch = claims.layout();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let openings = claims.flat_evaluations();
     let opening_point = claims.point();
     let num_polynomials = opening_batch.num_total_polynomials();

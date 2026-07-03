@@ -46,7 +46,7 @@ where
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
     let openings = claims.flat_evaluations();
-    let opening_batch = claims.layout();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let shared_opening_point = claims.point();
     let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {

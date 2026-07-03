@@ -8,38 +8,19 @@ use crate::compute::{
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
-    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED,
+    schedule_terminal_direct_witness_shape, should_reject_grouped_root,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 
-fn reject_unsupported_grouped_root<F, P, const D: usize>(
-    opening_batch: &OpeningClaimsLayout,
-    polys: &[&P],
-    setup_contribution_mode: SetupContributionMode,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-    P: RootPolyShape<F, D>,
-{
-    if opening_batch.num_groups() <= 1 {
-        return Ok(());
+fn grouped_root_prover_error(message: &'static str) -> AkitaError {
+    if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
+        AkitaError::InvalidSetup(message.to_string())
+    } else {
+        AkitaError::InvalidInput(message.to_string())
     }
-    if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
-        ));
-    }
-    if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
-        return Err(AkitaError::InvalidInput(
-            GROUPED_ROOT_DENSE_UNSUPPORTED.to_string(),
-        ));
-    }
-    Err(AkitaError::InvalidInput(
-        GROUPED_ROOT_UNSUPPORTED.to_string(),
-    ))
 }
+
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
 ///
@@ -141,13 +122,19 @@ where
     claims.validate::<Cfg::Field>()?;
     let opening_claims = claims.opening_claims();
     opening_claims.validate(expanded.seed())?;
-    let opening_batch = opening_claims.layout();
+    let opening_batch = opening_claims.layout()?;
     let flat_polys = claims.flat_polys();
-    reject_unsupported_grouped_root::<Cfg::Field, P, D>(
+    if let Some(message) = should_reject_grouped_root(
         &opening_batch,
-        &flat_polys,
         setup_contribution_mode,
-    )?;
+        Some(
+            flat_polys
+                .iter()
+                .any(|poly| poly.onehot_chunk_size().is_none()),
+        ),
+    ) {
+        return Err(grouped_root_prover_error(message));
+    }
     let num_vars = opening_batch.max_num_vars();
     let mut schedule = Cfg::get_params_for_prove(&opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
