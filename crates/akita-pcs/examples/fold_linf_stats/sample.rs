@@ -281,7 +281,7 @@ where
     grind_observations
 }
 
-pub fn run_onehot_fold_linf_sample<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+pub(crate) fn run_onehot_fold_linf_sample<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     nv: usize,
     layout: &LevelParams,
     _plan: &Schedule,
@@ -356,7 +356,7 @@ where
     )
 }
 
-pub fn run_dense_fold_linf_sample<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+pub(crate) fn run_dense_fold_linf_sample<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     nv: usize,
     layout: &LevelParams,
     _plan: &Schedule,
