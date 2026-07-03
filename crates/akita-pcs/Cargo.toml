@@ -82,8 +82,6 @@ rayon = { version = "1.10", optional = true }
 # feature out of production builds, which exclude dev-dependencies.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
-  "schedules-fp128-d128-full",
-  "schedules-fp128-d64-full",
   "schedules-fp128-d64-full-multi-chunk",
 ] }
 rand = "0.8"
