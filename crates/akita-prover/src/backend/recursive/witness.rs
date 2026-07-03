@@ -438,7 +438,7 @@ where
 /// The recursive suffix witness is genuinely D-erased: it owns a flat `Vec<i8>`
 /// digit buffer (one digit per field-element coefficient) and is re-chunked
 /// under the level's ring dimension only inside D-typed kernels. The D-free
-/// `RootPolyMeta` is what the PCS-facing `ProverOpeningBatch::to_opening_shape`
+/// `RootPolyMeta` is what the PCS-facing `ProverOpeningData::to_opening_shape`
 /// requires, so it must expose `num_vars` without a const `D`.
 ///
 /// `num_vars` is the witness's logical variable count `log2(coeff_count)`, where

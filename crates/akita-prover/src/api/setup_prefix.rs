@@ -136,7 +136,7 @@ where
         .iter()
         .map(|_| commit_inner_block_digit_count(shape.n_a, shape.num_digits_open))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut decomposed_inner_rows = FlatDigitBlocks::zeroed(block_sizes)?;
+    let mut decomposed_inner_rows = FlatDigitBlocks::<D>::zeroed(block_sizes)?;
     let dst_blocks = decomposed_inner_rows.split_blocks_mut();
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
@@ -251,8 +251,8 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, digest_level_params, setup_seed_digest, OpeningBatchShape,
-        SetupMatrixEnvelope, SisModulusFamily,
+        active_setup_field_len, setup_seed_digest, OpeningClaimsLayout, SetupMatrixEnvelope,
+        SisModulusFamily,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
@@ -331,7 +331,7 @@ mod tests {
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
         let level_params = prefix_level_params(D);
-        let opening_batch = OpeningBatchShape::new(4, 1).expect("opening_batch");
+        let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
             .num_blocks
             .checked_mul(level_params.block_len)

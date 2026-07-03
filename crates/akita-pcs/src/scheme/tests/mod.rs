@@ -5,7 +5,7 @@ use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
 use akita_field::LiftBase;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_prover::{DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch};
+use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
@@ -22,7 +22,8 @@ use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, LevelProofShape, RingVec, TerminalLevelProofShape,
 };
 use akita_types::{
-    CommitmentGroup, OpeningBatchShape, PointVariableSelection, VerifierOpeningBatch,
+    AkitaCommitmentHint, Commitment, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims,
 };
 use akita_verifier::cleartext_witness_opening_matches;
 use rand::rngs::StdRng;
@@ -104,7 +105,7 @@ fn expected_same_point_batched_shape(
     proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
-        akita_types::OpeningBatchShape::new(max_num_vars, num_claims).expect("opening_batch");
+        akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
     let schedule =
         OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -225,34 +226,37 @@ fn expected_same_point_batched_shape(
     shape
 }
 
-fn prover_claims<'a, E: Clone, P, CommitF: FieldCore>(
+fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     point: &'a [E],
     polynomials: &'a [&'a P],
     commitment: &'a Commitment<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningBatch<'a, E, P, CommitF> {
-    ProverOpeningBatch {
-        point: point.into(),
-        groups: vec![ProverCommitmentGroup {
-            point_vars: PointVariableSelection::prefix(point.len(), point.len())
-                .expect("full-point prover group"),
-            polynomials,
-            commitment: (commitment.clone(), hint),
-        }],
-    }
+) -> ProverOpeningData<'a, E, P, CommitF> {
+    let group = PolynomialGroupClaims::new(
+        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        vec![E::zero(); polynomials.len()],
+        commitment.clone(),
+    )
+    .expect("valid prover claims group");
+    let opening_claims =
+        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+        .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a, E: FieldCore, C>(
     point: &[E],
     openings: &[E],
     commitment: &'a C,
-) -> VerifierOpeningBatch<'static, E, &'a C> {
-    VerifierOpeningBatch::from_groups(
+) -> OpeningClaims<'static, E, &'a C> {
+    OpeningClaims::from_groups(
         point.to_vec(),
-        vec![CommitmentGroup {
-            claims: openings.to_vec(),
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
+            openings.to_vec(),
             commitment,
-        }],
+        )
+        .expect("valid verifier claims group")],
     )
     .expect("valid verifier claims")
 }
@@ -265,7 +269,7 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
 }
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> LevelParams {
-    let opening_batch = OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch");
+    let opening_batch = OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     C::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 

@@ -22,7 +22,7 @@ use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
-    CommitmentGroupScheduleKey, FlatMatrix, SetupPrefixProverRegistry,
+    FlatMatrix, PolynomialGroupLayout, SetupPrefixProverRegistry,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -151,7 +151,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule_lookup_key = CommitmentGroupScheduleKey::new(max_num_vars, max_num_batched_polys);
+    let schedule_lookup_key = PolynomialGroupLayout::new(max_num_vars, max_num_batched_polys);
     // Fingerprint the resolved schedule shape so cached setup files get
     // invalidated when the planner's per-level layout (including the
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
@@ -168,12 +168,14 @@ fn cache_file_name<Cfg: CommitmentConfig>(
                 }
                 format!(
                     "planner_v7_nv{}_batch{}_{hex}",
-                    schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
+                    schedule_lookup_key.num_vars(),
+                    schedule_lookup_key.num_polynomials(),
                 )
             }
             Err(_) => format!(
                 "miss_nv{}_batch{}",
-                schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
+                schedule_lookup_key.num_vars(),
+                schedule_lookup_key.num_polynomials(),
             ),
         };
     let schedule = raw_schedule
@@ -658,7 +660,7 @@ mod tests {
                 let disk_setup = load_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
 
                 let lp = Cfg::get_params_for_batched_commitment(
-                    &akita_types::OpeningBatchShape::new(MAX_VARS, 1)
+                    &akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
                         .expect("singleton opening batch"),
                 )
                 .unwrap();

@@ -26,7 +26,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage2Proof,
-    CleartextWitnessProof, OpeningBatchShape, RingDimPlan, RingVec, Schedule,
+    CleartextWitnessProof, OpeningClaimsLayout, RingDimPlan, RingVec, Schedule,
     SetupContributionMode,
 };
 use common::*;
@@ -84,11 +84,10 @@ impl akita_config::CommitmentConfig for MixedD128To64 {
         Envelope::basis_range()
     }
 
-    fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = akita_types::CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
+    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
         mixed_d_per_level_schedule::<Envelope, Suffix>(
-            key.num_vars,
-            key.num_polynomials,
+            opening_batch.max_num_vars(),
+            opening_batch.num_total_polynomials(),
             MIXED_D_SWITCH_FOLD,
         )
     }
@@ -131,11 +130,10 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::basis_range()
     }
 
-    fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = akita_types::CommitmentGroupScheduleKey::new_from_opening_batch(opening_batch)?;
+    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
         let mut schedule = mixed_d_per_level_schedule::<Envelope, Suffix>(
-            key.num_vars,
-            key.num_polynomials,
+            opening_batch.max_num_vars(),
+            opening_batch.num_total_polynomials(),
             MIXED_D_SWITCH_FOLD,
         )?;
         // Corrupt the first suffix fold level: 96 does not divide the
@@ -184,7 +182,7 @@ struct MixedDFixture {
 
 /// Commit + prove the mixed-D fixture once through the public PCS API.
 fn prove_mixed_fixture() -> MixedDFixture {
-    let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
+    let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
     let layout =
         <MixedD128To64 as akita_config::CommitmentConfig>::get_params_for_batched_commitment(
             &opening_batch,
@@ -525,7 +523,7 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
     run_on_large_stack(|| {
         type BadScheme = AkitaCommitmentScheme<MixedDBadLevelDim>;
 
-        let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
+        let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
         let layout = <MixedDBadLevelDim as akita_config::CommitmentConfig>::
             get_params_for_batched_commitment(&opening_batch)
         .expect("commit layout (root level params are untouched)");

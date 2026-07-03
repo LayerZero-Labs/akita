@@ -29,7 +29,7 @@ fn run_single_onehot(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
@@ -120,7 +120,7 @@ fn run_single_dense(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = DenseCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
 
@@ -251,7 +251,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;

@@ -7,12 +7,12 @@ use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
     validate_level_dispatch, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
-    LevelParams, OpeningBatchShape, Schedule, Step, ValidatedScheduleContext,
+    LevelParams, OpeningClaimsLayout, Schedule, Step, ValidatedScheduleContext,
 };
 
 fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
     Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        akita_types::CommitmentGroupScheduleKey::singleton(num_vars),
+        akita_types::PolynomialGroupLayout::singleton(num_vars),
     ))
     .expect("valid schedule for num_vars")
 }
@@ -35,7 +35,7 @@ fn batched_schedule_selection_matches_config_preset() {
     type Cfg = fp64::D64Full;
     let nv = 10usize;
     let schedule = real_schedule::<Cfg>(nv);
-    let opening_batch = OpeningBatchShape::new(nv, 1).expect("opening batch");
+    let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
     let point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
     let effective = effective_batched_schedule::<Cfg>(&opening_batch, &point).expect("schedule");
     assert_eq!(effective.steps.len(), schedule.steps.len());

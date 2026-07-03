@@ -100,7 +100,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     protocol_point: &[E],
     alpha_bits: usize,
     basis: BasisMode,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
@@ -125,14 +125,14 @@ where
         row_coefficients
     } else {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        if opening_batch.num_polynomials() == 1 {
+        if opening_batch.num_total_polynomials() == 1 {
             vec![E::one()]
         } else {
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
         }
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, &openings)?;
+        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
     let trace_eval_target =
         reduction
             .as_ref()
@@ -146,7 +146,7 @@ where
             })?;
     let trace_claim_scales = reduction
         .as_ref()
-        .map(|reduction| vec![reduction.final_factor; opening_batch.num_polynomials()]);
+        .map(|reduction| vec![reduction.final_factor; opening_batch.num_total_polynomials()]);
     let trace_scale = reduction
         .as_ref()
         .map_or(E::one(), |reduction| reduction.final_factor);
@@ -192,7 +192,7 @@ pub(in crate::protocol::core) fn build_root_stage2_trace_table<F, E>(
     ring_d: usize,
     num_blocks: usize,
     layout: &akita_types::TraceWeightLayout,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
     trace_claim_scales: Option<&[E]>,

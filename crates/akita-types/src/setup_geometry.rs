@@ -7,7 +7,7 @@
 use akita_field::{AkitaError, FieldCore};
 
 use crate::layout::{LevelParams, MRowLayout};
-use crate::proof::{AkitaExpandedSetup, OpeningBatchShape};
+use crate::proof::{AkitaExpandedSetup, OpeningClaimsLayout};
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;
 
@@ -309,14 +309,14 @@ pub fn setup_required_for_shape(relation_shape: &SetupRelationShape) -> Result<u
 /// Returns an error when layout parameters are inconsistent or the product overflows.
 pub fn active_setup_field_len(
     level_params: &LevelParams,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     m_row_layout: MRowLayout,
     depth_fold: usize,
     d_setup: usize,
 ) -> Result<usize, AkitaError> {
     let shape = SetupRelationShape::from_level_params(
         level_params,
-        opening_batch.num_polynomials(),
+        opening_batch.num_total_polynomials(),
         m_row_layout,
         depth_fold,
     )?;

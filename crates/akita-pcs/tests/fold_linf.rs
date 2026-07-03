@@ -38,7 +38,7 @@ struct TailBoundGrindFixture {
 
 fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> TailBoundGrindFixture {
     let layout = OneHotCfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     assert_eq!(
@@ -200,7 +200,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
     run_on_large_stack(|| {
         let num_vars = FOLD_LINF_E2E_NV;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x61_61);

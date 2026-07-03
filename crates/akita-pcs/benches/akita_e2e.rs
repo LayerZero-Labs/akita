@@ -1,17 +1,18 @@
 #![allow(missing_docs)]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
-
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{DensePoly, OneHotPoly, ProverCommitmentGroup, ProverOpeningBatch};
+use akita_prover::{
+    AkitaProverSetup, CommitmentProver, ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly,
+    ProverOpeningData,
+};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, Commitment, CommitmentGroup, PointVariableSelection,
-    SetupContributionMode, VerifierOpeningBatch,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, Commitment,
+    OpeningClaims, PointVariableSelection, PolynomialGroupClaims, SetupContributionMode,
 };
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
@@ -49,29 +50,32 @@ fn prover_claims<'a, P, CommitF: FieldCore>(
     polynomials: &'a [&'a P],
     commitment: &'a Commitment<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningBatch<'a, F, P, CommitF> {
-    ProverOpeningBatch {
-        point: point.into(),
-        groups: vec![ProverCommitmentGroup {
-            point_vars: PointVariableSelection::prefix(point.len(), point.len())
-                .expect("full-point prover group"),
-            polynomials,
-            commitment: (commitment.clone(), hint),
-        }],
-    }
+) -> ProverOpeningData<'a, F, P, CommitF> {
+    let group = PolynomialGroupClaims::new(
+        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        vec![F::zero(); polynomials.len()],
+        commitment.clone(),
+    )
+    .expect("valid prover claims group");
+    let opening_claims =
+        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+        .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a, C>(
     point: &[F],
     openings: &[F],
     commitment: &'a C,
-) -> VerifierOpeningBatch<'static, F, &'a C> {
-    VerifierOpeningBatch::from_groups(
+) -> OpeningClaims<'static, F, &'a C> {
+    OpeningClaims::from_groups(
         point.to_vec(),
-        vec![CommitmentGroup {
-            claims: openings.to_vec(),
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
+            openings.to_vec(),
             commitment,
-        }],
+        )
+        .expect("valid verifier claims group")],
     )
     .expect("valid verifier claims")
 }
@@ -240,7 +244,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     nv: usize,
 ) {
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("benchmark layout");
     let total_ring = layout.num_blocks * layout.block_len;

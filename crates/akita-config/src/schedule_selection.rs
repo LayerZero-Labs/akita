@@ -4,7 +4,7 @@ use crate::CommitmentConfig;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
     dispatch_ring_dim_result, folded_root_supports_opening_shape, root_direct_schedule,
-    root_tensor_projection_enabled, schedule_root_fold_step, FpExtEncoding, OpeningBatchShape,
+    root_tensor_projection_enabled, schedule_root_fold_step, FpExtEncoding, OpeningClaimsLayout,
     Schedule,
 };
 
@@ -19,7 +19,7 @@ use akita_types::{
 /// Returns an error when schedule lookup fails or an unsupported ring dimension
 /// is encountered during dispatch.
 pub fn effective_batched_schedule<Cfg>(
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     opening_point: &[Cfg::ExtField],
 ) -> Result<Schedule, AkitaError>
 where
@@ -27,7 +27,7 @@ where
     Cfg::Field: FieldCore,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
 {
-    let num_vars = opening_batch.num_vars();
+    let num_vars = opening_batch.max_num_vars();
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;

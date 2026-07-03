@@ -21,15 +21,15 @@ use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
-    ProverCommitmentGroup, ProverOpeningBatch,
+    CommitmentProver, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
+    ProverOpeningData,
 };
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    CommitmentGroup, LevelParams, OpeningBatchShape, PointVariableSelection, SetupContributionMode,
-    VerifierOpeningBatch,
+    PolynomialGroupClaims, LevelParams, OpeningClaimsLayout, PointVariableSelection, SetupContributionMode,
+    OpeningClaims,
 };
 use akita_verifier::batched_verify;
 use clap::{Parser, ValueEnum};
@@ -90,14 +90,14 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
 }
 
 fn opening_from_poly<'a, I>(
-    poly: &'a OneHotPoly<F, D, I>,
+    poly: &'a OneHotPoly<F, I>,
     point: &[F],
     layout: &LevelParams,
     basis: BasisMode,
 ) -> Result<F, String>
 where
     I: OneHotIndex,
-    CpuBackend: OpeningFoldKernel<<OneHotPoly<F, D, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
+    CpuBackend: OpeningFoldKernel<<OneHotPoly<F, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
@@ -211,10 +211,10 @@ fn verify_with_setup_mode(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
-    claims: VerifierOpeningBatch<'_, Claim, &akita_types::Commitment<F>>,
+    claims: OpeningClaims<'_, Claim, &akita_types::Commitment<F>>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
-    batched_verify::<Cfg, _, D>(
+    batched_verify::<Cfg, _>(
         proof,
         verifier_setup,
         transcript,
@@ -269,7 +269,7 @@ fn run() -> Result<(), String> {
     );
 
     let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
-        &OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+        &OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
@@ -307,7 +307,7 @@ fn run() -> Result<(), String> {
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    let onehot_poly = OneHotPoly::<F, D, u8>::new(onehot_k, indices)
+    let onehot_poly = OneHotPoly::<F, u8>::new(onehot_k, D, indices)
         .map_err(|err| format!("failed to build onehot polynomial: {err}"))?;
     let opening_point: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -349,20 +349,25 @@ fn run() -> Result<(), String> {
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
 
-    let poly_refs: [&OneHotPoly<F, D, u8>; 1] = [&onehot_poly];
+    let poly_refs: [&OneHotPoly<F, u8>; 1] = [&onehot_poly];
     let openings = [opening];
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let prove_input = ProverOpeningBatch {
-        point: opening_point[..].into(),
-        groups: vec![ProverCommitmentGroup {
-            point_vars: PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-                .map_err(|err| format!("invalid opening point shape: {err}"))?,
-            polynomials: &poly_refs[..],
-            commitment: (commitment.clone(), hint),
-        }],
-    };
+let prove_group = PolynomialGroupClaims::new(
+        PointVariableSelection::prefix(opening_point.len(), opening_point.len())
+            .map_err(|err| format!("invalid opening point shape: {err}"))?,
+        openings.to_vec(),
+        commitment.clone(),
+    )
+    .map_err(|err| format!("invalid prover opening group: {err}"))?;
+    let prove_input = ProverOpeningData::new(
+        OpeningClaims::from_groups(opening_point.clone(), vec![prove_group])
+            .map_err(|err| format!("invalid prover opening claims: {err}"))?,
+        vec![hint],
+        vec![&poly_refs[..]],
+    )
+    .map_err(|err| format!("invalid prover opening data: {err}"))?;
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
         &prover_setup,
         prove_input,
@@ -384,12 +389,15 @@ fn run() -> Result<(), String> {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        VerifierOpeningBatch::from_groups(
+        OpeningClaims::from_groups(
             opening_point.clone(),
-            vec![CommitmentGroup {
-                claims: openings.to_vec(),
-                commitment: &commitment,
-            }],
+            vec![PolynomialGroupClaims::new(
+                PointVariableSelection::prefix(opening_point.len(), opening_point.len())
+                    .map_err(|err| format!("invalid verifier opening point shape: {err}"))?,
+                openings.to_vec(),
+                &commitment,
+            )
+            .map_err(|err| format!("invalid verifier opening group: {err}"))?],
         )
         .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
         setup_contribution_mode,

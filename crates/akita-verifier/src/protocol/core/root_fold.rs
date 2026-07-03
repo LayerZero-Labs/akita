@@ -1,6 +1,6 @@
 use super::*;
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{terminal_witness_segment_layout, RingView};
+use akita_types::{terminal_witness_segment_layout, Commitment, RingView};
 
 /// Verify the folded-root proof payload for either an intermediate root or the
 /// 1-fold terminal root.
@@ -20,7 +20,7 @@ pub(super) fn verify_root<F, E, T>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: &VerifierOpeningBatch<'_, E, &RingVec<F>>,
+    claims: &OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
@@ -45,10 +45,10 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let openings = claims.claims();
-    let opening_batch = claims.to_shape();
+    let openings = claims.flat_evaluations();
+    let opening_batch = claims.layout();
     let shared_opening_point = claims.point();
-    let num_claims = opening_batch.num_polynomials();
+    let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -57,7 +57,7 @@ where
     // multiple-of-`ring_dim` invariant (no panic), and the ring count must
     // equal the expected commitment-row count.
     let ring_dim = root_lp.ring_dimension;
-    let commitment_view = RingView::new(commitment.coeffs(), ring_dim)?;
+    let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
     if commitment_view.num_rings() != root_lp.effective_commit_rows() {
         return Err(AkitaError::InvalidProof);
     }
@@ -65,7 +65,7 @@ where
     // Transcript binding, D-free and byte-identical to the prover's absorb:
     // batch shape header, then the flat commitment coefficients under
     // `ring_dim`, then the shared opening point. This replaces the former
-    // `VerifierOpeningBatch::append_to_transcript`, whose generic commitment
+    // `OpeningClaims::append_to_transcript`, whose generic commitment
     // path required a typed `RingCommitment: AppendToTranscript`.
     opening_batch.append_to_transcript::<F, T>(transcript)?;
     commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript);
@@ -82,7 +82,7 @@ where
             proof,
             setup,
             transcript,
-            commitment,
+            commitment.rows(),
             &openings,
             &opening_batch,
             shared_opening_point,
@@ -110,7 +110,7 @@ fn verify_root_inner<F, E, T, const D: usize>(
     transcript: &mut T,
     commitment: &RingVec<F>,
     openings: &[E],
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     shared_opening_point: &[E],
     num_claims: usize,
     m_row_layout: MRowLayout,
@@ -186,7 +186,7 @@ where
         )?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, openings)?;
+        opening_batch.batched_eval_target(&row_coefficients, openings)?;
     let trace_eval_target = eor_trace_final
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
@@ -195,7 +195,7 @@ where
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_polynomials()])
+            Ok(vec![shared_factor; opening_batch.num_total_polynomials()])
         })
         .transpose()?;
 
@@ -207,7 +207,7 @@ where
             akita_types::w_ring_element_count_for_chunks(
                 F::modulus_bits(),
                 root_lp,
-                opening_batch.num_polynomials(),
+                opening_batch.num_total_polynomials(),
                 akita_types::MRowLayout::WithDBlock,
                 root_lp.witness_chunk.num_chunks,
             )?
@@ -239,13 +239,16 @@ where
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
     let fold_grind_nonce = proof.fold_grind_nonce()?;
-    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+    let replay_opening_batch = OpeningClaims::from_groups(
         shared_opening_point,
-        opening_batch.clone(),
-        vec![CommitmentGroup {
-            claims: openings.to_vec(),
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(
+                opening_batch.max_num_vars(),
+                opening_batch.max_num_vars(),
+            )?,
+            openings.to_vec(),
             commitment,
-        }],
+        )?],
     )?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,

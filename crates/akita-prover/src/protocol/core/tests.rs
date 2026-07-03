@@ -3,7 +3,8 @@ use crate::RecursiveWitnessFlat;
 use akita_field::{AkitaError, Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    CommitmentGroup, CommitmentGroupScheduleKey, OpeningBatchShape, VerifierOpeningBatch,
+    AkitaScheduleLookupKey, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims,
 };
 
 type F = Fp32<251>;
@@ -21,12 +22,14 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
-    let opening_batch = VerifierOpeningBatch::from_groups(
+    let opening_batch = OpeningClaims::from_groups(
         point.to_vec(),
-        vec![CommitmentGroup {
-            claims: vec![E::zero()],
-            commitment: (),
-        }],
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(point.len(), point.len()).expect("point vars"),
+            vec![E::zero()],
+            (),
+        )
+        .expect("group claims")],
     )
     .expect("opening batch");
     let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _, 2>(
@@ -49,10 +52,10 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 
 #[test]
 fn batched_prove_opening_batch_rejects_multi_group_shape() {
-    let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
-    assert_eq!(batch.num_commitment_groups(), 2);
+    let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped shape");
+    assert_eq!(batch.num_groups(), 2);
     assert!(matches!(
-        CommitmentGroupScheduleKey::new_from_opening_batch(&batch),
+        AkitaScheduleLookupKey::from_layout(&batch),
         Err(AkitaError::InvalidSetup(_))
     ));
 }

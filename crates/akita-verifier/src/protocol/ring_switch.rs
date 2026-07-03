@@ -215,12 +215,12 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
-    let num_polys = opening_batch.num_polynomials();
+    let num_polys = opening_batch.num_total_polynomials();
     let gamma = replay.row_coefficients;
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let num_claims = relation.opening_batch().num_polynomials();
+    let num_claims = relation.opening_batch().num_total_polynomials();
     if relation.opening_point().a.len() < lp.block_len
         || relation.opening_point().b.len() != lp.num_blocks
     {
@@ -311,7 +311,7 @@ where
         alpha,
         lp,
         tau1,
-        opening_batch.num_polynomials(),
+        opening_batch.num_total_polynomials(),
         replay.row_coefficients,
         relation.m_row_layout(),
         chunk_layout,

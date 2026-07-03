@@ -1,7 +1,7 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{CleartextWitnessShape, LevelParams, OpeningBatchShape};
+use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -69,75 +69,11 @@ impl ExecutionSchedule {
     }
 }
 
-/// Per-group schedule lookup dimensions for one commitment group.
-///
-/// Describes one group's opening geometry: `num_vars` coordinates in the shared
-/// point and `num_polynomials` committed polynomials opened at that point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CommitmentGroupScheduleKey {
-    /// Root polynomial variable count.
-    pub num_vars: usize,
-    /// Number of polynomials in this commitment group.
-    pub num_polynomials: usize,
-}
-
-impl CommitmentGroupScheduleKey {
-    /// Singleton root-opening context.
-    pub const fn singleton(num_vars: usize) -> Self {
-        Self {
-            num_vars,
-            num_polynomials: 1,
-        }
-    }
-
-    /// General root-opening context for a scalar same-point batch.
-    pub const fn new(num_vars: usize, num_polynomials: usize) -> Self {
-        Self {
-            num_vars,
-            num_polynomials,
-        }
-    }
-
-    /// Build a schedule lookup key from a validated [`OpeningBatchShape`].
-    ///
-    /// Projects `num_vars` and the total polynomial count. Assumes the batch
-    /// was already validated at the opening boundary (`OpeningBatchShape::check`
-    /// or an infallible constructor).
-    ///
-    /// Folded schedule lookup currently treats every batch as one commitment
-    /// group; see `akita_planner::generated_schedule_lookup_key`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the batch is multi-group.
-    pub fn new_from_opening_batch(opening_batch: &OpeningBatchShape) -> Result<Self, AkitaError> {
-        if opening_batch.num_commitment_groups() != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "scalar schedule lookup cannot collapse a multi-commitment batch; use the grouped schedule key from specs/multi-group-batching.md".to_string(),
-            ));
-        }
-        Ok(Self::new(
-            opening_batch.num_vars(),
-            opening_batch.num_polynomials(),
-        ))
-    }
-
-    /// Validate that the key dimensions are usable.
-    pub fn validate(self) -> Result<(), AkitaError> {
-        if self.num_vars == 0 || self.num_polynomials == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "schedule lookup key dimensions must be at least 1".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
 /// Root layout metadata frozen when a standalone commitment group is created.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CommitmentGroupLayout {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PrecommittedGroupParams {
     /// Per-group root schedule entry shape.
-    pub key: CommitmentGroupScheduleKey,
+    pub group: PolynomialGroupLayout,
     /// Root block size exponent used for this group's committed `t_hat` shape.
     pub m_vars: usize,
     /// Root block count exponent used for this group's committed `t_hat` shape.
@@ -150,11 +86,11 @@ pub struct CommitmentGroupLayout {
     pub conservative_n_b: usize,
 }
 
-impl CommitmentGroupLayout {
+impl PrecommittedGroupParams {
     /// Build frozen group metadata from the concrete commit params.
-    pub fn from_params(key: CommitmentGroupScheduleKey, params: &LevelParams) -> Self {
+    pub fn from_params(group: PolynomialGroupLayout, params: &LevelParams) -> Self {
         Self {
-            key,
+            group,
             m_vars: params.m_vars,
             r_vars: params.r_vars,
             log_basis: params.log_basis,
@@ -164,8 +100,8 @@ impl CommitmentGroupLayout {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        push_usize(bytes, self.key.num_vars);
-        push_usize(bytes, self.key.num_polynomials);
+        push_usize(bytes, self.group.num_vars());
+        push_usize(bytes, self.group.num_polynomials());
         push_usize(bytes, self.m_vars);
         push_usize(bytes, self.r_vars);
         push_u32(bytes, self.log_basis);
@@ -175,7 +111,7 @@ impl CommitmentGroupLayout {
 
     /// Validate that this layout is a well-formed standalone commitment group.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        self.key.validate()?;
+        self.group.validate()?;
         if self.n_a == 0 || self.conservative_n_b == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout requires nonzero A rows and conservative B rows"
@@ -190,7 +126,7 @@ impl CommitmentGroupLayout {
         Ok(())
     }
 
-    /// Validate that frozen `(m_vars, r_vars)` geometry matches `key.num_vars`.
+    /// Validate that frozen `(m_vars, r_vars)` geometry matches `group.num_vars`.
     pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError> {
         let alpha = ring_dimension.trailing_zeros() as usize;
         let Some(outer) = self
@@ -202,11 +138,14 @@ impl CommitmentGroupLayout {
                 "commitment group layout geometry overflow".to_string(),
             ));
         };
-        if outer != self.key.num_vars {
+        if outer != self.group.num_vars() {
             return Err(AkitaError::InvalidSetup(format!(
-                "commitment group layout geometry does not match key.num_vars: \
-                 m_vars={} r_vars={} alpha={} key.num_vars={}",
-                self.m_vars, self.r_vars, alpha, self.key.num_vars
+                "precommitted group geometry does not match group.num_vars: \
+                 m_vars={} r_vars={} alpha={} group.num_vars={}",
+                self.m_vars,
+                self.r_vars,
+                alpha,
+                self.group.num_vars()
             )));
         }
         Ok(())
@@ -238,18 +177,28 @@ impl CommitmentGroupLayout {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Final group shape for the grouped root commitment.
-    pub final_group: CommitmentGroupScheduleKey,
+    pub final_group: PolynomialGroupLayout,
     /// Previously committed groups in caller-supplied transcript order.
-    pub precommitteds: Vec<CommitmentGroupLayout>,
+    pub precommitteds: Vec<PrecommittedGroupParams>,
 }
 
 impl AkitaScheduleLookupKey {
     /// Scalar root-opening context with no precommitted groups.
-    pub fn single(final_group: CommitmentGroupScheduleKey) -> Self {
+    pub fn single(final_group: PolynomialGroupLayout) -> Self {
         Self {
             final_group,
             precommitteds: Vec::new(),
         }
+    }
+
+    /// Scalar schedule lookup from a single-group opening layout.
+    pub fn from_layout(layout: &OpeningClaimsLayout) -> Result<Self, AkitaError> {
+        if layout.num_groups() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "scalar schedule lookup cannot collapse a multi-group layout; build an explicit grouped key".to_string(),
+            ));
+        }
+        Ok(Self::single(layout.groups()[0]))
     }
 
     /// Number of commitment groups in this schedule key.
@@ -259,10 +208,10 @@ impl AkitaScheduleLookupKey {
 
     /// Total number of polynomials across the final and precommitted groups.
     pub fn num_polynomials(&self) -> Result<usize, AkitaError> {
-        let mut total = self.final_group.num_polynomials;
+        let mut total = self.final_group.num_polynomials();
         for layout in &self.precommitteds {
             total = total
-                .checked_add(layout.key.num_polynomials)
+                .checked_add(layout.group.num_polynomials())
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("grouped root polynomial count overflow".to_string())
                 })?;
@@ -273,11 +222,16 @@ impl AkitaScheduleLookupKey {
     /// Validate per-group metadata.
     pub fn validate(&self) -> Result<(), AkitaError> {
         self.final_group.validate()?;
+        if self.final_group.num_vars() == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "schedule lookup key dimensions must be at least 1".to_string(),
+            ));
+        }
         for layout in &self.precommitteds {
             layout.validate()?;
-            if layout.key.num_vars > self.final_group.num_vars {
+            if layout.group.num_vars() > self.final_group.num_vars() / 2 {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root requires precommitted groups to have at most the final num_vars"
+                    "grouped root requires precommitted groups to have at most half the final num_vars"
                         .to_string(),
                 ));
             }
@@ -1175,24 +1129,36 @@ mod tests {
     }
 
     #[test]
-    fn new_from_opening_batch_rejects_multi_group() {
-        let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
-        let err = CommitmentGroupScheduleKey::new_from_opening_batch(&batch)
+    fn from_layout_rejects_multi_group() {
+        let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped layout");
+        let err = AkitaScheduleLookupKey::from_layout(&layout)
             .expect_err("scalar lookup must reject grouped batches");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
     fn validate_rejects_zero_dimensions() {
-        assert!(CommitmentGroupScheduleKey::new(0, 1).validate().is_err());
-        assert!(CommitmentGroupScheduleKey::new(20, 0).validate().is_err());
-        assert!(CommitmentGroupScheduleKey::new(20, 4).validate().is_ok());
+        assert!(
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(0, 1))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 0))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 4))
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]
     fn group_batch_key_rejects_precommitted_num_vars_above_main() {
-        let pre = CommitmentGroupLayout {
-            key: CommitmentGroupScheduleKey::new(24, 1),
+        let pre = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(24, 1),
             m_vars: 4,
             r_vars: 2,
             log_basis: 2,
@@ -1200,7 +1166,7 @@ mod tests {
             conservative_n_b: 4,
         };
         let grouped = AkitaScheduleLookupKey {
-            final_group: CommitmentGroupScheduleKey::new(20, 3),
+            final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![pre],
         };
 
@@ -1211,9 +1177,9 @@ mod tests {
     }
 
     #[test]
-    fn group_batch_key_allows_precommitted_num_vars_above_half_main() {
-        let pre_small = CommitmentGroupLayout {
-            key: CommitmentGroupScheduleKey::new(12, 1),
+    fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
+        let pre_small = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(12, 1),
             m_vars: 4,
             r_vars: 2,
             log_basis: 2,
@@ -1221,19 +1187,19 @@ mod tests {
             conservative_n_b: 4,
         };
         let grouped = AkitaScheduleLookupKey {
-            final_group: CommitmentGroupScheduleKey::new(20, 3),
+            final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![pre_small],
         };
 
         grouped
             .validate()
-            .expect("precommitted groups may exceed half the main key up to main num_vars");
+            .expect_err("precommitted groups above half the main key must be rejected");
     }
 
     #[test]
     fn group_batch_key_allows_mixed_polynomial_counts() {
-        let pre = CommitmentGroupLayout {
-            key: CommitmentGroupScheduleKey::new(10, 1),
+        let pre = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(10, 1),
             m_vars: 12,
             r_vars: 2,
             log_basis: 2,
@@ -1241,7 +1207,7 @@ mod tests {
             conservative_n_b: 4,
         };
         let grouped = AkitaScheduleLookupKey {
-            final_group: CommitmentGroupScheduleKey::new(20, 3),
+            final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![pre],
         };
 
@@ -1253,8 +1219,8 @@ mod tests {
 
     #[test]
     fn validate_frozen_precommit_rejects_geometry_mismatch() {
-        let layout = CommitmentGroupLayout {
-            key: CommitmentGroupScheduleKey::new(20, 1),
+        let layout = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(20, 1),
             m_vars: 4,
             r_vars: 2,
             log_basis: 2,

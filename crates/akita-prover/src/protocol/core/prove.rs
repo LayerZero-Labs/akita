@@ -18,7 +18,7 @@ use akita_types::{
 };
 
 fn reject_unsupported_grouped_root<Cfg, F, P>(
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     polys: &[&P],
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -27,7 +27,7 @@ where
     F: FieldCore,
     P: RootPolyMeta<F>,
 {
-    if opening_batch.num_commitment_groups() <= 1 {
+    if opening_batch.num_groups() <= 1 {
         return Ok(());
     }
     if Cfg::TIERED_COMMITMENT {
@@ -108,7 +108,7 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
         Tensor = TS,
         RingSwitch = R,
     >,
-    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
+    claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     transcript: &mut T,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -156,9 +156,10 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    let group_sizes = claims.group_sizes();
-    validate_batched_inputs(expanded.as_ref(), claims.point(), &group_sizes, true)?;
-    let opening_batch = claims.to_opening_shape::<Cfg::Field>()?;
+    claims.validate::<Cfg::Field>()?;
+    let opening_claims = claims.opening_claims();
+    opening_claims.validate(expanded.seed())?;
+    let opening_batch = opening_claims.layout();
     let flat_polys = claims.flat_polys();
     reject_unsupported_grouped_root::<Cfg, Cfg::Field, P>(
         &opening_batch,
@@ -198,11 +199,7 @@ where
     })?;
 
     if schedule_is_root_direct(&schedule) {
-        let commitment_hints = claims
-            .groups()
-            .iter()
-            .map(|group| group.commitment.1.clone())
-            .collect::<Vec<_>>();
+        let commitment_hints = claims.hints().to_vec();
         return prove_root_direct::<Cfg::Field, Cfg::ExtField, P>(
             &flat_polys,
             &commitment_hints,
@@ -255,7 +252,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
+    claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &Schedule,
     schedule_ctx: &ValidatedScheduleContext<'_>,
     basis: BasisMode,

@@ -17,7 +17,7 @@ use akita_types::CleartextWitnessProof;
 ///
 /// This is the **PCS/batch-facing** capability bound: it names a polynomial's
 /// variable count and ring-element count *without* a const ring dimension `D`,
-/// so D-free entry points (e.g. [`crate::ProverOpeningBatch`]) can require just
+/// so D-free entry points (e.g. [`crate::ProverOpeningData`]) can require just
 /// `RootPolyMeta` while the const-D kernel-entry traits ([`RootPolyShape`] and
 /// the commit/opening/tensor/direct-witness family) carry `D`.
 ///

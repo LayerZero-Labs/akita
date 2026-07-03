@@ -10,17 +10,17 @@ use akita_prover::compute::{
     ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend,
     RuntimeRootCommitPoly, RuntimeRootProvePoly, UniformProverStack,
 };
-use akita_prover::ProverOpeningBatch;
+use akita_prover::ProverOpeningData;
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommittedGroupHandle};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    validate_ring_subfield_role, BasisMode, Commitment, CommitmentGroupScheduleKey, FpExtEncoding,
+    validate_ring_subfield_role, BasisMode, Commitment, FpExtEncoding, PolynomialGroupLayout,
 };
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, SetupContributionMode};
-use akita_types::{AkitaVerifierSetup, VerifierOpeningBatch};
+use akita_types::{AkitaVerifierSetup, OpeningClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -190,7 +190,7 @@ where
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
-        precommitteds: Vec<CommitmentGroupScheduleKey>,
+        precommitteds: Vec<PolynomialGroupLayout>,
     ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -216,7 +216,7 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     pub fn batched_prove<'a, T, P, B>(
         setup: &AkitaProverSetup<Cfg::Field>,
-        claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field>,
+        claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
         stacks: &'a impl LevelProveStacks<
             'a,
             Cfg::Field,
@@ -270,7 +270,7 @@ where
         proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
         setup: &AkitaVerifierSetup<Cfg::Field>,
         transcript: &mut T,
-        claims: VerifierOpeningBatch<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
+        claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError> {
@@ -295,7 +295,7 @@ fn batched_verify_inner<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
+    claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -315,12 +315,11 @@ where
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();
-    let row_claims = claims.as_row_batch();
     akita_verifier::batched_verify::<Cfg, T>(
         proof,
         setup,
         transcript,
-        row_claims,
+        claims,
         basis,
         setup_contribution_mode,
     )?;

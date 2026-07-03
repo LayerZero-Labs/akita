@@ -59,9 +59,9 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
 pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     needs_extension_reduction: bool,
-    fold_claims: ProverOpeningBatch<'a, E, P, F>,
+    fold_claims: ProverOpeningData<'a, E, P, F>,
     eor_polys: &[&P],
-    eor_opening_batch: &VerifierOpeningBatch<'_, E>,
+    eor_opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
     non_eor_protocol_point: Vec<E>,
@@ -94,7 +94,7 @@ where
         + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = fold_claims.to_opening_shape::<F>()?;
+    let opening_batch = fold_claims.opening_claims().layout();
     let fold_polys = fold_claims.flat_polys();
     let tensor = stack.tensor();
     // A-role fold dimension: the EOR sumcheck and tensor projection operate on
@@ -219,12 +219,12 @@ where
     R: ComputeBackendSetup<F>,
 {
     stack: &'a ProverComputeStack<'a, F, C, O, TS, R>,
-    fold_claims: ProverOpeningBatch<'a, E, Q, F>,
+    fold_claims: ProverOpeningData<'a, E, Q, F>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
     row_coefficients: Option<Vec<E>>,
-    trace_opening_batch: &'a OpeningBatchShape,
+    trace_opening_batch: &'a OpeningClaimsLayout,
     level_params: &'a LevelParams,
     alpha_bits: usize,
     basis: BasisMode,
@@ -565,7 +565,7 @@ where
         let num_trace_blocks = prepared_fold
             .instance
             .opening_batch()
-            .num_polynomials()
+            .num_total_polynomials()
             .checked_mul(lp.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let (_, layout) = trace_layout_for_instance(

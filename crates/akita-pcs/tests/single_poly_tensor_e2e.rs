@@ -20,7 +20,7 @@ fn run_single_onehot_tensor(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = D64OneHotTensor::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
@@ -94,7 +94,7 @@ fn run_single_dense_tensor(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = D64OneHotTensor::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;

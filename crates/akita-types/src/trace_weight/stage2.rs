@@ -11,7 +11,7 @@ use super::build::{
 use super::layout::TraceChunkLayout;
 use super::trace_table::TraceTable;
 use crate::{
-    embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams, OpeningBatchShape,
+    embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams, OpeningClaimsLayout,
     PreparedOpeningPoint, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm,
     TraceWeightLayout, WitnessLayout,
 };
@@ -200,7 +200,7 @@ struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore> {
     /// M-matrix block count per claim (`LevelParams::num_blocks`, extracted by
     /// the caller — trace-weight construction must not read schedule types).
     num_blocks: usize,
-    opening_batch: &'a OpeningBatchShape,
+    opening_batch: &'a OpeningClaimsLayout,
     prepared_point: &'a PreparedOpeningPoint<F, E>,
     row_coefficients: &'a [E],
     claim_scales: Option<&'a [E]>,
@@ -215,16 +215,16 @@ struct RootTraceClaimItem<'a, F: FieldCore, E: FieldCore> {
 fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore>(
     inputs: &RootTraceClaimInputs<'_, F, E>,
 ) -> Result<(), AkitaError> {
-    if inputs.row_coefficients.len() != inputs.opening_batch.num_polynomials() {
+    if inputs.row_coefficients.len() != inputs.opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
-            expected: inputs.opening_batch.num_polynomials(),
+            expected: inputs.opening_batch.num_total_polynomials(),
             actual: inputs.row_coefficients.len(),
         });
     }
     if let Some(scales) = inputs.claim_scales {
-        if scales.len() != inputs.opening_batch.num_polynomials() {
+        if scales.len() != inputs.opening_batch.num_total_polynomials() {
             return Err(AkitaError::InvalidSize {
-                expected: inputs.opening_batch.num_polynomials(),
+                expected: inputs.opening_batch.num_total_polynomials(),
                 actual: scales.len(),
             });
         }
@@ -236,7 +236,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
     inputs: &'a RootTraceClaimInputs<'a, F, E>,
 ) -> Result<Vec<RootTraceClaimItem<'a, F, E>>, AkitaError> {
     validate_root_trace_claim_inputs(inputs)?;
-    let mut items = Vec::with_capacity(inputs.opening_batch.num_polynomials());
+    let mut items = Vec::with_capacity(inputs.opening_batch.num_total_polynomials());
     for (claim_idx, &coefficient) in inputs.row_coefficients.iter().enumerate() {
         let scale = inputs
             .claim_scales
@@ -268,7 +268,7 @@ pub fn stage2_trace_coeff<E: FieldCore>(batching_coeff: E, trace_gamma: E, is_te
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
     num_blocks: usize,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
@@ -396,7 +396,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
 #[allow(clippy::too_many_arguments)]
 pub fn trace_terms_root<F, E, const D: usize>(
     lp: &LevelParams,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     b_open: &[E],
     basis: BasisMode,
@@ -433,7 +433,7 @@ where
 pub fn build_trace_claim_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
     lp: &LevelParams,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     b_open: &[E],
     basis: BasisMode,

@@ -30,7 +30,7 @@ use akita_types::{
 /// Resolve a real schedule from a config preset at the given `num_vars`.
 fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
     Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        akita_types::CommitmentGroupScheduleKey::singleton(num_vars),
+        akita_types::PolynomialGroupLayout::singleton(num_vars),
     ))
     .expect("valid schedule for num_vars")
 }

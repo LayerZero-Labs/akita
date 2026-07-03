@@ -12,7 +12,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
-use akita_planner::{generated_schedule_lookup_key, PlannerPolicy};
+use akita_planner::PlannerPolicy;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
@@ -21,8 +21,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, MRowLayout, OpeningBatchShape, Schedule, Step,
+    AkitaScheduleLookupKey, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
+    OpeningClaimsLayout, PolynomialGroupLayout, Schedule, Step,
 };
 
 use crate::{policy_of, CommitmentConfig};
@@ -53,7 +53,7 @@ pub fn akita_batched_root_layout<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let lookup_key = CommitmentGroupScheduleKey::new(num_vars, num_polynomials);
+    let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(lookup_key))?;
     if let Some(root) = akita_types::schedule_root_fold_step(&schedule) {
         let layout = root.params.clone();
@@ -76,7 +76,7 @@ where
     // Size the fallback for the requested batch (`num_polynomials`), not a
     // singleton — otherwise the per-poly inputs would be smaller than the
     // batched commit layout `Scheme::commit` actually uses.
-    Cfg::get_params_for_batched_commitment(&OpeningBatchShape::new(num_vars, num_polynomials)?)
+    Cfg::get_params_for_batched_commitment(&OpeningClaimsLayout::new(num_vars, num_polynomials)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ struct MixedSuffixFoldPlan {
 }
 
 fn generated_fold_step<Cfg: CommitmentConfig>(
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     level: usize,
 ) -> Result<GeneratedFoldStep, AkitaError> {
     let catalog = Cfg::schedule_catalog().ok_or_else(|| {
@@ -102,8 +102,8 @@ fn generated_fold_step<Cfg: CommitmentConfig>(
             std::any::type_name::<Cfg>()
         ))
     })?;
-    let table_key = generated_schedule_lookup_key(key);
-    let entry = table_entry(catalog, table_key).ok_or_else(|| {
+    let table_key = AkitaScheduleLookupKey::single(key);
+    let entry = table_entry(catalog, &table_key).ok_or_else(|| {
         AkitaError::InvalidSetup(format!("missing generated schedule for {key:?}"))
     })?;
     let mut fold_idx = 0usize;
@@ -289,7 +289,7 @@ fn expand_envelope_witness_at_ring_d(
 }
 
 fn mixed_continue_suffix_level<EnvelopeCfg, SuffixCfg>(
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     level: usize,
     current_w_len: usize,
     suffix_ring_d: usize,
@@ -303,7 +303,7 @@ where
     let envelope_gen = generated_fold_step::<EnvelopeCfg>(key, level)?;
     let suffix_policy = policy_of::<SuffixCfg>();
     let fold_shape = SuffixCfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.num_vars,
+        num_vars: key.num_vars(),
         level,
         current_w_len,
     });
@@ -323,7 +323,7 @@ where
 }
 
 fn mixed_level_params<EnvelopeCfg, SuffixCfg>(
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     level: usize,
     envelope_current_w_len: usize,
     envelope_params: &LevelParams,
@@ -340,9 +340,9 @@ where
         return Ok(envelope_params.clone());
     }
     let suffix_policy = policy_of::<SuffixCfg>();
-    let num_claims = if level == 0 { key.num_polynomials } else { 1 };
+    let num_claims = if level == 0 { key.num_polynomials() } else { 1 };
     let fold_shape = EnvelopeCfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.num_vars,
+        num_vars: key.num_vars(),
         level,
         current_w_len: envelope_current_w_len,
     });
@@ -405,7 +405,7 @@ where
         )));
     }
     let lookup_key =
-        AkitaScheduleLookupKey::single(CommitmentGroupScheduleKey::new(num_vars, num_polynomials));
+        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, num_polynomials));
     let envelope = EnvelopeCfg::runtime_schedule(lookup_key.clone())?;
     let suffix = SuffixCfg::runtime_schedule(lookup_key.clone())?;
 
@@ -553,7 +553,7 @@ where
         let terminal_fold_level = mixed_folds.len() - 1;
         let field_bits = SuffixCfg::decomposition().field_bits();
         let terminal_num_polynomials = if terminal_fold_level == 0 {
-            lookup_key.final_group.num_polynomials
+            lookup_key.final_group.num_polynomials()
         } else {
             1
         };

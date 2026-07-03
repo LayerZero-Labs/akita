@@ -5,7 +5,7 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
-use akita_types::{AkitaScheduleLookupKey, CommitmentGroupScheduleKey, OpeningBatchShape};
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 #[test]
 fn schedule_catalog_none_without_feature_uses_dp() {
@@ -18,10 +18,7 @@ fn schedule_catalog_none_without_feature_uses_dp() {
         "schedule feature disabled: schedule_catalog must be None"
     );
 
-    let key = CommitmentGroupScheduleKey::new_from_opening_batch(
-        &OpeningBatchShape::new(28, 1).expect("opening batch"),
-    )
-    .expect("lookup key");
+    let key = PolynomialGroupLayout::new(28, 1);
 
     let dp = find_schedule(
         key,

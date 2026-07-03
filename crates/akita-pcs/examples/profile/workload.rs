@@ -15,18 +15,18 @@ use akita_prover::compute::{
     RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
 use akita_prover::{
-    AkitaProverSetup, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
-    ProverCommitmentGroup, ProverOpeningBatch,
+    AkitaProverSetup, CommitmentProver, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly,
+    ProverOpeningData,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
-    BlockOrder, CleartextWitnessProof, CleartextWitnessShape, Commitment, CommitmentGroup,
-    FpExtEncoding, LevelParams, OpeningBatchShape, PointVariableSelection, Schedule,
-    SetupContributionMode, Step, VerifierOpeningBatch,
+    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint,
+    AkitaVerifierSetup, BasisMode, BlockOrder, CleartextWitnessProof, CleartextWitnessShape,
+    Commitment, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, Schedule, SetupContributionMode, Step,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -34,34 +34,37 @@ use std::time::Instant;
 
 pub(crate) const ONEHOT_K: usize = 256;
 
-fn prover_claims<'a, E: Clone, P, CommitF: FieldCore>(
+fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     point: &'a [E],
     polynomials: &'a [&'a P],
     commitment: &'a Commitment<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningBatch<'a, E, P, CommitF> {
-    ProverOpeningBatch {
-        point: point.into(),
-        groups: vec![ProverCommitmentGroup {
-            point_vars: PointVariableSelection::prefix(point.len(), point.len())
-                .expect("full-point prover group"),
-            polynomials,
-            commitment: (commitment.clone(), hint),
-        }],
-    }
+) -> ProverOpeningData<'a, E, P, CommitF> {
+    let group = PolynomialGroupClaims::new(
+        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        vec![E::zero(); polynomials.len()],
+        commitment.clone(),
+    )
+    .expect("valid prover claims group");
+    let opening_claims =
+        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+        .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a, E: FieldCore, C>(
     point: &[E],
     openings: &[E],
     commitment: &'a C,
-) -> VerifierOpeningBatch<'static, E, &'a C> {
-    VerifierOpeningBatch::from_groups(
+) -> OpeningClaims<'static, E, &'a C> {
+    OpeningClaims::from_groups(
         point.to_vec(),
-        vec![CommitmentGroup {
-            claims: openings.to_vec(),
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
+            openings.to_vec(),
             commitment,
-        }],
+        )
+        .expect("valid verifier claims group")],
     )
     .expect("valid verifier claims")
 }
@@ -476,7 +479,8 @@ fn run_prove<
             Cfg::decomposition().field_bits(),
         );
     } else {
-        let opening_batch = OpeningBatchShape::new(pt.len(), 1).expect("same-point opening batch");
+        let opening_batch =
+            OpeningClaimsLayout::new(pt.len(), 1).expect("same-point opening batch");
         let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
         report_proof_size_against_planner(
             label,
@@ -835,7 +839,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, &grind_observations);
-    let opening_batch = OpeningBatchShape::new(nv, num_polys).expect("same-point opening batch");
+    let opening_batch = OpeningClaimsLayout::new(nv, num_polys).expect("same-point opening batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("batched schedule");
     if let Some(plan) = plan {
         report_proof_size_against_planner(

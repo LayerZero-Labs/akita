@@ -9,7 +9,7 @@ use crate::compute::{
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{
-    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningBatch,
+    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
@@ -454,7 +454,7 @@ impl RingRelationProver {
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F>,
-        fold_claims: ProverOpeningBatch<'a, PointF, P, F>,
+        fold_claims: ProverOpeningData<'a, PointF, P, F>,
         pre_folded_e_by_poly: Vec<RingVec<F>>,
         lp: LevelParams,
         transcript: &mut T,
@@ -480,15 +480,17 @@ impl RingRelationProver {
         // Per-role ring dimensions for this level; the mixed-row spec feeds
         // diverging role dims here (uniform today).
         let dims = CommitmentRingDims::uniform(lp.ring_dimension);
-        let opening_batch = fold_claims.to_opening_shape::<F>()?;
+        let opening_batch = fold_claims.opening_claims().layout();
         let polys = fold_claims.flat_polys();
-        let group_sizes = opening_batch.num_polys_per_commitment_group();
-        let mut hints = Vec::with_capacity(fold_claims.groups.len());
+        let group_sizes = opening_batch.group_sizes();
+        let num_groups = fold_claims.opening_claims().num_groups();
+        let mut hints = Vec::with_capacity(num_groups);
         // Sent-commitment rows are B-role data; keep them as flat coefficients
         // and validate the ring count under `d_b` (no-panic length gate).
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
-        for group in fold_claims.groups {
-            let (group_commitment, group_hint) = group.commitment;
+        for group_index in 0..num_groups {
+            let group_commitment = fold_claims.opening_claims().group_commitment(group_index)?;
+            let group_hint = fold_claims.group_hint(group_index)?;
             let group_rows =
                 RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
             if group_rows != lp.effective_commit_rows() {
@@ -512,7 +514,7 @@ impl RingRelationProver {
                 "batched prover ring-multiplier opening-point layout mismatch".to_string(),
             ));
         }
-        let num_claims = opening_batch.num_polynomials();
+        let num_claims = opening_batch.num_total_polynomials();
         if polys.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
@@ -550,7 +552,7 @@ impl RingRelationProver {
         // D-role operations: decompose the folded opening rows into `e_hat`
         // digits and (non-terminal layouts) compute + absorb the D-block rows
         // `v = D * e_hat`. Both consume the same digits at `d_d`, so they share
-        // one kernel-entry dispatch; the flat `DigitBlocks` / `RingVec` come
+        // one kernel-entry dispatch; the flat `FlatDigitBlocks` / `RingVec` come
         // back out as D-free carriers.
         //
         // Terminal layout drops the D-block from the M-matrix entirely:

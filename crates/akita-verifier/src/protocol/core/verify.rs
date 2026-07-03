@@ -17,9 +17,9 @@ use akita_transcript::Transcript;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{
     validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, RingVec, RingView,
-    Schedule, SetupContributionMode, Step, ValidatedScheduleContext, VerifierOpeningBatch,
+    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, Commitment,
+    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingVec, RingView, Schedule,
+    SetupContributionMode, Step, ValidatedScheduleContext,
     GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
 };
 use std::array::from_fn;
@@ -71,13 +71,13 @@ where
 }
 
 fn reject_unsupported_grouped_root<Cfg>(
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
 {
-    if opening_batch.num_commitment_groups() <= 1 {
+    if opening_batch.num_groups() <= 1 {
         return Ok(());
     }
     if Cfg::TIERED_COMMITMENT {
@@ -97,7 +97,7 @@ where
 fn validate_root_direct_recommitment_shape<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup_seed: &AkitaSetupSeed,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
@@ -116,7 +116,9 @@ where
         ));
     }
     let expected_witness_len = 1usize
-        .checked_shl(u32::try_from(opening_batch.num_vars()).map_err(|_| AkitaError::InvalidProof)?)
+        .checked_shl(
+            u32::try_from(opening_batch.max_num_vars()).map_err(|_| AkitaError::InvalidProof)?,
+        )
         .ok_or(AkitaError::InvalidProof)?;
     let direct_capacity = params
         .num_blocks
@@ -127,7 +129,7 @@ where
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    if opening_batch.num_polynomials() != witnesses.len() {
+    if opening_batch.num_total_polynomials() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -307,7 +309,7 @@ where
 pub(crate) fn verify_root_direct_commitments_with_params<F, E>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    claims: &VerifierOpeningBatch<'_, E, &RingVec<F>>,
+    claims: &OpeningClaims<'_, E, &Commitment<F>>,
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
@@ -318,12 +320,12 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let opening_batch = claims.to_shape();
+    let opening_batch = claims.layout();
     // Validate the flat commitment shape against the schedule-derived ring
     // dimension before interpreting it. `RingView::new` enforces the
     // multiple-of-`ring_dim` invariant; no panic on malformed lengths.
     let ring_dim = params.ring_dimension;
-    let commitment_view = RingView::new(commitment.coeffs(), ring_dim)?;
+    let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
     let recomputed_matches = dispatch_ring_dim_result!(ring_dim, |D| {
         validate_root_direct_recommitment_shape::<F, D>(
             witnesses,
@@ -384,7 +386,7 @@ pub fn batched_verify<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingVec<Cfg::Field>>,
+    claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -402,18 +404,10 @@ where
     // would silently skip past.
     check_batched_proof_step_shape(proof)?;
 
-    let group_sizes = claims
-        .groups()
-        .iter()
-        .map(|group| group.claims.len())
-        .collect::<Vec<_>>();
-    validate_batched_inputs(&setup.expanded, claims.point(), &group_sizes, false)?;
-    let opening_batch = claims
-        .validate(OpeningBatchLimits {
-            max_num_vars: setup.expanded.seed().max_num_vars,
-            max_num_polynomials: setup.expanded.seed().max_num_batched_polys,
-        })
+    claims
+        .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
+    let opening_batch = claims.layout();
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
@@ -463,7 +457,7 @@ pub(crate) fn verify<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingVec<Cfg::Field>>,
+    claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -523,7 +517,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T>(
     proof: &AkitaBatchedProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, E, &RingVec<F>>,
+    claims: OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
@@ -669,8 +663,8 @@ mod tests {
         }
     }
 
-    fn opening_batch(num_vars: usize) -> OpeningBatchShape {
-        OpeningBatchShape::new(num_vars, 1).expect("valid opening batch summary")
+    fn opening_batch(num_vars: usize) -> OpeningClaimsLayout {
+        OpeningClaimsLayout::new(num_vars, 1).expect("valid opening batch summary")
     }
 
     fn setup_seed(max_setup_len: usize) -> AkitaSetupSeed {
@@ -754,7 +748,7 @@ mod tests {
     fn reject_unsupported_grouped_root_rejects_generic_multi_group() {
         use akita_config::proof_optimized::fp128;
 
-        let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped batch");
+        let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped batch");
         let err = reject_unsupported_grouped_root::<fp128::D64OneHot>(
             &batch,
             SetupContributionMode::Direct,

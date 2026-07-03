@@ -855,34 +855,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AkitaSetupSeed, FlatMatrix, SisModulusFamily};
+    use crate::SisModulusFamily;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{Fp32, FpExt2, FpExt4, LiftBase, NegOneNr};
+    use akita_field::{Fp32, FpExt4, LiftBase};
 
     type F = Fp32<251>;
-    type E2 = FpExt2<F, NegOneNr>;
     type E = FpExt4<F>;
-
-    fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupSeed {
-                max_num_vars: 3,
-                max_num_batched_polys: 8,
-                gen_ring_dim: 1,
-                max_setup_len: 1,
-                public_matrix_seed: [0u8; 32],
-            },
-            FlatMatrix::from_flat_data(vec![F::zero()], 1),
-        )
-    }
-
-    #[test]
-    fn batched_input_validation_accepts_extension_points() {
-        let p0 = [E2::new(F::from_u64(1), F::from_u64(2))];
-
-        validate_batched_inputs(&setup(), &p0[..], &[3], true)
-            .expect("extension-valued shared opening point should validate by shape");
-    }
 
     fn packed_inner_lp() -> LevelParams {
         LevelParams::params_only(

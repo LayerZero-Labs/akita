@@ -1,6 +1,6 @@
 use super::*;
 use akita_types::dispatch_ring_dim_result;
-use akita_types::{terminal_witness_segment_layout, OpeningBatchShape, RingView};
+use akita_types::{terminal_witness_segment_layout, OpeningClaimsLayout, RingView};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
@@ -60,7 +60,7 @@ where
     )?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
+    let opening_batch = OpeningClaimsLayout::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
     let row_coefficients = vec![E::one()];
     let FoldEorReplay {
@@ -147,13 +147,16 @@ where
         AkitaLevelProof::Intermediate { v, .. } => v.clone(),
         AkitaLevelProof::Terminal { .. } => RingVec::from_coeffs(Vec::new()),
     };
-    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+    let replay_opening_batch = OpeningClaims::from_groups(
         current_state.opening_point.as_slice(),
-        opening_batch,
-        vec![CommitmentGroup {
-            claims: openings,
-            commitment: current_state.commitment,
-        }],
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(
+                opening_batch.max_num_vars(),
+                current_state.opening_point.len(),
+            )?,
+            openings,
+            current_state.commitment,
+        )?],
     )?;
     Ok(PreparedFoldReplay {
         lp,

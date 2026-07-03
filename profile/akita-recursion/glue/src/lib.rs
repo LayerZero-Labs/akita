@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, Commitment, CommitmentGroup, FlatMatrix, SetupContributionMode,
-    SetupPrefixVerifierRegistry, VerifierOpeningBatch,
+    AkitaVerifierSetup, Commitment, FlatMatrix, OpeningClaims, PointVariableSelection,
+    PolynomialGroupClaims, SetupContributionMode, SetupPrefixVerifierRegistry,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
@@ -107,13 +107,18 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> VerifierOpeningBatch<'static, F, &'a Commitment<F>> {
-        VerifierOpeningBatch::from_groups(
+    ) -> OpeningClaims<'static, F, &'a Commitment<F>> {
+        let point_vars = PointVariableSelection::prefix(
+            usize::try_from(self.num_vars).expect("recursion blob num_vars fits usize"),
+            self.opening_point.len(),
+        )
+        .expect("singleton recursion opening point covers all variables");
+        OpeningClaims::from_groups(
             self.opening_point.clone(),
-            vec![CommitmentGroup {
-                claims: openings.to_vec(),
-                commitment: &self.commitment,
-            }],
+            vec![
+                PolynomialGroupClaims::new(point_vars, openings.to_vec(), &self.commitment)
+                    .expect("singleton recursion opening batch has one evaluation"),
+            ],
         )
         .expect("singleton recursion opening batch is valid")
     }

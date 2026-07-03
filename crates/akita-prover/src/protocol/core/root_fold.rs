@@ -44,7 +44,7 @@ where
 fn prepare_root<F, E, T, P, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F>,
+    claims: ProverOpeningData<'_, E, P, F>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
@@ -75,9 +75,9 @@ where
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
-    let opening_num_vars = opening_batch.num_vars();
+    let opening_batch = claims.opening_layout::<F>()?;
+    let num_claims = opening_batch.num_total_polynomials();
+    let opening_num_vars = opening_batch.max_num_vars();
     // A-role root fold ring dimension (schedule-derived).
     let root_ring_d = root_params.ring_dimension;
     let alpha_bits = root_ring_d.trailing_zeros() as usize;
@@ -98,7 +98,7 @@ where
     }
 
     let eor_opening_batch =
-        VerifierOpeningBatch::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
+        OpeningClaims::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
     let non_eor_protocol_point = claims.point().to_vec();
     prepare_fold_inner::<F, E, T, P, _, C, O, TS, R>(
         stack,
@@ -144,7 +144,7 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F>,
+    claims: ProverOpeningData<'_, E, P, F>,
     scheduled: &ExecutionSchedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -186,8 +186,8 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
+    let opening_batch = claims.opening_layout::<F>()?;
+    let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params;
 
     if claims.flat_polys().len() != num_claims {
@@ -251,7 +251,7 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F>,
+    claims: ProverOpeningData<'_, E, P, F>,
     scheduled: &ExecutionSchedule,
     terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
@@ -294,8 +294,8 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
+    let opening_batch = claims.opening_layout::<F>()?;
+    let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params;
 
     if claims.flat_polys().len() != num_claims {

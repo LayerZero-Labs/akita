@@ -11,7 +11,7 @@ use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::protocol::RingRelationProver;
 use crate::{
-    ProverOpeningBatch, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
+    ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
     RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
@@ -34,12 +34,11 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::FpExtEncoding;
 use akita_types::{
-    append_claim_values_to_transcript, basis_weights, batched_eval_target_from_opening_batch,
-    build_trace_table_scaled, check_extension_opening_reduction_output,
-    derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
-    embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
-    recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, root_current_w_len,
+    append_claim_values_to_transcript, basis_weights, build_trace_table_scaled,
+    check_extension_opening_reduction_output, derive_tensor_extension_opening_claim_from_partials,
+    embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
+    prepare_opening_point, recover_ring_subfield_inner_product, relation_claim_from_rows_extension,
+    reorder_stage1_coords, ring_subfield_packed_extension_opening_point, root_current_w_len,
     root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
     schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
@@ -49,9 +48,9 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
     CleartextWitnessProof, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
-    LevelParams, MRowLayout, OpeningBatchShape, PreparedOpeningPoint, RingMultiplierOpeningPoint,
-    RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
-    SetupSumcheckProof, Step, TerminalLevelProof, TraceTable, VerifierOpeningBatch,
+    LevelParams, MRowLayout, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
+    RingMultiplierOpeningPoint, RingVec, RingView, Schedule, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 use std::sync::Arc;
 
