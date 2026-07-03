@@ -69,26 +69,39 @@ jobs:
         # through multiple recursive levels. The fp128 cells fold aggressively enough
         # to stay at nv=32.
         #
-        # The tensor cell runs at nv=26, not nv=32. Under the 138-bit L-infinity SIS
-        # floors the planner picks a top-heavy tensor root split (large m_vars), so
-        # the public setup matrix grows ~4x per +2 nv: ~1 GiB at nv=26, ~4 GiB at
-        # nv=28, and ~72 GiB at nv=32 (which OOM-aborts the runner during setup).
-        # nv=26 keeps the tensor setup vector (~1 GiB) and peak RSS on par with the
-        # flat onehot_fp128_d64 nv=32 cell that already passes here, while still
-        # exercising the tensor root fold plus multiple recursive flat folds.
+        # The tensor cell (group 2) runs at nv=26, not nv=32. Under the 138-bit
+        # L-infinity SIS floors the planner picks a top-heavy tensor root split
+        # (large m_vars), so the public setup matrix grows ~4x per +2 nv: ~1 GiB
+        # at nv=26, ~4 GiB at nv=28, and ~72 GiB at nv=32 (which OOM-aborts the
+        # runner during setup). nv=26 keeps the tensor setup vector (~1 GiB) and
+        # peak RSS on par with the flat onehot_fp128_d64 nv=32 cell that already
+        # passes here, while still exercising the tensor root fold plus multiple
+        # recursive flat folds.
         group:
-          - name: 1-fp128-dense-tensor
+          - name: 1-fp128-dense
             cases: |
               dense_fp128_d64:24:1
+          - name: 2-fp128-tensor
+            # Keep the tensor case in its own group with the merge-base baseline
+            # skipped. main before the tensor prover cutover (this PR) ships a
+            # placeholder tensor schedule table: every nv is a non-committing
+            # Direct step, so the merge-base baseline binary panics resolving the
+            # commit layout for this mode at *any* nv. The name-based
+            # `baseline_required_mode` guard cannot detect this because the
+            # merge-base still defines the mode name. Skip the baseline until the
+            # real tensor schedules land on main; future PRs compare against
+            # merge-base like the rest.
+            skip_merge_base_baseline: true
+            cases: |
               onehot_fp128_d64_tensor:26:1
-          - name: 2-flat-onehot-suite
+          - name: 3-flat-onehot-suite
             cases: |
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
               onehot_fp128_d64:32:1
               onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
-          - name: 3-distributed
+          - name: 4-distributed
             # Keep this in its own group so the first PR that introduces the
             # profile mode can still benchmark the PR side even though its
             # merge-base binary cannot run the new mode. Once merged, future
@@ -115,7 +128,15 @@ jobs:
           echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_BASELINE_AVAILABLE=1" >> "$GITHUB_ENV"
+          # Groups whose merge-base cannot meaningfully run the mode (e.g. a
+          # placeholder schedule that panics) opt out of the merge-base baseline
+          # via `skip_merge_base_baseline`. The name-based `baseline_required_mode`
+          # guard below only covers modes the merge-base does not define at all.
+          if [ "${{ matrix.group.skip_merge_base_baseline }}" = "true" ]; then
+            echo "AKITA_BENCH_BASELINE_AVAILABLE=0" >> "$GITHUB_ENV"
+          else
+            echo "AKITA_BENCH_BASELINE_AVAILABLE=1" >> "$GITHUB_ENV"
+          fi
           echo "AKITA_BENCH_BASE_REQUIRED_MODE=${{ matrix.group.baseline_required_mode }}" >> "$GITHUB_ENV"
 
       - name: Determine PR benchmark merge base
@@ -171,7 +192,7 @@ jobs:
         run: ./scripts/check_profile_ci_features.sh
 
       - name: Build merge-base profile binary
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && matrix.group.skip_merge_base_baseline != true
         run: |
           git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
           mkdir -p "$RUNNER_TEMP/bench-bins"
