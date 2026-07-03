@@ -99,13 +99,10 @@ where
     Ok(schedule)
 }
 
-fn reject_unsupported_grouped_root<Cfg>(
+fn reject_unsupported_grouped_root(
     opening_batch: &OpeningClaimsLayout,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<(), AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
+) -> Result<(), AkitaError> {
     if let Some(message) = should_reject_grouped_root(opening_batch, setup_contribution_mode, None)
     {
         return Err(if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
@@ -410,7 +407,7 @@ where
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
+    reject_unsupported_grouped_root(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg, D>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
@@ -722,14 +719,9 @@ mod tests {
 
     #[test]
     fn reject_unsupported_grouped_root_rejects_generic_multi_group() {
-        use akita_config::proof_optimized::fp128;
-
         let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped batch");
-        let err = reject_unsupported_grouped_root::<fp128::D64OneHot>(
-            &batch,
-            SetupContributionMode::Direct,
-        )
-        .expect_err("multi-group verify must reject before schedule lookup");
+        let err = reject_unsupported_grouped_root(&batch, SetupContributionMode::Direct)
+            .expect_err("multi-group verify must reject before schedule lookup");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }
