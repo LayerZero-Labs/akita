@@ -12,7 +12,7 @@ use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, padded_setup_prefix_len,
     setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams,
-    OpeningBatchShape, SETUP_OFFLOAD_D_SETUP,
+    OpeningClaimsLayout, SETUP_OFFLOAD_D_SETUP,
 };
 
 fn commit_setup_prefix_for_level<F, const D: usize, B>(
@@ -68,9 +68,9 @@ where
         return Ok(());
     }
 
-    let root_opening_batch = OpeningBatchShape::new(max_num_vars, max_num_batched_polys)?;
+    let root_opening_batch = OpeningClaimsLayout::new(max_num_vars, max_num_batched_polys)?;
     let schedule = Cfg::get_params_for_prove(&root_opening_batch)?;
-    let recursive_opening_batch = OpeningBatchShape::new(0, 1)?;
+    let recursive_opening_batch = OpeningClaimsLayout::new(0, 1)?;
     let available_field_len = setup
         .expanded
         .shared_matrix()
