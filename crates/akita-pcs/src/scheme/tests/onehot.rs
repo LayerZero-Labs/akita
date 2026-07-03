@@ -140,7 +140,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
             akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
         let grouped_key = akita_types::AkitaScheduleLookupKey {
             final_group: akita_types::PolynomialGroupLayout::new(NV, MAIN_SIZE),
-            precommitteds: vec![pre_a_frozen.clone(), pre_b_frozen.clone()],
+            precommitteds: vec![pre_a_frozen, pre_b_frozen],
         };
 
         let schedule =
@@ -190,7 +190,7 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
             akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
         let grouped_key = akita_types::AkitaScheduleLookupKey {
             final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, GROUP_SIZE),
-            precommitteds: vec![pre_a_frozen.clone(), pre_b_frozen.clone()],
+            precommitteds: vec![pre_a_frozen, pre_b_frozen],
         };
 
         let main_params = OneHotCfg::get_params_for_grouped_batched_commitment(&grouped_key)

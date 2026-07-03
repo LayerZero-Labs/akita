@@ -28,7 +28,6 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, OpeningClaimsLayout};
-use akita_verifier::CommitmentVerifier;
 use common::*;
 
 const DENSE_ONEHOT_K: usize = DENSE_D;

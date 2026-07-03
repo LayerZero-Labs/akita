@@ -7,8 +7,6 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
 use akita_types::OpeningClaimsLayout;
-use akita_types::OpeningClaimsLayout;
-use akita_verifier::CommitmentVerifier;
 use common::*;
 use proptest::prelude::*;
 
