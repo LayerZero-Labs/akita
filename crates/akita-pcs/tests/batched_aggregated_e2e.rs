@@ -28,7 +28,7 @@ use akita_prover::MultilinearPolynomial;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::{AkitaBatchedProof, OpeningBatchShape};
+use akita_types::{AkitaBatchedProof, OpeningClaimsLayout};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
@@ -51,7 +51,7 @@ mod non_zk_aggregated_cases {
     fn run_aggregated_onehot(nv: usize, batch_size: usize, expect_folded: bool) {
         init_rayon_pool();
         run_on_large_stack(move || {
-            let opening_batch = OpeningBatchShape::new(nv, batch_size).expect("opening_batch");
+            let opening_batch = OpeningClaimsLayout::new(nv, batch_size).expect("opening_batch");
             let layout =
                 OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
@@ -158,7 +158,7 @@ mod non_zk_aggregated_cases {
     fn run_aggregated_dense(nv: usize, batch_size: usize, expect_folded: bool) {
         init_rayon_pool();
         run_on_large_stack(move || {
-            let opening_batch = OpeningBatchShape::new(nv, batch_size).expect("opening_batch");
+            let opening_batch = OpeningClaimsLayout::new(nv, batch_size).expect("opening_batch");
             let layout =
                 DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
@@ -292,7 +292,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         const NV: usize = 17;
         const BATCH_SIZE: usize = 4;
 
-        let opening_batch = OpeningBatchShape::new(NV, BATCH_SIZE).expect("opening_batch");
+        let opening_batch = OpeningClaimsLayout::new(NV, BATCH_SIZE).expect("opening_batch");
         let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let dense_a = make_dense_poly(NV, 0x4d10_0001);
         let dense_b = make_dense_poly(NV, 0x4d10_0002);

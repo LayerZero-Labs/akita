@@ -21,7 +21,7 @@ use akita_prover::compute::{
 use akita_prover::{
     batched_commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly,
 };
-use akita_types::OpeningBatchShape;
+use akita_types::OpeningClaimsLayout;
 
 type Cfg = fp64::D32Full;
 type F = <Cfg as CommitmentConfig>::Field;
@@ -146,7 +146,7 @@ fn custom_commit_source_runs_batched_commit_with_params() {
     let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
     assert_commit_source_only(&contract);
     let dense = DensePoly::<F, D>::from_field_evals(NUM_VARS, &evals).expect("dense oracle");
-    let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
+    let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
     let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");

@@ -113,7 +113,7 @@ where
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
 
@@ -188,7 +188,7 @@ where
     assert_eq!(Cfg::D, D);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     // The committed poly's one-hot chunk size must match the config's required
@@ -287,7 +287,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     assert!(commit_batch >= 1);
 
     let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(poly_nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let polys: Vec<DensePoly<F, D>> = (0..commit_batch)
