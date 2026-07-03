@@ -540,6 +540,12 @@ impl TensorChallenges {
                 "tensor evaluation requires D >= 2".to_string(),
             ));
         }
+        if ring_d != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: ring_d,
+            });
+        }
         if u_weights.len() != self.left_len {
             return Err(AkitaError::InvalidSize {
                 expected: self.left_len,

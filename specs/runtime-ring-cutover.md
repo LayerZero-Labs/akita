@@ -317,26 +317,26 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 - [x] Uniform-D existing E2E tests still pass.
 - [x] A mixed-D-per-level fixture proves and verifies through the normal
       public PCS API, not a special test-only typed path.
-- [ ] **Per-role operation dispatch (litmus):** prover and verifier fold paths
+- [x] **Per-role operation dispatch (litmus):** prover and verifier fold paths
       admit `d_a`, `d_b`, `d_d` from `CommitmentRingDims` with separate
       `dispatch_ring_dim_result!` per operation (EOR, relation build, ring
       switch, stage2, stage3, relation claim). No `uniform_dim()` fused path
       remains on the prove/verify hot path.
-- [ ] `scripts/ring-cutover-progress.sh --merge-gate` passes: zero `const D`
+- [x] `scripts/ring-cutover-progress.sh --merge-gate` passes: zero `const D`
       in the prover orchestration spine
       (`crates/akita-prover/src/protocol/core.rs` and
       `crates/akita-prover/src/protocol/core/{prove,fold,root_fold,suffix}.rs`),
       zero **prover** discriminator violations (`const D` + schedule types),
       zero **verifier** discriminator violations (F2 transitional state removed),
       and zero hits for the banned #227 bridge names.
-- [ ] No function in `crates/akita-prover/src` or `crates/akita-verifier/src`
+- [x] No function in `crates/akita-prover/src` or `crates/akita-verifier/src`
       reads a schedule type and also has `const D` (discriminator rule;
       enforced by `ring-cutover-progress.sh` at merge).
-- [ ] Every dispatch arm in orchestration calls a kernel or an operation
+- [x] Every dispatch arm in orchestration calls a kernel or an operation
       adapter, never another orchestration function (no F1/F2 patterns).
       **Verifier `verify_suffix` must not wrap `prepare_fold_data` +
       `verify_fold` in one per-level dispatch** (F2).
-- [ ] `ring-cutover-progress.sh --merge-gate` is wired in CI.
+- [x] `ring-cutover-progress.sh --merge-gate` is wired in CI.
 - [x] `rg "AkitaCommitmentScheme<.*const D|..."` (high-level D surfaces) has
       no protocol-facing hits at merge time.
 - [x] For each D-free replacement added during the cutover, the typed path it
@@ -345,13 +345,13 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 
 **Completed slices (2026-07-03):** D-free PCS API, proof storage, prover spine
 `const D` = 0, mixed-D-per-level E2E, root poly step 11, council audit fixes
-(grind dispatch hoist, `RingView::append_flat_to_transcript` → `Result`).
+(grind dispatch hoist, `RingView::append_flat_to_transcript` → `Result`),
+slices 0–4 (authority, per-role dispatch, verifier F2 teardown, planner
+`role_dims`, regression locks, CI merge-gate).
 
-**Remaining (normative end state — not transitional):** per-role operation
-dispatch on prover (finish), full verifier F2 teardown mirroring prover,
-`RingRelationInstance` / `generate_y` segmentation, CI merge-gate on verifier
-discriminator count. Verifier level monomorphization is **not** an acceptable
-end state for merge.
+**Deferred (follow-on, not merge blockers):** divergent per-role planner
+emission (`d_a ≠ d_b ≠ d_d` within one fold level), nested ring-switch views
+when `d_d ≠ d_a`, and removing the last witness borrow `uniform_dim()` gate.
 
 ### Testing Strategy
 

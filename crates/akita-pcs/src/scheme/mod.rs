@@ -101,15 +101,32 @@ where
             .expect("prover setup must convert to verifier setup")
     }
 
-    /// Validate the field tower and setup envelope against the config's
-    /// schedule policy ring dimension (the schedule-derived replacement for
-    /// the former compile-time `D` checks).
-    fn validate_policy_ring_dim(setup: &AkitaProverSetup<Cfg::Field>) -> Result<(), AkitaError> {
+    /// Validate the field tower against the config schedule policy ring dimension.
+    fn validate_cfg_ring_policy() -> Result<usize, AkitaError> {
         let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
         dispatch_ring_dim_result!(ring_d, |D| {
             validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
         })?;
+        Ok(ring_d)
+    }
+
+    /// Validate policy ring dimension and setup envelope generation degree.
+    fn validate_policy_ring_dim(setup: &AkitaProverSetup<Cfg::Field>) -> Result<(), AkitaError> {
+        let ring_d = Self::validate_cfg_ring_policy()?;
         setup.ensure_root_ring_dim(ring_d)
+    }
+
+    fn validate_verifier_policy_ring_dim(
+        setup: &AkitaVerifierSetup<Cfg::Field>,
+    ) -> Result<(), AkitaError> {
+        let ring_d = Self::validate_cfg_ring_policy()?;
+        if setup.expanded.seed().gen_ring_dim != ring_d {
+            return Err(AkitaError::InvalidInput(format!(
+                "setup gen_ring_dim={} does not match scheme root ring degree {ring_d}",
+                setup.expanded.seed().gen_ring_dim
+            )));
+        }
+        Ok(())
     }
 
     /// Commit a single opening-point bundle.
@@ -274,6 +291,7 @@ where
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError> {
+        Self::validate_verifier_policy_ring_dim(setup)?;
         batched_verify_inner::<Cfg, T>(
             proof,
             setup,

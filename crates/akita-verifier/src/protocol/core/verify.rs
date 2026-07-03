@@ -431,8 +431,9 @@ where
     reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
-    ValidatedScheduleContext::new(&schedule, setup.expanded.seed().gen_ring_dim)?;
-    validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
+    let schedule_ctx =
+        ValidatedScheduleContext::new(&schedule, setup.expanded.seed().gen_ring_dim)?;
+    validate_schedule_onehot_chunk_size::<Cfg>(schedule_ctx.schedule())?;
 
     // The transcript instance descriptor binds the setup-wide root ring
     // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
@@ -442,7 +443,7 @@ where
         bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
             &setup.expanded,
             &opening_batch,
-            &schedule,
+            schedule_ctx.schedule(),
             basis,
             transcript,
         )
@@ -453,7 +454,7 @@ where
         setup,
         transcript,
         claims,
-        &schedule,
+        &schedule_ctx,
         basis,
         setup_contribution_mode,
     )
@@ -478,7 +479,7 @@ pub(crate) fn verify<Cfg, T>(
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
     claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
-    schedule: &Schedule,
+    schedule_ctx: &ValidatedScheduleContext,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -492,6 +493,7 @@ where
         + AkitaSerialize,
     T: Transcript<Cfg::Field>,
 {
+    let schedule = schedule_ctx.schedule();
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
             let Some(Step::Direct(direct)) = schedule.steps.first() else {
