@@ -134,7 +134,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
     if !family.emit_group_batch {
         return Ok(Vec::new());
     }
-    if Cfg::TIERED_COMMITMENT || Cfg::decomposition().log_commit_bound != 1 {
+    if Cfg::decomposition().log_commit_bound != 1 {
         return Ok(Vec::new());
     }
 
@@ -356,15 +356,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         1,
         50,
         fp128::D64FullMultiChunk
-    ),
-    // Tiered companion of `fp128_d64_onehot`
-    family_row!(
-        "fp128_d64_onehot_tiered",
-        "FP128_D64_ONEHOT_TIERED_SCHEDULES",
-        "fp128-d64-onehot-tiered",
-        1,
-        50,
-        fp128::D64OneHotTiered
     ),
     family_row!(
         "fp64_d128",

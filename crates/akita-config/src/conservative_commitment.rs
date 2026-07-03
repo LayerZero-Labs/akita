@@ -28,7 +28,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
     type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
-    const TIERED_COMMITMENT: bool = Cfg::TIERED_COMMITMENT;
 
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
@@ -109,12 +108,6 @@ pub(crate) fn inflate_setup_envelope_for_conservative_commitments<Cfg: Commitmen
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<Schedule, AkitaError> {
-    if Cfg::TIERED_COMMITMENT {
-        return Err(AkitaError::InvalidSetup(
-            "tiered conservative commitments are not supported; see specs/multi-group-batching.md"
-                .to_string(),
-        ));
-    }
     if Cfg::decomposition().log_commit_bound != 1 {
         return Err(AkitaError::InvalidSetup(
             "conservative commitments require a one-hot config".to_string(),
@@ -202,14 +195,7 @@ fn accumulate_matrix_envelope_for_level(
         .row_len()
         .checked_mul(lp.d_matrix_width())
         .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
-    let f_len = match lp.f_key.as_ref() {
-        Some(fk) => fk
-            .row_len()
-            .checked_mul(fk.col_len())
-            .ok_or_else(|| AkitaError::InvalidSetup("F setup envelope overflow".to_string()))?,
-        None => 0,
-    };
-    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len).max(f_len);
+    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len);
     Ok(())
 }
 

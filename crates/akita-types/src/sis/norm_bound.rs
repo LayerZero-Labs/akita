@@ -377,18 +377,6 @@ pub fn rounded_up_collision_linf_w(
     rounded_up_collision_linf_t(min_security_bits, sis_family, d, log_basis)
 }
 
-/// Tiered-commitment second-tier (`F`) rounded-up SIS coefficient-`L∞` bucket. The
-/// matrix `F` commits the balanced base-`2^log_basis` digits of `u_1 ‖ … ‖ u_f`,
-/// so its collision is the same digit-range difference as the B/D roles.
-pub fn rounded_up_collision_linf_tiered_commitment(
-    min_security_bits: u16,
-    sis_family: SisModulusFamily,
-    d: usize,
-    log_basis: u32,
-) -> Option<u128> {
-    rounded_up_collision_linf_t(min_security_bits, sis_family, d, log_basis)
-}
-
 /// Deterministic coefficient-`L∞` envelope on the folded witness sum
 /// `z = Σ c_i·s_i` (written `β_inf` in specs):
 ///

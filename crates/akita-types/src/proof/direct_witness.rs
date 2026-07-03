@@ -138,14 +138,14 @@ pub fn segment_typed_witness_shape(
     field_bits: u32,
     num_w_vectors: usize,
     num_t_vectors: usize,
-    num_public_rows: usize,
+    num_z_segments: usize,
     num_segments: usize,
 ) -> Result<CleartextWitnessShape, AkitaError> {
     let layout = tail_segment_layout(
         terminal_lp,
         num_w_vectors,
         num_t_vectors,
-        num_public_rows,
+        num_z_segments,
         num_segments,
         field_bits,
     )?;
