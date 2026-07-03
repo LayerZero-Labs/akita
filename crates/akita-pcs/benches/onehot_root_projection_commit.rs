@@ -11,7 +11,9 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
-use akita_prover::{commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly};
+use akita_prover::{
+    batched_commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly,
+};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{FpExtEncoding, OpeningBatchShape};
 use criterion::measurement::WallTime;
@@ -172,7 +174,7 @@ where
             for _ in 0..iters {
                 let start = Instant::now();
                 let committed =
-                    commit_with_params::<F, D, RootTensorProjectionPoly<F, D>, CpuBackend>(
+                    batched_commit_with_params::<F, D, RootTensorProjectionPoly<F, D>, CpuBackend>(
                         &transformed_polys,
                         setup.expanded.as_ref(),
                         stack.commit(),
@@ -192,9 +194,10 @@ where
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed =
-                    <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
-                        .expect("benchmark scheme commitment");
+                let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                    &setup, &polys, &stack,
+                )
+                .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

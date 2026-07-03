@@ -24,26 +24,24 @@ use crate::PlannerPolicy;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_norm_t, rounded_up_collision_norm_tiered_commitment,
-    rounded_up_collision_norm_w, SisModulusFamily,
+    rounded_up_collision_linf_t, rounded_up_collision_linf_tiered_commitment,
+    rounded_up_collision_linf_w, SisTableKey,
 };
 use akita_types::{AjtaiKeyParams, DecompositionParams, GroupRootParams, LevelParams};
 
 fn require_exact_rank(
     role: &str,
-    sis_family: SisModulusFamily,
-    ring_d: usize,
-    collision_l2_sq: u128,
+    key: SisTableKey,
     width: usize,
     stored_rank: usize,
 ) -> Result<(), AkitaError> {
-    let expected = min_secure_rank(sis_family, ring_d as u32, collision_l2_sq, width as u64)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "no audited {role}-role rank for generated schedule \
-                 (family={sis_family:?}, d={ring_d}, collision_l2_sq={collision_l2_sq}, width={width})"
-            ))
-        })?;
+    let expected = min_secure_rank(key, width as u64).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "no audited {role}-role rank for generated schedule \
+             (min_security_bits={}, family={:?}, d={}, coeff_linf_bound={}, width={width})",
+            key.min_security_bits, key.family, key.ring_dimension, key.coeff_linf_bound
+        ))
+    })?;
     if stored_rank != expected {
         return Err(AkitaError::InvalidSetup(format!(
             "generated schedule {role}-rank mismatch: stored n_{role} = {stored_rank}, recomputed n_{role} = {expected}"
@@ -107,6 +105,7 @@ impl GeneratedFoldStep {
         let is_root = fold_level == 0;
         let log_basis = self.log_basis;
         let sis_family = policy.sis_family;
+        let min_security_bits = policy.min_sis_security_bits;
 
         // Block geometry: the root spans `2^m_vars` ring elements per block;
         // recursive levels pack `ceil(num_ring / num_blocks)` instead.
@@ -145,6 +144,7 @@ impl GeneratedFoldStep {
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let (a_bucket, _) = committed_fold_a_role_rank(
+            min_security_bits,
             sis_family,
             ring_d,
             decomp,
@@ -160,15 +160,19 @@ impl GeneratedFoldStep {
         .ok_or_else(|| no_layout("A"))?;
         require_exact_rank(
             "a",
-            sis_family,
-            ring_d,
-            a_bucket,
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: a_bucket,
+            },
             inner_width,
             self.n_a as usize,
         )?;
 
-        let b_bucket = rounded_up_collision_norm_t(sis_family, ring_d, log_basis)
-            .ok_or_else(|| no_layout("B"))?;
+        let b_bucket =
+            rounded_up_collision_linf_t(min_security_bits, sis_family, ring_d, log_basis)
+                .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
@@ -177,8 +181,9 @@ impl GeneratedFoldStep {
         )
         .ok_or_else(|| no_layout("B"))?;
 
-        let d_bucket = rounded_up_collision_norm_w(sis_family, ring_d, log_basis)
-            .ok_or_else(|| no_layout("D"))?;
+        let d_bucket =
+            rounded_up_collision_linf_w(min_security_bits, sis_family, ring_d, log_basis)
+                .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
             .ok_or_else(|| no_layout("D"))?;
 
@@ -225,12 +230,32 @@ impl GeneratedFoldStep {
                     .checked_mul(self.n_b as usize)
                     .and_then(|w| w.checked_mul(num_digits_open_val))
                     .ok_or_else(|| no_layout("F"))?;
-                let f_bucket =
-                    rounded_up_collision_norm_tiered_commitment(sis_family, ring_d, log_basis)
-                        .ok_or_else(|| no_layout("F"))?;
-                require_exact_rank("f", sis_family, ring_d, f_bucket, f_width, n_f as usize)?;
-                let f_key =
-                    AjtaiKeyParams::try_new(sis_family, n_f as usize, f_width, f_bucket, ring_d)?;
+                let f_bucket = rounded_up_collision_linf_tiered_commitment(
+                    min_security_bits,
+                    sis_family,
+                    ring_d,
+                    log_basis,
+                )
+                .ok_or_else(|| no_layout("F"))?;
+                require_exact_rank(
+                    "f",
+                    SisTableKey {
+                        min_security_bits,
+                        family: sis_family,
+                        ring_dimension: ring_d as u32,
+                        coeff_linf_bound: f_bucket,
+                    },
+                    f_width,
+                    n_f as usize,
+                )?;
+                let f_key = AjtaiKeyParams::try_new(
+                    min_security_bits,
+                    sis_family,
+                    n_f as usize,
+                    f_width,
+                    f_bucket,
+                    ring_d,
+                )?;
                 (b_small_width, f, Some(f_key))
             }
             _ => {
@@ -242,17 +267,23 @@ impl GeneratedFoldStep {
         };
         require_exact_rank(
             "b",
-            sis_family,
-            ring_d,
-            b_bucket,
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: b_bucket,
+            },
             b_width,
             self.n_b as usize,
         )?;
         require_exact_rank(
             "d",
-            sis_family,
-            ring_d,
-            d_bucket,
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: d_bucket,
+            },
             d_matrix_width,
             self.n_d as usize,
         )?;
@@ -264,6 +295,7 @@ impl GeneratedFoldStep {
             ring_dimension: ring_d,
             log_basis,
             a_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_a as usize,
                 inner_width,
@@ -271,6 +303,7 @@ impl GeneratedFoldStep {
                 ring_d,
             )?,
             b_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_b as usize,
                 b_width,
@@ -278,6 +311,7 @@ impl GeneratedFoldStep {
                 ring_d,
             )?,
             d_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_d as usize,
                 d_matrix_width,
@@ -346,6 +380,7 @@ impl GeneratedFoldStep {
 
         let log_basis = self.log_basis;
         let sis_family = policy.sis_family;
+        let min_security_bits = policy.min_sis_security_bits;
         let m_vars = self.m_vars as usize;
         let r_vars = self.r_vars as usize;
         let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
@@ -371,7 +406,8 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (a_bucket, expected_n_a) = committed_fold_a_role_rank(
+        let (a_bucket, _) = committed_fold_a_role_rank(
+            min_security_bits,
             sis_family,
             ring_d,
             decomp,
@@ -385,15 +421,21 @@ impl GeneratedFoldStep {
             inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
-        if self.n_a as usize != expected_n_a {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated grouped root A-rank mismatch: stored n_a = {}, recomputed n_a = {expected_n_a}",
-                self.n_a
-            )));
-        }
+        require_exact_rank(
+            "a",
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: a_bucket,
+            },
+            inner_width,
+            self.n_a as usize,
+        )?;
 
-        let b_bucket = rounded_up_collision_norm_t(sis_family, ring_d, log_basis)
-            .ok_or_else(|| no_layout("B"))?;
+        let b_bucket =
+            rounded_up_collision_linf_t(min_security_bits, sis_family, ring_d, log_basis)
+                .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
@@ -407,8 +449,9 @@ impl GeneratedFoldStep {
         let d_matrix_width = main_d_width
             .checked_add(precommitted_d_width)
             .ok_or_else(|| AkitaError::InvalidSetup("generated grouped D width overflow".into()))?;
-        let d_bucket = rounded_up_collision_norm_w(sis_family, ring_d, log_basis)
-            .ok_or_else(|| no_layout("D"))?;
+        let d_bucket =
+            rounded_up_collision_linf_w(min_security_bits, sis_family, ring_d, log_basis)
+                .ok_or_else(|| no_layout("D"))?;
 
         let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
             policy.onehot_chunk_size
@@ -420,6 +463,7 @@ impl GeneratedFoldStep {
             ring_dimension: ring_d,
             log_basis,
             a_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_a as usize,
                 inner_width,
@@ -427,6 +471,7 @@ impl GeneratedFoldStep {
                 ring_d,
             )?,
             b_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_b as usize,
                 outer_width,
@@ -434,6 +479,7 @@ impl GeneratedFoldStep {
                 ring_d,
             )?,
             d_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_d as usize,
                 d_matrix_width,

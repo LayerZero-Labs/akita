@@ -28,17 +28,17 @@ Replay golden cells, rank monotonicity, and secure/insecure brackets:
 sage -python scripts/sis_golden/check.py
 ```
 
-## Full table regen
+## Euclidean comparison table regen
 
-Regenerate and stitch every SIS table row with the Rust Euclidean estimator:
+Regenerate and stitch the offline Euclidean comparison table:
 
 ```bash
 cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --format rust-split
 ```
 
-The generator uses `--max-rank 20`, the current 128-bit BDGL16 Euclidean
-profile, and the same power-of-two plus derived `d * B^2` collision-key set as
-the legacy Sage stitcher.
+The generator uses `--max-rank 20`, the old 128-bit BDGL16 Euclidean profile,
+and the same power-of-two plus derived `d * B^2` collision-key set as the legacy
+Sage stitcher. This is not the production lookup path after the L∞ cutover.
 
 For a row-oriented comparison artifact:
 
@@ -168,18 +168,21 @@ AKITA_SIS_INFINITY_BENCH_SET=all-trusted \
   cargo bench -p akita-sis-estimator --features parallel --bench infinity_optimizer
 ```
 
-## Infinity Width Table Comparison
+## Production infinity width table
 
-Slice 5 generates comparison-only max-width rows for the planner-shaped
-infinity key:
+Production SIS table generation uses the planner-shaped infinity key:
 
 ```text
-(family, ring_dimension, coeff_linf_bound) -> max widths by rank
+(min_security_bits, family, ring_dimension, coeff_linf_bound)
+    -> max widths by rank
 ```
 
-This is deliberately outside the production `generated_sis_table/` modules.
-Those modules still use the Euclidean key `(family, d, collision_l2_sq)` until
-the production cutover slice.
+The checked-in production table currently supports only `min_security_bits =
+138`.
+
+The temporary 128-bit coefficient-`L∞` Rust split table used for PR benchmark
+comparison is preserved under `scripts/sis_golden/reference_linf_128/`. It is a
+reference artifact only and is not compiled by runtime crates.
 
 Run a small smoke table:
 
@@ -203,9 +206,29 @@ cargo run -p akita-sis-estimator --example infinity_width_table --release -- \
   --output scripts/sis_golden/infinity_width_table.csv
 ```
 
-The current Rust estimator stores explicit scalar `m` as `u32`, so each row is
-capped at `floor(u32::MAX / d)` unless `--search-cap` is smaller. Rows with
-`hit_cap=true` are lower bounds, not tight cutoffs.
+Regenerate the production Rust split table:
+
+```bash
+cargo run -p akita-sis-estimator --release --features parallel \
+  --example infinity_width_table -- \
+  --format rust-split --target-bits 138 --profile local-minimum --progress-every 500
+```
+
+The production `rust-split` mode requires the complete production keyspace.
+Partial jobs must use CSV output. Rows with `hit_cap=true` are lower bounds, not
+tight cutoffs.
+
+The checked-in 138-bit table uses `--profile local-minimum`. This profile
+matches the Python `lattice-estimator` local search shape. It searches for a
+local minimum over `zeta`, and for each `zeta` it searches for a local minimum
+over `beta`, then refines in the Python-compatible beta neighborhood. Building
+with `--features parallel` parallelizes independent table rows, but it does not
+make the local search inside one row exhaustive.
+
+The exhaustive profiles scan the full finite `zeta` range and the full finite
+`beta` range for each row. They are more conservative if they find a cheaper
+attack that local-minimum skipped. They are also much slower for the full
+production keyspace.
 
 For Rust-vs-Sage single-shot timing, run:
 

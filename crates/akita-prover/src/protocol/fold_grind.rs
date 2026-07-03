@@ -83,9 +83,7 @@ fn grind_probe_nonces(
     let cap = contract.max_nonce_exclusive;
     match binding.grind_probe_order {
         FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN => Ok((0..cap).collect()),
-        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE
-            if contract.policy == FoldWitnessLinfCapPolicy::TailBoundWithGrind =>
-        {
+        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE if contract.policy.allows_grind() => {
             let absorb_buf = lp.fold_grind_probe_order_absorb_buf(num_claims);
             let seed = transcript.preview_challenge_bytes_after_absorb(&absorb_buf, 32);
             Ok(grind_probe_permutation(&seed, cap))
