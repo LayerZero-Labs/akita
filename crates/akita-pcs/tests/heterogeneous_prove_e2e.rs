@@ -4,9 +4,8 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, DensePoly,
-    OpeningCluster, ProverComputeStack, ProverOpeningData, RingSwitchCluster, TensorCluster,
-    UniformProverStack,
+    batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, DensePoly, OpeningCluster,
+    ProverComputeStack, ProverOpeningData, RingSwitchCluster, TensorCluster, UniformProverStack,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
