@@ -8,9 +8,7 @@ use crate::compute::{
     RuntimeOpeningProveBackendFor,
 };
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{
-    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData,
-};
+use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
@@ -32,7 +30,6 @@ use super::ring_relation_witness::RingRelationWitness;
 use std::time::Instant;
 
 mod relation_quotient;
-mod repeated_b;
 
 pub use relation_quotient::{compute_relation_quotient, RelationQuotientShape};
 
@@ -374,11 +371,6 @@ pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), Akita
                 "witness chunk block window must be a power of two".to_string(),
             ));
         }
-        if lp.tier_split > 1 {
-            return Err(AkitaError::InvalidSetup(
-                "multi-chunk witness layout for tiered commitments is not supported".to_string(),
-            ));
-        }
     }
     Ok(())
 }
@@ -492,7 +484,7 @@ impl RingRelationProver {
             let group_hint = fold_claims.group_hint(group_index)?;
             let group_rows =
                 RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
-            if group_rows != lp.effective_commit_rows() {
+            if group_rows != lp.b_key.row_len() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
@@ -544,8 +536,6 @@ impl RingRelationProver {
         let num_digits_open = lp.num_digits_open;
         let log_basis = lp.log_basis;
         let d_row_len = lp.d_key.row_len();
-        let effective_commit_rows = lp.effective_commit_rows();
-        let b_inner_rows_per_group = lp.b_inner_rows_per_group();
         let n_a = lp.a_key.row_len();
 
         // D-role operations: decompose the folded opening rows into `e_hat`
@@ -619,8 +609,8 @@ impl RingRelationProver {
             dims,
             RelationYLayout {
                 n_d: n_d_active,
-                commit_rows_per_group: effective_commit_rows,
-                b_inner_rows_per_group,
+                commit_rows_per_group: lp.b_key.row_len(),
+                b_inner_rows_per_group: 0,
                 n_a,
             },
             &v,

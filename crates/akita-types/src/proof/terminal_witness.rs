@@ -201,7 +201,7 @@ pub fn terminal_witness_segment_layout_from_counts(
 pub fn terminal_witness_segment_layout(
     lp: &LevelParams,
     num_w_vectors: usize,
-    num_public_rows: usize,
+    num_z_segments: usize,
     field_bits: u32,
 ) -> Result<TerminalWitnessSegmentLayout, AkitaError> {
     if lp.ring_dimension == 0 {
@@ -214,7 +214,7 @@ pub fn terminal_witness_segment_layout(
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal e_hat width overflow".to_string()))?;
     let num_digits_fold = lp.num_digits_fold(num_w_vectors, field_bits)?;
-    let z_folded_ring_count = num_public_rows
+    let z_folded_ring_count = num_z_segments
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal z-folded width overflow".to_string()))?;

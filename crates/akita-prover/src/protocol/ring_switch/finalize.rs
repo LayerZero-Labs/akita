@@ -49,7 +49,6 @@ where
 
         let opening_batch = instance.opening_batch();
         let num_polys = opening_batch.num_total_polynomials();
-        let num_public_m_rows = 0usize;
 
         let num_ring_elems = w.len() / D;
         let live_x_cols = num_ring_elems;
@@ -60,7 +59,7 @@ where
             })?
             .trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
-        let m_rows = lp.m_row_count_for(1, num_public_m_rows, m_row_layout)?;
+        let m_rows = lp.m_row_count_for(1, m_row_layout)?;
         let num_sc_vars = col_bits + ring_bits;
         let num_i = m_rows
             .checked_next_power_of_two()
@@ -101,7 +100,6 @@ where
                     &tau1,
                     num_polys,
                     gamma,
-                    num_public_m_rows,
                     m_row_layout,
                 )
             },
@@ -121,7 +119,6 @@ where
                 &tau1,
                 num_polys,
                 gamma,
-                num_public_m_rows,
                 m_row_layout,
             )?;
             let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);

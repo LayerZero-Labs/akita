@@ -546,7 +546,7 @@ pub fn tail_segment_layout(
     lp: &LevelParams,
     num_w_vectors: usize,
     num_t_vectors: usize,
-    num_public_rows: usize,
+    num_z_segments: usize,
     num_commitment_groups: usize,
     field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
@@ -579,12 +579,12 @@ pub fn tail_segment_layout(
         .checked_mul(lp.a_key.row_len())
         .and_then(|n| n.checked_mul(d))
         .ok_or_else(|| AkitaError::InvalidSetup("tail t field count overflow".to_string()))?;
-    let z_coords = num_public_rows
+    let z_coords = num_z_segments
         .checked_mul(lp.block_len)
         .and_then(|n| n.checked_mul(depth_commit))
         .and_then(|n| n.checked_mul(d))
         .ok_or_else(|| AkitaError::InvalidSetup("tail z coord count overflow".to_string()))?;
-    let z_plane_rings = num_public_rows
+    let z_plane_rings = num_z_segments
         .checked_mul(lp.block_len)
         .and_then(|n| n.checked_mul(depth_commit))
         .and_then(|n| n.checked_mul(depth_fold))
@@ -597,7 +597,7 @@ pub fn tail_segment_layout(
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
     let r_plane_rings = lp
-        .m_row_count_for(num_commitment_groups, 0, MRowLayout::WithoutDBlock)?
+        .m_row_count_for(num_commitment_groups, MRowLayout::WithoutDBlock)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
     let total_plane_rings = z_plane_rings
@@ -609,7 +609,7 @@ pub fn tail_segment_layout(
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
     let r_field_elems = lp
-        .m_row_count_for(num_commitment_groups, 0, MRowLayout::WithoutDBlock)?
+        .m_row_count_for(num_commitment_groups, MRowLayout::WithoutDBlock)?
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {
@@ -662,9 +662,9 @@ pub fn tail_segment_multiplicities_from_layout(
     if !layout.z_coords.is_multiple_of(z_unit) {
         return Err(AkitaError::InvalidProof);
     }
-    let num_public_rows = layout.z_coords / z_unit;
+    let num_z_segments = layout.z_coords / z_unit;
 
-    Ok((num_w_vectors, num_t_vectors, num_public_rows))
+    Ok((num_w_vectors, num_t_vectors, num_z_segments))
 }
 
 /// Planner byte budget for the Golomb-coded terminal `z` segment.
@@ -788,7 +788,7 @@ pub fn build_segment_typed_witness<F>(
     lp: &LevelParams,
     num_w_vectors: usize,
     num_t_vectors: usize,
-    num_public_rows: usize,
+    num_z_segments: usize,
     num_commitment_groups: usize,
 ) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
@@ -819,7 +819,7 @@ where
         lp,
         num_w_vectors,
         num_t_vectors,
-        num_public_rows,
+        num_z_segments,
         num_commitment_groups,
         field_bits,
     )?;
@@ -926,13 +926,13 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let field_bits = F::modulus_bits();
-    let (num_w_vectors, num_t_vectors, num_public_rows) =
+    let (num_w_vectors, num_t_vectors, num_z_segments) =
         tail_segment_multiplicities_from_layout(lp, &witness.layout)?;
     let expected_layout = tail_segment_layout(
         lp,
         num_w_vectors,
         num_t_vectors,
-        num_public_rows,
+        num_z_segments,
         num_commitment_groups,
         field_bits,
     )?;

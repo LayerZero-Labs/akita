@@ -594,8 +594,8 @@ where
         role_dims,
         RelationYLayout {
             n_d: n_d_active,
-            commit_rows_per_group: prepared.lp.effective_commit_rows(),
-            b_inner_rows_per_group: prepared.lp.b_inner_rows_per_group(),
+            commit_rows_per_group: prepared.lp.b_key.row_len(),
+            b_inner_rows_per_group: 0,
             n_a: prepared.lp.a_key.row_len(),
         },
         &prepared.v,
@@ -649,6 +649,7 @@ where
         relation_instance.role_dims(),
         &rs.tau1,
         rs.alpha,
+        prepared.lp.a_key.row_len(),
         relation_instance.v(),
         commitment,
     )?;

@@ -20,7 +20,7 @@ use akita_types::{
     AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, Commitment,
     FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingVec, RingView, Schedule,
     SetupContributionMode, Step, ValidatedScheduleContext,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -75,28 +75,17 @@ where
     Ok(())
 }
 
-fn reject_unsupported_grouped_root<Cfg>(
+fn reject_unsupported_grouped_root(
     opening_batch: &OpeningClaimsLayout,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<(), AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    if let Some(message) = should_reject_grouped_root(
-        opening_batch,
-        Cfg::TIERED_COMMITMENT,
-        setup_contribution_mode,
-        None,
-    ) {
-        return Err(
-            if message == GROUPED_ROOT_TIERED_UNSUPPORTED
-                || message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED
-            {
-                AkitaError::InvalidSetup(message.to_string())
-            } else {
-                AkitaError::InvalidProof
-            },
-        );
+) -> Result<(), AkitaError> {
+    if let Some(message) = should_reject_grouped_root(opening_batch, setup_contribution_mode, None)
+    {
+        return Err(if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
+            AkitaError::InvalidSetup(message.to_string())
+        } else {
+            AkitaError::InvalidProof
+        });
     }
     Ok(())
 }
@@ -296,19 +285,10 @@ fn recommit_direct_witness_group<F, const D: usize>(
     group_witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     geom: &DirectRecommitGeometry,
-    tiered: bool,
 ) -> Result<RingCommitment<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    if tiered {
-        return Err(AkitaError::InvalidSetup(
-            "root-direct recommitment does not support tiered commitment \
-             (f_key must be absent on the root-direct path)"
-                .to_string(),
-        ));
-    }
-
     let mut outer_input = Vec::new();
     for witness in group_witnesses {
         let field_witness = witness
@@ -359,8 +339,7 @@ where
     let geom = DirectRecommitGeometry::from_level(params, setup.expanded.seed());
     let recomputed_matches = dispatch_ring_dim_result!(ring_dim, |D| {
         validate_root_direct_recommitment_shape::<F>(witnesses, &geom, &opening_batch, ring_dim)?;
-        let recomputed =
-            recommit_direct_witness_group::<F, D>(witnesses, setup, &geom, params.f_key.is_some())?;
+        let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, &geom)?;
         // Compare recomputed `u` to the proof commitment as flat coefficients
         // under the same ring dimension (byte/coefficient parity with absorb).
         let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
@@ -435,7 +414,7 @@ where
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
+    reject_unsupported_grouped_root(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     let schedule_ctx =
@@ -775,14 +754,9 @@ mod tests {
 
     #[test]
     fn reject_unsupported_grouped_root_rejects_generic_multi_group() {
-        use akita_config::proof_optimized::fp128;
-
         let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped batch");
-        let err = reject_unsupported_grouped_root::<fp128::D64OneHot>(
-            &batch,
-            SetupContributionMode::Direct,
-        )
-        .expect_err("multi-group verify must reject before schedule lookup");
+        let err = reject_unsupported_grouped_root(&batch, SetupContributionMode::Direct)
+            .expect_err("multi-group verify must reject before schedule lookup");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

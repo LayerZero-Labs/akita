@@ -27,7 +27,7 @@
 //!
 //! There is no public-output `y_ring` row: the §3.1 fold-opening trace check is
 //! internalized as the fused `gamma^2` term below rather than carried as an `M`
-//! row, so `y_alpha` runs `consistency | D(v) | B(u) | A`.
+//! row, so `y_alpha` runs `consistency | A | B(u) | D(v)`.
 //!
 //! The fused trace term binds the committed fold witness to the public opening
 //! through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only on the

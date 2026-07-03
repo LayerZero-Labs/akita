@@ -29,9 +29,6 @@ pub struct SetupRelationShape {
     pub num_segments: usize,
     pub rows: usize,
     pub num_polys_per_segment: Vec<usize>,
-    pub num_public_rows: usize,
-    pub tier_split: usize,
-    pub n_f: usize,
 }
 
 /// Full row-layout footprint used by weight materialization and geometry tests.
@@ -97,8 +94,7 @@ impl SetupRelationShape {
                 "A-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let num_public_rows = 0usize;
-        let rows = lp.m_row_count_for(1, num_public_rows, m_row_layout)?;
+        let rows = lp.m_row_count_for(1, m_row_layout)?;
         Ok(Self {
             num_t_vectors: num_polynomials,
             num_blocks: lp.num_blocks,
@@ -115,9 +111,6 @@ impl SetupRelationShape {
             num_segments: 1,
             rows,
             num_polys_per_segment: vec![num_polynomials],
-            num_public_rows,
-            tier_split: lp.tier_split,
-            n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         })
     }
 }
@@ -140,9 +133,6 @@ impl<E: FieldCore> From<&SetupContributionPlanInputs<E>> for SetupRelationShape 
             num_segments: inputs.num_segments,
             rows: inputs.rows,
             num_polys_per_segment: inputs.num_polys_per_segment.clone(),
-            num_public_rows: inputs.num_public_rows,
-            tier_split: inputs.tier_split,
-            n_f: inputs.n_f,
         }
     }
 }
@@ -186,30 +176,16 @@ pub fn compute_setup_layout(
         });
     }
 
-    let tiered = shape.tier_split > 1;
-    if tiered && (shape.n_f == 0 || shape.num_segments != 1) {
-        return Err(AkitaError::InvalidSetup(
-            "tiered setup contribution requires n_f > 0 and a single commitment bundle".into(),
-        ));
-    }
     let n_d_active = match shape.m_row_layout {
         MRowLayout::WithDBlock => shape.n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    let d_start = checked_add(1, shape.num_public_rows, "D row start")?;
-    let f_start = checked_add(d_start, n_d_active, "COMMIT row start")?;
-    let commit_rows_pg = if tiered { shape.n_f } else { shape.n_b };
-    let b_inner_rows_pg = if tiered {
-        checked_mul(shape.tier_split, shape.n_b, "B_inner rows")?
-    } else {
-        0
-    };
-    let commit_rows = checked_mul(commit_rows_pg, shape.num_segments, "COMMIT row count")?;
-    let b_inner_start = checked_add(f_start, commit_rows, "B_inner row start")?;
-    let b_inner_rows_total = checked_mul(b_inner_rows_pg, shape.num_segments, "B_inner row count")?;
-    let a_start = checked_add(b_inner_start, b_inner_rows_total, "A row start")?;
-    let a_end = checked_add(a_start, shape.n_a, "A row end")?;
-    let b_start = f_start;
+    // Canonical row layout: consistency (1) | A | B | D.
+    let a_start = 1usize;
+    let b_start = checked_add(a_start, shape.n_a, "B row start")?;
+    let b_rows_total = checked_mul(shape.n_b, shape.num_segments, "B row count")?;
+    let d_start = checked_add(b_start, b_rows_total, "D row start")?;
+    let a_end = checked_add(d_start, n_d_active, "D row end")?;
     if a_end > shape.rows {
         return Err(AkitaError::InvalidSetup(
             "M-row weights are inconsistent with setup evaluator layout".into(),
@@ -230,34 +206,8 @@ pub fn compute_setup_layout(
 
     let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
     let a_required = checked_mul(shape.n_a, z_range, "A setup footprint")?;
-    let b_required = if tiered {
-        0
-    } else {
-        checked_mul(shape.n_b, n_cols_t, "B setup footprint")?
-    };
-    let (b_inner_stride, b_inner_required, f_stride, f_required) = if tiered {
-        if n_cols_t == 0 || !n_cols_t.is_multiple_of(shape.tier_split) {
-            return Err(AkitaError::InvalidSetup(
-                "tiered B' width does not divide the per-group T width".into(),
-            ));
-        }
-        let b_inner_stride = n_cols_t / shape.tier_split;
-        let b_inner_required = checked_mul(shape.n_b, b_inner_stride, "B_inner setup footprint")?;
-        let f_stride = checked_mul(
-            checked_mul(shape.tier_split, shape.n_b, "F width")?,
-            shape.depth_open,
-            "F width",
-        )?;
-        let f_required = checked_mul(shape.n_f, f_stride, "F setup footprint")?;
-        (b_inner_stride, b_inner_required, f_stride, f_required)
-    } else {
-        (0, 0, 0, 0)
-    };
-    let required = d_required
-        .max(b_required)
-        .max(a_required)
-        .max(b_inner_required)
-        .max(f_required);
+    let b_required = checked_mul(shape.n_b, n_cols_t, "B setup footprint")?;
+    let required = d_required.max(b_required).max(a_required);
     if required == 0 {
         return Err(AkitaError::InvalidSetup(
             "setup evaluator requires a non-empty packed footprint".into(),
@@ -269,18 +219,18 @@ pub fn compute_setup_layout(
         d_required,
         b_required,
         a_required,
-        b_inner_required,
-        f_required,
+        b_inner_required: 0,
+        f_required: 0,
         a_end,
         d_start,
-        f_start,
+        f_start: b_start,
         b_start,
-        b_inner_start,
+        b_inner_start: 0,
         a_start,
         n_d_active,
-        tiered,
-        b_inner_stride,
-        f_stride,
+        tiered: false,
+        b_inner_stride: 0,
+        f_stride: 0,
         n_cols_e,
         n_cols_t,
         z_range,
@@ -482,9 +432,6 @@ mod tests {
             num_segments: num_points,
             rows: 2,
             num_polys_per_segment: vec![0],
-            num_public_rows: 0,
-            tier_split: 1,
-            n_f: 0,
         };
         let shape = SetupRelationShape::from(&inputs);
         let layout = compute_setup_layout(&shape).expect("layout");
@@ -523,9 +470,6 @@ mod tests {
             num_segments: 1,
             rows: 2,
             num_polys_per_segment: vec![2],
-            num_public_rows: 0,
-            tier_split: 1,
-            n_f: 0,
         };
         let required = setup_required_for_shape(&shape).expect("required");
         assert!(required > 0);
@@ -548,9 +492,6 @@ mod tests {
             num_segments: 1,
             rows: 2,
             num_polys_per_segment: vec![2],
-            num_public_rows: 0,
-            tier_split: 1,
-            n_f: 0,
         };
         let chunk_layout = single_chunk_layout(4, 0, z_range, 0, 64, 0);
         let plan_a = SetupContributionPlan::prepare::<F>(
@@ -594,9 +535,6 @@ mod tests {
             num_segments: 1,
             rows: 8,
             num_polys_per_segment: vec![1],
-            num_public_rows: 1,
-            tier_split: 1,
-            n_f: 0,
         };
         let required = setup_required_for_shape(&shape).expect("required");
         let seed = crate::AkitaSetupSeed {
@@ -631,9 +569,6 @@ mod tests {
             num_segments: 1,
             rows: 8,
             num_polys_per_segment: vec![1],
-            num_public_rows: 0,
-            tier_split: 1,
-            n_f: 0,
         };
         let err = compute_setup_layout(&shape).expect_err("non-pow2 blocks");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));

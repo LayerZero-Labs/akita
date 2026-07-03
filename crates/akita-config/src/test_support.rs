@@ -209,11 +209,6 @@ fn expand_envelope_witness_at_ring_d(
             .ok_or_else(|| no_layout("D"))?;
     let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
         .ok_or_else(|| no_layout("D"))?;
-    if step.tier_split.is_some() || step.n_f.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D envelope witness expansion does not support tiered layouts".into(),
-        ));
-    }
     let n_b = min_secure_rank(
         SisTableKey {
             min_security_bits,
@@ -275,8 +270,6 @@ fn expand_envelope_witness_at_ring_d(
         num_digits_commit,
         num_digits_open: num_digits_open_val,
         onehot_chunk_size,
-        tier_split: 1,
-        f_key: None,
         fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(),
         num_digits_fold_one: 1,
         field_bits_hint: 0,

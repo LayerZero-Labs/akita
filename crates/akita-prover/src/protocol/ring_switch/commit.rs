@@ -87,25 +87,15 @@ where
         let typed_digits = inner.decomposed_inner_rows_trusted::<D>()?;
         let outer_input = typed_digits.flat_digits().to_vec();
         validate_commit_outer_input_nonempty(outer_input.len())?;
-        let u: Vec<CyclotomicRing<Cfg::Field, D>> = if commit_params.f_key.is_some() {
-            crate::api::commitment::tiered_commit_u_final::<Cfg::Field, D, B>(
-                backend,
-                prepared,
-                crate::api::commitment::TieredCommitShape::from_level(commit_params)?,
-                &outer_input,
-            )?
-        } else {
-            let u: Vec<CyclotomicRing<Cfg::Field, D>> = backend.digit_rows::<D>(
-                prepared,
-                commit_params.b_key.row_len(),
-                &outer_input,
-                commit_params.log_basis,
-            )?;
-            if u.len() != commit_params.b_key.row_len() {
-                return Err(AkitaError::InvalidProof);
-            }
-            u
-        };
+        let u: Vec<CyclotomicRing<Cfg::Field, D>> = backend.digit_rows::<D>(
+            prepared,
+            commit_params.b_key.row_len(),
+            &outer_input,
+            commit_params.log_basis,
+        )?;
+        if u.len() != commit_params.b_key.row_len() {
+            return Err(AkitaError::InvalidProof);
+        }
         let hint = AkitaCommitmentHint::singleton(inner.decomposed_inner_rows.clone());
         Ok(NextWitnessCommitment {
             witness: packed_witness,

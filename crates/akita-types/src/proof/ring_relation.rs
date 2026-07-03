@@ -20,7 +20,6 @@ pub struct RingRelationSegmentLengths {
     pub z_len: usize,
     pub e_len: usize,
     pub t_len: usize,
-    pub u_len: usize,
 }
 
 /// Opening-batch counts that determine witness segment widths.
@@ -73,13 +72,10 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         .and_then(|len| len.checked_mul(lp.block_len))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
-    let u_len = lp.u_concat_ring_len_per_group();
-
     Ok(RingRelationSegmentLengths {
         z_len,
         e_len,
         t_len,
-        u_len,
     })
 }
 
@@ -364,9 +360,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     ///
     /// Returns [`AkitaError::InvalidSetup`] (never panics) for a malformed chunk
     /// count (`0`, non-power-of-two, `> num_blocks`, or `∤ num_blocks`), a
-    /// non-power-of-two block window, multi-chunk + tiered commitments (not yet
-    /// specified), any offset/length arithmetic overflow, or a layout whose `r̂`
-    /// tail would exceed the committed witness capacity.
+    /// non-power-of-two block window, or any offset/length arithmetic overflow, or a
+    /// layout whose `r̂` tail would exceed the committed witness capacity.
     pub fn segment_layout(
         &self,
         lp: &LevelParams,
@@ -385,7 +380,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             z_len,
             e_len,
             t_len,
-            u_len,
         } = lens;
 
         let num_blocks = lp.num_blocks;
@@ -404,8 +398,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         };
         let y_layout = crate::proof::relation::RelationYLayout {
             n_d: n_d_active,
-            commit_rows_per_group: lp.effective_commit_rows(),
-            b_inner_rows_per_group: lp.b_inner_rows_per_group(),
+            commit_rows_per_group: lp.b_key.row_len(),
+            b_inner_rows_per_group: 0,
             n_a: lp.a_key.row_len(),
         };
         let num_groups = self.opening_batch.num_groups();
@@ -422,13 +416,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             .checked_mul(r_levels)
             .ok_or_else(|| AkitaError::InvalidSetup("r-tail length overflow".to_string()))?;
 
-        // The tiered `û_concat` segment exists only on single-tier-aware levels
-        // and is unsupported alongside multi-chunk layouts (rejected below).
-        let u_present = lp.tier_split > 1 && u_len > 0;
-
         // The single-chunk layout is the `num_chunks = 1` case of the chunked
-        // construction below; only multi-chunk needs the extra well-formedness
-        // checks (and forbids the tiered `û` segment).
+        // construction below; only multi-chunk needs the extra well-formedness checks.
         if num_chunks > 1 {
             if !num_chunks.is_power_of_two() {
                 return Err(AkitaError::InvalidSetup(
@@ -445,12 +434,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                     "witness chunk count must divide num_blocks".to_string(),
                 ));
             }
-            if lp.tier_split > 1 {
-                return Err(AkitaError::InvalidSetup(
-                    "multi-chunk witness layout for tiered commitments is not specified"
-                        .to_string(),
-                ));
-            }
             if !(num_blocks / num_chunks).is_power_of_two() {
                 return Err(AkitaError::InvalidSetup(
                     "witness chunk block window must be a power of two".to_string(),
@@ -465,8 +448,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         }
 
         // `ê`/`t̂` are partitioned across windows; `ẑ` is replicated full-width
-        // in every window. The shared `r̂` (and the tiered `û`, which exists only
-        // for the single-chunk layout) tail the last window.
+        // in every window. The shared `r̂` tails the last window.
         let blocks_per_chunk = num_blocks / num_chunks;
         let e_len_j = e_len / num_chunks;
         let t_len_j = t_len / num_chunks;
@@ -490,17 +472,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 .ok_or_else(|| AkitaError::InvalidSetup("chunk t offset overflow".to_string()))?;
             let after_t = offset_t
                 .checked_add(t_len_j)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk u/r offset overflow".to_string()))?;
-            let has_u = is_last && u_present;
-            let offset_r = if is_last {
-                Some(
-                    after_t
-                        .checked_add(if u_present { u_len } else { 0 })
-                        .ok_or_else(|| AkitaError::InvalidSetup("r offset overflow".to_string()))?,
-                )
-            } else {
-                None
-            };
+                .ok_or_else(|| AkitaError::InvalidSetup("chunk r offset overflow".to_string()))?;
+            let offset_r = if is_last { Some(after_t) } else { None };
             let global_block_base = j.checked_mul(blocks_per_chunk).ok_or_else(|| {
                 AkitaError::InvalidSetup("global block base overflow".to_string())
             })?;
@@ -508,7 +481,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 offset_z: base,
                 offset_e,
                 offset_t,
-                offset_u: has_u.then_some(after_t),
+                offset_u: None,
                 offset_r,
                 global_block_base,
             });
@@ -516,7 +489,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 z_len,
                 e_len: e_len_j,
                 t_len: t_len_j,
-                u_len: has_u.then_some(u_len),
+                u_len: None,
                 r_len: is_last.then_some(r_len_total),
             });
         }
@@ -785,8 +758,8 @@ mod tests {
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let y_layout = RelationYLayout {
             n_d: lp.d_key.row_len(),
-            commit_rows_per_group: lp.effective_commit_rows(),
-            b_inner_rows_per_group: lp.b_inner_rows_per_group(),
+            commit_rows_per_group: lp.b_key.row_len(),
+            b_inner_rows_per_group: 0,
             n_a: lp.a_key.row_len(),
         };
         let y_rows = relation_y_row_count(y_layout, opening_batch.num_groups());
@@ -820,7 +793,6 @@ mod tests {
         assert_eq!(chunk.offset_z, 0);
         assert_eq!(chunk.offset_e, lens.z_len);
         assert_eq!(chunk.offset_t, lens.z_len + lens.e_len);
-        // Single-tier: r tails z‖e‖t (u segment absent).
         assert_eq!(chunk.offset_r, Some(lens.z_len + lens.e_len + lens.t_len));
         instance
             .check_v_shape_for_level(&lp)

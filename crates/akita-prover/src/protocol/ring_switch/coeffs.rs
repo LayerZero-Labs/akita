@@ -217,7 +217,7 @@ where
                     .collect::<Result<Vec<_>, _>>()
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let (r, u_concat_digits) = compute_relation_quotient::<F, B, D>(
+        let r = compute_relation_quotient::<F, B, D>(
             ring_switch_ctx,
             crate::protocol::ring_relation::RelationQuotientShape::from_level(
                 lp,
@@ -244,7 +244,6 @@ where
             build_w_coeffs::<F, D>(
                 &e_hat,
                 &decomposed_inner_rows,
-                &u_concat_digits,
                 &z_folded_centered_per_chunk,
                 &r,
                 lp,
@@ -257,7 +256,7 @@ where
                 recomposed_inner_rows,
                 z_centered,
                 r,
-                u_concat_digits.len(),
+                0,
             ))
         } else {
             None
@@ -296,14 +295,6 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
             c = (c - balanced) >> log_basis;
             plane[coeff_idx] = balanced as i8;
         }
-    }
-}
-
-/// Emit flat digit planes contiguously (no block transpose). Used for the
-/// tiered `û_concat` segment; a no-op for the single-tier path (empty slice).
-fn emit_flat_planes<const D: usize>(out: &mut Vec<i8>, planes: &[[i8; D]]) {
-    for plane in planes {
-        out.extend_from_slice(plane);
     }
 }
 
@@ -373,7 +364,7 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// Build the committed witness polynomial from ring-domain digit planes.
 ///
 /// Emits field-domain coefficients in digit-major order (block index innermost):
-/// z-hat, e-hat + t-hat, û_concat, r-hat.
+/// z-hat, e-hat + t-hat, r-hat.
 ///
 /// Within each segment, the power-of-2 block index is the fastest-varying
 /// (innermost) dimension.
@@ -396,7 +387,6 @@ fn emit_z_folded_block_inner<const D: usize>(
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     e_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
-    u_concat_digits: &[[i8; D]],
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
@@ -417,14 +407,11 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let e_hat_planes = e_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
-    // Tiered: the hidden decomposed concatenated slice images `û_concat` are a
-    // flat contiguous segment emitted immediately after the last chunk's `t̂`.
-    let u_concat_planes = u_concat_digits.len();
     let z_planes_total: usize = z_folded_centered_per_chunk
         .iter()
         .map(|z| z.len() * num_digits_fold)
         .sum();
-    let z_count = e_hat_planes + t_hat_planes + u_concat_planes + z_planes_total;
+    let z_count = e_hat_planes + t_hat_planes + z_planes_total;
     let r_hat_count = r.len() * levels;
     tracing::debug!(
         num_chunks,
@@ -468,9 +455,9 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     );
 
     // Per window: z_i (replicated full fold), ê_i / t̂_i (partitioned block
-    // windows). The single shared `û_concat` and `r̂` tails follow the last
-    // window. With `num_chunks = 1` this is byte-identical to the legacy
-    // `z ‖ e ‖ t ‖ u ‖ r` emission.
+    // windows). The single shared `r̂` tail follows the last window. With
+    // `num_chunks = 1` this is byte-identical to the legacy `z ‖ e ‖ t ‖ r`
+    // emission.
     for (chunk, z_i) in z_folded_centered_per_chunk.iter().enumerate() {
         emit_z_folded_block_inner(
             &mut out,
@@ -500,7 +487,6 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             blocks_per_chunk,
         );
     }
-    emit_flat_planes(&mut out, u_concat_digits);
 
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;

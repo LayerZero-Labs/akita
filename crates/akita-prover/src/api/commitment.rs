@@ -1,9 +1,9 @@
 //! Prover-owned commitment kernels.
 
 use crate::compute::{
-    tensor_root_projection, CommitInnerPlan, DigitRowsComputeBackend, OperationCtx,
-    RootCommitKernel, RootCommitSource, RootPolyMeta, RuntimeCommitBackendFor,
-    RuntimeRootCommitBackend, RuntimeRootCommitPoly, UniformProverStack,
+    tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitKernel, RootCommitSource,
+    RootPolyMeta, RuntimeCommitBackendFor, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
+    UniformProverStack,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
@@ -330,98 +330,6 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
     })
 }
 
-/// Tiered second-tier commitment: `u_final = F · decompose(blockdiag(B')·t̂)`.
-///
-/// `b_input_digits` is the full first-tier opening-digit input `t̂` (the same
-/// `[[i8; D]]` the single-tier path feeds to `B`). The first-tier matrix `B'`
-/// (`params.b_key`) is reused across `tier_split` equal column-slices, the
-/// concatenated images are decomposed at `num_digits_open`, and the second-tier
-/// matrix `F` (`params.f_key`) commits them. Reads the `B'` and `F` prefixes of
-/// the shared setup matrix from the origin (overlapping, like A/B/D).
-///
-/// Returns the sent commitment `u_final` (length `f_key.row_len()`).
-///
-/// # Errors
-///
-/// Returns an error when `params.f_key` is absent, when the `B'` width does not
-/// divide `b_input_digits`, or when a matvec fails.
-pub(crate) struct TieredCommitShape {
-    /// First-tier `B'` row count (`b_key.row_len()`).
-    pub n_b_small: usize,
-    /// First-tier `B'` width (`b_key.col_len()`).
-    pub width_small: usize,
-    /// Opening digit depth (`num_digits_open`).
-    pub delta_open: usize,
-    /// Digit basis (`log_basis`).
-    pub log_basis: u32,
-    /// Second-tier `F` row count (`f_key.row_len()`).
-    pub n_f: usize,
-}
-
-impl TieredCommitShape {
-    /// Extract the tiered-commit geometry from level params.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the level has no second-tier `F` key.
-    pub(crate) fn from_level(params: &LevelParams) -> Result<Self, AkitaError> {
-        let f_key = params.f_key.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "tiered_commit_u_final requires a second-tier F key".to_string(),
-            )
-        })?;
-        Ok(Self {
-            n_b_small: params.b_key.row_len(),
-            width_small: params.b_key.col_len(),
-            delta_open: params.num_digits_open,
-            log_basis: params.log_basis,
-            n_f: f_key.row_len(),
-        })
-    }
-}
-
-pub(crate) fn tiered_commit_u_final<F, const D: usize, B>(
-    backend: &B,
-    prepared: &B::PreparedSetup,
-    shape: TieredCommitShape,
-    b_input_digits: &[[i8; D]],
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    B: DigitRowsComputeBackend<F>,
-{
-    let TieredCommitShape {
-        n_b_small,
-        width_small,
-        delta_open,
-        log_basis,
-        n_f,
-    } = shape;
-    if width_small == 0 || !b_input_digits.len().is_multiple_of(width_small) {
-        return Err(AkitaError::InvalidSetup(
-            "tiered commit: first-tier B' width does not divide the opening input".to_string(),
-        ));
-    }
-    // u_concat = (B'·t̂_slice_0 ‖ … ‖ B'·t̂_slice_{f-1}), negacyclic.
-    let mut u_concat: Vec<CyclotomicRing<F, D>> = Vec::new();
-    for chunk in b_input_digits.chunks(width_small) {
-        let rows = backend.digit_rows::<D>(prepared, n_b_small, chunk, log_basis)?;
-        u_concat.extend(rows);
-    }
-    // û_concat = decompose(u_concat) at the opening digit depth, ordered
-    // [slice][b'_row][digit].
-    let mut u_hat = vec![[0i8; D]; u_concat.len() * delta_open];
-    for (dst, ring) in u_hat.chunks_mut(delta_open).zip(u_concat.iter()) {
-        ring.balanced_decompose_pow2_i8_into(dst, log_basis);
-    }
-    // u_final = F · û_concat (reads the F prefix of the shared matrix).
-    let u_final = backend.digit_rows::<D>(prepared, n_f, &u_hat, log_basis)?;
-    if u_final.len() != n_f {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(u_final)
-}
-
 fn commit_with_validated_params<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
@@ -491,15 +399,8 @@ where
         Ok::<_, AkitaError>((b_input_flat, decomposed_digit_blocks))
     })?;
     validate_commit_outer_input_nonempty(b_input_flat.len())?;
-    let tiered_shape = if params.f_key.is_some() {
-        Some(TieredCommitShape::from_level(params)?)
-    } else {
-        None
-    };
     let n_b = params.b_key.row_len();
-    // B-role operation: the sent commitment rows `u = B·t̂` (or the tiered
-    // second-tier image `u_final = F·decompose(blockdiag(B')·t̂)`; ZK blinding
-    // of the F tier is a non-goal — tiered proofs are exercised non-zk).
+    // B-role operation: the sent commitment rows `u = B·t̂`.
     let commitment = dispatch_ring_dim_result!(dims.d_b(), |D_B| {
         let (b_input_digits, remainder) = b_input_flat.as_chunks::<D_B>();
         if !remainder.is_empty() {
@@ -507,18 +408,13 @@ where
                 "commit digit carrier is not aligned to the outer ring dimension".to_string(),
             ));
         }
-        let u: Vec<CyclotomicRing<F, D_B>> = if let Some(shape) = tiered_shape {
-            tiered_commit_u_final::<F, D_B, B>(backend, prepared, shape, b_input_digits)?
-        } else {
-            let u = backend.digit_rows::<D_B>(prepared, n_b, b_input_digits, log_basis)?;
-            if u.len() != n_b {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "backend returned {} B commitment rows, expected {n_b}",
-                    u.len(),
-                )));
-            }
-            u
-        };
+        let u = backend.digit_rows::<D_B>(prepared, n_b, b_input_digits, log_basis)?;
+        if u.len() != n_b {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {} B commitment rows, expected {n_b}",
+                u.len(),
+            )));
+        }
         Ok::<_, AkitaError>(Commitment::from_ring_elems(&u))
     })?;
     let hint = AkitaCommitmentHint::new(decomposed_digit_blocks);

@@ -232,7 +232,7 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 let commitment_view = RingView::new(current_state.commitment.coeffs(), commit_d)?;
-                if commitment_view.num_rings() != current_lp.effective_commit_rows() {
+                if commitment_view.num_rings() != current_lp.b_key.row_len() {
                     return Err(AkitaError::InvalidProof);
                 }
 

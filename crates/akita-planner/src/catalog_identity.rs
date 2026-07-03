@@ -51,7 +51,6 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.basis_range.0));
     h.write_u64(u64::from(policy.basis_range.1));
     h.write_u64(policy.onehot_chunk_size as u64);
-    h.write_u64(u64::from(policy.tiered));
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
     out
@@ -72,9 +71,9 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.basis_range.0));
     h.write_u64(u64::from(identity.basis_range.1));
     h.write_u64(identity.onehot_chunk_size as u64);
-    h.write_u64(u64::from(identity.tiered));
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
+
     h.write_u64(match identity.root_fold_shape {
         TensorChallengeShape::Flat => 0,
         TensorChallengeShape::Tensor => 1,
@@ -117,8 +116,8 @@ struct CatalogIdentityExpectation {
     chal_ext_degree: usize,
     basis_range: (u32, u32),
     onehot_chunk_size: usize,
-    tiered: bool,
     witness_chunk: akita_types::ChunkedWitnessCfg,
+
     root_fold_shape: TensorChallengeShape,
     ring_dimensions: Vec<usize>,
     ring_challenge_config_digest: u64,
@@ -140,8 +139,8 @@ impl CatalogIdentityExpectation {
             chal_ext_degree: identity.chal_ext_degree,
             basis_range: identity.basis_range,
             onehot_chunk_size: identity.onehot_chunk_size,
-            tiered: identity.tiered,
             witness_chunk: identity.witness_chunk,
+
             root_fold_shape: identity.root_fold_shape,
             ring_dimensions: identity.ring_dimensions.to_vec(),
             ring_challenge_config_digest: identity.ring_challenge_config_digest,
@@ -177,8 +176,8 @@ fn catalog_identity_expectation(
         chal_ext_degree: policy.chal_ext_degree,
         basis_range: policy.basis_range,
         onehot_chunk_size: policy.onehot_chunk_size,
-        tiered: policy.tiered,
         witness_chunk: policy.witness_chunk,
+
         root_fold_shape,
         ring_dimensions,
         ring_challenge_config_digest,
@@ -214,8 +213,8 @@ pub fn expected_catalog_identity(
         chal_ext_degree: expected.chal_ext_degree,
         basis_range: expected.basis_range,
         onehot_chunk_size: expected.onehot_chunk_size,
-        tiered: expected.tiered,
         witness_chunk: expected.witness_chunk,
+
         root_fold_shape: expected.root_fold_shape,
         ring_dimensions: intern_ring_dimensions(expected.ring_dimensions),
         ring_challenge_config_digest: expected.ring_challenge_config_digest,
@@ -523,7 +522,6 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
-            tiered: false,
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         }
     }

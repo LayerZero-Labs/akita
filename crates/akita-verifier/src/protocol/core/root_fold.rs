@@ -52,13 +52,9 @@ where
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    // Validate the commitment length against the schedule-derived ring
-    // dimension before interpreting it: `RingView::new` enforces the
-    // multiple-of-`ring_dim` invariant (no panic), and the ring count must
-    // equal the expected commitment-row count.
     let ring_dim = root_lp.role_dims().d_b();
     let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
-    if commitment_view.num_rings() != root_lp.effective_commit_rows() {
+    if commitment_view.num_rings() != root_lp.b_key.row_len() {
         return Err(AkitaError::InvalidProof);
     }
 

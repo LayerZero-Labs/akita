@@ -526,6 +526,7 @@ where
         prepared_fold.instance.role_dims(),
         &rs.tau1,
         rs.alpha,
+        lp.a_key.row_len(),
         prepared_fold.instance.v(),
         &prepared_fold.commitment,
     )?;
@@ -717,11 +718,6 @@ where
             AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
         })?;
         if let Some(artifacts) = terminal_artifacts {
-            if artifacts.u_concat_planes != 0 {
-                return Err(AkitaError::InvalidInput(
-                    "segment-typed terminal witness does not support tiered u_concat".to_string(),
-                ));
-            }
             let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
                 terminal_direct_witness_shape.ok_or_else(|| {
                     AkitaError::InvalidSetup(
@@ -733,7 +729,7 @@ where
                     "terminal fold expected segment-typed witness shape".to_string(),
                 ));
             };
-            let (num_w_vectors, num_t_vectors, num_public_rows) =
+            let (num_w_vectors, num_t_vectors, num_z_segments) =
                 akita_types::tail_segment_multiplicities_from_layout(lp, &scheduled_shape.layout)?;
             let segment = build_segment_typed_witness::<F>(
                 artifacts.ring_dim(),
@@ -744,7 +740,7 @@ where
                 lp,
                 num_w_vectors,
                 num_t_vectors,
-                num_public_rows,
+                num_z_segments,
                 1,
             )?;
             if segment.layout != scheduled_shape.layout {
