@@ -76,7 +76,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let commit_stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
         .expect("commit stack");
-    let (commitment, hint) = akita_prover::commit::<Cfg, D, DensePoly<F, D>, CpuBackend>(
+    let (commitment, hint) = akita_prover::batched_commit::<Cfg, D, DensePoly<F, D>, CpuBackend>(
         std::slice::from_ref(&poly),
         setup.expanded.as_ref(),
         &commit_stack,

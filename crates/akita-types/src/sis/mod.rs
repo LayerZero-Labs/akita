@@ -27,9 +27,9 @@ mod generated_sis_table;
 pub mod norm_bound;
 
 pub use ajtai_key::{
-    ceil_coeff_linf_bucket, ceil_supported_collision, collision_l2_sq_for_linf_envelope,
-    derived_collision_l2_sq_key, min_secure_rank, AjtaiKeyParams, SisModulusFamily,
-    COEFF_LINF_BUCKETS,
+    ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
+    sis_table_key_for_linf_bound, AjtaiKeyParams, SisModulusFamily, SisTableKey,
+    COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_BITS, SUPPORTED_SIS_SECURITY_BITS,
 };
 pub use decomposition_digits::{
     compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
@@ -38,11 +38,13 @@ pub use decomposition_digits::{
 };
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use norm_bound::{
-    committed_fold_a_role_rank, committed_fold_collision_l2_sq, fold_challenge_norms,
+    committed_fold_a_role_rank, committed_fold_collision_linf_bound, fold_challenge_norms,
     fold_level_witness_scoring_cost, fold_witness_beta, fold_witness_honest_prover_linf_cap,
-    fold_witness_linf_cap_policy, fold_witness_linf_ln_term, fold_witness_linf_tail_bound_sq,
-    isqrt_ceil, l2_sq_from_linf, ring_product_infinity_norm_bound, rounded_up_collision_norm_t,
-    rounded_up_collision_norm_w, FoldChallengeNorms, FoldWitnessLinfCapConfig,
-    FoldWitnessLinfCapPolicy, FoldWitnessNorms, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+    fold_witness_linf_cap_policy, fold_witness_linf_ln_term,
+    fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
+    fold_witness_linf_tensor_tail_bound_sq, isqrt_ceil, l2_sq_from_linf,
+    ring_product_infinity_norm_bound, rounded_up_collision_linf_t, rounded_up_collision_linf_w,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    MAX_FOLD_GRIND_ATTEMPTS,
 };

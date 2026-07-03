@@ -226,21 +226,30 @@ impl LevelParams {
         Self {
             ring_dimension,
             log_basis,
-            a_key: AjtaiKeyParams {
-                row_len: n_a,
+            a_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
-            b_key: AjtaiKeyParams {
-                row_len: n_b,
+                n_a,
+                0,
+                0,
+                ring_dimension,
+            ),
+            b_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
-            d_key: AjtaiKeyParams {
-                row_len: n_d,
+                n_b,
+                0,
+                0,
+                ring_dimension,
+            ),
+            d_key: AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
                 sis_family,
-                ..Default::default()
-            },
+                n_d,
+                0,
+                0,
+                ring_dimension,
+            ),
             num_blocks: 0,
             block_len: 0,
             m_vars: 0,
@@ -426,7 +435,8 @@ impl LevelParams {
         let policy = self.fold_witness_linf_cap_policy();
         let max_nonce_exclusive = match policy {
             crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
-            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => max_grind_attempts,
+            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
+            | crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => max_grind_attempts,
         };
         let witness_linf_cap = self.fold_witness_linf_cap_for_claims(num_claims)?;
         Ok(crate::sis::FoldWitnessGrindContract {
@@ -452,7 +462,7 @@ impl LevelParams {
 
     pub fn fold_witness_linf_tail_bound_sq(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let cap_config = self.fold_linf_cap_config;
-        if cap_config.policy != crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind {
+        if !cap_config.policy.allows_grind() {
             return Err(AkitaError::InvalidSetup(
                 "fold_witness_linf_tail_bound_sq: deterministic policy has no tail bound"
                     .to_string(),
@@ -463,19 +473,13 @@ impl LevelParams {
                 "fold_witness_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
             ));
         }
-        let num_fold_blocks = self.num_fold_blocks(num_claims)?;
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        let ln_term = crate::sis::fold_witness_linf_ln_term(
-            cap_config.num_fold_coeffs,
-            cap_config.grind_target_accept_num,
-            cap_config.grind_target_accept_den,
-        )?;
-        crate::sis::fold_witness_linf_tail_bound_sq(
-            num_fold_blocks,
-            cap_config.challenge_l2_sq_max,
+        crate::sis::fold_witness_linf_tail_bound_for_config_sq(
+            self.r_vars,
+            num_claims,
             witness_linf_sq,
-            ln_term,
+            &cap_config,
         )
     }
 
@@ -521,12 +525,17 @@ impl LevelParams {
         self
     }
 
-    /// Replace the fold-round challenge shape, returning the updated params.
+    /// Replace the fold-round challenge shape, rebuilding derived fold-linf
+    /// digit/cache state for the new shape.
     #[inline]
-    #[must_use]
-    pub fn with_fold_challenge_shape(mut self, shape: TensorChallengeShape) -> Self {
+    pub fn with_fold_challenge_shape(
+        mut self,
+        shape: TensorChallengeShape,
+    ) -> Result<Self, AkitaError> {
         self.fold_challenge_shape = shape;
-        self
+        let field_bits = self.field_bits_for_cache();
+        let root_num_claims = self.cached_num_digits_fold_claims;
+        self.with_fold_linf_cap_config(field_bits, root_num_claims)
     }
 
     /// Block-select variable count (the `r_vars` of the legacy layout).
@@ -737,24 +746,27 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: self.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.sis_family,
+                self.a_key.min_security_bits(),
+                self.a_key.sis_family(),
                 self.a_key.row_len,
                 inner_width,
-                self.a_key.collision_l2_sq,
+                self.a_key.coeff_linf_bound(),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.sis_family,
+                self.b_key.min_security_bits(),
+                self.b_key.sis_family(),
                 self.b_key.row_len,
                 outer_width,
-                self.b_key.collision_l2_sq,
+                self.b_key.coeff_linf_bound(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.sis_family,
+                self.d_key.min_security_bits(),
+                self.d_key.sis_family(),
                 self.d_key.row_len,
                 d_matrix_width,
-                self.d_key.collision_l2_sq,
+                self.d_key.coeff_linf_bound(),
                 d,
             ),
             num_blocks,
@@ -785,39 +797,41 @@ impl LevelParams {
     /// from `other`.
     ///
     /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
-    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_l2_sq`
-    /// is not a layout field** — it is the SIS-floor bucket the rank
-    /// (`row_len`) was sized against — so it is preserved from `self`,
-    /// matching the placement of `row_len` and `sis_family`. Pulling
-    /// `collision_l2_sq` from `other` would lose the audited bucket when
-    /// the layout argument was constructed via
-    /// [`LevelParams::params_only`] (which leaves `collision_l2_sq = 0`)
-    /// or threaded through [`Self::with_decomp`], and would let the SIS
-    /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
+    /// `m_vars`, `r_vars`, and the commit/open digit counts. The audited
+    /// coefficient-L∞ SIS bucket is not a layout field: it is the bucket the
+    /// rank (`row_len`) was sized against, so it is preserved from `self`,
+    /// matching the placement of `row_len` and `sis_family`. Pulling the
+    /// bucket from `other` would lose the audited value when the layout
+    /// argument was constructed via [`LevelParams::params_only`] or threaded
+    /// through [`Self::with_decomp`], and would let the SIS audit at
+    /// [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Result<Self, AkitaError> {
         let d = self.ring_dimension;
         Self {
             ring_dimension: d,
             log_basis: other.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.sis_family,
+                self.a_key.min_security_bits(),
+                self.a_key.sis_family(),
                 self.a_key.row_len,
                 other.a_key.col_len,
-                self.a_key.collision_l2_sq,
+                self.a_key.coeff_linf_bound(),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.sis_family,
+                self.b_key.min_security_bits(),
+                self.b_key.sis_family(),
                 self.b_key.row_len,
                 other.b_key.col_len,
-                self.b_key.collision_l2_sq,
+                self.b_key.coeff_linf_bound(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.sis_family,
+                self.d_key.min_security_bits(),
+                self.d_key.sis_family(),
                 self.d_key.row_len,
                 other.d_key.col_len,
-                self.d_key.collision_l2_sq,
+                self.d_key.coeff_linf_bound(),
                 d,
             ),
             num_blocks: other.num_blocks,
@@ -877,6 +891,7 @@ fn append_fold_linf_policy_descriptor_bytes(
     bytes.push(match policy {
         crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => 0,
         crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
+        crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => 2,
     });
 }
 

@@ -9,7 +9,8 @@ use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::OpeningBatchShape;
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentGroupScheduleKey, LevelParams, Schedule, SetupMatrixEnvelope,
+    AkitaScheduleLookupKey, CommitmentGroupLayout, CommitmentGroupScheduleKey, LevelParams,
+    Schedule, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -163,8 +164,70 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
             max_num_batched_polys,
             &mut envelope,
         )?;
+        inflate_setup_envelope_for_precommitted_grouped_roots::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            &mut envelope,
+        )?;
     }
     Ok(envelope)
+}
+
+pub(crate) fn inflate_setup_envelope_for_precommitted_grouped_roots<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    envelope: &mut SetupMatrixEnvelope,
+) -> Result<(), AkitaError> {
+    let Some(catalog) = Cfg::schedule_catalog() else {
+        return Ok(());
+    };
+
+    for entry in catalog.group_batch_entries {
+        let key = runtime_group_batch_key_from_generated(&entry.key);
+        if !grouped_key_within_setup_capacity(&key, max_num_vars, max_num_batched_polys) {
+            continue;
+        }
+        let schedule = Cfg::runtime_schedule(key)?;
+        let d_len = grouped_root_d_setup_len(&schedule)?;
+        envelope.max_setup_len = envelope.max_setup_len.max(d_len);
+    }
+    Ok(())
+}
+
+fn runtime_group_batch_key_from_generated(
+    key: &akita_planner::generated::GeneratedScheduleLookupKey,
+) -> AkitaScheduleLookupKey {
+    AkitaScheduleLookupKey {
+        final_group: CommitmentGroupScheduleKey::new(
+            key.final_group.num_vars,
+            key.final_group.num_polynomials,
+        ),
+        precommitteds: key
+            .precommitteds
+            .iter()
+            .map(|group| CommitmentGroupLayout {
+                key: CommitmentGroupScheduleKey::new(group.key.num_vars, group.key.num_polynomials),
+                m_vars: group.m_vars,
+                r_vars: group.r_vars,
+                log_basis: group.log_basis,
+                n_a: group.n_a,
+                conservative_n_b: group.conservative_n_b,
+            })
+            .collect(),
+    }
+}
+
+fn grouped_key_within_setup_capacity(
+    key: &AkitaScheduleLookupKey,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> bool {
+    key.final_group.num_vars <= max_num_vars
+        && key.final_group.num_polynomials <= max_num_batched_polys
+        && key.precommitteds.iter().all(|layout| {
+            layout.key.num_vars <= max_num_vars
+                && layout.key.num_polynomials <= max_num_batched_polys
+        })
 }
 
 /// Batched polynomial counts scanned by [`proof_optimized_max_setup_matrix_size`].
@@ -239,6 +302,20 @@ where
         accumulate_matrix_envelope_for_level::<Cfg>(lp, &mut max_setup_len)?;
     }
     Ok(SetupMatrixEnvelope { max_setup_len })
+}
+
+fn grouped_root_d_setup_len(schedule: &Schedule) -> Result<usize, AkitaError> {
+    let Some(root_params) = root_commit_params_from_schedule(schedule)? else {
+        return Ok(1);
+    };
+    if root_params.precommitted_groups.is_empty() {
+        return Ok(1);
+    }
+    root_params
+        .d_key
+        .row_len()
+        .checked_mul(root_params.d_matrix_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("grouped D setup envelope overflow".to_string()))
 }
 
 /// Packed setup envelope spanning every level in `schedule`, including root

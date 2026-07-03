@@ -43,7 +43,10 @@ use std::sync::{Arc, OnceLock};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::backend::tensor_fold::{fill_rotated_tensor_challenge, narrow_tensor_accum_to_i32};
+use crate::backend::tensor_fold::{
+    fill_rotated_sparse_challenge_i64, narrow_tensor_accum_to_i32, sparse_i64_mul_acc_i64,
+    validate_tensor_blocks,
+};
 use crate::compute::{
     CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
 };

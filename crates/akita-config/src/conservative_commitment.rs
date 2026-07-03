@@ -8,7 +8,9 @@ use crate::proof_optimized::setup_envelope_poly_counts;
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
+use akita_types::sis::{
+    min_secure_rank, rounded_up_collision_linf_t, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
+};
 use akita_types::{
     AjtaiKeyParams, AkitaScheduleInputs, CommitmentGroupScheduleKey, DecompositionParams,
     LevelParams, OpeningBatchShape, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
@@ -137,18 +139,24 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         ));
     }
 
-    let conservative_norm =
-        rounded_up_collision_norm_t(Cfg::sis_modulus_family(), Cfg::D, max_basis).ok_or_else(
-            || {
-                AkitaError::InvalidSetup(
-                    "no conservative B-role norm for conservative commitment".to_string(),
-                )
-            },
-        )?;
-    let conservative_n_b = min_secure_rank(
+    let conservative_norm = rounded_up_collision_linf_t(
+        DEFAULT_SIS_SECURITY_BITS,
         Cfg::sis_modulus_family(),
-        Cfg::D as u32,
-        conservative_norm,
+        Cfg::D,
+        max_basis,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "no conservative B-role norm for conservative commitment".to_string(),
+        )
+    })?;
+    let conservative_n_b = min_secure_rank(
+        SisTableKey {
+            min_security_bits: DEFAULT_SIS_SECURITY_BITS,
+            family: Cfg::sis_modulus_family(),
+            ring_dimension: Cfg::D as u32,
+            coeff_linf_bound: conservative_norm,
+        },
         params.b_key.col_len() as u64,
     )
     .ok_or_else(|| {
@@ -157,6 +165,7 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         )
     })?;
     params.b_key = AjtaiKeyParams::try_new(
+        DEFAULT_SIS_SECURITY_BITS,
         Cfg::sis_modulus_family(),
         conservative_n_b,
         params.b_key.col_len(),

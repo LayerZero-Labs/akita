@@ -15,7 +15,10 @@ use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
-use akita_types::{validate_ring_subfield_role, BasisMode, FpExtEncoding, SetupContributionMode};
+use akita_types::{
+    validate_ring_subfield_role, BasisMode, CommitmentGroupScheduleKey, FpExtEncoding,
+    SetupContributionMode,
+};
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, RingCommitment};
 use akita_types::{AkitaVerifierSetup, VerifierOpeningBatch};
 use akita_verifier::CommitmentVerifier;
@@ -81,22 +84,6 @@ where
             .expect("prover setup must convert to verifier setup")
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
-    fn commit<P, B>(
-        setup: &Self::ProverSetup,
-        polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
-    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
-    where
-        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-        Self::ExtField: FpExtEncoding<F>,
-        P: RootCommitPoly<F, D>,
-        B: RootCommitBackend<F, P, Self::ExtField, D>,
-    {
-        akita_prover::commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
-    }
-
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
     fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
@@ -113,12 +100,13 @@ where
         akita_prover::batched_commit::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_group")]
-    fn commit_group<P, B>(
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_final_group")]
+    fn commit_final_group<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
-    ) -> Result<akita_prover::CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
+        precommitteds: Vec<CommitmentGroupScheduleKey>,
+    ) -> Result<CommitmentWithHint<F, D>, AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -126,7 +114,12 @@ where
         P: RootCommitPoly<F, D>,
         B: RootCommitBackend<F, P, Self::ExtField, D>,
     {
-        akita_prover::commit_group::<Cfg, D, P, B>(polys, setup.expanded.as_ref(), stack)
+        akita_prover::commit_final_group::<Cfg, D, P, B>(
+            polys,
+            setup.expanded.as_ref(),
+            stack,
+            precommitteds,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]

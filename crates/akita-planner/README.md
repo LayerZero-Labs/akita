@@ -34,6 +34,7 @@ width helpers need them.
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 
 - Ring dimension and SIS modulus family.
+- Minimum SIS security floor in bits.
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
 - Ring-subfield norm bound.
@@ -60,7 +61,7 @@ For a fixed field, ring dimension, decomposition policy, and opening shape, the 
 - `r_vars`: the number of block-index variables, which determines `num_blocks = 2^r`.
 - `m_vars`: the number of variables inside each block.
 
-Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, collision bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
+Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
 
 Conceptually, a candidate level answers two questions:
 
@@ -118,10 +119,20 @@ For each level candidate, the planner derives the SIS layout in the same order:
 
 1. Compute the decomposition for the candidate `log_basis`.
 2. Compute the relevant digit counts for commitment and opening.
-3. Compute the collision norm bucket for each role.
+3. Compute the coefficient-`L∞` bucket for each role.
 4. Compute the decomposed matrix width for each role.
 5. Ask the SIS floor table for the minimum secure rank.
-6. Build `AjtaiKeyParams` with the audited rank, width, collision bucket, SIS family, and ring dimension.
+6. Build `AjtaiKeyParams` with the audited rank, width, coefficient-`L∞` bucket, SIS family, ring dimension, and security floor.
+
+Production SIS lookups use `SisTableKey`:
+
+```text
+(min_security_bits, sis_family, ring_dimension, coeff_linf_bound)
+```
+
+Only the 138-bit floor is generated today. The floor is part of `PlannerPolicy`,
+catalog identity, generated table expansion, and descriptor bytes, so a schedule
+generated for one SIS floor cannot be silently reused under another floor.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 
