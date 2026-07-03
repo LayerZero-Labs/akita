@@ -184,8 +184,9 @@ e2e batched/recursive/zk suites, transcript tests.
 New tests:
 
 - `akita-challenges`: `challenge_l2_sq_max` per-family values; tensor
-  `effective_l2_sq_max` (flat = `challenge_l2_sq_max`, tensor = factor product) for future
-  policy binding, while the first digit-sizing cutover enables only flat shapes.
+  `effective_l2_sq_max` as the deterministic materialized-product envelope
+  `l1_factor^2 · l2_sq_factor` for descriptor binding, while the first
+  digit-sizing cutover enables only flat shapes.
 - `akita-types::sis`: tail-bound monotonicity, overflow/no-panic,
   `min(β_inf, t*)` sizing table; `fold_witness_linf_ln_term` reference checks for the
   largest supported `num_fold_coeffs` and for a nontrivial `p_num/p_den` case.
@@ -439,12 +440,11 @@ at `num_fold_blocks = 4, 8, 16, 32` before the tighter `ln_term`).
 
 **Tensor folds.** A tensor fold materializes the product `c = α_p · β_q`; the
 signs are products `ε^α·ε^β` and are no longer independent across `(p,q)`. The
-clean sub-Gaussian tail argument does not apply directly. The code may expose
-`effective_l2_sq_max = challenge_l2_sq_max(α)·challenge_l2_sq_max(β)` for future descriptor
-binding, but the first
-digit-count cutover treats tensor as unsupported and returns deterministic
-`β_inf`. A future tensor threshold needs its own dependency-aware tail proof
-before it can change `K`.
+clean flat sub-Gaussian tail argument does not apply directly. The code exposes
+`effective_l2_sq_max = l1_factor^2 · challenge_l2_sq_max(factor)` as a
+deterministic materialized-product envelope. This is not the tensor tail scale.
+Tensor tail-bound grind needs the separate tensor-chaos formula in
+[`specs/tensor-challenge-prover-cutover.md`](tensor-challenge-prover-cutover.md).
 
 ### Why it terminates and stays sound (restated)
 
@@ -477,7 +477,8 @@ worst-case path is generalized in place):
   `SparseChallengeConfig` (table above). Pure; mirrors the existing `l1_norm`
   accessor.
 - `src/tensor.rs`: add `pub fn effective_l2_sq_max(&self, cfg) -> u128` to
-  `ChallengeShape` (`Flat → challenge_l2_sq_max`, `Tensor → product`).
+  `ChallengeShape` (`Flat → challenge_l2_sq_max`, `Tensor → l1_factor^2 ·
+  challenge_l2_sq_max`).
 - `src/sampler/mod.rs`: extend `sample_folding_challenges` (and the inner
   `sample_sparse_challenges`) with a `grind_nonce: u32` that is folded into
   `sparse_challenge_absorb_buf` (a new field after the config domain separator),
@@ -559,9 +560,10 @@ worst-case path is generalized in place):
 - **Witness-independent threshold (no nonce on the wire).** Impossible: `‖z‖_inf`
   depends on the secret `s`, so the verifier cannot replay which challenge passed.
   The nonce is the minimal wire cost (one `u32` per level).
-- **Tensor: exact expanded-product `challenge_l2_sq_max`** instead of the factor product
-  bound. Tighter but requires modeling the dependent product signs. Deferred until
-  a tensor-specific tail proof exists; first cut leaves tensor at `β_inf`.
+- **Tensor: flat-formula `challenge_l2_sq_max` from the factor-product chaos
+  scale.** Rejected because `s2_factor^2` is not the deterministic L2 envelope
+  of the materialized product, and the flat independent-sign formula does not
+  model factor reuse. Tensor grind must use the separate tensor-chaos formula.
 - **BoundedL1 threshold with an empirical/inflated constant.** Rejected for the
   approved cutover. The fixed `2^128` rank prefix needs a proof or certificate of
   the conditional sign tail; an inflated constant without that artifact would make

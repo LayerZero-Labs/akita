@@ -29,7 +29,7 @@ mod sampler;
 mod tensor;
 
 pub use akita_transcript::FoldChallengeSeedPreview;
-pub use challenge::{IntegerChallenge, SparseChallenge};
+pub use challenge::SparseChallenge;
 pub use config::{
     SparseChallengeConfig, D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
     MIN_FOLD_CHALLENGE_ENTROPY_BITS,
