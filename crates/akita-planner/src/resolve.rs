@@ -134,6 +134,7 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
+            compression: akita_types::CompressionPolicy::default(),
             witness_chunk: ChunkedWitnessCfg::default(),
         }
     }

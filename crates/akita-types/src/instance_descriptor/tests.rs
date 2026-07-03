@@ -31,6 +31,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 current_w_len: 256,
                 next_w_len: 256,
                 level_bytes: 123,
+                compression: Default::default(),
             }),
             Step::Direct(crate::DirectStep {
                 current_w_len: 256,
@@ -40,6 +41,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             }),
         ],
         total_bytes: 155,
+        root_compression: None,
     };
 
     AkitaInstanceDescriptor::new(
@@ -164,7 +166,9 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
+            compression: Default::default(),
         })],
+        root_compression: None,
         total_bytes: 123,
     };
     let schedule_deterministic = Schedule {
@@ -173,7 +177,9 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
+            compression: Default::default(),
         })],
+        root_compression: None,
         total_bytes: 123,
     };
 
@@ -196,7 +202,9 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
+            compression: Default::default(),
         })],
+        root_compression: None,
         total_bytes: 123,
     };
     let schedule_tensor = Schedule {
@@ -205,7 +213,9 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
+            compression: Default::default(),
         })],
+        root_compression: None,
         total_bytes: 123,
     };
 
@@ -226,7 +236,9 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
+            compression: Default::default(),
         })],
+        root_compression: None,
         total_bytes: 123,
     };
     let schedule_tensor = Schedule {
@@ -235,7 +247,9 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
+            compression: Default::default(),
         })],
+        root_compression: None,
         total_bytes: 123,
     };
 
@@ -372,6 +386,7 @@ fn effective_schedule_digest_binds_direct_shape() {
             direct_bytes: 8,
             params: None,
         })],
+        root_compression: None,
         total_bytes: 8,
     };
     let schedule_b = Schedule {
@@ -381,6 +396,7 @@ fn effective_schedule_digest_binds_direct_shape() {
             direct_bytes: 9,
             params: None,
         })],
+        root_compression: None,
         total_bytes: 9,
     };
 
@@ -406,6 +422,7 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
             direct_bytes: 0,
             params: Some(sample_level_params()),
         })],
+        root_compression: None,
         total_bytes: 0,
     };
     let schedule_b = Schedule {
@@ -415,6 +432,7 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
             direct_bytes: 0,
             params: Some(other_params),
         })],
+        root_compression: None,
         total_bytes: 0,
     };
 
