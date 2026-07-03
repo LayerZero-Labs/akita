@@ -381,6 +381,12 @@ impl LevelParams {
         }
     }
 
+    /// Field bit width used for fold digit sizing on this layout.
+    #[inline]
+    pub fn fold_digit_field_bits(&self) -> u32 {
+        self.field_bits_for_cache()
+    }
+
     /// Attach the level-static fold-linf cap config derived from this layout.
     pub fn with_fold_linf_cap_config(
         mut self,

@@ -744,7 +744,7 @@ mod tests {
     }
 
     #[test]
-    fn fold_linf_digit_plan_applies_snap_for_tail_bound_levels() {
+    fn fold_linf_digit_plan_respects_production_tstar_retain_floor() {
         use crate::DecompositionParams;
         use akita_challenges::{
             SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_EXACT_SHELL_MAG1,
@@ -781,10 +781,12 @@ mod tests {
             decomposition.field_bits(),
             decomposition.log_basis,
         );
-        if plan.delta_fold < delta_unsnapped {
-            assert!(plan.grind_cap <= plan.pre_snap_cap);
-            assert!(plan.grind_cap >= t_star / 2);
-        }
+        assert_eq!(
+            plan.delta_fold, delta_unsnapped,
+            "production retain floor keeps the full t* cap"
+        );
+        assert_eq!(plan.grind_cap, plan.pre_snap_cap);
+        assert!(plan.grind_cap <= t_star);
     }
 
     #[test]
