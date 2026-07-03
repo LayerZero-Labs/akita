@@ -15,8 +15,9 @@ Public API shape:
 (shared_point, Vec<CommittedPolynomials>) // prover
 ```
 
-`OpeningBatch` in `crates/akita-types/src/proof/opening_batch.rs` is the
-normalized batch descriptor (routing, gamma row, transcript binding).
+`OpeningClaims` and `OpeningClaimsLayout` in
+`crates/akita-types/src/opening_claims.rs` are the normalized public claims and
+layout-only batch descriptor (routing, gamma row, transcript binding).
 
 ## Supported call shapes
 
@@ -33,7 +34,7 @@ normalized batch descriptor (routing, gamma row, transcript binding).
   calls (or re-commit under a new batch at a new point).
 - For **multiple polynomials at one point**, use one `CommittedPolynomials` /
   `CommittedOpenings` entry whose `polynomials` / `openings` vectors list every
-  slot (`batched_commit`, `OpeningBatch::new`).
+  slot (`batched_commit`, `OpeningClaimsLayout::new` for layout-only paths).
 
 ## Wire / transcript impact
 

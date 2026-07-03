@@ -79,7 +79,7 @@ where
 {
     let num_trace_blocks = instance
         .opening_batch()
-        .num_polynomials()
+        .num_total_polynomials()
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
@@ -194,7 +194,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     protocol_point: &[E],
     alpha_bits: usize,
     basis: BasisMode,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
@@ -219,14 +219,14 @@ where
         row_coefficients
     } else {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        if opening_batch.num_polynomials() == 1 {
+        if opening_batch.num_total_polynomials() == 1 {
             vec![E::one()]
         } else {
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
         }
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, &openings)?;
+        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
     let trace_eval_target =
         reduction
             .as_ref()
@@ -240,7 +240,7 @@ where
             })?;
     let trace_claim_scales = reduction
         .as_ref()
-        .map(|reduction| vec![reduction.final_factor; opening_batch.num_polynomials()]);
+        .map(|reduction| vec![reduction.final_factor; opening_batch.num_total_polynomials()]);
     let trace_scale = reduction
         .as_ref()
         .map_or(E::one(), |reduction| reduction.final_factor);
@@ -271,9 +271,9 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
 >(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     needs_extension_reduction: bool,
-    fold_claims: ProverOpeningBatch<'a, E, P, F, D>,
+    fold_claims: ProverOpeningData<'a, E, P, F, D>,
     eor_polys: &[&P],
-    eor_opening_batch: &VerifierOpeningBatch<'_, E>,
+    eor_opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
     non_eor_protocol_point: Vec<E>,
@@ -306,7 +306,7 @@ where
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = fold_claims.to_opening_shape::<F>()?;
+    let opening_batch = fold_claims.opening_claims().layout();
     let fold_polys = fold_claims.flat_polys();
     let tensor = stack.tensor();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
@@ -424,12 +424,12 @@ where
     R: ComputeBackendSetup<F>,
 {
     stack: &'a ProverComputeStack<'a, F, D, C, O, TS, R>,
-    fold_claims: ProverOpeningBatch<'a, E, Q, F, D>,
+    fold_claims: ProverOpeningData<'a, E, Q, F, D>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
     row_coefficients: Option<Vec<E>>,
-    trace_opening_batch: &'a OpeningBatchShape,
+    trace_opening_batch: &'a OpeningClaimsLayout,
     level_params: &'a LevelParams,
     alpha_bits: usize,
     basis: BasisMode,

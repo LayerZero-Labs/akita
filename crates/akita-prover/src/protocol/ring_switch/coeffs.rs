@@ -47,7 +47,7 @@ where
         + AkitaSerialize,
     B: RingSwitchProveBackend<F, D>,
 {
-    let num_claims = instance.opening_batch().num_polynomials();
+    let num_claims = instance.opening_batch().num_total_polynomials();
     let RingRelationWitness {
         z_folded_rings,
         z_folded_centered_per_chunk,
@@ -77,7 +77,7 @@ where
         &z_folded_rings.centered_coeffs,
         z_folded_rings.centered_inf_norm,
         instance.y(),
-        opening_batch.num_polynomials(),
+        opening_batch.num_total_polynomials(),
         lp.num_blocks,
         lp.inner_width(),
         instance.m_row_layout(),

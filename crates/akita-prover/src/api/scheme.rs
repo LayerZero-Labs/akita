@@ -5,7 +5,7 @@ use crate::compute::{
     LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
     UniformProverStack,
 };
-use crate::ProverOpeningBatch;
+use crate::ProverOpeningData;
 use crate::ProverTranscriptGrind;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
@@ -13,7 +13,7 @@ use akita_field::{
     RandomSampling,
 };
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, CommitmentGroupScheduleKey, FpExtEncoding, SetupContributionMode};
+use akita_types::{BasisMode, FpExtEncoding, PolynomialGroupLayout, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -101,7 +101,7 @@ where
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
-        precommitteds: Vec<CommitmentGroupScheduleKey>,
+        precommitteds: Vec<PolynomialGroupLayout>,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -122,7 +122,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        claims: ProverOpeningBatch<'a, Self::ExtField, P, F, D>,
+        claims: ProverOpeningData<'a, Self::ExtField, P, F, D>,
         stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,

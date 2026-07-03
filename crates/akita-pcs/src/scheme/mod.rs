@@ -10,17 +10,17 @@ use akita_prover::compute::{
     ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RootCommitBackend,
     RootCommitPoly, RootProvePoly, UniformProverStack,
 };
-use akita_prover::ProverOpeningBatch;
+use akita_prover::ProverOpeningData;
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::{
-    validate_ring_subfield_role, BasisMode, CommitmentGroupScheduleKey, FpExtEncoding,
+    validate_ring_subfield_role, BasisMode, FpExtEncoding, PolynomialGroupLayout,
     SetupContributionMode,
 };
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, RingCommitment};
-use akita_types::{AkitaVerifierSetup, VerifierOpeningBatch};
+use akita_types::{AkitaVerifierSetup, OpeningClaims};
 use akita_verifier::CommitmentVerifier;
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -105,7 +105,7 @@ where
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
-        precommitteds: Vec<CommitmentGroupScheduleKey>,
+        precommitteds: Vec<PolynomialGroupLayout>,
     ) -> Result<CommitmentWithHint<F, D>, AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -125,7 +125,7 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        claims: ProverOpeningBatch<'a, Self::ExtField, P, F, D>,
+        claims: ProverOpeningData<'a, Self::ExtField, P, F, D>,
         stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
@@ -186,7 +186,7 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierOpeningBatch<'_, Self::ExtField, &Self::Commitment>,
+        claims: OpeningClaims<'_, Self::ExtField, &Self::Commitment>,
         basis: BasisMode,
         setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError> {

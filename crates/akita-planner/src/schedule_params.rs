@@ -22,8 +22,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
-    ChunkedWitnessCfg, CleartextWitnessShape, CommitmentGroupScheduleKey, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    ChunkedWitnessCfg, CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep,
+    LevelParams, MRowLayout, PolynomialGroupLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -474,7 +474,7 @@ fn try_terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     terminal_fold_level: usize,
 ) -> Result<Option<(DirectStep, usize)>, AkitaError> {
     if terminal_lp.witness_chunk.num_chunks > 1 {
@@ -494,12 +494,12 @@ pub(crate) fn terminal_direct_suffix_cost(
     current_w_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     terminal_fold_level: usize,
 ) -> Result<(DirectStep, usize), AkitaError> {
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
     let num_polynomials = if terminal_fold_level == 0 {
-        key.num_polynomials
+        key.num_polynomials()
     } else {
         1
     };
@@ -521,7 +521,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) ring_challenge_config: RingChallengeConfigFn<'a>,
     pub(crate) num_vars: usize,
-    pub(crate) key: CommitmentGroupScheduleKey,
+    pub(crate) key: PolynomialGroupLayout,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -619,7 +619,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
             policy.claim_ext_degree,
             level,
-            CommitmentGroupScheduleKey::singleton(num_vars),
+            PolynomialGroupLayout::singleton(num_vars),
             current_witness_len,
         ) else {
             continue;
@@ -933,7 +933,7 @@ fn compute_root_direct_level_params(
 /// overflows. The function never panics on malformed input — it is
 /// verifier-reachable and audited under the no-panic contract.
 pub fn find_schedule(
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -947,7 +947,7 @@ pub fn find_schedule(
 }
 
 fn find_schedule_inner(
-    key: CommitmentGroupScheduleKey,
+    key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -957,7 +957,7 @@ fn find_schedule_inner(
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_config,
-        num_vars: key.num_vars,
+        num_vars: key.num_vars(),
         key,
     };
 
@@ -965,7 +965,7 @@ fn find_schedule_inner(
     validate_policy_witness_chunk(policy)?;
 
     let witness_len = 1usize
-        .checked_shl(key.num_vars as u32)
+        .checked_shl(key.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let field_bits = policy.decomposition.field_bits();
@@ -973,7 +973,7 @@ fn find_schedule_inner(
     let root_witness_shape = CleartextWitnessShape::FieldElements(witness_len);
     let mut best_cost = direct_witness_bytes(field_bits, &root_witness_shape);
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
-        num_vars: key.num_vars,
+        num_vars: key.num_vars(),
         level: 0,
         current_w_len: witness_len,
     });
@@ -985,10 +985,10 @@ fn find_schedule_inner(
     let root_direct_commit_params = compute_root_direct_level_params(
         policy,
         ring_challenge_config,
-        key.num_vars,
+        key.num_vars(),
         policy.decomposition.log_basis,
         fold_challenge_shape,
-        key.num_polynomials,
+        key.num_polynomials(),
     )?;
     let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
         current_w_len: witness_len,
@@ -1000,7 +1000,7 @@ fn find_schedule_inner(
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
-    let reduced_vars = key.num_vars.saturating_sub(alpha);
+    let reduced_vars = key.num_vars().saturating_sub(alpha);
 
     if reduced_vars == 0 {
         return Ok(Schedule {
@@ -1057,7 +1057,7 @@ fn find_schedule_inner(
                 policy.onehot_chunk_size,
                 policy.ring_subfield_norm_bound,
                 r_vars,
-                key.num_polynomials,
+                key.num_polynomials(),
                 width_s as u64,
             ) else {
                 continue;
@@ -1079,7 +1079,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some(width_t) =
-                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, key.num_polynomials)
+                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, key.num_polynomials())
             else {
                 continue;
             };
@@ -1103,7 +1103,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some(width_w) =
-                decomposed_w_ring_count(num_digits_open, num_blocks, key.num_polynomials)
+                decomposed_w_ring_count(num_digits_open, num_blocks, key.num_polynomials())
             else {
                 continue;
             };
@@ -1163,7 +1163,7 @@ fn find_schedule_inner(
                 witness_chunk: root_witness_chunk,
                 precommitted_groups: Vec::new(),
             }
-            .with_fold_linf_cap_config(field_bits, key.num_polynomials) else {
+            .with_fold_linf_cap_config(field_bits, key.num_polynomials()) else {
                 continue;
             };
 
@@ -1171,7 +1171,7 @@ fn find_schedule_inner(
                 let rings = w_ring_element_count_for_chunks(
                     field_bits,
                     &candidate_params,
-                    key.num_polynomials,
+                    key.num_polynomials(),
                     layout,
                     root_num_chunks,
                 )?;
