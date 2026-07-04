@@ -1,10 +1,11 @@
 #![allow(missing_docs)]
 
 pub use akita_planner::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
-    GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
+    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep, PolynomialGroupLayout,
+    PrecommittedGroupParams, SisModulusFamily,
 };
-pub use akita_planner::{DecompositionParams, TensorChallengeShape};
+pub use akita_planner::{ChunkedWitnessCfg, DecompositionParams, TensorChallengeShape};
 
 // @generated schedule module wiring begin
 #[cfg(feature = "fp128-d128-full")]
@@ -13,12 +14,18 @@ pub mod fp128_d128_full;
 pub mod fp128_d128_onehot;
 #[cfg(feature = "fp128-d64-full")]
 pub mod fp128_d64_full;
+#[cfg(feature = "fp128-d64-full-multi-chunk")]
+pub mod fp128_d64_full_multi_chunk;
 #[cfg(feature = "fp128-d64-onehot")]
 pub mod fp128_d64_onehot;
+#[cfg(feature = "fp128-d64-onehot-multi-chunk")]
+pub mod fp128_d64_onehot_multi_chunk;
+#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
+pub mod fp128_d64_onehot_multi_chunk_w2r2;
+#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
+pub mod fp128_d64_onehot_multi_chunk_w4r2;
 #[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor;
-#[cfg(feature = "fp128-d64-onehot-tiered")]
-pub mod fp128_d64_onehot_tiered;
 #[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot;
 #[cfg(feature = "fp32-d256-onehot")]
@@ -54,6 +61,14 @@ pub fn fp128_d64_full_table() -> GeneratedScheduleTable {
     }
 }
 
+#[cfg(feature = "fp128-d64-full-multi-chunk")]
+pub fn fp128_d64_full_multi_chunk_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d64_full_multi_chunk::FP128_D64_FULL_MULTI_CHUNK_SCHEDULES,
+        identity: fp128_d64_full_multi_chunk::CATALOG_IDENTITY,
+    }
+}
+
 #[cfg(feature = "fp128-d64-onehot")]
 pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
@@ -62,23 +77,35 @@ pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
+#[cfg(feature = "fp128-d64-onehot-multi-chunk")]
+pub fn fp128_d64_onehot_multi_chunk_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d64_onehot_multi_chunk::FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES,
+        identity: fp128_d64_onehot_multi_chunk::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
+pub fn fp128_d64_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d64_onehot_multi_chunk_w2r2::FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES,
+        identity: fp128_d64_onehot_multi_chunk_w2r2::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
+pub fn fp128_d64_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d64_onehot_multi_chunk_w4r2::FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES,
+        identity: fp128_d64_onehot_multi_chunk_w4r2::CATALOG_IDENTITY,
+    }
+}
+
 #[cfg(feature = "fp128-d64-onehot-tensor")]
 pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_onehot_tensor::FP128_D64_ONEHOT_TENSOR_SCHEDULES,
         identity: fp128_d64_onehot_tensor::CATALOG_IDENTITY,
-    }
-}
-
-/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries
-/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with
-/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored
-/// fields. Tiering is a non-ZK optimization.
-#[cfg(feature = "fp128-d64-onehot-tiered")]
-pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,
-        identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,
     }
 }
 

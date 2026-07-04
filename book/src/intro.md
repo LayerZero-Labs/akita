@@ -23,7 +23,8 @@ This book has four top-level parts:
 ## What is Akita?
 
 A multilinear PCS whose binding and knowledge soundness reduce to Module-SIS,
-configured for 128-bit security per the lattice estimator. It commits to
+configured for a 138-bit SIS security floor in the generated production tables.
+It commits to
 base-field (or extension-field) multilinear polynomials, then proves evaluation
 claims by a recursive fold whose witness shrinks roughly from `N` to `N^{1/2}`
 ring elements per step. No trusted setup, no pairing, post-quantum target.
@@ -52,8 +53,8 @@ contributed" story belong here.
 ## Security status (honest)
 
 State the audited reality separately from the marketing claim: which hardness
-assumption, which norm model is live (anchored → committed-fold L∞ → proposed
-Euclidean model), and what is asserted vs proven. The canonical narrative lives in
+assumption is used, why the production tables use coefficient-`L∞` SIS bounds,
+and what is asserted vs proven. The canonical narrative lives in
 [How it works → Security model](./how/security.md).
 
 **Sources to fold in**
@@ -61,7 +62,7 @@ Euclidean model), and what is asserted vs proven. The canonical narrative lives 
 - `crates/akita-types/src/sis/` (`mod.rs`, `ajtai_key.rs`, `norm_bound.rs`).
 - `docs/security-posture.md`.
 - Paper §3.12 `sec:batched-soundness`, §3.11 `sec:akita-cwss` (audited soundness).
-- `specs/security-hardening.md`, `specs/l2-msis-opnorm-folded-witness.md`.
+- `specs/security-hardening.md`, `specs/sis-linf-table-cutover.md`, `specs/fold-linf-rejection.md`.
 
 ## How to read this book
 

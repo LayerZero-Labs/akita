@@ -12,15 +12,16 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams,
+    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, Step,
 };
 
 use crate::catalog_identity::expected_catalog_identity;
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, GeneratedScheduleKey,
+    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity,
     GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
 };
-use crate::{generated_schedule_lookup_key, PlannerPolicy};
+use crate::PlannerPolicy;
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -30,12 +31,14 @@ pub struct EmitSpec {
     pub family_name: &'static str,
     pub schedule_feature: &'static str,
     pub policy: PlannerPolicy,
-    pub keys: Vec<AkitaScheduleLookupKey>,
+    pub keys: Vec<PolynomialGroupLayout>,
+    pub group_batch_keys: Vec<AkitaScheduleLookupKey>,
+    pub emit_group_batch: bool,
     pub output_dir: PathBuf,
-    pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub regen: fn(PolynomialGroupLayout) -> Result<Schedule, AkitaError>,
+    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    pub zk_enabled: bool,
     pub generator_command: &'static str,
 }
 
@@ -43,10 +46,6 @@ const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 
 fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
-    let (tier_split, n_f) = match p.f_key.as_ref() {
-        Some(fk) => (Some(p.tier_split as u32), Some(fk.row_len() as u32)),
-        None => (None, None),
-    };
     GeneratedFoldStep {
         ring_d: p.ring_dimension as u32,
         log_basis: p.log_basis,
@@ -55,8 +54,6 @@ fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
         n_a: p.a_key.row_len() as u32,
         n_b: p.b_key.row_len() as u32,
         n_d: p.d_key.row_len() as u32,
-        tier_split,
-        n_f,
     }
 }
 
@@ -73,10 +70,37 @@ fn schedule_to_generated_steps(schedule: &Schedule) -> Vec<GeneratedStep> {
         .collect()
 }
 
-fn emit_key(key: GeneratedScheduleKey) -> String {
+fn emit_key(key: PolynomialGroupLayout) -> String {
     format!(
-        "GeneratedScheduleKey {{ num_vars: {}, num_polynomials: {} }}",
-        key.num_vars, key.num_polynomials,
+        "PolynomialGroupLayout::new({}, {})",
+        key.num_vars(),
+        key.num_polynomials(),
+    )
+}
+
+fn emit_precommitted_group_key(layout: &PrecommittedGroupParams) -> String {
+    format!(
+        "PrecommittedGroupParams {{ group: {}, m_vars: {}, r_vars: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        emit_key(layout.group),
+        layout.m_vars,
+        layout.r_vars,
+        layout.log_basis,
+        layout.n_a,
+        layout.conservative_n_b,
+    )
+}
+
+fn emit_entry_fields(key: &AkitaScheduleLookupKey) -> String {
+    let precommitteds = key
+        .precommitteds
+        .iter()
+        .map(emit_precommitted_group_key)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "final_group: {}, precommitteds: &[{}]",
+        emit_key(key.final_group),
+        precommitteds,
     )
 }
 
@@ -84,23 +108,8 @@ fn emit_fold_struct(p: &LevelParams) -> String {
     let fold = fold_step_from_params(p);
     format!(
         "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {}, \
-         tier_split: {}, n_f: {} }}",
-        fold.ring_d,
-        fold.log_basis,
-        fold.m_vars,
-        fold.r_vars,
-        fold.n_a,
-        fold.n_b,
-        fold.n_d,
-        match fold.tier_split {
-            Some(v) => format!("Some({v})"),
-            None => "None".to_string(),
-        },
-        match fold.n_f {
-            Some(v) => format!("Some({v})"),
-            None => "None".to_string(),
-        },
+         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}",
+        fold.ring_d, fold.log_basis, fold.m_vars, fold.r_vars, fold.n_a, fold.n_b, fold.n_d,
     )
 }
 
@@ -124,7 +133,7 @@ fn emit_direct(direct: &DirectStep) -> String {
 fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> Result<(), String> {
     writeln!(
         out,
-        "    GeneratedScheduleTableEntry {{ key: {key_str}, steps: &[",
+        "    GeneratedScheduleTableEntry {{ {key_str}, steps: &[",
     )
     .map_err(|e| e.to_string())?;
 
@@ -170,6 +179,13 @@ fn emit_root_fold_shape(shape: TensorChallengeShape) -> &'static str {
     }
 }
 
+fn emit_witness_chunk(cfg: akita_types::ChunkedWitnessCfg) -> String {
+    format!(
+        "ChunkedWitnessCfg {{ num_chunks: {}, num_activated_levels: {} }}",
+        cfg.num_chunks, cfg.num_activated_levels
+    )
+}
+
 fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
     let ring_dims: String = identity
         .ring_dimensions
@@ -185,8 +201,8 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = ",
             "GeneratedScheduleCatalogIdentity {{\n",
             "    family_name: \"{family_name}\",\n",
-            "    zk_enabled: {zk_enabled},\n",
             "    sis_family: {sis_family},\n",
+            "    min_sis_security_bits: {min_sis_security_bits},\n",
             "    ring_dimension: {ring_dimension},\n",
             "    decomposition: {decomposition},\n",
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
@@ -194,7 +210,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    chal_ext_degree: {chal_ext_degree},\n",
             "    basis_range: ({basis_min}, {basis_max}),\n",
             "    onehot_chunk_size: {onehot_chunk_size},\n",
-            "    tiered: {tiered},\n",
+            "    witness_chunk: {witness_chunk},\n",
             "    root_fold_shape: {root_fold_shape},\n",
             "    ring_dimensions: CATALOG_RING_DIMENSIONS,\n",
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
@@ -204,8 +220,8 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         ),
         ring_dims = ring_dims,
         family_name = identity.family_name,
-        zk_enabled = identity.zk_enabled,
         sis_family = emit_sis_family(identity.sis_family),
+        min_sis_security_bits = identity.min_sis_security_bits,
         ring_dimension = identity.ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
@@ -214,7 +230,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         basis_min = identity.basis_range.0,
         basis_max = identity.basis_range.1,
         onehot_chunk_size = identity.onehot_chunk_size,
-        tiered = identity.tiered,
+        witness_chunk = emit_witness_chunk(identity.witness_chunk),
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
         key_count = identity.key_count,
@@ -223,23 +239,30 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
 }
 
 fn output_module_name(spec: &EmitSpec) -> String {
-    if spec.zk_enabled {
-        format!("{}_zk", spec.module_name)
-    } else {
-        spec.module_name.to_string()
-    }
+    spec.module_name.to_string()
 }
 
 fn output_const_name(spec: &EmitSpec) -> String {
-    if spec.zk_enabled {
-        let base = spec
-            .const_name
-            .strip_suffix("_SCHEDULES")
-            .expect("generated schedule const name should end in _SCHEDULES");
-        format!("{base}_ZK_SCHEDULES")
-    } else {
-        spec.const_name.to_string()
+    spec.const_name.to_string()
+}
+
+fn materialized_entries(
+    spec: &EmitSpec,
+) -> Result<Vec<(AkitaScheduleLookupKey, Schedule)>, String> {
+    let mut entries = Vec::new();
+    for key in &spec.keys {
+        let schedule =
+            (spec.regen)(*key).map_err(|e| format!("{}: regen {key:?}: {e}", spec.module_name))?;
+        entries.push((AkitaScheduleLookupKey::single(*key), schedule));
     }
+    for key in &spec.group_batch_keys {
+        let schedule = (spec.regen_group_batch)(key.clone())
+            .map_err(|e| format!("{}: regen grouped {key:?}: {e}", spec.module_name))?;
+        entries.push((key.clone(), schedule));
+    }
+    entries
+        .sort_by(|(left, _), (right, _)| crate::generated::runtime_schedule_key_cmp(left, right));
+    Ok(entries)
 }
 
 /// Emit one family module (entries + embedded catalog identity).
@@ -250,9 +273,10 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity, \
-         GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, \
-         SisModulusFamily, TensorChallengeShape,\n}};"
+        "use super::{{\n    ChunkedWitnessCfg, GeneratedDirectStep, GeneratedFoldStep, \
+         GeneratedScheduleCatalogIdentity, PolynomialGroupLayout, PrecommittedGroupParams, \
+         GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, SisModulusFamily, \
+         TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;
@@ -267,27 +291,27 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     )
     .map_err(|e| e.to_string())?;
 
-    for key in &spec.keys {
-        let schedule =
-            (spec.regen)(*key).map_err(|e| format!("{}: regen {key:?}: {e}", spec.module_name))?;
-        let key_str = emit_key(generated_schedule_lookup_key(*key));
+    for (key, schedule) in materialized_entries(spec)? {
+        let key_str = emit_entry_fields(&key);
         emit_schedule_entry(&mut out, &key_str, &schedule)?;
-
         let steps = schedule_to_generated_steps(&schedule);
         let steps_ref = Box::leak(steps.into_boxed_slice());
         leaked_steps.push(steps_ref);
         memory_entries.push(GeneratedScheduleTableEntry {
-            key: generated_schedule_lookup_key(*key),
+            final_group: key.final_group,
+            precommitteds: Box::leak(key.precommitteds.into_boxed_slice()),
             steps: steps_ref,
         });
     }
+    debug_assert!(crate::generated::catalog_entries_sorted_for_lookup(
+        &memory_entries
+    ));
 
     writeln!(out, "];").map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;
 
     let identity = expected_catalog_identity(
         spec.family_name,
-        spec.zk_enabled,
         &spec.policy,
         &memory_entries,
         spec.ring_challenge_config,
@@ -299,108 +323,45 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     Ok(out)
 }
 
-fn is_tiered_only_family(module_name: &str) -> bool {
-    module_name == "fp128_d64_onehot_tiered"
-}
-
-fn table_fn_name(module_name: &str) -> String {
-    format!("{module_name}_table")
-}
-
-fn emit_tiered_module_declaration(out: &mut String) -> Result<(), String> {
-    writeln!(
-        out,
-        "#[cfg(all(feature = \"fp128-d64-onehot-tiered\", not(feature = \"zk\")))]"
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(out, "pub mod fp128_d64_onehot_tiered;").map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-fn emit_tiered_table_accessor() -> String {
-    concat!(
-        "/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries\n",
-        "/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with\n",
-        "/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored\n",
-        "/// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.\n",
-        "#[cfg(all(feature = \"fp128-d64-onehot-tiered\", not(feature = \"zk\")))]\n",
-        "pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {\n",
-        "    GeneratedScheduleTable {\n",
-        "        entries: fp128_d64_onehot_tiered::FP128_D64_ONEHOT_TIERED_SCHEDULES,\n",
-        "        identity: fp128_d64_onehot_tiered::CATALOG_IDENTITY,\n",
-        "    }\n",
-        "}\n",
-    )
-    .to_string()
-}
-
 fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
     let mut out = String::new();
     let mut seen = std::collections::BTreeSet::new();
-    let mut tiered_wired = false;
     for spec in specs {
         if !seen.insert(spec.module_name) {
             continue;
         }
         let module_name = spec.module_name;
         let feat = spec.schedule_feature;
-        if is_tiered_only_family(module_name) {
-            emit_tiered_module_declaration(&mut out)?;
-            tiered_wired = true;
-            continue;
-        }
         writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(not(feature = \"zk\"))]").map_err(|e| e.to_string())?;
         writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"zk\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {module_name}_zk;").map_err(|e| e.to_string())?;
-    }
-    if !tiered_wired {
-        emit_tiered_module_declaration(&mut out)?;
     }
     writeln!(out).map_err(|e| e.to_string())?;
     Ok(out)
 }
 
+fn table_fn_name(module_name: &str) -> String {
+    format!("{module_name}_table")
+}
+
 fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
-    if is_tiered_only_family(spec.module_name) {
-        return Ok(emit_tiered_table_accessor());
-    }
     let fn_name = table_fn_name(spec.module_name);
     let feat = spec.schedule_feature;
     let module_name = spec.module_name;
-    let zk_module = format!("{module_name}_zk");
     let const_name = spec.const_name;
-    let zk_const_base = spec.const_name.strip_suffix("_SCHEDULES").ok_or_else(|| {
-        format!(
-            "generated schedule const name should end in _SCHEDULES: {}",
-            spec.const_name
-        )
-    })?;
-    let zk_const = format!("{zk_const_base}_ZK_SCHEDULES");
     Ok(format!(
         "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    #[cfg(feature = \"zk\")]\n    {{\n        GeneratedScheduleTable {{\n            entries: {zk_module}::{zk_const},\n            identity: {zk_module}::CATALOG_IDENTITY,\n        }}\n    }}\n    #[cfg(not(feature = \"zk\"))]\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
+         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
 }
 
 fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
     let mut out = emit_module_declarations(specs)?;
     let mut seen = std::collections::BTreeSet::new();
-    let mut tiered_wired = false;
     for spec in specs {
         if !seen.insert(spec.module_name) {
             continue;
         }
-        if is_tiered_only_family(spec.module_name) {
-            tiered_wired = true;
-        }
         out.push_str(&emit_table_accessor(spec)?);
-        out.push('\n');
-    }
-    if !tiered_wired {
-        out.push_str(&emit_tiered_table_accessor());
         out.push('\n');
     }
     Ok(out)

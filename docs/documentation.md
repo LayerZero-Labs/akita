@@ -49,13 +49,15 @@ Run locally: `./scripts/check-doc-guardrails.sh`
 | Check | Script | What it catches |
 |-------|--------|-----------------|
 | Dead symbols in live specs | `check-spec-references.sh` | References to removed crates/types (`akita-scheme`, `PlannerConfig`, …) in `specs/` outside `archive/` |
-| Dead symbols in `docs/` | `check-doc-dead-symbols.sh` | Removed crates/types in non-historical `docs/*.md` (`README`/`AGENTS` by review) |
+| Dead symbols in live docs | `check-doc-dead-symbols.sh` | Removed crates/types in non-historical `docs/*.md`, plus deleted public API names in `book/src`, `docs/`, and crate READMEs (`README`/`AGENTS` by review) |
 | `Book-chapter:` paths exist | `check-book-chapter-paths.sh` | Spec headers pointing at missing book pages |
 | Book source paths exist | `check-book-source-paths.sh` | Stale `crates/` / `specs/` / `docs/` citations in `book/src/` |
 | Book builds | `mdbook build` (in CI) | Broken internal links, preprocessor errors |
 
 Add a symbol to the dead-pattern list in **both** check scripts when a rename or
-cutover removes it from the codebase.
+cutover removes it from the codebase. For public API type removals, add it to
+the deleted-API pattern lists so live book pages and crate READMEs are covered
+without scanning archived or generated output.
 
 ### Future hard checks (not yet implemented)
 
@@ -92,7 +94,7 @@ Fork PRs do not receive blast-radius comments (read-only `GITHUB_TOKEN`).
 | API / proof shape change | Update or new spec | Owning chapter | Yes | crate-graph if deps change |
 | Internal refactor, same API | Optional note | Only if narrative wrong | If hooks move | No |
 | Preset / schedule table | planner specs | `how/configuration.md` | Pointer only | `usage/profiling.md` if modes change |
-| Security / SIS sizing | `l2-msis-*`, `akita-sis-*` | `how/security.md` | If verifier-reachable | No |
+| Security / SIS sizing | `sis-linf-table-cutover.md`, `fold-linf-rejection.md`, `akita-sis-*` | `how/security.md` | If verifier-reachable | No |
 | Doc-only PR | Archive/fold as needed | Yes | If commands change | Yes |
 
 ## Folding and pruning cadence

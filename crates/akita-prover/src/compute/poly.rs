@@ -7,8 +7,6 @@ use super::kernels::{
     RootCommitKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::backend::{RecursiveWitnessFlat, RingSwitchQuotientView, RingSwitchRelationView};
-#[cfg(feature = "zk")]
-use crate::DensePoly;
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::RandomSampling;
@@ -151,8 +149,8 @@ where
 /// One opening-point polynomial bundle passed to commit entry points.
 ///
 /// The wrapper pins the polynomial type `P` for inference through generic
-/// [`crate::api::commitment::commit`] and [`crate::api::CommitmentProver::commit`]. Scheme-level
-/// [`crate::api::CommitmentProver::commit`] takes this bundle before `backend` so `P` is known when the
+/// `crate::api::commit` and `CommitmentProver::commit`. Scheme-level
+/// `CommitmentProver::commit` takes this bundle before `backend` so `P` is known when the
 /// compiler checks [`RootCommitBackend`].
 #[derive(Clone, Copy, Debug)]
 pub struct RootCommitPolys<'a, P> {
@@ -184,7 +182,7 @@ impl<'a, P> RootCommitPolys<'a, P> {
 /// Marker bundle for scheme-level commit entry points that may tensor-project.
 ///
 /// Algorithms live on [`RootCommitKernel`] / [`TensorProjectionKernel`], not here.
-/// Lower-level helpers such as [`crate::api::commitment::commit_with_params`]
+/// Lower-level helpers such as [`crate::api::commitment::batched_commit_with_params`]
 /// should bound only [`RootCommitSource`].
 pub trait RootCommitPoly<F, const D: usize>:
     RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>
@@ -616,53 +614,13 @@ where
 {
 }
 
-/// Backend capability for ZK hiding witness commitment (`DensePoly` inner commit).
-///
-/// With `zk` enabled, requires `RootCommitKernel` on [`DensePoly`]. Without `zk`, this is a
-/// vacuous marker implemented for every [`ComputeBackendSetup`].
-#[cfg(feature = "zk")]
-pub trait ZkHidingCommitBackend<F, const D: usize>: DigitRowsComputeBackend<F>
-where
-    F: FieldCore + CanonicalField + RandomSampling + 'static,
-    Self:
-        for<'a> RootCommitKernel<<DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
-{
-}
-
-#[cfg(feature = "zk")]
-impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
-where
-    F: FieldCore + CanonicalField + RandomSampling + 'static,
-    B: DigitRowsComputeBackend<F>
-        + for<'a> RootCommitKernel<<DensePoly<F, D> as RootCommitSource<F, D>>::CommitView<'a>, F, D>,
-{
-}
-
-#[cfg(not(feature = "zk"))]
-pub trait ZkHidingCommitBackend<F, const D: usize>: ComputeBackendSetup<F>
-where
-    F: FieldCore + CanonicalField,
-{
-}
-
-#[cfg(not(feature = "zk"))]
-impl<F, const D: usize, B> ZkHidingCommitBackend<F, D> for B
-where
-    F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F>,
-{
-}
-
 /// Ring dimensions the recursive suffix may dispatch besides the config ring `D`.
 pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256];
 
 /// Full prove-flow capability at a single ring dimension `RING_D`: opening/tensor
-/// prove kernels plus ring-switch, commitment rows, and ZK hiding commit.
+/// prove kernels plus ring-switch and commitment rows.
 pub trait ProveFlowBackendFor<F, P, E, const RING_D: usize>:
-    RootProveBackend<F, P, E, RING_D>
-    + RingSwitchProveBackend<F, RING_D>
-    + CommitmentComputeBackend<F>
-    + ZkHidingCommitBackend<F, RING_D>
+    RootProveBackend<F, P, E, RING_D> + RingSwitchProveBackend<F, RING_D> + CommitmentComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -679,8 +637,7 @@ where
     P: RootProvePoly<F, RING_D>,
     B: RootProveBackend<F, P, E, RING_D>
         + RingSwitchProveBackend<F, RING_D>
-        + CommitmentComputeBackend<F>
-        + ZkHidingCommitBackend<F, RING_D>,
+        + CommitmentComputeBackend<F>,
 {
 }
 
@@ -757,7 +714,6 @@ where
 {
 }
 
-#[cfg(not(feature = "zk"))]
 impl<F, P, E, const D: usize, C, O, TS, R> ProveStackFor<F, P, E, D, C, O, TS, R> for ()
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -765,28 +721,6 @@ where
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
     C: ComputeBackendSetup<F> + CommitmentComputeBackend<F>,
-    O: ComputeBackendSetup<F>
-        + OpeningProveBackendFor<F, P, D>
-        + SuffixDispatchOpeningProveBackendFor<F, D>
-        + DigitRowsComputeBackend<F>,
-    TS: ComputeBackendSetup<F>
-        + TensorBackendFor<F, P, E, D>
-        + SuffixDispatchTensorProveBackendFor<F, E, D>,
-    R: ComputeBackendSetup<F>
-        + SuffixRingSwitchProveBackend<F>
-        + RingSwitchProveBackend<F, D>
-        + DigitRowsComputeBackend<F>,
-{
-}
-
-#[cfg(feature = "zk")]
-impl<F, P, E, const D: usize, C, O, TS, R> ProveStackFor<F, P, E, D, C, O, TS, R> for ()
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootProvePoly<F, D>,
-    C: ComputeBackendSetup<F> + CommitmentComputeBackend<F> + ZkHidingCommitBackend<F, D>,
     O: ComputeBackendSetup<F>
         + OpeningProveBackendFor<F, P, D>
         + SuffixDispatchOpeningProveBackendFor<F, D>

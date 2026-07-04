@@ -63,6 +63,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+SCRIPTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS))
+from lattice_estimator_pin import (  # noqa: E402
+    PINNED_LATTICE_ESTIMATOR_SHA,
+    assert_pinned_estimator,
+    estimator_git_sha,
+    estimator_remote_url,
+    locate_estimator,
+    repo_root,
+)
+
 if hasattr(signal, "SIGPIPE"):
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
@@ -148,8 +159,6 @@ DEFAULT_RANK_SWEEP = 4
 D128_SEARCH_CAP = 50_000_000_000
 DEFAULT_SEARCH_CAP = 10_000_000_000
 DEFAULT_JOBS_CAP = 6
-PINNED_LATTICE_ESTIMATOR_SHA = "27a581bb8e9d49f5e9e2db315bd48ac769d5f5f5"
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -217,77 +226,6 @@ def default_search_cap(d: int) -> int:
     if d == 128:
         return D128_SEARCH_CAP
     return DEFAULT_SEARCH_CAP
-
-
-def repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
-def locate_estimator(explicit: str | None) -> Path:
-    candidates: list[Path] = []
-    if explicit:
-        candidates.append(Path(explicit).expanduser())
-    env_path = os.environ.get("LATTICE_ESTIMATOR_PATH")
-    if env_path:
-        candidates.append(Path(env_path).expanduser())
-    root = repo_root()
-    candidates.extend([
-        root / "third_party" / "lattice-estimator",
-        root / "lattice-estimator",
-        root.parent / "lattice-estimator",
-    ])
-    for c in candidates:
-        if (c / "estimator" / "__init__.py").exists():
-            return c.resolve()
-    raise SystemExit(
-        "Could not locate lattice-estimator. "
-        "Initialize `third_party/lattice-estimator`, set LATTICE_ESTIMATOR_PATH, "
-        "or pass --estimator-path."
-    )
-
-
-def estimator_git_sha(path: Path) -> str:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return out.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
-
-
-def assert_pinned_estimator(path: Path) -> None:
-    actual = estimator_git_sha(path)
-    if actual != PINNED_LATTICE_ESTIMATOR_SHA:
-        raise SystemExit(
-            "lattice-estimator SHA mismatch: "
-            f"expected {PINNED_LATTICE_ESTIMATOR_SHA}, got {actual} at {path}"
-        )
-
-
-def estimator_remote_url(path: Path) -> str:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(path), "remote", "get-url", "origin"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return normalize_git_remote_url(out.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
-
-
-def normalize_git_remote_url(url: str) -> str:
-    """Canonicalize common GitHub SSH remotes for reproducible metadata."""
-    if url.startswith("git@github.com:"):
-        return "https://github.com/" + url.removeprefix("git@github.com:")
-    if url.startswith("ssh://git@github.com/"):
-        return "https://github.com/" + url.removeprefix("ssh://git@github.com/")
-    return url
 
 
 def load_estimator(path: Path):

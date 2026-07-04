@@ -19,14 +19,12 @@ pub(super) fn verify_root<F, E, T, const D: usize>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: &VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: &OpeningClaims<'_, E, &RingCommitment<F, D>>,
     basis: BasisMode,
     root_lp: &LevelParams,
     setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -47,14 +45,14 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let openings = claims.claims();
-    let opening_batch = claims.to_shape();
+    let openings = claims.flat_evaluations();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let shared_opening_point = claims.point();
-    let num_claims = opening_batch.num_polynomials();
+    let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    if commitment.u.len() != root_lp.effective_commit_rows() {
+    if commitment.u.len() != root_lp.b_key.row_len() {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -73,9 +71,6 @@ where
     }
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?;
-    #[cfg(feature = "zk")]
-    let opening_masks = vec![None; num_claims];
-
     let root_eor = verify_fold_eor::<F, E, T, D>(
         extension_opening_reduction,
         &[],
@@ -88,21 +83,10 @@ where
         BlockOrder::RowMajor,
         false,
         transcript,
-        #[cfg(feature = "zk")]
-        &opening_masks,
-        #[cfg(feature = "zk")]
-        "root extension-opening partial claim",
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
     )?;
     let reduction_check = root_eor.reduction_challenges;
     let prepared_points = root_eor.prepared_points;
-    #[cfg(not(feature = "zk"))]
     let eor_trace_final = root_eor.final_relation;
-    #[cfg(feature = "zk")]
-    let zk_eor_final = root_eor.final_relation;
     let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
     if extension_opening_reduction.is_some() {
         for pt in &prepared_point.padded_point {
@@ -125,47 +109,33 @@ where
         )?
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(&opening_batch, &row_coefficients, &openings)?;
-    #[cfg(not(feature = "zk"))]
+        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
     let trace_eval_target = eor_trace_final
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
         .unwrap_or(ordinary_trace_eval_target);
-    #[cfg(feature = "zk")]
-    let (trace_eval_target, trace_eval_target_mask) =
-        if let Some((final_claim, _)) = zk_eor_final.as_ref() {
-            (final_claim.public, final_claim.mask.clone())
-        } else {
-            (
-                ordinary_trace_eval_target,
-                ZkR1csLinearCombination::<E>::zero(),
-            )
-        };
-    #[cfg(not(feature = "zk"))]
     let trace_claim_scales = eor_trace_final
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_polynomials()])
-        })
-        .transpose()?;
-    #[cfg(feature = "zk")]
-    let trace_claim_scales = zk_eor_final
-        .as_ref()
-        .map(|(_, factors_by_point)| {
-            let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_polynomials()])
+            Ok(vec![shared_factor; opening_batch.num_total_polynomials()])
         })
         .transpose()?;
 
     let w_len = match proof {
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
         AkitaBatchedRootProof::Fold(_) => {
-            w_ring_element_count_with_counts::<F>(root_lp, opening_batch.num_polynomials(), 1)?
-                .checked_mul(D)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("next witness length overflow".to_string())
-                })?
+            // Chunked levels commit a wider (replicated-ẑ) next witness; size it
+            // with the per-level chunk count (`num_chunks = 1` is unchanged).
+            akita_types::w_ring_element_count_for_chunks(
+                F::modulus_bits(),
+                root_lp,
+                opening_batch.num_total_polynomials(),
+                akita_types::MRowLayout::WithDBlock,
+                root_lp.witness_chunk.num_chunks,
+            )?
+            .checked_mul(D)
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
         }
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
@@ -192,13 +162,16 @@ where
     let next_w_commitment = proof.fold_next_w_commitment()?;
     let stage2 = proof.fold_stage2()?;
     let fold_grind_nonce = proof.fold_grind_nonce()?;
-    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+    let replay_opening_batch = OpeningClaims::from_groups(
         shared_opening_point,
-        opening_batch.clone(),
-        vec![CommitmentGroup {
-            claims: openings,
-            commitment: commitment.u.as_slice(),
-        }],
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(
+                opening_batch.max_num_vars(),
+                opening_batch.max_num_vars(),
+            )?,
+            openings,
+            commitment.u.as_slice(),
+        )?],
     )?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
@@ -219,18 +192,8 @@ where
         trace_block_opening: Some(trace_block_opening),
         trace_eval_target,
         trace_eval_scale: E::one(),
-        #[cfg(feature = "zk")]
-        trace_eval_target_mask,
         trace_claim_scales,
         trace_basis: basis,
     };
-    verify_fold::<F, E, T, D>(
-        setup,
-        transcript,
-        prepared,
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
-    )
+    verify_fold::<F, E, T, D>(setup, transcript, prepared)
 }

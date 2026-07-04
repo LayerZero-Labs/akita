@@ -1,7 +1,7 @@
 //! Verifier helpers for zero-fold proof payloads.
 
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{basis_weights, BasisMode, CleartextWitnessProof, VerifierOpeningBatch};
+use akita_types::{basis_weights, BasisMode, CleartextWitnessProof, OpeningClaims};
 
 /// Check one zero-fold cleartext witness against one claimed opening.
 ///
@@ -58,17 +58,17 @@ where
 /// witness does not match its opening.
 pub(crate) fn verify_zero_fold_openings_with_opening_batch<F, E, C>(
     witnesses: &[CleartextWitnessProof<F>],
-    claims: &VerifierOpeningBatch<'_, E, C>,
+    claims: &OpeningClaims<'_, E, C>,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let opening_batch = claims.to_shape();
-    let openings = claims.claims();
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
+    let openings = claims.flat_evaluations();
     let opening_point = claims.point();
-    let num_polynomials = opening_batch.num_polynomials();
+    let num_polynomials = opening_batch.num_total_polynomials();
     if witnesses.len() != num_polynomials || openings.len() != num_polynomials {
         return Err(AkitaError::InvalidProof);
     }
@@ -87,18 +87,20 @@ where
 mod tests {
     use super::*;
     use akita_field::{Fp32, FpExt2, NegOneNr};
-    use akita_types::{CommitmentGroup, FlatRingVec};
+    use akita_types::{FlatRingVec, PointVariableSelection, PolynomialGroupClaims};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;
 
-    fn claims(point: &[E], openings: &[E]) -> VerifierOpeningBatch<'static, E, ()> {
-        VerifierOpeningBatch::from_groups(
+    fn claims(point: &[E], openings: &[E]) -> OpeningClaims<'static, E, ()> {
+        OpeningClaims::from_groups(
             point.to_vec(),
-            vec![CommitmentGroup {
-                claims: openings.to_vec(),
-                commitment: (),
-            }],
+            vec![PolynomialGroupClaims::new(
+                PointVariableSelection::prefix(point.len(), point.len()).expect("point vars"),
+                openings.to_vec(),
+                (),
+            )
+            .expect("group claims")],
         )
         .expect("valid verifier claims")
     }

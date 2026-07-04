@@ -1,0 +1,41 @@
+[package]
+name = "akita-sis-estimator"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+authors = [
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzero.foundation>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
+license = "Apache-2.0 OR MIT"
+description = "Offline SIS lattice estimator for Akita table generation"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+libm = "0.2"
+num-bigint = "0.4.6"
+num-traits = "0.2"
+rayon = { version = "1.10", optional = true }
+thiserror = "2.0"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[features]
+default = []
+parallel = ["dep:rayon"]
+
+[[bench]]
+name = "fixed_infinity"
+harness = false
+
+[[bench]]
+name = "infinity_optimizer"
+harness = false
+
+[lints]
+workspace = true

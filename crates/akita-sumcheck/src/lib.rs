@@ -27,12 +27,6 @@ pub use drivers::{
     advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
     EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
-#[cfg(feature = "zk")]
-pub use drivers::{
-    EqFactoredMaskedProveOutput, MaskedProveOutput, ZkEqFactoredFinalRelation,
-    ZkEqFactoredSumcheckInstanceProverExt, ZkEqFactoredSumcheckInstanceVerifierExt,
-    ZkSumcheckFinalRelation, ZkSumcheckInstanceProverExt, ZkSumcheckInstanceVerifierExt,
-};
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
@@ -41,5 +35,3 @@ pub use types::{
     uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,
     EqFactoredUniPoly, SumcheckProof, SumcheckProofShape,
 };
-#[cfg(feature = "zk")]
-pub use types::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};

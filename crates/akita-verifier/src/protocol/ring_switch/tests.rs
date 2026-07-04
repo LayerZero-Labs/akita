@@ -1,22 +1,29 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp32;
-use akita_types::{RingRelationSegmentLayout, SisModulusFamily};
+use akita_types::{SisModulusFamily, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
 
 /// Placeholder layout for prepare-path rejection tests. These cases fail before
 /// any layout-dependent evaluation runs, so the offsets are not required to
 /// match the witness column geometry.
-fn reject_test_segment_layout() -> RingRelationSegmentLayout {
-    RingRelationSegmentLayout {
-        offset_e: 0,
-        offset_t: 0,
-        offset_u: 0,
-        offset_z: 0,
-        offset_r: 0,
-        #[cfg(feature = "zk")]
-        b_blinding_offset: 0,
-        #[cfg(feature = "zk")]
-        d_blinding_offset: 0,
+fn reject_test_segment_layout() -> WitnessLayout {
+    WitnessLayout {
+        blocks_per_chunk: 1,
+        chunks: vec![WitnessChunkLayout {
+            offset_z: 0,
+            offset_e: 0,
+            offset_t: 0,
+            offset_u: None,
+            offset_r: Some(0),
+            global_block_base: 0,
+        }],
+        chunk_lengths: vec![WitnessChunkLengths {
+            z_len: 0,
+            e_len: 0,
+            t_len: 0,
+            u_len: None,
+            r_len: Some(0),
+        }],
     }
 }
 

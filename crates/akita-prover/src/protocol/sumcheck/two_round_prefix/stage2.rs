@@ -17,7 +17,7 @@ pub(crate) enum BooleanCorner {
 
 impl BooleanCorner {
     pub(crate) const ALL: [Self; 4] = [Self::ZeroZero, Self::ZeroOne, Self::OneZero, Self::OneOne];
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     pub(crate) const DEFAULT_STAGE2_NORM: Self = Self::ZeroZero;
     pub(crate) const DEFAULT_STAGE2_RELATION: Self = Self::ZeroZero;
 
@@ -56,7 +56,7 @@ pub(crate) struct Stage2CompressedGrid<E: FieldCore> {
 }
 
 impl<E: FieldCore> Stage2CompressedGrid<E> {
-    #[cfg(all(test, not(feature = "zk")))]
+    #[cfg(test)]
     pub(crate) fn from_full_grid(full_grid: [E; 9], omitted_corner: BooleanCorner) -> Self {
         let omitted_idx = omitted_corner.grid_index();
         let mut out_idx = 0usize;
@@ -101,7 +101,7 @@ pub(crate) struct Stage2BivariateSkipProof<E: FieldCore> {
 
 /// Return the stage-2 full-domain grid in row-major `x`-major order over
 /// `{0, 1, Infinity}^2`.
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
     mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
 ) -> [E; 9] {
@@ -115,7 +115,7 @@ pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
 
 /// Evaluate a biquadratic from its full `{0, 1, Infinity}^2` grid.
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn eval_biquadratic_from_full_grid<E: FieldCore>(
     full_grid: [E; 9],
     x: PrefixPoint<E>,
@@ -195,17 +195,6 @@ pub(crate) fn recover_stage2_relation_grid_from_claim<E: FieldCore>(
 ) -> [E; 9] {
     recover_stage2_grid_from_corner_claim(compressed, [E::one(); 4], relation_claim)
         .expect("relation corner weights are all one")
-}
-
-/// Recover a full stage-2 norm grid from an omitted Boolean corner and the
-/// weighted local norm claim.
-#[inline]
-pub(crate) fn recover_stage2_norm_grid_from_claim<E: FieldCore>(
-    compressed: &Stage2CompressedGrid<E>,
-    corner_weights: [E; 4],
-    norm_claim: E,
-) -> Option<[E; 9]> {
-    recover_stage2_grid_from_corner_claim(compressed, corner_weights, norm_claim)
 }
 
 /// Whether stage 2 has enough y-rounds to use the 2-round prefix path.
@@ -414,7 +403,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
         }
         let tau0 = stage1_point[0];
         let tau1 = stage1_point[1];
-        let norm_full_grid = recover_stage2_norm_grid_from_claim(
+        let norm_full_grid = recover_stage2_grid_from_corner_claim(
             &proof.norm,
             stage2_norm_corner_weights_from_taus(tau0, tau1),
             s_claim,

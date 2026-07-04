@@ -53,6 +53,6 @@ jobs:
           shared-key: ci-jolt-verifier-profile-smoke
           cache-on-failure: true
       - name: Test AkitaJoltInputs blob encode/decode (akita-recursion-glue)
-        run: cargo test -p akita-recursion-glue
+        run: cargo test --release -p akita-recursion-glue
       - name: Compile akita-recursion-artifact and akita-recursion-host (release)
         run: cargo check --release

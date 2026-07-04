@@ -27,6 +27,7 @@ fn field_block_weights_layout() -> TraceWeightLayout {
         num_digits_open: 2,
         r_vars: 1,
         log_basis: LOG_BASIS,
+        chunk: crate::TraceChunkLayout::single(),
     }
 }
 
@@ -39,6 +40,7 @@ fn field_block_weights_layout_with_offset() -> TraceWeightLayout {
         num_digits_open: 2,
         r_vars: 1,
         log_basis: LOG_BASIS,
+        chunk: crate::TraceChunkLayout::single(),
     }
 }
 
@@ -168,6 +170,7 @@ fn closed_form_matches_dense_table_multiple_field_terms() {
         num_digits_open: 2,
         r_vars: 2,
         log_basis: LOG_BASIS,
+        chunk: crate::TraceChunkLayout::single(),
     };
     let mut rng = StdRng::seed_from_u64(0x7ACE_0005);
 
@@ -272,6 +275,7 @@ mod ring_block_weights {
             num_digits_open: 2,
             r_vars: 1,
             log_basis: LOG_BASIS,
+            chunk: crate::TraceChunkLayout::single(),
         }
     }
 
@@ -284,6 +288,7 @@ mod ring_block_weights {
             num_digits_open: 2,
             r_vars: 2,
             log_basis: LOG_BASIS,
+            chunk: crate::TraceChunkLayout::single(),
         }
     }
 
@@ -644,6 +649,7 @@ mod closed_terms {
             num_digits_open: 2,
             r_vars: 1,
             log_basis: LB,
+            chunk: crate::TraceChunkLayout::single(),
         }
     }
 
@@ -672,6 +678,7 @@ mod closed_terms {
             num_digits_open: 2,
             r_vars: 1,
             log_basis: LB,
+            chunk: crate::TraceChunkLayout::single(),
         };
         const D8: usize = 8;
         let mut rng = StdRng::seed_from_u64(0x5EED_0001);
@@ -721,6 +728,7 @@ mod closed_terms {
             num_digits_open: 2,
             r_vars: 2,
             log_basis: LB,
+            chunk: crate::TraceChunkLayout::single(),
         };
         const D8: usize = 8;
         let mut rng = StdRng::seed_from_u64(0x5EED_1001);
@@ -770,6 +778,7 @@ mod closed_terms {
             num_digits_open: 2,
             r_vars: 2,
             log_basis: LB,
+            chunk: crate::TraceChunkLayout::single(),
         };
         const D8: usize = 8;
         let mut rng = StdRng::seed_from_u64(0x5EED_4001);
@@ -803,6 +812,135 @@ mod closed_terms {
                 eval_trace_terms_closed::<Fk, E4, D8>(&layout, &ring_point, &col_point, &terms)
                     .unwrap();
             assert_eq!(dense, closed);
+        }
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k1_chunked() {
+        // Chunked layout: num_claims=2, num_blocks_global=4; sweep W in {1,2,4}.
+        // The dense table places ê weights at chunked columns (chunk-aware
+        // `opening_digit_col_index`); the closed form must reconstruct them.
+        const D8: usize = 8;
+        let num_claims = 2usize;
+        let num_blocks_global = 4usize;
+        let num_digits_open = 2usize;
+        for &(w, chunk_stride) in &[(1usize, 0usize), (2, 32), (4, 32)] {
+            let bpc = num_blocks_global / w;
+            let layout = TraceWeightLayout {
+                ring_bits: 3,
+                col_bits: 8,
+                opening_digit_offset: 2,
+                num_blocks: num_claims * num_blocks_global,
+                num_digits_open,
+                r_vars: (num_claims * num_blocks_global).trailing_zeros() as usize,
+                log_basis: LB,
+                chunk: crate::TraceChunkLayout {
+                    num_chunks: w,
+                    blocks_per_chunk: bpc,
+                    num_claims,
+                    num_blocks_global,
+                    chunk_stride,
+                },
+            };
+            layout.validate_opening_digit_segment().unwrap();
+            let mut rng = StdRng::seed_from_u64(0xC0DE_0000 + w as u64);
+            for _ in 0..8 {
+                let mut terms = Vec::new();
+                let mut dense_terms = Vec::new();
+                for claim in 0..num_claims {
+                    let inner_open = random_point(&mut rng, layout.ring_bits);
+                    let inner = reduce_inner_opening_to_ring_element::<F, D8>(
+                        &inner_open,
+                        BasisMode::Lagrange,
+                    )
+                    .unwrap();
+                    let b_open =
+                        random_point(&mut rng, num_blocks_global.trailing_zeros() as usize);
+                    let block_weights = lagrange_weights(&b_open).unwrap();
+                    dense_terms.push(TraceFieldBlockOpening {
+                        block_offset: claim * num_blocks_global,
+                        block_weights,
+                        inner_opening_ring: inner,
+                    });
+                    terms.push(TraceTerm {
+                        block_offset: claim * num_blocks_global,
+                        b_open,
+                        basis: BasisMode::Lagrange,
+                        packed_inner_point: inner,
+                        coefficient: F::one(),
+                    });
+                }
+                let table = build_trace_weight_table_field_terms::<F, F, D8>(&layout, &dense_terms)
+                    .unwrap();
+                let ring_point = random_point(&mut rng, layout.ring_bits);
+                let col_point = random_point(&mut rng, layout.col_bits);
+                let dense =
+                    trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+                let closed =
+                    eval_trace_terms_closed::<F, F, D8>(&layout, &ring_point, &col_point, &terms)
+                        .unwrap();
+                assert_eq!(dense, closed, "chunked k1 closed-form mismatch W={w}");
+            }
+        }
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k4_chunked() {
+        // K=4 chunked: exercises the per-chunk high-bit weight in the ring-subfield
+        // coordinate algebra. num_claims=2, num_blocks_global=4, W=2.
+        const D8: usize = 8;
+        let num_claims = 2usize;
+        let num_blocks_global = 4usize;
+        let w = 2usize;
+        let bpc = num_blocks_global / w;
+        let layout = TraceWeightLayout {
+            ring_bits: 3,
+            col_bits: 8,
+            opening_digit_offset: 2,
+            num_blocks: num_claims * num_blocks_global,
+            num_digits_open: 2,
+            r_vars: (num_claims * num_blocks_global).trailing_zeros() as usize,
+            log_basis: LB,
+            chunk: crate::TraceChunkLayout {
+                num_chunks: w,
+                blocks_per_chunk: bpc,
+                num_claims,
+                num_blocks_global,
+                chunk_stride: 32,
+            },
+        };
+        layout.validate_opening_digit_segment().unwrap();
+        let mut rng = StdRng::seed_from_u64(0xC0DE_4444);
+        for _ in 0..8 {
+            let mut terms = Vec::new();
+            let mut dense_terms = Vec::new();
+            for claim in 0..num_claims {
+                let trace_inner_open = ext_point::<E4>(&mut rng, trace_inner_len::<E4, D8>());
+                let inner = packed_inner::<E4, D8>(&trace_inner_open);
+                let b_open = ext_point::<E4>(&mut rng, num_blocks_global.trailing_zeros() as usize);
+                let block_rings = block_rings_at_opening::<Fk, E4, D8>(&b_open).unwrap();
+                dense_terms.push(TraceRingBlockOpening {
+                    block_offset: claim * num_blocks_global,
+                    block_rings,
+                    packed_inner_point: inner,
+                });
+                terms.push(TraceTerm {
+                    block_offset: claim * num_blocks_global,
+                    b_open,
+                    basis: BasisMode::Lagrange,
+                    packed_inner_point: inner,
+                    coefficient: E4::one(),
+                });
+            }
+            let table =
+                build_trace_weight_table_ring_terms::<Fk, E4, D8>(&layout, &dense_terms).unwrap();
+            let ring_point = ext_point::<E4>(&mut rng, layout.ring_bits);
+            let col_point = ext_point::<E4>(&mut rng, layout.col_bits);
+            let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+            let closed =
+                eval_trace_terms_closed::<Fk, E4, D8>(&layout, &ring_point, &col_point, &terms)
+                    .unwrap();
+            assert_eq!(dense, closed, "chunked k4 closed-form mismatch");
         }
     }
 

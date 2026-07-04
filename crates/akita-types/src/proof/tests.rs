@@ -1,77 +1,17 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
-#[cfg(not(feature = "zk"))]
 use akita_algebra::CompressedUniPoly;
 use akita_field::Prime128Offset275;
 use akita_serialization::Valid;
-#[cfg(not(feature = "zk"))]
 use akita_sumcheck::SumcheckProof;
 
 type F = Prime128Offset275;
-
-#[test]
-fn packed_digits_roundtrip_basis6() {
-    let digits = vec![-32, -17, -1, 0, 1, 31];
-    let packed = PackedDigits::from_i8_digits(&digits, 6);
-
-    assert_eq!(packed.bits_per_elem, 6);
-    let recovered: Vec<i8> = (0..digits.len())
-        .map(|idx| packed.digit_at(idx).expect("packed index in bounds"))
-        .collect();
-    assert_eq!(recovered, digits);
-
-    let expected_field: Vec<Prime128Offset275> = digits
-        .iter()
-        .map(|&digit| Prime128Offset275::from_i64(digit as i64))
-        .collect();
-    assert_eq!(
-        packed.to_field_elems::<Prime128Offset275>().unwrap(),
-        expected_field
-    );
-}
-
-#[test]
-fn packed_digits_reject_bits_above_six() {
-    let packed = PackedDigits {
-        num_elems: 1,
-        bits_per_elem: 7,
-        data: vec![0],
-    };
-
-    assert!(packed.check().is_err());
-    assert_eq!(packed.digit_at(0), None);
-    assert!(packed.to_field_elems::<Prime128Offset275>().is_err());
-}
-
-#[test]
-fn packed_digits_malformed_buffer_returns_error() {
-    let packed = PackedDigits {
-        num_elems: 4,
-        bits_per_elem: 6,
-        data: vec![0],
-    };
-
-    assert!(packed.check().is_err());
-    assert_eq!(packed.digit_at(3), None);
-    assert!(packed.to_field_elems::<Prime128Offset275>().is_err());
-}
 
 #[test]
 fn direct_witness_shape_rejects_oversized_allocations() {
     let err = CleartextWitnessShape::FieldElements(DEFAULT_MAX_SEQUENCE_LEN + 1)
         .check()
         .unwrap_err();
-    assert!(matches!(
-        err,
-        SerializationError::LengthLimitExceeded { .. }
-    ));
-}
-
-#[test]
-fn packed_digits_deserialization_rejects_shape_before_allocation() {
-    let ctx = (DEFAULT_MAX_SEQUENCE_LEN + 1, 6);
-
-    let err = PackedDigits::deserialize_compressed(&[][..], &ctx).expect_err("shape exceeds cap");
     assert!(matches!(
         err,
         SerializationError::LengthLimitExceeded { .. }
@@ -207,35 +147,22 @@ fn tiny_stage1() -> AkitaStage1Proof<F> {
 
 fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
     AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-        #[cfg(not(feature = "zk"))]
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
         },
-        #[cfg(feature = "zk")]
-        sumcheck_proof_masked: SumcheckProofMasked {
-            masked_round_polys: Vec::new(),
-        },
         next_w_commitment: FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()])
             .into_compact(),
-        #[cfg(not(feature = "zk"))]
         next_w_eval: F::zero(),
-        #[cfg(feature = "zk")]
-        next_w_eval_masked: F::zero(),
     })
 }
 
 fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
     ExtensionOpeningReductionProof {
         partials: vec![F::zero(), F::one()],
-        #[cfg(not(feature = "zk"))]
         sumcheck: SumcheckProof {
             round_polys: vec![CompressedUniPoly {
                 coeffs_except_linear_term: vec![F::zero(), F::one()],
             }],
-        },
-        #[cfg(feature = "zk")]
-        sumcheck_proof_masked: SumcheckProofMasked {
-            masked_round_polys: Vec::new(),
         },
     }
 }
@@ -270,13 +197,8 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
         Some(tiny_reduction()),
         vec![CyclotomicRing::<F, D>::zero()],
         tiny_stage1(),
-        #[cfg(not(feature = "zk"))]
         SumcheckProof {
             round_polys: Vec::new(),
-        },
-        #[cfg(feature = "zk")]
-        SumcheckProofMasked {
-            masked_round_polys: Vec::new(),
         },
         FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
         F::zero(),
@@ -304,32 +226,24 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert_eq!(decoded_with_reduction, with_reduction);
 }
 
-#[cfg(not(feature = "zk"))]
 fn tiny_terminal_stage2() -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: Vec::new(),
     }
 }
 
-#[cfg(feature = "zk")]
-fn tiny_terminal_stage2_masked() -> SumcheckProofMasked<F> {
-    SumcheckProofMasked {
-        masked_round_polys: Vec::new(),
-    }
-}
-
 #[test]
 fn terminal_level_proof_serde_round_trip() {
-    let final_witness = CleartextWitnessProof::PackedDigits(
-        PackedDigits::from_i8_digits_with_min_bits(&[1i8, -1, 0, 2], 3),
-    );
+    let final_witness = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
+        F::one(),
+        -F::one(),
+        F::zero(),
+        F::from_u64(2),
+    ]));
 
     let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         None,
-        #[cfg(not(feature = "zk"))]
         tiny_terminal_stage2(),
-        #[cfg(feature = "zk")]
-        tiny_terminal_stage2_masked(),
         final_witness.clone(),
         7,
     );
@@ -358,10 +272,7 @@ fn terminal_level_proof_serde_round_trip() {
 
     let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         Some(tiny_reduction()),
-        #[cfg(not(feature = "zk"))]
         tiny_terminal_stage2(),
-        #[cfg(feature = "zk")]
-        tiny_terminal_stage2_masked(),
         final_witness,
         0,
     );

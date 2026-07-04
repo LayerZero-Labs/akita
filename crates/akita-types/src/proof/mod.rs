@@ -9,7 +9,6 @@
 
 pub mod batch;
 pub mod commitment;
-pub mod opening_batch;
 pub mod relation;
 pub mod ring_relation;
 pub mod scheme;
@@ -28,21 +27,22 @@ mod tail_segments;
 mod tests;
 mod wire;
 
+pub use crate::opening_claims::{
+    sample_public_row_coefficients, should_reject_grouped_root, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_UNSUPPORTED,
+};
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    checked_total_claims, folded_root_supports_opening_shape, padded_scalar_batch_num_vars,
-    prepare_opening_point, ring_subfield_packed_extension_opening_point,
-    root_tensor_projection_enabled, validate_batched_inputs,
+    folded_root_supports_opening_shape, padded_scalar_batch_num_vars, prepare_opening_point,
+    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
     validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, ProverCommitmentRows, RingCommitment};
-#[cfg(feature = "zk")]
-pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
 pub use direct_witness::{
-    segment_typed_witness_shape, terminal_direct_witness_shape,
-    terminal_direct_witness_shape_for_key, CleartextWitnessProof, CleartextWitnessShape,
-    PackedDigits,
+    segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape,
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
@@ -51,16 +51,10 @@ pub use levels::{
     AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
     TerminalLevelProof,
 };
-pub use opening_batch::{
-    batched_eval_target_from_opening_batch, sample_public_row_coefficients, CommitmentGroup,
-    OpeningBatchLimits, OpeningBatchShape, OpeningGroupShape, PointVariableSelection,
-    VerifierOpeningBatch, GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
-};
 pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLayout, RingRelationSegmentLengths,
+    RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
@@ -104,17 +98,14 @@ pub use terminal_witness::{
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
-#[cfg(not(feature = "zk"))]
 use akita_sumcheck::EqFactoredSumcheckProof;
 use akita_sumcheck::{
     uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
 };
-#[cfg(feature = "zk")]
-use akita_sumcheck::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
 use std::marker::PhantomData;

@@ -22,6 +22,7 @@ use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
 /// The fold point `k` and offset `c = 2^k − p` are computed at compile time
 /// from the const-generic `P`.  For `c = 2^a ± 1`, the fold multiply is
 /// replaced by shift+add/sub.
+#[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Fp64<const P: u64>(pub(crate) u64);
 

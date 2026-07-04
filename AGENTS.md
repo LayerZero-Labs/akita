@@ -29,6 +29,16 @@ Verifier-reachable code must reject malformed input with `AkitaError` or `Serial
 Do not add verifier-reachable `panic!`, `assert!`, `unwrap`, unchecked indexing, or unbounded allocation without prior validation at a boundary.
 Full contract: [`book/src/how/verification.md`](book/src/how/verification.md) and [`docs/verifier-contract.md`](docs/verifier-contract.md).
 
+## Single source of truth (no wrapper slop)
+
+Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **one canonical function per concept**; call it directly.
+
+- Do not add thin wrappers, pass-through aliases, or `_for_level` helpers that only recompose existing APIs.
+- Type methods may assemble `self` into arguments, but the logic lives in one place, not duplicated across siblings.
+- If `A` needs the output of `B`, call `B` (or extend `B`); do not introduce `C` that forwards to `B`.
+- Security and sizing contracts must use the same primitives the verifier enforces. No split-brain where certification and MSIS pricing read different bounds.
+- Keep intentional boundaries: traits, arithmetic primitives, domain/security helpers, named test/bench scenarios. Delete single-use indirection.
+
 ## Crate structure
 
 Workspace members under `crates/`:
@@ -81,5 +91,5 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | CI test timing | [`docs/ci-test-timing.md`](docs/ci-test-timing.md) |
 | Profiling harness | [`book/src/usage/profiling.md`](book/src/usage/profiling.md) |
 | Transcript hardening | [`specs/transcript-hardening.md`](specs/transcript-hardening.md) |
-| Offline SIS table regen | `scripts/stitch_generated_sis_table.py` (Sage + pinned `third_party/lattice-estimator`) |
+| Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --format rust-split` |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |

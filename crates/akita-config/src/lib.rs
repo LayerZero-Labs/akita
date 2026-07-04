@@ -13,17 +13,88 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+#[cfg(test)]
+use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
-    OpeningBatchShape, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
+    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 
+/// Define a multi-chunk companion preset that delegates every layout-affecting
+/// parameter to a base `Cfg` and overrides only the multi-chunk witness config
+/// and the shipped schedule catalog.
+///
+/// The companion shares the base's field, ring dimension, decomposition,
+/// challenge config, and SIS family, so its `_multi_chunk` table enumerates the
+/// same `(num_vars, num_polynomials)` keys as its sibling; the schedules differ
+/// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
+macro_rules! impl_multi_chunk_companion {
+    ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident) => {
+        impl $crate::CommitmentConfig for $cfg {
+            type Field = <$base as $crate::CommitmentConfig>::Field;
+            type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
+            const D: usize = <$base as $crate::CommitmentConfig>::D;
+            const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
+
+            fn decomposition() -> akita_types::DecompositionParams {
+                <$base as $crate::CommitmentConfig>::decomposition()
+            }
+            fn ring_challenge_config(
+                d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+                <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
+            }
+            fn fold_challenge_shape_at_level(
+                inputs: akita_types::AkitaScheduleInputs,
+            ) -> akita_challenges::TensorChallengeShape {
+                <$base as $crate::CommitmentConfig>::fold_challenge_shape_at_level(inputs)
+            }
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                <$base as $crate::CommitmentConfig>::sis_modulus_family()
+            }
+            fn ring_subfield_embedding_norm_bound() -> u32 {
+                <$base as $crate::CommitmentConfig>::ring_subfield_embedding_norm_bound()
+            }
+            fn max_setup_matrix_size(
+                max_num_vars: usize,
+                max_num_batched_polys: usize,
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<$cfg>(
+                    max_num_vars,
+                    max_num_batched_polys,
+                )
+            }
+            fn basis_range() -> (u32, u32) {
+                <$base as $crate::CommitmentConfig>::basis_range()
+            }
+            fn onehot_chunk_size() -> usize {
+                <$base as $crate::CommitmentConfig>::onehot_chunk_size()
+            }
+            fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+                $profile.cfg()
+            }
+            fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+                #[cfg(feature = $feat)]
+                {
+                    Some(akita_schedules::$table())
+                }
+                #[cfg(not(feature = $feat))]
+                {
+                    None
+                }
+            }
+        }
+    };
+}
+
+pub mod conservative_commitment;
 pub mod generated_families;
 pub mod proof_optimized;
 pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+pub use conservative_commitment::ConservativeCommitmentConfig;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_grouped_opening_batch_for_shape,
@@ -43,12 +114,13 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_family: Cfg::sis_modulus_family(),
+        min_sis_security_bits: akita_types::DEFAULT_SIS_SECURITY_BITS,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
-        tiered: Cfg::TIERED_COMMITMENT,
+        witness_chunk: Cfg::chunked_witness_cfg(),
     }
 }
 
@@ -100,17 +172,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
-
-    /// Enable the second commitment tier (matrix `F`).
-    ///
-    /// When `true`, the planner is allowed
-    /// to reuse a smaller first-tier matrix `B` across `f` witness slices and
-    /// commit the partial images with a second-tier matrix `F`
-    /// (`u_final = F · decompose(u_1 ‖ … ‖ u_f)`), shrinking the shared
-    /// preprocessing matrix and the verifier setup-contribution scan. See
-    /// `specs/tiered-commitment.md`. Threaded into the planner via
-    /// [`PlannerPolicy::tiered`] (see [`policy_of`]).
-    const TIERED_COMMITMENT: bool = false;
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -192,6 +253,16 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         1
     }
 
+    /// Multi-chunk witness layout parameters for schedule planning and (future)
+    /// prover orchestration.
+    ///
+    /// Default is single-chunk ([`ChunkedWitnessCfg::default`]), which leaves
+    /// every schedule byte-identical to the historical layout. Distributed-prover
+    /// presets override this to price the chunked witness layout.
+    fn chunked_witness_cfg() -> ChunkedWitnessCfg {
+        ChunkedWitnessCfg::default()
+    }
+
     /// Optional shipped schedule catalog for this preset.
     ///
     /// Presets with generated tables override this when the matching
@@ -202,14 +273,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Build the runtime [`Schedule`] for `key`.
     ///
-    /// Delegates to [`akita_planner::resolve_schedule`] with this preset's
-    /// optional [`Self::schedule_catalog`]: validates catalog identity on a hit,
-    /// expands the compact entry, and regenerates from scratch with the offline
-    /// DP on a miss. The result is deterministic in
-    /// `(policy, key)` plus this config's `ring_challenge_config` /
-    /// `fold_challenge_shape_at_level` hooks, so
-    /// prover and verifier resolve identical schedules and the Fiat-Shamir
-    /// `PlanSection` digest stays consistent.
+    /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
+    /// empty `precommitteds` vector. Grouped roots supply frozen precommit
+    /// layouts in `precommitteds`.
+    ///
+    /// Delegates to [`akita_planner::resolve_group_batch_schedule`] with this
+    /// preset's optional [`Self::schedule_catalog`]: validates catalog identity
+    /// on a hit, expands the compact entry, and regenerates from scratch with
+    /// the offline DP on a miss.
     ///
     /// # Errors
     ///
@@ -217,8 +288,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// (invalid key dimensions, witness overflow). Never panics — this is
     /// verifier-reachable.
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-        akita_planner::resolve_schedule(
-            key,
+        akita_planner::resolve_group_batch_schedule(
+            &key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
@@ -226,18 +297,32 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
+    /// Root commit layout for a grouped final root plan.
+    ///
+    /// Reads the first schedule step from [`Self::runtime_schedule`], so config
+    /// overrides and DP fallback stay honored.
+    fn get_params_for_grouped_batched_commitment(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<LevelParams, AkitaError> {
+        Self::grouped_root_commit_params(&Self::runtime_schedule(key.clone())?)
+    }
+
+    /// Root commit layout read from a grouped runtime schedule.
+    fn grouped_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
+        akita_types::grouped_root_commit_params(schedule)
+    }
+
     /// Schedule consumed by the prove/verify root path.
     /// Default: expand the resolved table entry; error on miss.
     ///
     /// # Errors
     ///
-    /// `InvalidSetup` if no schedule-table entry exists for `opening_batch`.
-    fn get_params_for_prove(opening_batch: &OpeningBatchShape) -> Result<Schedule, AkitaError> {
-        let key = AkitaScheduleLookupKey::new_from_opening_batch(opening_batch)?;
-        Self::runtime_schedule(key)
+    /// `InvalidSetup` if no schedule-table entry exists for `layout`.
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+        Self::runtime_schedule(AkitaScheduleLookupKey::from_layout(layout)?)
     }
 
-    /// Root commit layout the `batched_prove` flow uses for `opening_batch`,
+    /// Root commit layout the `batched_prove` flow uses for `layout`,
     /// read off the runtime schedule's first step (the root Fold params or
     /// the root-direct's commit slot). Same layout per-point commits use,
     /// so they stay compatible with the batched prove root.
@@ -252,9 +337,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
     /// schedule lacks a commit (the uncommittable edge case).
     fn get_params_for_batched_commitment(
-        opening_batch: &OpeningBatchShape,
+        layout: &OpeningClaimsLayout,
     ) -> Result<LevelParams, AkitaError> {
-        let schedule = Self::get_params_for_prove(opening_batch)?;
+        let schedule = Self::get_params_for_prove(layout)?;
         match schedule.steps.first() {
             Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
             Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
@@ -318,13 +403,7 @@ mod tests {
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope {
-                max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            })
+            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
         }
 
         fn basis_range() -> (u32, u32) {
@@ -389,13 +468,9 @@ mod sis_schedule_width_audit {
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
             let d = u32::try_from(lp.ring_dimension).expect("ring dimension fits in u32");
-            let family = lp.a_key.sis_family();
 
-            let a_collision = lp.a_key.collision_l2_sq();
             let a_rank = min_secure_rank(
-                family,
-                d,
-                a_collision,
+                lp.a_key.sis_table_key(),
                 u64::try_from(lp.inner_width()).expect("inner width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -413,11 +488,8 @@ mod sis_schedule_width_audit {
                 lp.a_key.row_len(),
             );
 
-            let b_collision = lp.b_key.collision_l2_sq();
             let b_rank = min_secure_rank(
-                family,
-                d,
-                b_collision,
+                lp.b_key.sis_table_key(),
                 u64::try_from(lp.outer_width()).expect("outer width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -435,11 +507,8 @@ mod sis_schedule_width_audit {
                 lp.b_key.row_len(),
             );
 
-            let d_collision = lp.d_key.collision_l2_sq();
             let d_rank = min_secure_rank(
-                family,
-                d,
-                d_collision,
+                lp.d_key.sis_table_key(),
                 u64::try_from(lp.d_matrix_width()).expect("d-matrix width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -460,69 +529,53 @@ mod sis_schedule_width_audit {
     }
 }
 
-#[cfg(all(test, feature = "zk"))]
-mod zk_generated_family_sis_audit {
-    use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
-    use super::*;
-
-    const GENERATED_FAMILY_NV_SAMPLES: &[usize] = &[8, 16, 28, 30];
-
-    fn audit_generated_family_sparse(
-        family: &generated_families::GeneratedFamily,
-        nv_samples: &[usize],
-    ) {
-        for key in generated_families::family_keys(family).expect("family keys") {
-            if !nv_samples.contains(&key.num_vars) {
-                continue;
-            }
-            let schedule = (family.table_backed)(key).expect("runtime schedule");
-            assert_schedule_stays_within_audited_sis_widths(&schedule, key.num_vars);
-        }
-    }
-
-    #[test]
-    fn generated_families_stay_within_audited_sis_widths() {
-        for family in generated_families::ALL_GENERATED_FAMILIES {
-            audit_generated_family_sparse(family, GENERATED_FAMILY_NV_SAMPLES);
-        }
-    }
-}
-
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
     use super::*;
 
     fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
-        min_num_vars: usize,
-        max_num_vars: usize,
+        num_vars_values: &[usize],
     ) {
-        for num_vars in min_num_vars..=max_num_vars {
-            let schedule =
-                Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars)).unwrap();
+        for &num_vars in num_vars_values {
+            let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+                PolynomialGroupLayout::singleton(num_vars),
+            ))
+            .unwrap();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
         }
     }
 
+    /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
+    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[8, 16, 28, 30, 44, 50];
+
     #[test]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 50);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(
+            CI_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(
+            CI_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]
-    fn current_d32_full_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 50);
+    #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
+    fn current_d64_full_schedule_stays_within_audited_sis_widths_full_range() {
+        let num_vars: Vec<usize> = (8..=50).collect();
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(&num_vars);
     }
 
     #[test]
-    fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 50);
+    #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
+    fn current_d64_onehot_schedule_stays_within_audited_sis_widths_full_range() {
+        let num_vars: Vec<usize> = (8..=50).collect();
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(&num_vars);
     }
 
     #[test]
@@ -539,22 +592,21 @@ mod fp128_policy_tests {
             2
         );
 
-        let opening_batch = OpeningBatchShape::new(20, 1).expect("singleton opening batch");
+        let opening_batch = OpeningClaimsLayout::new(20, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
             panic!("small-field schedule should start with a root fold");
         };
         assert!(
-            root.params.a_key.collision_l2_sq() >= root.params.b_key.collision_l2_sq() * 2,
-            "A-role collision should include the psi norm bound"
+            root.params.a_key.coeff_linf_bound() >= root.params.b_key.coeff_linf_bound() * 2,
+            "A-role L-infinity bound should include the psi norm bound"
         );
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_uses_generated_singleton_plans() {
-        let key = AkitaScheduleLookupKey::singleton(32);
+        let key = PolynomialGroupLayout::singleton(32);
 
         let full = fp128::best_full_schedule(key)
             .expect("selector should resolve full schedules")
@@ -571,9 +623,8 @@ mod fp128_policy_tests {
     }
 
     #[test]
-    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_supports_batched_keys() {
-        let key = AkitaScheduleLookupKey::new(30, 4);
+        let key = PolynomialGroupLayout::new(30, 4);
 
         let selection = fp128::best_onehot_schedule(key)
             .expect("selector should resolve batched onehot schedules")

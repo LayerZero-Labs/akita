@@ -1,11 +1,9 @@
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 use akita_challenges::{
-    sample_folding_challenges, sample_sparse_challenges, tensor_left_digest, ChallengeLabels,
-    ChallengeShape, Challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
-    TensorChallenges, D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
-    D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
+    preview_folding_challenges, sample_folding_challenges, sample_sparse_challenges,
+    tensor_left_digest, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
+    SparseChallengeConfig, TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
@@ -40,17 +38,6 @@ fn l1_norm(c: &SparseChallenge) -> u64 {
         .iter()
         .map(|&v| (v as i32).unsigned_abs() as u64)
         .sum()
-}
-
-/// Local helper: convert an integer challenge to dense ring coefficients.
-fn integer_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
-    c: &IntegerChallenge,
-) -> [F; D] {
-    let mut out = [F::zero(); D];
-    for (&pos, &coeff) in c.positions.iter().zip(c.coeffs.iter()) {
-        out[pos as usize] += F::from_i64(i64::from(coeff));
-    }
-    out
 }
 
 /// Local helper: scalar power table `[1, alpha, alpha^2, ..., alpha^{D-1}]`.
@@ -115,6 +102,25 @@ fn dense_negacyclic_mul<F: FieldCore, const D: usize>(lhs: &[F; D], rhs: &[F; D]
     out
 }
 
+fn eval_dense_at_pows<F: FieldCore, const D: usize>(coeffs: &[F; D], alpha_pows: &[F]) -> F {
+    coeffs
+        .iter()
+        .zip(alpha_pows.iter())
+        .fold(F::zero(), |acc, (&coeff, &power)| acc + coeff * power)
+}
+
+fn tensor_product_eval<F: FieldCore + CanonicalField, const D: usize>(
+    left: &SparseChallenge,
+    right: &SparseChallenge,
+    alpha_pows: &[F],
+) -> F {
+    let product = dense_negacyclic_mul(
+        &sparse_challenge_to_dense::<F, D>(left).unwrap(),
+        &sparse_challenge_to_dense::<F, D>(right).unwrap(),
+    );
+    eval_dense_at_pows(&product, alpha_pows)
+}
+
 #[test]
 fn sparse_challenge_to_dense_lays_out_coefficients() {
     let s = SparseChallenge {
@@ -167,11 +173,11 @@ fn uniform_sampling_is_deterministic_and_exact_weight() {
     t1.append_field(b"seed", &F::from_u64(123));
     t2.append_field(b"seed", &F::from_u64(123));
 
-    let c1 = sample_sparse_challenges::<F, _, D>(&mut t1, b"c", 1, &cfg, 0, false)
+    let c1 = sample_sparse_challenges::<F, _, D>(&mut t1, b"c", 1, &cfg, 0)
         .unwrap()
         .pop()
         .unwrap();
-    let c2 = sample_sparse_challenges::<F, _, D>(&mut t2, b"c", 1, &cfg, 0, false)
+    let c2 = sample_sparse_challenges::<F, _, D>(&mut t2, b"c", 1, &cfg, 0)
         .unwrap()
         .pop()
         .unwrap();
@@ -192,11 +198,11 @@ fn grind_nonce_changes_sparse_challenge_stream() {
     t0.append_field(b"seed", &F::from_u64(42));
     t1.append_field(b"seed", &F::from_u64(42));
 
-    let c0 = sample_sparse_challenges::<F, _, D>(&mut t0, b"fold", 1, &cfg, 0, false)
+    let c0 = sample_sparse_challenges::<F, _, D>(&mut t0, b"fold", 1, &cfg, 0)
         .unwrap()
         .pop()
         .unwrap();
-    let c1 = sample_sparse_challenges::<F, _, D>(&mut t1, b"fold", 1, &cfg, 1, false)
+    let c1 = sample_sparse_challenges::<F, _, D>(&mut t1, b"fold", 1, &cfg, 1)
         .unwrap()
         .pop()
         .unwrap();
@@ -235,7 +241,6 @@ fn bounded_l1_domain_separator_is_canonical() {
     let shell = SparseChallengeConfig::ExactShell {
         count_mag1: 8,
         count_mag2: 0,
-        operator_norm_threshold: 8,
     }
     .domain_separator_bytes();
     assert_ne!(bytes, uniform);
@@ -251,11 +256,11 @@ fn bounded_l1_sampling_is_deterministic_and_within_bounds() {
     t1.append_field(b"seed", &F::from_u64(42));
     t2.append_field(b"seed", &F::from_u64(42));
 
-    let c1 = sample_sparse_challenges::<F, _, D>(&mut t1, b"l1", 1, &cfg, 0, false)
+    let c1 = sample_sparse_challenges::<F, _, D>(&mut t1, b"l1", 1, &cfg, 0)
         .unwrap()
         .pop()
         .unwrap();
-    let c2 = sample_sparse_challenges::<F, _, D>(&mut t2, b"l1", 1, &cfg, 0, false)
+    let c2 = sample_sparse_challenges::<F, _, D>(&mut t2, b"l1", 1, &cfg, 0)
         .unwrap()
         .pop()
         .unwrap();
@@ -277,7 +282,7 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
     let cfg = SparseChallengeConfig::BoundedL1Norm;
     let mut t = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xC0FFEE));
-    let c = sample_sparse_challenges::<F, _, D>(&mut t, b"ref", 1, &cfg, 0, false)
+    let c = sample_sparse_challenges::<F, _, D>(&mut t, b"ref", 1, &cfg, 0)
         .unwrap()
         .pop()
         .unwrap();
@@ -308,7 +313,7 @@ fn bounded_l1_rejects_non_d32_ring() {
 
     let mut t = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xDADADA));
-    let err = sample_sparse_challenges::<F, _, D_SMALL>(&mut t, b"non-d32", 1, &cfg, 0, false)
+    let err = sample_sparse_challenges::<F, _, D_SMALL>(&mut t, b"non-d32", 1, &cfg, 0)
         .expect_err("non-D=32 BoundedL1Norm must be rejected");
     let msg = format!("{err:?}");
     assert!(
@@ -327,8 +332,7 @@ fn bounded_l1_d32_samples_are_in_norm_bound() {
     let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(0xBEEF));
     let challenges =
-        sample_sparse_challenges::<F, _, D>(&mut transcript, b"norm-check", 4096, &cfg, 0, false)
-            .unwrap();
+        sample_sparse_challenges::<F, _, D>(&mut transcript, b"norm-check", 4096, &cfg, 0).unwrap();
     for c in &challenges {
         assert_eq!(c.positions.len(), c.coeffs.len());
         assert!(l1_norm(c) <= 121, "l1 norm {} > 121", l1_norm(c));
@@ -347,17 +351,15 @@ fn exact_shell_sampling_has_exact_magnitude_counts() {
     let cfg = SparseChallengeConfig::ExactShell {
         count_mag1: 4,
         count_mag2: 2,
-        operator_norm_threshold: 8,
     };
     cfg.validate::<D>().unwrap();
 
     let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(789));
-    let challenge =
-        sample_sparse_challenges::<F, _, D>(&mut transcript, b"shell", 1, &cfg, 0, false)
-            .unwrap()
-            .pop()
-            .unwrap();
+    let challenge = sample_sparse_challenges::<F, _, D>(&mut transcript, b"shell", 1, &cfg, 0)
+        .unwrap()
+        .pop()
+        .unwrap();
 
     assert_eq!(hamming_weight(&challenge), 6);
     assert_eq!(l1_norm(&challenge), cfg.l1_norm() as u64);
@@ -377,15 +379,13 @@ fn exact_shell_sampling_handles_weight_above_sign_stack_chunk() {
     let cfg = SparseChallengeConfig::ExactShell {
         count_mag1: 65,
         count_mag2: 0,
-        operator_norm_threshold: 65,
     };
     cfg.validate::<DR>().unwrap();
 
     let sample = || {
         let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
         transcript.append_field(b"seed", &F::from_u64(0x516E));
-        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"large-shell", 3, &cfg, 0, false)
-            .unwrap()
+        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"large-shell", 3, &cfg, 0).unwrap()
     };
 
     let first = sample();
@@ -398,162 +398,27 @@ fn exact_shell_sampling_handles_weight_above_sign_stack_chunk() {
     }
 }
 
-/// f64 reference for the negacyclic operator norm `gamma_D(c) = max_k |c(zeta_k)|`,
-/// used only to confirm the certified integer predicate actually bounds the
-/// accepted challenges in the end-to-end sampling path.
-fn gamma_f64<const D: usize>(c: &SparseChallenge) -> f64 {
-    use std::f64::consts::PI;
-    let mut max_sq = 0.0f64;
-    for k in 0..D {
-        let base = (2 * k + 1) as f64 * PI / D as f64;
-        let (mut re, mut im) = (0.0f64, 0.0f64);
-        for (&pos, &coeff) in c.positions.iter().zip(c.coeffs.iter()) {
-            let theta = base * pos as f64;
-            re += coeff as f64 * theta.cos();
-            im += coeff as f64 * theta.sin();
-        }
-        max_sq = max_sq.max(re * re + im * im);
-    }
-    max_sq.sqrt()
-}
-
 #[test]
-fn exact_shell_op_norm_rejection_is_deterministic_and_bounded() {
-    const DR: usize = 64;
-    let cfg = SparseChallengeConfig::ExactShell {
-        count_mag1: 31,
-        count_mag2: 11,
-        operator_norm_threshold: 16,
-    };
-    cfg.validate::<DR>().unwrap();
-    // The accepted cap is the threshold (binding, since T = 16 < ||c||_1 = 53).
-    assert_eq!(cfg.operator_norm_cap(), 16);
-
-    let sample = || {
-        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-        transcript.append_field(b"seed", &F::from_u64(0xA17A));
-        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"opnorm", 64, &cfg, 0, true).unwrap()
-    };
-
-    // Fiat-Shamir replay stability: prover and verifier draw the identical
-    // post-rejection stream.
-    let first = sample();
-    let second = sample();
-    assert_eq!(
-        first, second,
-        "rejection sampling must be transcript-stable"
-    );
-
-    for c in &first {
-        // Structure is preserved by rejection: it only filters, never edits.
-        assert_eq!(l1_norm(c), cfg.l1_norm() as u64);
-        assert_eq!(c.coeffs.iter().filter(|&&v| v.abs() == 1).count(), 31);
-        assert_eq!(c.coeffs.iter().filter(|&&v| v.abs() == 2).count(), 11);
-        // Every retained challenge respects the operator-norm cap.
-        assert!(
-            gamma_f64::<DR>(c) <= 16.0 + 1e-6,
-            "accepted challenge exceeds the operator-norm cap: gamma = {}",
-            gamma_f64::<DR>(c)
-        );
-    }
-}
-
-#[test]
-fn production_d64_exact_shell_op_norm_rejection_at_gamma_18() {
-    const DR: usize = 64;
-    let cfg = SparseChallengeConfig::ExactShell {
-        count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
-        count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
-        operator_norm_threshold: D64_PRODUCTION_OPERATOR_NORM_THRESHOLD,
-    };
-    cfg.validate::<DR>().unwrap();
-    assert!(cfg.operator_norm_rejection_binds());
-    assert_eq!(cfg.operator_norm_cap(), 18);
-
-    let sample = || {
-        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-        transcript.append_field(b"seed", &F::from_u64(0xD64));
-        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"opnorm-prod", 64, &cfg, 0, true)
-            .unwrap()
-    };
-
-    let first = sample();
-    let second = sample();
-    assert_eq!(
-        first, second,
-        "production rejection must be transcript-stable"
-    );
-
-    for c in &first {
-        assert_eq!(l1_norm(c), cfg.l1_norm() as u64);
-        assert!(
-            gamma_f64::<DR>(c) <= 18.0 + 1e-6,
-            "accepted challenge exceeds Gamma=18: gamma = {}",
-            gamma_f64::<DR>(c)
-        );
-    }
-}
-
-#[test]
-fn exact_shell_non_binding_threshold_skips_rejection() {
-    const DR: usize = 64;
-    // T >= ||c||_1 = 53, so gamma_D(c) <= ||c||_1 <= T always: no rejection,
-    // and the cap collapses to the deterministic ||c||_1.
-    let rejecting = SparseChallengeConfig::ExactShell {
-        count_mag1: 31,
-        count_mag2: 11,
-        operator_norm_threshold: 16,
-    };
-    let non_binding = SparseChallengeConfig::ExactShell {
-        count_mag1: 31,
-        count_mag2: 11,
-        operator_norm_threshold: 1_000,
-    };
-    assert_eq!(
-        non_binding.operator_norm_cap(),
-        non_binding.l1_norm() as u32
-    );
-
-    let draw = |cfg: &SparseChallengeConfig| {
-        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-        transcript.append_field(b"seed", &F::from_u64(0xBEEF));
-        sample_sparse_challenges::<F, _, DR>(&mut transcript, b"opnorm", 32, cfg, 0, false).unwrap()
-    };
-
-    // The two configs bind different domain-separator bytes (the threshold is
-    // part of the transcript), so they must not collide even though the shell
-    // shape is identical.
-    assert_ne!(
-        rejecting.domain_separator_bytes(),
-        non_binding.domain_separator_bytes()
-    );
-    // The non-binding draw still produces a well-formed shell sequence.
-    let challenges = draw(&non_binding);
-    assert_eq!(challenges.len(), 32);
-    for c in &challenges {
-        assert_eq!(l1_norm(c), non_binding.l1_norm() as u64);
-    }
-}
-
-#[test]
-fn tensor_product_matches_dense_ring_product() {
+fn dense_negacyclic_product_reference_handles_wrap_and_cancellation() {
     const TD: usize = 8;
     let left = SparseChallenge {
-        positions: vec![0, 6],
-        coeffs: vec![2, -1],
+        positions: vec![0, 1],
+        coeffs: vec![1, 1],
     };
     let right = SparseChallenge {
-        positions: vec![3, 5],
-        coeffs: vec![1, 4],
+        positions: vec![0, TD as u32 - 1],
+        coeffs: vec![1, 1],
     };
 
-    let product = IntegerChallenge::tensor_product::<TD>(&left, &right).unwrap();
     let dense_product = dense_negacyclic_mul(
         &sparse_challenge_to_dense::<F, TD>(&left).unwrap(),
         &sparse_challenge_to_dense::<F, TD>(&right).unwrap(),
     );
+    let mut expected = [F::zero(); TD];
+    expected[1] = F::one();
+    expected[TD - 1] = F::one();
 
-    assert_eq!(integer_challenge_to_dense::<F, TD>(&product), dense_product);
+    assert_eq!(dense_product, expected);
 }
 
 #[test]
@@ -574,7 +439,6 @@ fn tensor_sampling_uses_two_vectors() {
         &ChallengeShape::Tensor,
         fold_challenge_labels(),
         0,
-        false,
     )
     .unwrap();
 
@@ -588,7 +452,46 @@ fn tensor_sampling_uses_two_vectors() {
     assert_eq!(tensor.right_len, 4);
     assert_eq!(tensor.left.len(), 4);
     assert_eq!(tensor.right.len(), 8);
-    assert_eq!(tensor.expand_integer::<TD>().unwrap().len(), 16);
+    assert_eq!(tensor.total_blocks().unwrap(), 16);
+}
+
+#[test]
+fn tensor_effective_l2_sq_max_is_deterministic_product_envelope() {
+    let d64 = SparseChallengeConfig::ExactShell {
+        count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
+        count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+    };
+    assert_eq!(d64.l1_norm(), 51);
+    assert_eq!(d64.challenge_l2_sq_max(), 71);
+    assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d64), 71);
+    assert_eq!(
+        ChallengeShape::Tensor.effective_l2_sq_max(&d64),
+        51u128 * 51 * 71
+    );
+
+    let d128 = SparseChallengeConfig::Uniform {
+        weight: 31,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    assert_eq!(d128.l1_norm(), 31);
+    assert_eq!(d128.challenge_l2_sq_max(), 31);
+    assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d128), 31);
+    assert_eq!(
+        ChallengeShape::Tensor.effective_l2_sq_max(&d128),
+        31u128 * 31 * 31
+    );
+
+    let d256 = SparseChallengeConfig::Uniform {
+        weight: 23,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    assert_eq!(d256.l1_norm(), 23);
+    assert_eq!(d256.challenge_l2_sq_max(), 23);
+    assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d256), 23);
+    assert_eq!(
+        ChallengeShape::Tensor.effective_l2_sq_max(&d256),
+        23u128 * 23 * 23
+    );
 }
 
 #[test]
@@ -609,7 +512,6 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         &ChallengeShape::Tensor,
         fold_challenge_labels(),
         0,
-        false,
     )
     .unwrap();
     let Challenges::Tensor {
@@ -627,7 +529,6 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         sampled.left.len(),
         &cfg,
         0,
-        false,
     )
     .unwrap();
     let left_digest =
@@ -639,7 +540,6 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         sampled.right.len(),
         &cfg,
         0,
-        false,
     )
     .unwrap();
 
@@ -652,7 +552,6 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         sampled.left.len(),
         &cfg,
         0,
-        false,
     )
     .unwrap();
     let nodigest_right = sample_sparse_challenges::<F, _, TD>(
@@ -661,7 +560,6 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         sampled.right.len(),
         &cfg,
         0,
-        false,
     )
     .unwrap();
 
@@ -671,6 +569,40 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         sampled.right, nodigest_right,
         "right challenges must be bound to the tensor-left output digest"
     );
+}
+
+#[test]
+fn tensor_preview_matches_live_sample_without_advancing_transcript() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    transcript.append_field(b"seed", &F::from_u64(0x7171));
+
+    let previewed = preview_folding_challenges::<TD>(
+        &transcript,
+        8,
+        2,
+        &cfg,
+        &ChallengeShape::Tensor,
+        fold_challenge_labels(),
+        7,
+    )
+    .unwrap();
+    let live = sample_folding_challenges::<F, _, TD>(
+        &mut transcript,
+        8,
+        2,
+        &cfg,
+        &ChallengeShape::Tensor,
+        fold_challenge_labels(),
+        7,
+    )
+    .unwrap();
+
+    assert_eq!(previewed, live);
 }
 
 #[test]
@@ -687,7 +619,7 @@ fn tensor_left_digest_rejects_duplicate_positions() {
 }
 
 #[test]
-fn tensor_lazy_evals_match_expanded_products() {
+fn tensor_lazy_evals_match_ring_product_reference() {
     const TD: usize = 8;
     let cfg = SparseChallengeConfig::Uniform {
         weight: 2,
@@ -703,7 +635,6 @@ fn tensor_lazy_evals_match_expanded_products() {
         &ChallengeShape::Tensor,
         fold_challenge_labels(),
         0,
-        false,
     )
     .unwrap();
 
@@ -712,19 +643,18 @@ fn tensor_lazy_evals_match_expanded_products() {
     let Challenges::Tensor { factored } = &challenges else {
         panic!("expected tensor challenges");
     };
-    let expanded = factored
-        .expand_integer::<TD>()
-        .unwrap()
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows))
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let expected = (0..factored.total_blocks().unwrap())
+        .map(|block_idx| {
+            let (_, _, left, right) = factored.factors_for_logical_block(block_idx).unwrap();
+            tensor_product_eval::<F, TD>(left, right, &alpha_pows)
+        })
+        .collect::<Vec<_>>();
 
-    assert_eq!(lazy, expanded);
+    assert_eq!(lazy, expected);
 }
 
 #[test]
-fn tensor_factored_aggregate_matches_expanded_products() {
+fn tensor_factored_aggregate_matches_ring_product_reference() {
     const TD: usize = 8;
     let tensor = TensorChallenges {
         left: vec![
@@ -793,13 +723,13 @@ fn tensor_factored_aggregate_matches_expanded_products() {
         .eval_factored_aggregate_at_pows::<F, F, TD>(claim_idx, &u_weights, &v_weights, &alpha_pows)
         .unwrap();
 
-    let expanded = tensor.expand_integer::<TD>().unwrap();
-    let start = claim_idx * tensor.left_len * tensor.right_len;
     let mut expected = F::zero();
     for (p, &u) in u_weights.iter().enumerate() {
         for (q, &v) in v_weights.iter().enumerate() {
-            let idx = start + p * tensor.right_len + q;
-            expected += u * v * expanded[idx].eval_at_pows::<F, F, TD>(&alpha_pows).unwrap();
+            let block_idx =
+                claim_idx * tensor.left_len * tensor.right_len + p * tensor.right_len + q;
+            let (_, _, left, right) = tensor.factors_for_logical_block(block_idx).unwrap();
+            expected += u * v * tensor_product_eval::<F, TD>(left, right, &alpha_pows);
         }
     }
 
@@ -807,7 +737,7 @@ fn tensor_factored_aggregate_matches_expanded_products() {
 }
 
 #[test]
-fn tensor_evals_at_pows_match_expanded_integer_reference() {
+fn tensor_evals_at_pows_match_ring_product_reference() {
     const TD: usize = 8;
     let tensor = TensorChallenges {
         left: vec![
@@ -837,11 +767,11 @@ fn tensor_evals_at_pows_match_expanded_integer_reference() {
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(13));
 
     let got = tensor.evals_at_pows::<F, F, TD>(&alpha_pows).unwrap();
-    let expected = tensor
-        .expand_integer::<TD>()
-        .unwrap()
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows).unwrap())
+    let expected = (0..tensor.total_blocks().unwrap())
+        .map(|block_idx| {
+            let (_, _, left, right) = tensor.factors_for_logical_block(block_idx).unwrap();
+            tensor_product_eval::<F, TD>(left, right, &alpha_pows)
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(got, expected);

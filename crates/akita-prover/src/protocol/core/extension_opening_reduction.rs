@@ -11,11 +11,7 @@ pub(in crate::protocol::core) struct PreparedExtensionOpeningReduction<E: FieldC
     pub(in crate::protocol::core) padded_point: Vec<E>,
     pub(in crate::protocol::core) split_bits: usize,
     pub(in crate::protocol::core) eta: Vec<E>,
-    #[cfg(feature = "zk")]
-    pub(in crate::protocol::core) input_claim: E,
     pub(in crate::protocol::core) true_input_claim: E,
-    #[cfg(feature = "zk")]
-    pub(in crate::protocol::core) sumcheck_pads: Vec<CompressedUniPoly<E>>,
 }
 
 pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: FieldCore> {
@@ -193,11 +189,9 @@ pub(in crate::protocol::core) fn prepare_extension_opening_reduction<
     backend: &B,
     prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
     polys: &[&P],
-    opening_batch: &VerifierOpeningBatch<'_, E>,
-    #[cfg(feature = "zk")] public_openings: Option<&[E]>,
+    opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<PreparedExtensionOpeningReduction<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -208,7 +202,7 @@ where
         + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>
         + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
-    let num_claims = opening_batch.num_polynomials();
+    let num_claims = opening_batch.num_total_polynomials();
     let num_vars = opening_batch.num_vars();
     let _span =
         tracing::info_span!("prepare_extension_opening_reduction", num_claims, num_vars).entered();
@@ -256,17 +250,6 @@ where
             row_partials_by_claim.push(row_partials);
         }
     }
-    #[cfg(feature = "zk")]
-    let (partial_masks, sumcheck_pads) = zk_hiding
-        .take_extension_opening_reduction_pads::<E>(partials.len(), num_vars - split_bits)?;
-    #[cfg(feature = "zk")]
-    let proof_partials = partials
-        .iter()
-        .copied()
-        .zip(partial_masks)
-        .map(|(partial, mask)| partial + mask)
-        .collect::<Vec<_>>();
-    #[cfg(not(feature = "zk"))]
     let proof_partials = partials.clone();
     let row_coefficients = if pad_base_evals {
         if num_claims != 1 {
@@ -276,22 +259,9 @@ where
         }
         vec![E::one()]
     } else {
-        #[cfg(feature = "zk")]
-        let transcript_openings = if let Some(public_openings) = public_openings {
-            if public_openings.len() != openings.len() {
-                return Err(AkitaError::InvalidSize {
-                    expected: openings.len(),
-                    actual: public_openings.len(),
-                });
-            }
-            public_openings
-        } else {
-            openings.as_slice()
-        };
-        #[cfg(not(feature = "zk"))]
         let transcript_openings = openings.as_slice();
         append_claim_values_to_transcript::<F, E, T>(transcript_openings, transcript);
-        let opening_shape = opening_batch.to_shape();
+        let opening_shape = opening_batch.layout()?;
         sample_public_row_coefficients::<F, E, T>(&opening_shape, transcript)?
     };
     if row_partials_by_claim.len() != row_coefficients.len() {
@@ -343,7 +313,6 @@ where
             tensor_reduction_claim_from_rows::<F, E>(row_partials, &eta)
                 .map(|claim| acc + coeff * claim)
         })?;
-    #[cfg(not(feature = "zk"))]
     debug_assert_eq!(input_claim, true_input_claim);
 
     let tail_point = &padded_point[split_bits..];
@@ -363,11 +332,7 @@ where
         padded_point,
         split_bits,
         eta,
-        #[cfg(feature = "zk")]
-        input_claim,
         true_input_claim,
-        #[cfg(feature = "zk")]
-        sumcheck_pads,
     })
 }
 
@@ -376,12 +341,10 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B
     tensor_backend: &B,
     tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
     polys: &[&P],
-    opening_batch: &VerifierOpeningBatch<'_, E>,
-    #[cfg(feature = "zk")] public_openings: Option<&[E]>,
+    opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
     path: &'static str,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -395,7 +358,7 @@ where
     let _span = tracing::info_span!(
         "prove_extension_opening_reduction",
         path,
-        num_claims = opening_batch.num_polynomials()
+        num_claims = opening_batch.num_total_polynomials()
     )
     .entered();
     let backend = tensor_backend;
@@ -404,12 +367,8 @@ where
         tensor_prepared,
         polys,
         opening_batch,
-        #[cfg(feature = "zk")]
-        public_openings,
         pad_base_evals,
         transcript,
-        #[cfg(feature = "zk")]
-        zk_hiding,
     )?;
     let tail_point = &prepared.padded_point[prepared.split_bits..];
     let prover_claim =
@@ -429,20 +388,9 @@ where
         num_rounds = prover.num_rounds()
     )
     .entered();
-    #[cfg(not(feature = "zk"))]
     let (sumcheck_proof, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
     })?;
-    #[cfg(feature = "zk")]
-    let (sumcheck_proof, rho) = prover.prove_zk::<F, T, _>(
-        prepared.input_claim,
-        transcript,
-        |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-        prepared.sumcheck_pads,
-    )?;
-    #[cfg(feature = "zk")]
-    let final_claim_public =
-        masked_sumcheck_final_claim(prepared.input_claim, &sumcheck_proof, &rho)?;
     let final_terms = prover.final_terms().ok_or_else(|| {
         AkitaError::InvalidInput(format!(
             "{path} extension-opening reduction has not reached a final point"
@@ -463,9 +411,6 @@ where
         .fold(E::zero(), |acc, (coeff, witness, factor)| {
             acc + coeff * witness * factor
         });
-    #[cfg(feature = "zk")]
-    let final_claim = expected_final;
-    #[cfg(not(feature = "zk"))]
     if final_claim != expected_final {
         return Err(AkitaError::InvalidInput(format!(
             "{path} extension-opening reduction final oracle mismatch"
@@ -478,14 +423,9 @@ where
     let reduction = ExtensionOpeningReduction {
         proof: ExtensionOpeningReductionProof {
             partials: prepared.proof_partials,
-            #[cfg(not(feature = "zk"))]
             sumcheck: sumcheck_proof,
-            #[cfg(feature = "zk")]
-            sumcheck_proof_masked: sumcheck_proof,
         },
         final_claim,
-        #[cfg(feature = "zk")]
-        final_claim_public,
         final_factor,
     };
 

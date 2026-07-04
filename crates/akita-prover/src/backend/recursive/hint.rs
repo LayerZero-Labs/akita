@@ -16,10 +16,6 @@ pub struct RecursiveCommitmentHintCache<F: FieldCore> {
     decomposed_inner_row_block_sizes: Vec<usize>,
     recomposed_inner_row_coeffs: Vec<F>,
     recomposed_inner_row_block_sizes: Vec<usize>,
-    #[cfg(feature = "zk")]
-    blinding_digits: Vec<i8>,
-    #[cfg(feature = "zk")]
-    blinding_block_sizes: Vec<usize>,
     ring_dim: usize,
 }
 
@@ -31,22 +27,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     ///
     /// Returns an error if the typed hint does not carry recomposed inner rows.
     pub fn from_typed<const D: usize>(hint: AkitaCommitmentHint<F, D>) -> Result<Self, AkitaError> {
-        #[cfg(feature = "zk")]
-        let (flat_hint_digits, recomposed_inner_rows, mut blinding_by_group) =
-            hint.into_flat_parts();
-        #[cfg(not(feature = "zk"))]
         let (flat_hint_digits, recomposed_inner_rows) = hint.into_flat_parts();
-        #[cfg(feature = "zk")]
-        let blinding = {
-            if blinding_by_group.len() != 1 {
-                return Err(AkitaError::InvalidInput(
-                    "recursive commitment hint must carry exactly one blinding group".to_string(),
-                ));
-            }
-            blinding_by_group
-                .pop()
-                .ok_or_else(|| AkitaError::InvalidInput("missing recursive blinding".to_string()))?
-        };
         let decomposed_inner_row_block_sizes = flat_hint_digits.block_sizes().to_vec();
         let total_digit_planes: usize = flat_hint_digits.flat_digits().len();
         let mut decomposed_inner_rows = Vec::with_capacity(total_digit_planes * D);
@@ -68,26 +49,12 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
                 recomposed_inner_row_coeffs.extend_from_slice(ring.coefficients());
             }
         }
-        #[cfg(feature = "zk")]
-        let blinding_block_sizes = blinding.block_sizes().to_vec();
-        #[cfg(feature = "zk")]
-        let total_blinding_planes = blinding.flat_digits().len();
-        #[cfg(feature = "zk")]
-        let mut blinding_digits = Vec::with_capacity(total_blinding_planes * D);
-        #[cfg(feature = "zk")]
-        for plane in blinding.flat_digits() {
-            blinding_digits.extend_from_slice(plane);
-        }
 
         Ok(Self {
             decomposed_inner_rows,
             decomposed_inner_row_block_sizes,
             recomposed_inner_row_coeffs,
             recomposed_inner_row_block_sizes,
-            #[cfg(feature = "zk")]
-            blinding_digits,
-            #[cfg(feature = "zk")]
-            blinding_block_sizes,
             ring_dim: D,
         })
     }
@@ -126,15 +93,6 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
             return Err(AkitaError::InvalidSize {
                 expected: D,
                 actual: self.recomposed_inner_row_coeffs.len(),
-            });
-        }
-        #[cfg(feature = "zk")]
-        let (flat_blinding, blinding_remainder) = self.blinding_digits.as_chunks::<D>();
-        #[cfg(feature = "zk")]
-        if !blinding_remainder.is_empty() {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.blinding_digits.len(),
             });
         }
 
@@ -178,22 +136,9 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
             decomposed_inner_rows,
             self.decomposed_inner_row_block_sizes.clone(),
         )?;
-        #[cfg(feature = "zk")]
-        {
-            let b_blinding_digits =
-                FlatDigitBlocks::new(flat_blinding.to_vec(), self.blinding_block_sizes.clone())?;
-            Ok(AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                decomposed_inner_rows,
-                recomposed_inner_rows,
-                b_blinding_digits,
-            ))
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            Ok(AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                decomposed_inner_rows,
-                recomposed_inner_rows,
-            ))
-        }
+        Ok(AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+            decomposed_inner_rows,
+            recomposed_inner_rows,
+        ))
     }
 }

@@ -22,7 +22,6 @@ akita-types = { version = "0.1.0", path = "../akita-types" }
 
 [features]
 default = []
-zk = ["akita-types/zk"]
 
 [lints]
 workspace = true

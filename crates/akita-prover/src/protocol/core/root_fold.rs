@@ -7,9 +7,7 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-#[cfg(not(feature = "zk"))]
 use akita_types::terminal_golomb_grind_tail_t_vectors;
-#[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
 fn validate_non_eor_root_opening_shape<F, E, const D: usize>(
@@ -43,11 +41,10 @@ where
 fn prepare_root<F, E, T, P, C, O, TS, R, const D: usize>(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningData<'_, E, P, F, D>,
     root_params: &LevelParams,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
-    #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E, D>, AkitaError>
 where
@@ -75,16 +72,17 @@ where
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
-    let opening_num_vars = opening_batch.num_vars();
+    let opening_claims = claims.opening_claims();
+    let opening_batch = opening_claims.layout()?;
+    let num_claims = opening_batch.num_total_polynomials();
+    let opening_num_vars = opening_batch.max_num_vars();
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction = root_tensor_projection_enabled::<F, E, D>(opening_num_vars);
 
-    if claims.point().len() > opening_num_vars {
+    if opening_claims.point().len() > opening_num_vars {
         return Err(AkitaError::InvalidPointDimension {
             expected: opening_num_vars,
-            actual: claims.point().len(),
+            actual: opening_claims.point().len(),
         });
     }
     let flat_polys = claims.flat_polys();
@@ -95,22 +93,16 @@ where
     }
 
     let eor_opening_batch =
-        VerifierOpeningBatch::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
-    let non_eor_protocol_point = claims.point().to_vec();
+        OpeningClaims::with_padded_point(opening_claims.point(), opening_num_vars, num_claims)?;
+    let non_eor_protocol_point = opening_claims.point().to_vec();
     prepare_fold_inner::<F, E, T, P, _, C, O, TS, R, D>(
         stack,
         needs_extension_reduction,
         claims,
         &flat_polys,
         &eor_opening_batch,
-        #[cfg(feature = "zk")]
-        None,
-        #[cfg(feature = "zk")]
-        None,
         false,
         transcript,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         non_eor_protocol_point,
         || validate_non_eor_root_opening_shape::<F, E, D>(alpha_bits),
         root_params,
@@ -148,9 +140,8 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg, const D: usize>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningData<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
-    #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
@@ -191,8 +182,8 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
+    let opening_batch = claims.opening_claims().layout()?;
+    let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params;
 
     if claims.flat_polys().len() != num_claims {
@@ -210,8 +201,6 @@ where
         root_params,
         MRowLayout::WithDBlock,
         None,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         basis,
     )?;
 
@@ -225,7 +214,6 @@ where
         prepared_fold,
         setup_contribution_mode,
         false,
-        #[cfg(not(feature = "zk"))]
         None,
     )?
     .get_intermediate()
@@ -257,12 +245,11 @@ pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'_, E, P, F, D>,
+    claims: ProverOpeningData<'_, E, P, F, D>,
     scheduled: &ExecutionSchedule,
-    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: &CleartextWitnessShape,
+    terminal_direct_witness_shape: &CleartextWitnessShape,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
     F: FieldCore
@@ -301,8 +288,8 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.to_opening_shape::<F>()?;
-    let num_claims = opening_batch.num_polynomials();
+    let opening_batch = claims.opening_claims().layout()?;
+    let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params;
 
     if claims.flat_polys().len() != num_claims {
@@ -313,9 +300,6 @@ where
 
     claims.append_to_transcript::<T>(transcript)?;
 
-    #[cfg(feature = "zk")]
-    let owned_zk_hiding = std::mem::replace(zk_hiding, ZkHidingProverState::new(Vec::new()));
-    #[cfg(not(feature = "zk"))]
     let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
         root_params,
         MRowLayout::WithoutDBlock,
@@ -327,12 +311,7 @@ where
         claims,
         root_params,
         MRowLayout::WithoutDBlock,
-        #[cfg(not(feature = "zk"))]
         terminal_tail_t_vectors,
-        #[cfg(feature = "zk")]
-        None,
-        #[cfg(feature = "zk")]
-        owned_zk_hiding,
         basis,
     )?;
     let prefix_slots = SetupPrefixProverRegistry::new();
@@ -346,19 +325,9 @@ where
         prepared_fold,
         setup_contribution_mode,
         true,
-        #[cfg(not(feature = "zk"))]
         Some(terminal_direct_witness_shape),
     )?
     .get_terminal()?;
 
-    #[cfg(not(feature = "zk"))]
-    {
-        Ok(terminal_result)
-    }
-    #[cfg(feature = "zk")]
-    {
-        let (terminal, returned_zk_hiding) = terminal_result;
-        *zk_hiding = returned_zk_hiding;
-        Ok(terminal)
-    }
+    Ok(terminal_result)
 }

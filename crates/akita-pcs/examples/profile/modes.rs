@@ -15,7 +15,7 @@ use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup,
-    FpExtEncoding, LevelParams, RingCommitment,
+    FpExtEncoding, LevelParams, MultiChunkProfileId, PolynomialGroupLayout, RingCommitment,
 };
 use akita_verifier::CommitmentVerifier;
 
@@ -36,7 +36,10 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     nv: usize,
 ) {
     let layout = resolve_layout::<F, Cfg>(nv);
-    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
+    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(nv),
+    ))
+    .expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout, 1, Cfg::decomposition().field_bits());
     run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan));
@@ -78,9 +81,12 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
 {
     // The dense profile opens one polynomial at one point, so the schedule key
     // is the singleton root the prover actually resolves via
-    // `new_from_opening_batch`.
+    // `new_from_layout`.
     let layout = resolve_layout::<FF, Cfg>(nv);
-    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
+    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(nv),
+    ))
+    .expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout, 1, Cfg::decomposition().field_bits());
     run_dense_for::<FF, D, Cfg>(label, nv, &layout, Some(&plan));
@@ -136,13 +142,16 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 "[{label}] fixed onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
             );
         }
-        let plan =
-            Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(nv),
+        ))
+        .expect("schedule plan");
         print_layout(&layout, 1, Cfg::decomposition().field_bits());
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan));
     } else {
-        let schedule_key = AkitaScheduleLookupKey::new(nv, num_polys);
-        let plan = Cfg::runtime_schedule(schedule_key).expect("schedule plan");
+        let schedule_key = PolynomialGroupLayout::new(nv, num_polys);
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_key))
+            .expect("schedule plan");
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
@@ -228,11 +237,18 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
-    // Tiered second-tier commitment (F). Only tiers with a batch (B > A), so
-    // run with `AKITA_NUM_POLYS=16` or more; excluded from the `all` sweep.
+    // Chunked relation (distributed prover witness layout on leading fold levels).
     ProfileMode {
-        name: "onehot_fp128_d64_tiered",
-        run: run_profile_onehot_fp128_d64_tiered,
+        name: "onehot_fp128_d64_multi_chunk_w2r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w2r2,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk_w4r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w4r2,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_d64_multi_chunk_w8r2,
     },
     ProfileMode {
         name: "dense_fp32_d64",
@@ -279,7 +295,9 @@ const PROFILE_MODES: &[ProfileMode] = &[
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_tensor",
-    "onehot_fp128_d64_tiered",
+    "onehot_fp128_d64_multi_chunk_w2r2",
+    "onehot_fp128_d64_multi_chunk_w4r2",
+    "onehot_fp128_d64_multi_chunk_w8r2",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
@@ -353,6 +371,52 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
 }
 
+fn run_profile_onehot_fp128_d64_multi_chunk_named<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+>(
+    label: &str,
+    profile: MultiChunkProfileId,
+    nv: usize,
+    num_polys: usize,
+) {
+    let prime = fp128_prime_label();
+    let onehot_k = onehot_k_for_num_vars(nv);
+    let title = format!(
+        "=== {label} (fp128, {prime}, D=64, 1-of-{onehot_k}, distributed chunked relation, num_chunks={} x {} leading levels) ===",
+        profile.num_chunks(),
+        profile.num_activated_levels(),
+    );
+    run_onehot_mode::<D, Cfg>(label, &title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp128_d64_multi_chunk_w8r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunk>(
+        "onehot_fp128_d64_multi_chunk_w8r2",
+        MultiChunkProfileId::W8R2,
+        nv,
+        num_polys,
+    );
+}
+
+fn run_profile_onehot_fp128_d64_multi_chunk_w2r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunkW2R2>(
+        "onehot_fp128_d64_multi_chunk_w2r2",
+        MultiChunkProfileId::W2R2,
+        nv,
+        num_polys,
+    );
+}
+
+fn run_profile_onehot_fp128_d64_multi_chunk_w4r2(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp128_d64_multi_chunk_named::<64, fp128::D64OneHotMultiChunkW4R2>(
+        "onehot_fp128_d64_multi_chunk_w4r2",
+        MultiChunkProfileId::W4R2,
+        nv,
+        num_polys,
+    );
+}
+
 fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
     type Cfg = tensor_verifier::fp128::D64OneHotTensor;
     let prime = fp128_prime_label();
@@ -367,16 +431,6 @@ fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
         )
     };
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tensor", &title, nv, num_polys);
-}
-
-fn run_profile_onehot_fp128_d64_tiered(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D64OneHotTiered;
-    let prime = fp128_prime_label();
-    let onehot_k = onehot_k_for_num_vars(nv);
-    let title = format!(
-        "=== onehot_fp128_d64_tiered (fp128, {prime}, D=64, 1-of-{onehot_k}, tiered F-commit, batch={num_polys}) ==="
-    );
-    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tiered", &title, nv, num_polys);
 }
 
 fn run_profile_dense_fp128_d32(nv: usize, num_polys: usize) {
@@ -416,13 +470,9 @@ fn run_profile_onehot_fp128_d128(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp32_d64(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp32_d64_with_label("onehot_fp32_d64", nv, num_polys);
-}
-
-fn run_profile_onehot_fp32_d64_with_label(label: &str, nv: usize, num_polys: usize) {
     type Cfg = fp32::D64OneHot;
     let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
-    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
+    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d64", &title, nv, num_polys);
 }
 
 fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
@@ -440,13 +490,9 @@ fn run_profile_dense_fp32_d128(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp32_d128(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp32_d128_with_label("onehot_fp32_d128", nv, num_polys);
-}
-
-fn run_profile_onehot_fp32_d128_with_label(label: &str, nv: usize, num_polys: usize) {
     type Cfg = fp32::D128OneHot;
     let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
-    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
+    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d128", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp64_d32(nv: usize, num_polys: usize) {
@@ -456,13 +502,9 @@ fn run_profile_onehot_fp64_d32(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp64_d64(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp64_d64_with_label("onehot_fp64_d64", nv, num_polys);
-}
-
-fn run_profile_onehot_fp64_d64_with_label(label: &str, nv: usize, num_polys: usize) {
     type Cfg = fp64::D64OneHot;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
-    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
+    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64_d64", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp64_d128(nv: usize, num_polys: usize) {
@@ -516,7 +558,7 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
 
 fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> LevelParams {
     Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout")
 }

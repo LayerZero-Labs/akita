@@ -70,26 +70,6 @@ where
         digits: &[[i8; D]],
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Negacyclic ZK B-blinding digit mat-vec rows.
-    #[cfg(feature = "zk")]
-    fn zk_b_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Negacyclic ZK D-blinding digit mat-vec rows.
-    #[cfg(feature = "zk")]
-    fn zk_d_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.
@@ -104,26 +84,6 @@ where
         row_len: usize,
         digits: &[[i8; D]],
         log_basis: u32,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Cyclic ZK B-blinding digit mat-vec rows.
-    #[cfg(feature = "zk")]
-    fn zk_b_cyclic_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Cyclic ZK D-blinding digit mat-vec rows.
-    #[cfg(feature = "zk")]
-    fn zk_d_cyclic_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        row_width: usize,
-        digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 

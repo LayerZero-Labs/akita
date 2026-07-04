@@ -32,7 +32,6 @@ tracing = "0.1"
 [features]
 default = []
 parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
-zk = ["akita-sumcheck/zk"]
 
 [dev-dependencies]
 rand = "0.8"

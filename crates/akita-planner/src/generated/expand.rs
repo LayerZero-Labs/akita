@@ -21,11 +21,32 @@ use crate::generated::{
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    choose_op_norm_rejection_for_a_role, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_t,
-    rounded_up_collision_norm_w,
+    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
+    rounded_up_collision_linf_t, rounded_up_collision_linf_w, SisTableKey,
 };
-use akita_types::{AjtaiKeyParams, DecompositionParams, LevelParams};
+use akita_types::{AjtaiKeyParams, DecompositionParams, GroupRootParams, LevelParams};
+
+fn require_exact_rank(
+    role: &str,
+    key: SisTableKey,
+    width: usize,
+    stored_rank: usize,
+) -> Result<(), AkitaError> {
+    let expected = min_secure_rank(key, width as u64).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "no audited {role}-role rank for generated schedule \
+             (min_security_bits={}, family={:?}, d={}, coeff_linf_bound={}, width={width})",
+            key.min_security_bits, key.family, key.ring_dimension, key.coeff_linf_bound
+        ))
+    })?;
+    if stored_rank != expected {
+        return Err(AkitaError::InvalidSetup(format!(
+            "generated schedule {role}-rank mismatch: stored n_{role} = {stored_rank}, recomputed n_{role} = {expected}"
+        )));
+    }
+    Ok(())
+}
 
 impl GeneratedFoldStep {
     /// Expand this compact fold step into the full committed
@@ -82,6 +103,7 @@ impl GeneratedFoldStep {
         let is_root = fold_level == 0;
         let log_basis = self.log_basis;
         let sis_family = policy.sis_family;
+        let min_security_bits = policy.min_sis_security_bits;
 
         // Block geometry: the root spans `2^m_vars` ring elements per block;
         // recursive levels pack `ceil(num_ring / num_blocks)` instead.
@@ -100,9 +122,9 @@ impl GeneratedFoldStep {
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
-        // batch factor (the root commits `num_claims` polynomials); the stored
-        // `n_a` sizes the B-role width. Unlike the planner DP, expansion audits
-        // the *shipped* ranks against these (norm, width) via `try_new`.
+        // batch factor (the root commits `num_claims` polynomials); `n_a` is the
+        // A-matrix row count. Unlike the planner DP, expansion audits the
+        // *shipped* ranks against these (norm, width) via `try_new`.
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
@@ -119,7 +141,8 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (op_norm_rejection, a_bucket, expected_n_a) = choose_op_norm_rejection_for_a_role(
+        let (a_bucket, _) = committed_fold_a_role_rank(
+            min_security_bits,
             sis_family,
             ring_d,
             decomp,
@@ -133,15 +156,21 @@ impl GeneratedFoldStep {
             inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
-        if self.n_a as usize != expected_n_a {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated schedule A-rank mismatch: stored n_a = {}, recomputed n_a = {expected_n_a}",
-                self.n_a
-            )));
-        }
+        require_exact_rank(
+            "a",
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: a_bucket,
+            },
+            inner_width,
+            self.n_a as usize,
+        )?;
 
-        let b_bucket = rounded_up_collision_norm_t(sis_family, ring_d, log_basis)
-            .ok_or_else(|| no_layout("B"))?;
+        let b_bucket =
+            rounded_up_collision_linf_t(min_security_bits, sis_family, ring_d, log_basis)
+                .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
@@ -150,8 +179,9 @@ impl GeneratedFoldStep {
         )
         .ok_or_else(|| no_layout("B"))?;
 
-        let d_bucket = rounded_up_collision_norm_w(sis_family, ring_d, log_basis)
-            .ok_or_else(|| no_layout("D"))?;
+        let d_bucket =
+            rounded_up_collision_linf_w(min_security_bits, sis_family, ring_d, log_basis)
+                .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
             .ok_or_else(|| no_layout("D"))?;
 
@@ -165,45 +195,29 @@ impl GeneratedFoldStep {
             0
         };
 
-        // Tiered second tier (`B'`/`F`): the compact entry stores the committed
-        // layout directly — `n_b` is the shrunk `B'` rank, `tier_split` is the
-        // split factor, and `n_f` is the second-tier `F` rank. The `B'` width is
-        // the full outer width divided by the split, and `F` commits
-        // `tier_split · n_b · num_digits_open` digit columns at the same
-        // digit-range bucket as `B`/`D`. A single-tier step stores `None`/`None`
-        // and keeps the full `B` width. (No `apply_tiering` re-search: the table
-        // is the frozen snapshot; the DP path owns `apply_tiering` for misses.)
-        let (b_width, tier_split, f_key) = match (self.tier_split, self.n_f) {
-            (None, None) => (outer_width, 1usize, None),
-            (Some(f), Some(n_f)) => {
-                let f = f as usize;
-                if f <= 1 {
-                    return Err(AkitaError::InvalidSetup(
-                        "generated tiered step has tier_split <= 1".to_string(),
-                    ));
-                }
-                if outer_width == 0 || !outer_width.is_multiple_of(f) {
-                    return Err(AkitaError::InvalidSetup(
-                        "generated tiered B' width does not divide the full outer width"
-                            .to_string(),
-                    ));
-                }
-                let b_small_width = outer_width / f;
-                let f_width = f
-                    .checked_mul(self.n_b as usize)
-                    .and_then(|w| w.checked_mul(num_digits_open_val))
-                    .ok_or_else(|| no_layout("F"))?;
-                let f_key =
-                    AjtaiKeyParams::try_new(sis_family, n_f as usize, f_width, b_bucket, ring_d)?;
-                (b_small_width, f, Some(f_key))
-            }
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "generated tiered step must set both tier_split and n_f, or neither"
-                        .to_string(),
-                ));
-            }
-        };
+        // Size the committed B matrix at the full outer width.
+        require_exact_rank(
+            "b",
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: b_bucket,
+            },
+            outer_width,
+            self.n_b as usize,
+        )?;
+        require_exact_rank(
+            "d",
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: d_bucket,
+            },
+            d_matrix_width,
+            self.n_d as usize,
+        )?;
 
         // Audit each shipped rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead
@@ -212,6 +226,7 @@ impl GeneratedFoldStep {
             ring_dimension: ring_d,
             log_basis,
             a_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_a as usize,
                 inner_width,
@@ -219,13 +234,15 @@ impl GeneratedFoldStep {
                 ring_d,
             )?,
             b_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_b as usize,
-                b_width,
+                outer_width,
                 b_bucket,
                 ring_d,
             )?,
             d_key: AjtaiKeyParams::try_new(
+                min_security_bits,
                 sis_family,
                 self.n_d as usize,
                 d_matrix_width,
@@ -237,21 +254,181 @@ impl GeneratedFoldStep {
             m_vars,
             r_vars,
             stage1_config: ring_challenge_cfg,
-            op_norm_rejection,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
             num_digits_open,
             onehot_chunk_size,
-            tier_split,
-            f_key,
             fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
             ),
             num_digits_fold_one: 1,
             field_bits_hint: 0,
             cached_num_digits_fold_claims: 0,
             cached_num_digits_fold_value: 1,
+            // The chunk layout depends on the step's role (fold vs root-direct
+            // commit), which the caller knows; default here and let the caller
+            // (`schedule_from_entry`) stamp the per-level value for fold steps so
+            // a root-direct commit stays single-chunk.
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
+            precommitted_groups: Vec::new(),
         };
         params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
+    }
+
+    /// Expand a compact root step for a grouped-root schedule.
+    ///
+    /// The main group's A/B layouts are claim-scaled by `main_num_polys`, while
+    /// the shared D matrix has one segment for the main group plus the frozen
+    /// precommitted group segments. This intentionally differs from scalar
+    /// batched roots, whose D width is scaled by the total polynomial count.
+    pub fn expand_to_grouped_root_level_params(
+        &self,
+        policy: &PlannerPolicy,
+        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        fold_shape: TensorChallengeShape,
+        main_num_polys: usize,
+        precommitted_groups: Vec<GroupRootParams>,
+        precommitted_d_width: usize,
+    ) -> Result<LevelParams, AkitaError> {
+        let ring_d = self.ring_d as usize;
+        if ring_d == 0 || ring_d != policy.ring_dimension {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated grouped root ring dimension {ring_d} does not match policy D={}",
+                policy.ring_dimension
+            )));
+        }
+        if precommitted_groups.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "generated grouped root requires precommitted groups".to_string(),
+            ));
+        }
+
+        let log_basis = self.log_basis;
+        let sis_family = policy.sis_family;
+        let min_security_bits = policy.min_sis_security_bits;
+        let m_vars = self.m_vars as usize;
+        let r_vars = self.r_vars as usize;
+        let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidSetup("generated grouped root 2^r_vars overflows usize".to_string())
+        })?;
+        let block_len = 1usize.checked_shl(m_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidSetup("generated grouped root 2^m_vars overflows usize".to_string())
+        })?;
+
+        let no_layout = |role: &str| {
+            AkitaError::InvalidSetup(format!(
+                "no audited {role}-role layout for generated grouped root \
+                 (family={sis_family:?}, d={ring_d}, log_basis={log_basis})"
+            ))
+        };
+        let decomp = DecompositionParams {
+            log_basis,
+            ..policy.decomposition
+        };
+        let ring_challenge_cfg = ring_challenge_config(ring_d)?;
+        let num_digits_commit = num_digits_s_commit(decomp, true);
+        let num_digits_open_val = num_digits_open(decomp);
+
+        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+            .ok_or_else(|| no_layout("A"))?;
+        let (a_bucket, _) = committed_fold_a_role_rank(
+            min_security_bits,
+            sis_family,
+            ring_d,
+            decomp,
+            &ring_challenge_cfg,
+            fold_shape,
+            true,
+            policy.onehot_chunk_size,
+            policy.ring_subfield_norm_bound,
+            r_vars,
+            main_num_polys,
+            inner_width as u64,
+        )
+        .ok_or_else(|| no_layout("A"))?;
+        require_exact_rank(
+            "a",
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: ring_d as u32,
+                coeff_linf_bound: a_bucket,
+            },
+            inner_width,
+            self.n_a as usize,
+        )?;
+
+        let b_bucket =
+            rounded_up_collision_linf_t(min_security_bits, sis_family, ring_d, log_basis)
+                .ok_or_else(|| no_layout("B"))?;
+        let outer_width = decomposed_t_ring_count(
+            self.n_a as usize,
+            num_digits_open_val,
+            num_blocks,
+            main_num_polys,
+        )
+        .ok_or_else(|| no_layout("B"))?;
+
+        let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, 1)
+            .ok_or_else(|| no_layout("D"))?;
+        let d_matrix_width = main_d_width
+            .checked_add(precommitted_d_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("generated grouped D width overflow".into()))?;
+        let d_bucket =
+            rounded_up_collision_linf_w(min_security_bits, sis_family, ring_d, log_basis)
+                .ok_or_else(|| no_layout("D"))?;
+
+        let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
+            policy.onehot_chunk_size
+        } else {
+            0
+        };
+
+        let params = LevelParams {
+            ring_dimension: ring_d,
+            log_basis,
+            a_key: AjtaiKeyParams::try_new(
+                min_security_bits,
+                sis_family,
+                self.n_a as usize,
+                inner_width,
+                a_bucket,
+                ring_d,
+            )?,
+            b_key: AjtaiKeyParams::try_new(
+                min_security_bits,
+                sis_family,
+                self.n_b as usize,
+                outer_width,
+                b_bucket,
+                ring_d,
+            )?,
+            d_key: AjtaiKeyParams::try_new(
+                min_security_bits,
+                sis_family,
+                self.n_d as usize,
+                d_matrix_width,
+                d_bucket,
+                ring_d,
+            )?,
+            num_blocks,
+            block_len,
+            m_vars,
+            r_vars,
+            stage1_config: ring_challenge_cfg,
+            fold_challenge_shape: fold_shape,
+            num_digits_commit,
+            num_digits_open: num_digits_open_val,
+            onehot_chunk_size,
+            fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
+            ),
+            num_digits_fold_one: 1,
+            field_bits_hint: 0,
+            cached_num_digits_fold_claims: 0,
+            cached_num_digits_fold_value: 1,
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
+            precommitted_groups,
+        };
+        params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)
     }
 }
 
@@ -304,24 +481,28 @@ impl GeneratedScheduleTableEntry {
     ///
     /// Returns an error when any invariant is violated.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        if self.steps.is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "generated schedule table entry must contain at least one step".to_string(),
-            ));
-        }
-        let last = self.steps.len() - 1;
-        for (idx, step) in self.steps.iter().enumerate() {
-            if matches!(step, GeneratedStep::Direct(_)) && idx != last {
-                return Err(AkitaError::InvalidSetup(
-                    "generated direct step must be terminal".to_string(),
-                ));
-            }
-        }
-        if !matches!(self.steps[last], GeneratedStep::Direct(_)) {
-            return Err(AkitaError::InvalidSetup(
-                "generated schedule must end in a terminal direct step".to_string(),
-            ));
-        }
-        Ok(())
+        validate_generated_steps(self.steps)
     }
+}
+
+fn validate_generated_steps(steps: &[GeneratedStep]) -> Result<(), AkitaError> {
+    if steps.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "generated schedule table entry must contain at least one step".to_string(),
+        ));
+    }
+    let last = steps.len() - 1;
+    for (idx, step) in steps.iter().enumerate() {
+        if matches!(step, GeneratedStep::Direct(_)) && idx != last {
+            return Err(AkitaError::InvalidSetup(
+                "generated direct step must be terminal".to_string(),
+            ));
+        }
+    }
+    if !matches!(steps[last], GeneratedStep::Direct(_)) {
+        return Err(AkitaError::InvalidSetup(
+            "generated schedule must end in a terminal direct step".to_string(),
+        ));
+    }
+    Ok(())
 }

@@ -1,6 +1,4 @@
 use super::*;
-#[cfg(feature = "zk")]
-use crate::backend::RecursiveWitnessFlat;
 use crate::compute::{
     tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, OpeningProveBackendFor,
@@ -9,17 +7,10 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-#[cfg(feature = "zk")]
-use akita_types::terminal_witness_segment_layout;
-use cfg_if::cfg_if;
 
-#[cfg(not(feature = "zk"))]
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
-#[cfg(not(feature = "zk"))]
 use akita_types::build_segment_typed_witness;
-#[cfg(not(feature = "zk"))]
 use akita_types::validate_segment_typed_z_payload;
-#[cfg(not(feature = "zk"))]
 use akita_types::CleartextWitnessShape;
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
@@ -28,10 +19,25 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
-) -> Result<(RingRelationSegmentLayout, akita_types::TraceWeightLayout), AkitaError> {
-    let segment = instance.segment_layout(lp)?;
-    let layout =
-        trace_weight_layout_from_segment(lp, &segment, col_bits, ring_bits, num_trace_blocks)?;
+) -> Result<
+    (
+        akita_types::WitnessChunkLayout,
+        akita_types::TraceWeightLayout,
+    ),
+    AkitaError,
+> {
+    let witness_layout = instance.segment_layout(lp, None)?;
+    let segment = *witness_layout
+        .chunks
+        .first()
+        .ok_or_else(|| AkitaError::InvalidSetup("empty witness layout".to_string()))?;
+    let layout = trace_weight_layout_from_segment(
+        lp,
+        &witness_layout,
+        col_bits,
+        ring_bits,
+        num_trace_blocks,
+    )?;
     Ok((segment, layout))
 }
 
@@ -73,7 +79,7 @@ where
 {
     let num_trace_blocks = instance
         .opening_batch()
-        .num_polynomials()
+        .num_total_polynomials()
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
@@ -90,8 +96,6 @@ where
 
 pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
     pub(in crate::protocol::core) trace_eval_target: L,
-    #[cfg(feature = "zk")]
-    pub(in crate::protocol::core) trace_eval_target_public: L,
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
     pub(in crate::protocol::core) trace_scale: L,
 }
@@ -103,13 +107,9 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, co
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<L>>,
     pub(in crate::protocol::core) trace_eval_target: L,
-    #[cfg(feature = "zk")]
-    pub(in crate::protocol::core) trace_eval_target_public: L,
     pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, L, D>>,
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<L>>,
     pub(in crate::protocol::core) trace_scale: L,
-    #[cfg(feature = "zk")]
-    pub(in crate::protocol::core) zk_hiding: ZkHidingProverState<F>,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<L>>,
 }
 
@@ -194,7 +194,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     protocol_point: &[E],
     alpha_bits: usize,
     basis: BasisMode,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
@@ -219,14 +219,14 @@ where
         row_coefficients
     } else {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        if opening_batch.num_polynomials() == 1 {
+        if opening_batch.num_total_polynomials() == 1 {
             vec![E::one()]
         } else {
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
         }
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, &openings)?;
+        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
     let trace_eval_target =
         reduction
             .as_ref()
@@ -238,13 +238,9 @@ where
                 )?;
                 Ok(reduction.final_claim)
             })?;
-    #[cfg(feature = "zk")]
-    let trace_eval_target_public = reduction
-        .as_ref()
-        .map_or(trace_eval_target, |reduction| reduction.final_claim_public);
     let trace_claim_scales = reduction
         .as_ref()
-        .map(|reduction| vec![reduction.final_factor; opening_batch.num_polynomials()]);
+        .map(|reduction| vec![reduction.final_factor; opening_batch.num_total_polynomials()]);
     let trace_scale = reduction
         .as_ref()
         .map_or(E::one(), |reduction| reduction.final_factor);
@@ -252,8 +248,6 @@ where
     Ok((
         TraceTarget {
             trace_eval_target,
-            #[cfg(feature = "zk")]
-            trace_eval_target_public,
             trace_claim_scales,
             trace_scale,
         },
@@ -277,14 +271,11 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
 >(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     needs_extension_reduction: bool,
-    fold_claims: ProverOpeningBatch<'a, E, P, F, D>,
+    fold_claims: ProverOpeningData<'a, E, P, F, D>,
     eor_polys: &[&P],
-    eor_opening_batch: &VerifierOpeningBatch<'_, E>,
-    #[cfg(feature = "zk")] public_openings: Option<&[E]>,
-    #[cfg(feature = "zk")] no_eor_trace_eval_target_public: Option<E>,
+    eor_opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
-    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
     level_params: &LevelParams,
@@ -315,7 +306,7 @@ where
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = fold_claims.to_opening_shape::<F>()?;
+    let opening_batch = fold_claims.opening_claims().layout()?;
     let fold_polys = fold_claims.flat_polys();
     let tensor = stack.tensor();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
@@ -324,13 +315,9 @@ where
             Some(tensor.prepared()),
             eor_polys,
             eor_opening_batch,
-            #[cfg(feature = "zk")]
-            public_openings,
             pad_base_evals,
             transcript,
             if pad_base_evals { "recursive" } else { "root" },
-            #[cfg(feature = "zk")]
-            &mut zk_hiding,
         )?;
         (
             proved.protocol_point,
@@ -362,12 +349,8 @@ where
                 alpha_bits,
                 basis,
                 block_order,
-                #[cfg(feature = "zk")]
-                no_eor_trace_eval_target_public,
                 pad_base_evals,
                 transcript,
-                #[cfg(feature = "zk")]
-                zk_hiding,
                 m_row_layout,
                 terminal_tail_t_vectors,
             })
@@ -401,12 +384,8 @@ where
                     alpha_bits,
                     basis,
                     block_order,
-                    #[cfg(feature = "zk")]
-                    no_eor_trace_eval_target_public,
                     pad_base_evals,
                     transcript,
-                    #[cfg(feature = "zk")]
-                    zk_hiding,
                     m_row_layout,
                     terminal_tail_t_vectors,
                 },
@@ -426,12 +405,8 @@ where
             alpha_bits,
             basis,
             block_order,
-            #[cfg(feature = "zk")]
-            no_eor_trace_eval_target_public,
             pad_base_evals,
             transcript,
-            #[cfg(feature = "zk")]
-            zk_hiding,
             m_row_layout,
             terminal_tail_t_vectors,
         })
@@ -449,22 +424,18 @@ where
     R: ComputeBackendSetup<F>,
 {
     stack: &'a ProverComputeStack<'a, F, D, C, O, TS, R>,
-    fold_claims: ProverOpeningBatch<'a, E, Q, F, D>,
+    fold_claims: ProverOpeningData<'a, E, Q, F, D>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
     row_coefficients: Option<Vec<E>>,
-    trace_opening_batch: &'a OpeningBatchShape,
+    trace_opening_batch: &'a OpeningClaimsLayout,
     level_params: &'a LevelParams,
     alpha_bits: usize,
     basis: BasisMode,
     block_order: BlockOrder,
-    #[cfg(feature = "zk")]
-    no_eor_trace_eval_target_public: Option<E>,
     pad_base_evals: bool,
     transcript: &'p mut T,
-    #[cfg(feature = "zk")]
-    zk_hiding: ZkHidingProverState<F>,
     m_row_layout: MRowLayout,
     terminal_tail_t_vectors: Option<usize>,
 }
@@ -504,12 +475,8 @@ where
         alpha_bits,
         basis,
         block_order,
-        #[cfg(feature = "zk")]
-        no_eor_trace_eval_target_public,
         pad_base_evals,
         transcript,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         m_row_layout,
         terminal_tail_t_vectors,
     } = args;
@@ -542,14 +509,6 @@ where
         row_coefficients,
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let mut trace_target = trace_target;
-    #[cfg(feature = "zk")]
-    if reduction.is_none() {
-        if let Some(public_target) = no_eor_trace_eval_target_public {
-            trace_target.trace_eval_target_public = public_target;
-        }
-    }
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
     let commitment = fold_claims.single_fold_commitment()?;
     let (instance, witness) = RingRelationProver::new(
@@ -585,19 +544,11 @@ where
         trace_scale: trace_target.trace_scale,
         trace_prepared_point: Some(prepared_point),
         trace_claim_scales,
-        #[cfg(feature = "zk")]
-        trace_eval_target_public: trace_target.trace_eval_target_public,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         row_coefficients,
     })
 }
 
-#[cfg(not(feature = "zk"))]
 pub(in crate::protocol::core) type TerminalFoldResult<F, L> = TerminalLevelProof<F, L>;
-#[cfg(feature = "zk")]
-pub(in crate::protocol::core) type TerminalFoldResult<F, L> =
-    (TerminalLevelProof<F, L>, ZkHidingProverState<F>);
 
 pub(in crate::protocol::core) enum FoldProveOutput<F: FieldCore, L: FieldCore> {
     Intermediate(Box<ProveLevelOutput<F, L>>),
@@ -654,7 +605,7 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, L, T, C, O, TS, R, Cfg, c
     prepared_fold: PreparedFold<F, L, D>,
     setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
-    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<FoldProveOutput<F, L>, AkitaError>
 where
     F: FieldCore
@@ -680,8 +631,6 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup<D>: 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = L>,
 {
-    #[cfg(feature = "zk")]
-    let mut zk_hiding = prepared_fold.zk_hiding;
     let lp = &scheduled.params;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
     let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
@@ -709,19 +658,13 @@ where
         transcript,
         is_terminal_fold,
         lp,
-        #[cfg(feature = "zk")]
-        &prepared_fold.instance,
-        #[cfg(feature = "zk")]
-        &logical_w,
         next_commitment,
         if is_terminal_fold {
             Some(scheduled.next_params.log_basis)
         } else {
             None
         },
-        #[cfg(not(feature = "zk"))]
         build_output.terminal_artifacts,
-        #[cfg(not(feature = "zk"))]
         terminal_direct_witness_shape,
     )?;
     let m_row_layout = if is_terminal_fold {
@@ -747,36 +690,14 @@ where
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
+        lp.a_key.row_len(),
         relation_rows,
         commitment_u,
     )?;
-    #[cfg(feature = "zk")]
-    let relation_claim_public = relation_claim;
-    #[cfg(feature = "zk")]
-    let stage2_round_pads;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
-        #[cfg(feature = "zk")]
-        {
-            stage2_round_pads =
-                zk_hiding.take_compressed_rounds::<L>(rs.col_bits + rs.ring_bits, 3)?;
-        }
         (None, vec![L::zero(); rs.col_bits + rs.ring_bits], L::zero())
     } else {
-        #[cfg(feature = "zk")]
-        let (stage1_round_pads, stage1_child_claim_masks, next_stage2_round_pads) =
-            zk_hiding.take_current_level_pads::<L>(rs.col_bits + rs.ring_bits, rs.b)?;
-        #[cfg(feature = "zk")]
-        {
-            stage2_round_pads = next_stage2_round_pads;
-        }
-        let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, L, T>(
-            transcript,
-            &rs,
-            #[cfg(feature = "zk")]
-            stage1_round_pads,
-            #[cfg(feature = "zk")]
-            stage1_child_claim_masks,
-        )?;
+        let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, L, T>(transcript, &rs)?;
         transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
         (Some(stage1_proof), stage1_point, s_claim)
     };
@@ -794,8 +715,6 @@ where
         stage2_trace_coeff(batching_coeff, trace_gamma, is_terminal_fold)
     };
     let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
-    #[cfg(feature = "zk")]
-    let trace_eval_target_public_claim = trace_coeff * prepared_fold.trace_eval_target_public;
     ensure_trace_stage2_supported(L::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
         Some(build_root_stage2_trace_table::<F, L, D>(
@@ -831,11 +750,6 @@ where
     let live_x_cols = rs.live_x_cols;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
-    #[cfg(feature = "zk")]
-    let stage1_s_claim = stage1_proof
-        .as_ref()
-        .map(|proof| proof.s_claim)
-        .unwrap_or_else(L::zero);
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, L, T>(
         transcript,
         batching_coeff,
@@ -843,16 +757,8 @@ where
         &stage1_point,
         s_claim,
         relation_claim,
-        #[cfg(feature = "zk")]
-        relation_claim_public,
-        #[cfg(feature = "zk")]
-        stage1_s_claim,
         trace_compact,
         trace_opening_claim,
-        #[cfg(feature = "zk")]
-        trace_eval_target_public_claim,
-        #[cfg(feature = "zk")]
-        stage2_round_pads,
     )?;
     if is_terminal_fold {
         let final_witness = final_witness.ok_or_else(|| {
@@ -860,28 +766,16 @@ where
         })?;
         let proof = TerminalLevelProof::new_with_extension_opening_reduction(
             prepared_fold.extension_opening_reduction,
-            #[cfg(not(feature = "zk"))]
-            stage2_sumcheck_proof,
-            #[cfg(feature = "zk")]
             stage2_sumcheck_proof,
             final_witness,
             fold_grind_nonce,
         );
-        cfg_if! {
-            if #[cfg(feature = "zk")] {
-                Ok(FoldProveOutput::Terminal(Box::new((proof, zk_hiding))))
-            } else {
-                Ok(FoldProveOutput::Terminal(Box::new(proof)))
-            }
-        }
+        Ok(FoldProveOutput::Terminal(Box::new(proof)))
     } else {
         let w_eval = {
             let _span = tracing::info_span!("multilinear_eval", level).entered();
             stage2_prover.final_w_eval()
         };
-        #[cfg(feature = "zk")]
-        let proof_w_eval = w_eval + zk_hiding.take_next_w_eval_mask::<L>()?;
-        #[cfg(not(feature = "zk"))]
         let proof_w_eval = w_eval;
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
         let stage3_sumcheck_proof = prove_stage3::<F, L, T, D>(
@@ -924,15 +818,9 @@ where
             fold_grind_nonce,
             stage1: stage1_proof,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck_proof,
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: stage2_sumcheck_proof,
                 next_w_commitment: w_commitment_proof.into_compact(),
-                #[cfg(not(feature = "zk"))]
                 next_w_eval: proof_w_eval,
-                #[cfg(feature = "zk")]
-                next_w_eval_masked: proof_w_eval,
             }),
             stage3_sumcheck_proof,
         };
@@ -952,10 +840,6 @@ where
                 log_basis: scheduled.next_params.log_basis,
                 sumcheck_challenges: next_opening_point,
                 opening: next_opening,
-                #[cfg(feature = "zk")]
-                opening_public: proof_w_eval,
-                #[cfg(feature = "zk")]
-                zk_hiding,
             },
         })))
     }
@@ -966,104 +850,62 @@ pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T, const D
     transcript: &mut T,
     is_terminal_fold: bool,
     lp: &LevelParams,
-    #[cfg(feature = "zk")] instance: &RingRelationInstance<F, D>,
-    #[cfg(feature = "zk")] logical_w: &RecursiveWitnessFlat,
     next_commitment: Option<NextWitnessCommitment<F>>,
     final_log_basis: Option<u32>,
-    #[cfg(not(feature = "zk"))] terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
-    #[cfg(not(feature = "zk"))] terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+    terminal_artifacts: Option<RingSwitchTerminalArtifacts<F, D>>,
+    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<BoundNextWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
     T: Transcript<F>,
 {
     if is_terminal_fold {
-        #[cfg(feature = "zk")]
-        let final_log_basis = final_log_basis.ok_or_else(|| {
-            AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
-        })?;
-        #[cfg(not(feature = "zk"))]
         final_log_basis.ok_or_else(|| {
             AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
         })?;
-        #[cfg(not(feature = "zk"))]
-        {
-            if let Some(artifacts) = terminal_artifacts {
-                if artifacts.u_concat_planes != 0 {
-                    return Err(AkitaError::InvalidInput(
-                        "segment-typed terminal witness does not support tiered u_concat"
-                            .to_string(),
-                    ));
-                }
-                let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
-                    terminal_direct_witness_shape.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal fold missing scheduled segment-typed witness shape"
-                                .to_string(),
-                        )
-                    })?
-                else {
-                    return Err(AkitaError::InvalidSetup(
-                        "terminal fold expected segment-typed witness shape".to_string(),
-                    ));
-                };
-                let (num_w_vectors, num_t_vectors, num_public_rows) =
-                    akita_types::tail_segment_multiplicities_from_layout(
-                        lp,
-                        &scheduled_shape.layout,
-                    )?;
-                let segment = build_segment_typed_witness::<D, F>(
-                    &artifacts.e_folded,
-                    &artifacts.recomposed_inner_rows,
-                    &artifacts.z_folded_centered,
-                    &artifacts.r,
-                    lp,
-                    num_w_vectors,
-                    num_t_vectors,
-                    num_public_rows,
-                    1,
-                )?;
-                if segment.layout != scheduled_shape.layout {
-                    return Err(AkitaError::InvalidSetup(
-                        "segment-typed witness layout does not match schedule".to_string(),
-                    ));
-                }
-                validate_segment_typed_z_payload(
-                    &segment,
-                    lp,
-                    num_t_vectors,
-                    scheduled_shape.z_payload_bytes,
-                )?;
-                let parts = segment.terminal_transcript_parts()?;
-                transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
-                return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));
-            }
-            return Err(AkitaError::InvalidSetup(
-                "terminal fold missing segment-typed witness artifacts".to_string(),
-            ));
-        }
-        #[cfg(feature = "zk")]
-        {
-            let final_witness =
-                CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits_with_min_bits(
-                    logical_w.as_i8_digits(),
-                    final_log_basis,
+        if let Some(artifacts) = terminal_artifacts {
+            let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
+                terminal_direct_witness_shape.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "terminal fold missing scheduled segment-typed witness shape".to_string(),
+                    )
+                })?
+            else {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal fold expected segment-typed witness shape".to_string(),
                 ));
-            let terminal_layout = terminal_witness_segment_layout(
+            };
+            let (num_w_vectors, num_t_vectors, num_z_segments) =
+                akita_types::tail_segment_multiplicities_from_layout(lp, &scheduled_shape.layout)?;
+            let segment = build_segment_typed_witness::<D, F>(
+                &artifacts.e_folded,
+                &artifacts.recomposed_inner_rows,
+                &artifacts.z_folded_centered,
+                &artifacts.r,
                 lp,
-                instance.opening_batch().num_polynomials(),
+                num_w_vectors,
+                num_t_vectors,
+                num_z_segments,
                 1,
-                F::modulus_bits(),
             )?;
-            let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
-            if final_witness.packed_i8_digits()?.as_slice() != logical_w.as_i8_digits() {
-                return Err(AkitaError::InvalidInput(
-                    "terminal final witness does not match ring-switch witness".to_string(),
+            if segment.layout != scheduled_shape.layout {
+                return Err(AkitaError::InvalidSetup(
+                    "segment-typed witness layout does not match schedule".to_string(),
                 ));
             }
+            validate_segment_typed_z_payload(
+                &segment,
+                lp,
+                num_t_vectors,
+                scheduled_shape.z_payload_bytes,
+            )?;
+            let parts = segment.terminal_transcript_parts()?;
             transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
-            return Ok((None, Some(final_witness)));
+            return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));
         }
+        return Err(AkitaError::InvalidSetup(
+            "terminal fold missing segment-typed witness artifacts".to_string(),
+        ));
     }
 
     let next_commitment = next_commitment.ok_or_else(|| {
@@ -1080,8 +922,6 @@ where
 pub(in crate::protocol::core) fn prove_stage1<F, L, T>(
     transcript: &mut T,
     rs: &RingSwitchOutput<L>,
-    #[cfg(feature = "zk")] stage1_round_pads: Vec<Vec<akita_sumcheck::EqFactoredUniPoly<L>>>,
-    #[cfg(feature = "zk")] stage1_child_claim_masks: Vec<Vec<L>>,
 ) -> Result<(AkitaStage1Proof<L>, Vec<L>, L), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -1098,15 +938,9 @@ where
         rs.col_bits,
         rs.ring_bits,
     )?;
-    cfg_if! {
-        if #[cfg(feature = "zk")] {
-            stage1_prover.prove::<F, T>(transcript, stage1_round_pads, stage1_child_claim_masks)
-        } else {
-            let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
-            let s_claim = stage1_proof.s_claim;
-            Ok((stage1_proof, stage1_point, s_claim))
-        }
-    }
+    let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
+    let s_claim = stage1_proof.s_claim;
+    Ok((stage1_proof, stage1_point, s_claim))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1117,12 +951,8 @@ fn prove_stage2<F, L, T>(
     stage1_point: &[L],
     s_claim: L,
     relation_claim: L,
-    #[cfg(feature = "zk")] relation_claim_public: L,
-    #[cfg(feature = "zk")] stage1_s_claim: L,
     trace_compact: Option<TraceTable<L>>,
     trace_opening_claim: L,
-    #[cfg(feature = "zk")] trace_eval_target_public_claim: L,
-    #[cfg(feature = "zk")] stage2_round_pads: Vec<CompressedUniPoly<L>>,
 ) -> Result<Stage2ProveResult<L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -1145,32 +975,11 @@ where
         trace_compact.clone(),
         trace_opening_claim,
     )?;
-    cfg_if! {
-        if #[cfg(feature = "zk")] {
-            let mut stage2_public_input = batching_coeff * stage1_s_claim + relation_claim_public;
-            if trace_compact.is_some() {
-                stage2_public_input += trace_eval_target_public_claim;
-            }
-            let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
-                .prove_zk::<F, T, _>(
-                    stage2_public_input,
-                    transcript,
-                    |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                    stage2_round_pads,
-                )?;
-            Ok((
-                stage2_sumcheck_proof_masked,
-                sumcheck_challenges,
-                stage2_prover,
-            ))
-        } else {
-            let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
-                .prove::<F, T, _>(transcript, |tr| {
-                    sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-                })?;
-            Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
-        }
-    }
+    let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
+        .prove::<F, T, _>(transcript, |tr| {
+            sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+        })?;
+    Ok((stage2_sumcheck_proof, sumcheck_challenges, stage2_prover))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1198,62 +1007,37 @@ where
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            #[cfg(feature = "zk")]
-            {
-                let _ = (
-                    expanded,
-                    prefix_slots,
-                    lp,
-                    next_level_params,
-                    instance,
-                    tau1,
-                    alpha,
-                    sumcheck_challenges,
-                    stage2_next_w_eval,
-                    logical_w,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    transcript,
-                );
-                Err(AkitaError::InvalidInput(
-                    "batched recursive setup stage-3 is not implemented for zk proofs".to_string(),
-                ))
-            }
-            #[cfg(not(feature = "zk"))]
-            {
-                let eta = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-                let mut stage3_prover = AkitaStage3Prover::new::<F, T, D>(
-                    expanded,
-                    prefix_slots,
-                    lp,
-                    next_level_params,
-                    instance,
-                    tau1,
-                    alpha,
-                    sumcheck_challenges,
-                    stage2_next_w_eval,
-                    logical_w,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    eta,
-                    transcript,
-                )?;
-                let output = stage3_prover.prove::<F, T, _>(transcript, |tr| {
-                    sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-                })?;
-                transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);
-                Ok(Some(Stage3ProveOutput {
-                    proof: SetupSumcheckProof {
-                        claim: output.setup_product_claim,
-                        next_w_eval: output.next_w_eval,
-                        sumcheck: output.sumcheck,
-                    },
-                    next_w_point: output.next_w_point,
+            let eta = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+            let mut stage3_prover = AkitaStage3Prover::new::<F, T, D>(
+                expanded,
+                prefix_slots,
+                lp,
+                next_level_params,
+                instance,
+                tau1,
+                alpha,
+                sumcheck_challenges,
+                stage2_next_w_eval,
+                logical_w,
+                live_x_cols,
+                col_bits,
+                ring_bits,
+                eta,
+                transcript,
+            )?;
+            let output = stage3_prover.prove::<F, T, _>(transcript, |tr| {
+                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?;
+            transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);
+            Ok(Some(Stage3ProveOutput {
+                proof: SetupSumcheckProof {
+                    claim: output.setup_product_claim,
                     next_w_eval: output.next_w_eval,
-                }))
-            }
+                    sumcheck: output.sumcheck,
+                },
+                next_w_point: output.next_w_point,
+                next_w_eval: output.next_w_eval,
+            }))
         }
         SetupContributionMode::Direct => Ok(None),
     }

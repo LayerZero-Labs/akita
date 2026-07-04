@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
-    CleartextWitnessShape, FoldStep, LevelParams, OpeningBatchShape, OpeningGroupShape,
-    PointVariableSelection, Step,
+    CleartextWitnessShape, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, Step,
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{Prime32Offset99, Prime64Offset59};
@@ -24,7 +23,7 @@ fn sample_level_params() -> LevelParams {
 }
 
 fn sample_descriptor() -> AkitaInstanceDescriptor {
-    let opening_batch = OpeningBatchShape::new(5, 3).expect("valid opening batch");
+    let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     let schedule = Schedule {
         steps: vec![
             Step::Fold(FoldStep {
@@ -35,7 +34,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             }),
             Step::Direct(crate::DirectStep {
                 current_w_len: 256,
-                witness_shape: CleartextWitnessShape::PackedDigits((64, 3)),
+                witness_shape: CleartextWitnessShape::FieldElements(64),
                 direct_bytes: 32,
                 params: None,
             }),
@@ -53,11 +52,11 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             },
             sis_modulus_family: SisModulusFamily::Q32,
             setup_seed_digest: [1; 32],
-            protocol_features: ProtocolFeatureSet { zk: false },
+            protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
         },
         PlanSection::from_schedule(&schedule),
-        CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call"),
+        CallSection::from_layout(&opening_batch, BasisMode::Lagrange).expect("call"),
     )
 }
 
@@ -68,7 +67,30 @@ fn rejects_removed_q16_sis_family_tag() {
     assert!(matches!(err, SerializationError::InvalidData(_)));
 }
 
-#[cfg(not(feature = "zk"))]
+#[test]
+fn setup_section_rejects_mismatched_zk_protocol_feature() {
+    let mut descriptor = sample_descriptor();
+    descriptor.setup.protocol_features.zk = true;
+    let err = descriptor
+        .check()
+        .expect_err("zk=true must be rejected on transparent build");
+    assert!(matches!(err, SerializationError::InvalidData(_)));
+    assert!(
+        err.to_string().contains("protocol features"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn descriptor_deserialize_rejects_zk_protocol_feature() {
+    let mut descriptor = sample_descriptor();
+    descriptor.setup.protocol_features.zk = true;
+    let bytes = descriptor.canonical_bytes().expect("serialize");
+    let err = AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &())
+        .expect_err("zk=true wire must be rejected on transparent build");
+    assert!(matches!(err, SerializationError::InvalidData(_)));
+}
+
 #[test]
 fn fold_linf_descriptor_canonical_digest_pinned() {
     let bytes = sample_descriptor()
@@ -77,14 +99,14 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
     assert_eq!(
         (bytes.len(), blake2b_256(&bytes)),
         (
-            221,
+            229,
             [
-                0x89, 0x2a, 0xd5, 0x49, 0xae, 0xec, 0xea, 0x86, 0x29, 0x96, 0x65, 0x42, 0x30, 0x4f,
-                0xdc, 0xf0, 0xd7, 0xc2, 0xc2, 0xed, 0x24, 0x34, 0xfb, 0xd4, 0x48, 0x73, 0x14, 0x1a,
-                0x1a, 0x6c, 0xcd, 0x3d,
+                0x4b, 0xb8, 0x2c, 0x87, 0xc3, 0x63, 0x2d, 0xd4, 0x3c, 0x76, 0xe4, 0x78, 0x7e, 0x90,
+                0x22, 0xa4, 0xda, 0xd6, 0x4a, 0x34, 0xfc, 0xaa, 0xc5, 0x7c, 0x9c, 0xbc, 0x8c, 0xff,
+                0x58, 0x74, 0x08, 0xea,
             ]
         ),
-        "update pinned digest after dropping CallSection num_claims from the wire"
+        "update pinned digest when descriptor setup-section bindings change"
     );
 }
 
@@ -112,7 +134,6 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
         SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,
-            operator_norm_threshold: 0,
         },
     )
     .with_decomp(4, 2, 2, 2, 0)
@@ -263,52 +284,40 @@ fn algebra_section_binds_prime_and_extension_shape() {
 
 #[test]
 fn opening_batch_digest_binds_claim_count() {
-    let left = OpeningBatchShape::new(4, 2).expect("left");
-    let right = OpeningBatchShape::new(4, 3).expect("right");
+    let left = OpeningClaimsLayout::new(4, 2).expect("left");
+    let right = OpeningClaimsLayout::new(4, 3).expect("right");
 
-    assert_ne!(digest_opening_batch(&left), digest_opening_batch(&right));
+    assert_ne!(left.opening_batch_digest(), right.opening_batch_digest());
 }
 
 #[test]
 fn opening_batch_digest_binds_group_partition() {
-    let grouped = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
-    let scalar = OpeningBatchShape::new(4, 3).expect("scalar");
+    let grouped = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped");
+    let scalar = OpeningClaimsLayout::new(4, 3).expect("scalar");
 
     assert_ne!(
-        digest_opening_batch(&grouped),
-        digest_opening_batch(&scalar)
+        grouped.opening_batch_digest(),
+        scalar.opening_batch_digest()
     );
 }
 
 #[test]
-fn opening_batch_digest_binds_point_variable_selection_order() {
-    let forward = OpeningBatchShape::from_groups(
-        2,
-        vec![OpeningGroupShape {
-            point_vars: PointVariableSelection::new(vec![0, 1], 2).expect("forward"),
-            num_polynomials: 1,
-        }],
-    )
-    .expect("forward");
-    let swapped = OpeningBatchShape::from_groups(
-        2,
-        vec![OpeningGroupShape {
-            point_vars: PointVariableSelection::new(vec![1, 0], 2).expect("swapped"),
-            num_polynomials: 1,
-        }],
-    )
-    .expect("swapped");
+fn opening_batch_digest_binds_group_active_vars() {
+    let two_vars =
+        OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(2, 1)]).expect("two vars");
+    let three_vars = OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(3, 1)])
+        .expect("three vars");
 
     assert_ne!(
-        digest_opening_batch(&forward),
-        digest_opening_batch(&swapped)
+        two_vars.opening_batch_digest(),
+        three_vars.opening_batch_digest()
     );
 }
 
 #[test]
 fn call_section_exposes_group_partition() {
-    let opening_batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped");
-    let call = CallSection::from_opening_batch(&opening_batch, BasisMode::Lagrange).expect("call");
+    let opening_batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped");
+    let call = CallSection::from_layout(&opening_batch, BasisMode::Lagrange).expect("call");
 
     assert_eq!(call.num_polys, 3);
     assert_eq!(call.num_commitment_groups, 2);
@@ -335,10 +344,6 @@ fn setup_seed_digest_matches_setup_section() {
         max_num_batched_polys: 2,
         gen_ring_dim: 4,
         max_setup_len: 2,
-        #[cfg(feature = "zk")]
-        max_zk_b_len: 1,
-        #[cfg(feature = "zk")]
-        max_zk_d_len: 1,
         public_matrix_seed: [7; 32],
     };
     let section = SetupSection::from_parts(
@@ -372,11 +377,11 @@ fn effective_schedule_digest_binds_direct_shape() {
     let schedule_b = Schedule {
         steps: vec![Step::Direct(crate::DirectStep {
             current_w_len: 8,
-            witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
-            direct_bytes: 3,
+            witness_shape: CleartextWitnessShape::FieldElements(9),
+            direct_bytes: 9,
             params: None,
         })],
-        total_bytes: 3,
+        total_bytes: 9,
     };
 
     assert_ne!(

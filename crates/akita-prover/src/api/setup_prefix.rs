@@ -6,8 +6,6 @@ use crate::api::commitment::{
 };
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
-#[cfg(feature = "zk")]
-use crate::protocol::masking::sample_blinding_digits;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
@@ -138,35 +136,12 @@ where
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
     b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits());
-    #[cfg(feature = "zk")]
-    let b_blinding_digits =
-        sample_blinding_digits::<F, D>(level_params.b_key.row_len(), level_params.log_basis)?;
-    #[cfg(feature = "zk")]
-    let mut u = backend.digit_rows::<D>(
-        prepared,
-        level_params.b_key.row_len(),
-        &b_input_digits,
-        level_params.log_basis,
-    )?;
-    #[cfg(not(feature = "zk"))]
     let u = backend.digit_rows::<D>(
         prepared,
         level_params.b_key.row_len(),
         &b_input_digits,
         level_params.log_basis,
     )?;
-    #[cfg(feature = "zk")]
-    {
-        let blinding_rows = backend.zk_b_digit_rows::<D>(
-            prepared,
-            level_params.b_key.row_len(),
-            b_blinding_digits.flat_digits().len(),
-            b_blinding_digits.flat_digits(),
-        )?;
-        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
-            *row += blinding;
-        }
-    }
     if u.len() != level_params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(
             "setup prefix commit returned {} B rows, expected {}",
@@ -178,8 +153,6 @@ where
     let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
         decomposed_inner_rows,
         recomposed_inner_rows,
-        #[cfg(feature = "zk")]
-        b_blinding_digits,
     );
     let id = setup_prefix_slot_id(
         setup_seed_digest,
@@ -256,7 +229,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, setup_seed_digest, OpeningBatchShape, SetupMatrixEnvelope,
+        active_setup_field_len, setup_seed_digest, OpeningClaimsLayout, SetupMatrixEnvelope,
         SisModulusFamily,
     };
 
@@ -302,18 +275,6 @@ mod tests {
             1,
             SetupMatrixEnvelope {
                 max_setup_len: setup_capacity_for(level_params, n_prefix).max(1),
-                #[cfg(feature = "zk")]
-                max_zk_b_len: level_params
-                    .b_key
-                    .row_len()
-                    .checked_mul(akita_types::lhl_blinding::blinding_digit_plane_count::<F>(
-                        level_params.b_key.row_len(),
-                        D,
-                        level_params.log_basis,
-                    ))
-                    .expect("ZK B setup capacity"),
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
             },
         )
         .expect("setup")
@@ -347,7 +308,7 @@ mod tests {
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
         let level_params = prefix_level_params(D);
-        let opening_batch = OpeningBatchShape::new(4, 1).expect("opening_batch");
+        let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
             .num_blocks
             .checked_mul(level_params.block_len)

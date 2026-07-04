@@ -2,8 +2,6 @@
 use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
-#[cfg(feature = "zk")]
-use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
 use crate::{
@@ -27,10 +25,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths,
-    AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, FpExtEncoding,
-    LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationOpeningCounts,
+    gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths, AkitaCommitmentHint,
+    AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, FpExtEncoding, LevelParams, MRowLayout,
+    RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationOpeningCounts,
 };
 
 mod coeffs;
@@ -40,7 +37,6 @@ mod finalize;
 #[cfg(test)]
 mod tests;
 
-#[cfg(not(feature = "zk"))]
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_next_w, commit_w, NextWitnessCommitment};
