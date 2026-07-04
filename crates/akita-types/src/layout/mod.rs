@@ -20,9 +20,10 @@ pub use opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
     RingOpeningPoint,
 };
-pub use params::{AjtaiKeyParams, LevelParams, MRowLayout, SisModulusFamily};
+pub use params::{AjtaiKeyParams, GroupRootParams, LevelParams, MRowLayout, SisModulusFamily};
 pub use proof_size::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
-    sumcheck_rounds,
+    direct_witness_bytes, extension_opening_reduction_level_bytes,
+    extension_opening_reduction_proof_bytes, field_bytes, packed_digits_bytes,
+    padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
+    proof_ring_vec_bytes, sumcheck_rounds,
 };

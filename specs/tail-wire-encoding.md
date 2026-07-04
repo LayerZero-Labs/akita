@@ -1,5 +1,9 @@
 # Spec: Tail Wire Encoding (commitment elision + segment-typed entropy coding)
 
+> **Pre-zk-strip historical.** This umbrella spec predates the zk-strip
+> ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
+> `feature = "zk"` or `PackedDigits` describe removed code preserved on `zk-wip`.
+
 | Field       | Value                                                     |
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
@@ -129,7 +133,7 @@ The current single-width path (`PackedDigits`) is retained for the **zk** tail (
 
 ### Terminal `t`-state / u-elision
 
-The current relation row layout is `consistency | public | D(n_d) | COMMIT | B_inner | A(n_a)` (`crates/akita-types/src/layout/params.rs:340-354`), where the `COMMIT` block is the sent outer commitment rows (`B` in single-tier, `F` in tiered mode).
+The current relation row layout is `consistency | A(n_a) | B(n_b) | D(n_d)` (`crates/akita-types/src/layout/params.rs`). Public openings bind through the fused trace term in stage-2 sumcheck, not through M public rows. Tiered commitment (`B_inner`, second-tier `F`) was removed in PR #257.
 The terminal already sets `n_d_active = 0` (`WithoutDBlock`) by revealing `e_folded` in cleartext: the D-role commitment `v = D * e_hat` and its rows are gone (`specs/terminal-fold-cutover.md`).
 
 The correct S2 cutover is **not** "delete B rows while keeping `u` as the terminal statement."
@@ -187,16 +191,16 @@ Let `D = ring_dimension`.
 The legacy `RingRelationInstance::segment_layout` plane counts (`crates/akita-types/src/proof/ring_relation.rs:226-237`) count digit **planes** for the packed-digit layout. The segment-typed wire uses different units per segment:
 
 ```text
-z_coords       = num_public_rows * block_len * num_digits_commit * D   (Golomb integers; one per base-field slot in folded z)
+z_coords       = num_z_segments * block_len * num_digits_commit * D   (Golomb integers; one per base-field slot in folded z)
 e_field_elems  = num_blocks * num_w_vectors * D                       (RawField; one ring element per block → D coeffs)
 t_field_elems  = n_a * num_blocks * num_t_vectors * D                   (RawField)
-r_field_elems  = m_row_count(WithoutDBlock) * D                       (RawField; until PR #141 r-drop)
+r_field_elems  = m_row_count_for(WithoutDBlock) * D                   (RawField; until PR #141 r-drop)
 ```
 
 `z_coords` is the Golomb element count. `e_field_elems`, `t_field_elems`, and `r_field_elems` are base-field coefficient counts for `RawField` serialization.
 The legacy `PackedDigits` layout in `build_w_coeffs` (`coeffs.rs`) is the source for S3's byte-neutral framing, but S2 removes the legacy `t_hat`, `û_concat`, and `r_hat` planes from the final terminal policy.
 Segments appear in wire order `z ‖ e ‖ t ‖ r`; `r_hat` planes are absent under PR #141 direct mode.
-Multipoint layouts scale `z_coords` with `num_public_rows`; tiered layouts must either use the same `t`-state terminal policy or reject.
+Multipoint layouts scale `z_coords` with `num_z_segments`.
 
 This mirrors the existing headerless, shape-driven decode (the shape supplies counts and the `z` payload upper bound). `CleartextWitnessShape::SegmentTyped` and `CleartextWitnessProof::SegmentTyped` ship in #190.
 
@@ -263,7 +267,6 @@ Shipped schedule tables are regenerated under the new tail policy in S5; the dri
 - Update PR #141 branch `specs/terminal-direct-ring-relation.md` and `specs/terminal-fold-cutover.md` (PR #88) to cross-link this spec as the encoding layer on top of the r-drop and D-drop, and to record the terminal `t`-state cutover as the replacement for the old terminal `u` opening.
 - Update PR #174 / `specs/fold-linf-rejection.md` cross-link: Golomb `z` sizing uses the same fold `‖z‖_inf` cap as `num_digits_fold` (distinct from the level variance envelope).
 - Profile example / bench reports: structured tail witness reporting is implemented in `crates/akita-pcs/examples/profile/report.rs` (`emit_proof_tail_report`) and `scripts/profile_bench_report.py`. The profile binary (non-zk) emits `proof tail summary` with `final_w_encoding` / `final_w_policy` and, for `segment_typed`, per-segment wire bytes plus Golomb-vs-`PackedDigits` `z` stats. Encoding variants on `CleartextWitnessProof`: `segment_typed` (non-zk folded terminal default), `packed_digits` (`feature = "zk"` fallback), `field_elements` (root-direct cleartext witness), and `none` (root-direct zero-fold; `tail_bytes = 0`).
-- **Extension point:** a future revealed JL projection image `p` at the tail is itself sub-Gaussian and should become another `Gaussian{k}` segment; coordinate with `specs/akita-jl-norm-check-resolutions.md` §8 when that path is specified.
 
 ## Execution
 

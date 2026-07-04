@@ -181,13 +181,11 @@ impl<E: FieldCore> TraceTable<E> {
     }
 
     #[inline]
-    pub fn get_flat(&self, idx: usize, y_len: usize) -> E {
-        self.get(idx / y_len, idx % y_len, y_len)
-    }
-
-    #[inline]
     pub fn pair_flat(&self, idx0: usize, idx1: usize, y_len: usize) -> (E, E) {
-        (self.get_flat(idx0, y_len), self.get_flat(idx1, y_len))
+        (
+            self.get(idx0 / y_len, idx0 % y_len, y_len),
+            self.get(idx1 / y_len, idx1 % y_len, y_len),
+        )
     }
 
     pub fn quad_at(&self, x: usize, base: usize, y_len: usize) -> [E; 4] {

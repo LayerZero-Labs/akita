@@ -58,6 +58,9 @@ The checked-in workflow currently runs:
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `direct` | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `recursive` | Same nv32 singleton as the direct row, but with `SetupContributionMode::Recursive`, so the report compares proof size, prover time, and verifier time for recursive setup-product checks. |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | `direct` | Preserves same-point batched one-hot coverage. |
+| `onehot_fp128_d64_multi_chunk_w2r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W2R2 | `direct` | `2` chunks, `2` leading levels. |
+| `onehot_fp128_d64_multi_chunk_w4r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W4R2 | `direct` | `4` chunks, `2` leading levels. |
+| `onehot_fp128_d64_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W8R2 | `direct` | Production distributed preset (`8` chunks, `2` leading levels). |
 
 Every active cell folds securely under honest committed-fold A-role pricing.
 The ring degree differs by field, for two distinct reasons:
@@ -300,10 +303,17 @@ The old `full*` and bare `onehot*` names are removed. `AGENTS.md` now points the
 canonical profiling command at `AKITA_MODE=onehot_fp128_d64`. This is an
 explicit per-field D cutover, not a renamed adaptive selector.
 
-After merging `main`, the profile example also exposes
-`onehot_fp128_d64_tensor` as a direct local comparison mode because the tensor
-verifier preset and generated tables are D64-only. That mode is intentionally
-excluded from the active CI benchmark matrix and from `AKITA_MODE=all`.
+The profile example also exposes `onehot_fp128_d64_tensor` because the tensor
+verifier preset and generated tables are D64-only. It runs in the active CI
+benchmark matrix at nv=26 in its own group (`2-fp128-tensor`), not nv=32: under
+the 138-bit L-infinity SIS floors the tensor root split is top-heavy, so the
+public setup matrix grows ~4x per +2 nv (~1 GiB at nv=26, ~72 GiB at nv=32,
+which OOM-aborts the runner). nv=26 keeps its footprint on par with the flat
+`onehot_fp128_d64` nv=32 cell. The group sets `skip_merge_base_baseline: true`
+because main before this cutover ships a placeholder tensor schedule (every nv a
+non-committing `Direct` step) whose baseline binary panics resolving the commit
+layout at any nv; future PRs compare against merge-base once the real schedules
+land on main. The mode remains excluded from `AKITA_MODE=all`.
 
 ### Benchmark Runner And Artifacts
 

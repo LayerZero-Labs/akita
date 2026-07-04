@@ -77,59 +77,17 @@ where
         commit_layout.log_basis,
     )?;
 
-    #[cfg(feature = "zk")]
-    let b_blinding_digits =
-        sample_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
     validate_commit_outer_input_nonempty(outer_input.len())?;
-    let u: Vec<CyclotomicRing<F, D>> = if commit_layout.f_key.is_some() {
-        // Tiered: u_final = F·decompose(blockdiag(B')·t̂). ZK blinding of the F
-        // tier is a non-goal; tiered proofs are exercised non-zk.
-        crate::api::commitment::tiered_commit_u_final::<F, D, B>(
-            backend,
-            prepared,
-            commit_layout,
-            &outer_input,
-        )?
-    } else {
-        #[cfg(feature = "zk")]
-        let mut u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-            prepared,
-            commit_layout.b_key.row_len(),
-            &outer_input,
-            commit_layout.log_basis,
-        )?;
-        #[cfg(not(feature = "zk"))]
-        let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
-            prepared,
-            commit_layout.b_key.row_len(),
-            &outer_input,
-            commit_layout.log_basis,
-        )?;
-        #[cfg(feature = "zk")]
-        {
-            let blinding_rows = backend.zk_b_digit_rows::<D>(
-                prepared,
-                commit_layout.b_key.row_len(),
-                b_blinding_digits.flat_digits().len(),
-                b_blinding_digits.flat_digits(),
-            )?;
-            for (row, blinding) in u.iter_mut().zip(blinding_rows) {
-                *row += blinding;
-            }
-        }
-        if u.len() != commit_layout.b_key.row_len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        u
-    };
-    #[cfg(feature = "zk")]
-    let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-        inner.decomposed_inner_rows,
-        inner.recomposed_inner_rows,
-        b_blinding_digits,
-    );
-    #[cfg(not(feature = "zk"))]
+    let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+        prepared,
+        commit_layout.b_key.row_len(),
+        &outer_input,
+        commit_layout.log_basis,
+    )?;
+    if u.len() != commit_layout.b_key.row_len() {
+        return Err(AkitaError::InvalidProof);
+    }
     let hint = {
         AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
             inner.decomposed_inner_rows,

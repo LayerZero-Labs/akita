@@ -1,0 +1,2651 @@
+{
+  "description": "288 SIS infinity golden cells using norm=oo, ADPS16, LGSA, full zeta optimizer, and target_bits=138.0.",
+  "profile": {
+    "norm": "infinity",
+    "red_cost_model": "ADPS16",
+    "red_shape_model": "LGSA",
+    "zeta": "full optimizer",
+    "adps16_mode": "classical",
+    "nearest_neighbor": "classical"
+  },
+  "target_bits": 138.0,
+  "lattice_estimator_remote": "https://github.com/quangvdao/lattice-estimator.git",
+  "lattice_estimator_sha": "c667a48546f140c3a5454c7503c3ca44a264cce2",
+  "expected_lattice_estimator_sha": "c667a48546f140c3a5454c7503c3ca44a264cce2",
+  "families": {
+    "q32": {
+      "q": 4294967197,
+      "label": "2^32 - 99"
+    },
+    "q64": {
+      "q": 18446744073709551557,
+      "label": "2^64 - 59"
+    },
+    "q128": {
+      "q": 340282366920938463463374607427473266697,
+      "label": "2^128 - (2^32 - 22537)"
+    }
+  },
+  "grid": {
+    "families": [
+      "q32",
+      "q64",
+      "q128"
+    ],
+    "ring_dims": [
+      32,
+      64,
+      128,
+      256
+    ],
+    "ranks": [
+      1,
+      5,
+      20
+    ],
+    "coeff_linf_bounds": [
+      2,
+      15,
+      255,
+      4095
+    ],
+    "width_factors": [
+      2,
+      8
+    ]
+  },
+  "rows": [
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q128",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q32",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 64,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 128,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 1,
+      "width": 8,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 2,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 255,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": true,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 5,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 20,
+      "width": 40,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 2,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 15,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 255,
+      "tiny_probability": false,
+      "trust": "fragile"
+    },
+    {
+      "family": "q64",
+      "d": 256,
+      "rank": 20,
+      "width": 160,
+      "coeff_linf_bound": 4095,
+      "tiny_probability": false,
+      "trust": "fragile"
+    }
+  ]
+}

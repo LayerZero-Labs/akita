@@ -29,11 +29,10 @@ mod sampler;
 mod tensor;
 
 pub use akita_transcript::FoldChallengeSeedPreview;
-pub use challenge::{IntegerChallenge, SparseChallenge};
+pub use challenge::SparseChallenge;
 pub use config::{
-    SparseChallengeConfig, D64_EXACT_SHELL_OP_NORM_ACCEPT_DEN, D64_EXACT_SHELL_OP_NORM_ACCEPT_NUM,
-    D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
-    D64_PRODUCTION_OPERATOR_NORM_THRESHOLD, MIN_FOLD_CHALLENGE_ENTROPY_BITS,
+    SparseChallengeConfig, D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2,
+    MIN_FOLD_CHALLENGE_ENTROPY_BITS,
 };
 pub use fold_draw::{preview_folding_challenges, sample_folding_challenges};
 pub use grind_probe::grind_probe_permutation;
@@ -45,33 +44,3 @@ pub use tensor::{
     tensor_split, ChallengeLabels, ChallengeShape, ChallengeShape as TensorChallengeShape,
     Challenges, TensorChallenges,
 };
-
-/// Bench-only surface for criterion `op_norm_rejection` (not a stable API).
-#[doc(hidden)]
-pub mod op_norm_bench {
-    use akita_field::AkitaError;
-
-    use crate::sampler::op_norm::{Decision, OpNormTable};
-
-    /// Opaque handle wrapping a certified D=64 predicate table.
-    pub struct Table(OpNormTable);
-
-    impl Table {
-        /// Production table parameters: `D=64`, `q=48`, `max_l1=2D`, `max_t=64`.
-        pub fn d64_q48() -> Self {
-            Self(OpNormTable::new(64, 48, 128, 64).expect("D64 op-norm table"))
-        }
-
-        pub fn decide_production(
-            &self,
-            positions: &[u32],
-            coeffs: &[i8],
-            t: u64,
-        ) -> Result<bool, AkitaError> {
-            Ok(matches!(
-                self.0.decide_parts(positions, coeffs, t)?,
-                Decision::Accept
-            ))
-        }
-    }
-}

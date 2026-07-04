@@ -2,9 +2,8 @@
 
 use crate::{
     basis_weights, embed_ring_subfield_scalar, embed_ring_subfield_vector,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    AppendToTranscript, BasisMode, BlockOrder, FpExtEncoding, LevelParams, RingCommitment,
-    RingOpeningPoint,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AppendToTranscript,
+    BasisMode, BlockOrder, FpExtEncoding, LevelParams, RingCommitment, RingOpeningPoint,
 };
 use akita_algebra::{ring::eval_ring_at_pows, CyclotomicRing};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -182,17 +181,6 @@ fn ring_is_constant<F: FieldCore, const D: usize>(ring: &CyclotomicRing<F, D>) -
     ring.coefficients()[1..].iter().all(|coeff| coeff.is_zero())
 }
 
-fn ring_subfield_scalar_to_ring<F, E, const D: usize>(
-    value: E,
-    error: AkitaError,
-) -> Result<CyclotomicRing<F, D>, AkitaError>
-where
-    F: FieldCore + akita_field::FromPrimitiveInt,
-    E: FpExtEncoding<F>,
-{
-    embed_ring_subfield_scalar::<F, E, D>(value, error)
-}
-
 fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
     opening_point: &[E],
     r_vars: usize,
@@ -229,11 +217,11 @@ where
     );
     let a = a_weights
         .into_iter()
-        .map(|weight| ring_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
+        .map(|weight| embed_ring_subfield_scalar::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     let b = b_weights
         .into_iter()
-        .map(|weight| ring_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
+        .map(|weight| embed_ring_subfield_scalar::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RingMultiplierOpeningPoint::from_ring(a, b))
 }
@@ -248,18 +236,6 @@ where
     for value in values {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVAL_OPENINGS_FIELD, value);
     }
-}
-
-/// Sum claim-group sizes with overflow checking.
-///
-/// # Errors
-///
-/// Returns an error if the total claim count overflows `usize`.
-pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, AkitaError> {
-    group_sizes.iter().try_fold(0usize, |acc, &group_size| {
-        acc.checked_add(group_size)
-            .ok_or_else(|| AkitaError::InvalidInput(format!("{label} total claim count overflow")))
-    })
 }
 
 /// Absorb the batch commitment into the transcript.
@@ -305,71 +281,6 @@ pub fn validate_scalar_point_matches_poly_arity(
             "opening point length {point_len} does not match padded batch domain {padded_num_vars}"
         )));
     }
-    Ok(())
-}
-
-/// Validate common batched prove/verify input shape constraints.
-///
-/// # Errors
-///
-/// Returns an error if the shared opening point exceeds setup capacity, the
-/// payload is empty, or the claim count exceeds setup capacity.
-pub fn validate_batched_inputs<F, E>(
-    setup: &AkitaExpandedSetup<F>,
-    point: &[E],
-    group_sizes: &[usize],
-    for_prover: bool,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-{
-    let label = if for_prover {
-        "batched_prove"
-    } else {
-        "batched_verify"
-    };
-    let shape_error = |message| {
-        if for_prover {
-            AkitaError::InvalidInput(message)
-        } else {
-            AkitaError::InvalidProof
-        }
-    };
-
-    let num_vars = point.len();
-    if num_vars > setup.seed().max_num_vars {
-        return Err(AkitaError::InvalidInput(format!(
-            "{label} received opening points with {} variables but setup supports at most {}",
-            num_vars,
-            setup.seed().max_num_vars
-        )));
-    }
-    if group_sizes.is_empty() {
-        return Err(shape_error(format!(
-            "{label} requires at least one commitment group",
-        )));
-    }
-    if group_sizes.contains(&0) {
-        return Err(shape_error(format!(
-            "{label} commitment groups must be nonempty",
-        )));
-    }
-    let num_claims = checked_total_claims(group_sizes, label)?;
-    if num_claims == 0 {
-        return Err(shape_error(format!(
-            "{label} requires at least one claimed opening",
-        )));
-    }
-    if num_claims > setup.seed().max_num_batched_polys {
-        if for_prover {
-            return Err(AkitaError::InvalidInput(format!(
-                "batched_prove received {num_claims} polynomials but setup supports at most {}",
-                setup.seed().max_num_batched_polys
-            )));
-        }
-        return Err(AkitaError::InvalidProof);
-    }
-
     Ok(())
 }
 
@@ -612,42 +523,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AkitaSetupSeed, FlatMatrix, SisModulusFamily};
+    use crate::SisModulusFamily;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{Fp32, FpExt2, FpExt4, LiftBase, NegOneNr};
+    use akita_field::{Fp32, FpExt4, LiftBase};
 
     type F = Fp32<251>;
-    type E = FpExt2<F, NegOneNr>;
     type L = FpExt4<F>;
-
-    fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupSeed {
-                max_num_vars: 3,
-                max_num_batched_polys: 8,
-                gen_ring_dim: 1,
-                max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-                public_matrix_seed: [0u8; 32],
-            },
-            FlatMatrix::from_flat_data(vec![F::zero()], 1),
-            #[cfg(feature = "zk")]
-            FlatMatrix::from_flat_data(vec![F::zero()], 1),
-            #[cfg(feature = "zk")]
-            FlatMatrix::from_flat_data(vec![F::zero()], 1),
-        )
-    }
-
-    #[test]
-    fn batched_input_validation_accepts_extension_points() {
-        let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
-
-        validate_batched_inputs(&setup(), &p0[..], &[3], true)
-            .expect("extension-valued shared opening point should validate by shape");
-    }
 
     fn packed_inner_lp() -> LevelParams {
         LevelParams::params_only(

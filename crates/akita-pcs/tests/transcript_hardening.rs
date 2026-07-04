@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-#![cfg(all(feature = "logging-transcript", not(feature = "zk")))]
+#![cfg(feature = "logging-transcript")]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
@@ -15,7 +15,7 @@ use akita_transcript::{
 use akita_types::{
     terminal_witness_segment_layout, AkitaBatchedProof, AkitaBatchedProofShape,
     AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
-    PackedDigits, TerminalWitnessSegmentLayout,
+    TerminalWitnessSegmentLayout,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -45,7 +45,7 @@ fn event_stream_equality_small() {
     run_on_large_stack(move || {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
@@ -61,7 +61,7 @@ fn event_stream_equality_small() {
         )
         .expect("stack");
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -271,26 +271,6 @@ impl TerminalTamper {
                     segment.z_payload.pop();
                 }
             },
-            CleartextWitnessProof::PackedDigits(packed) => match self {
-                Self::EHatDigit => mutate_packed_digit(packed, layout.e_hat_digit_offset),
-                Self::RemainderDigit => {
-                    let e_hat_end = layout.e_hat_digit_end().expect("terminal range");
-                    let remainder_idx = if layout.e_hat_digit_offset > 0 {
-                        0
-                    } else {
-                        e_hat_end
-                    };
-                    assert!(
-                        remainder_idx < packed.num_elems,
-                        "terminal tamper corpus must include a non-empty remainder"
-                    );
-                    mutate_packed_digit(packed, remainder_idx);
-                }
-                Self::WitnessLen => packed.num_elems -= 1,
-                Self::PackedPayload => {
-                    packed.data.pop();
-                }
-            },
             CleartextWitnessProof::FieldElements(_) => {
                 panic!("terminal tamper test does not cover field-element witnesses");
             }
@@ -302,7 +282,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
@@ -318,7 +298,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         )
         .expect("stack");
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
@@ -367,15 +347,6 @@ fn assert_terminal_tamper_rejected(tamper: TerminalTamper) {
     assert_terminal_tamper_rejected_at_num_vars(TRANSCRIPT_HARDENING_NUM_VARS, tamper);
 }
 
-fn mutate_packed_digit(packed: &mut PackedDigits, idx: usize) {
-    let mut digits = (0..packed.num_elems)
-        .map(|digit| packed.digit_at(digit).expect("packed digit"))
-        .collect::<Vec<_>>();
-    let digit = digits.get_mut(idx).expect("digit index in range");
-    *digit = if *digit == -1 { 0 } else { -1 };
-    *packed = PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
-}
-
 #[test]
 fn terminal_final_witness_tamper_rejects() {
     for tamper in [
@@ -414,7 +385,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
     run_on_large_stack(|| {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningBatchShape::new(num_vars, 1).expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
@@ -428,7 +399,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,

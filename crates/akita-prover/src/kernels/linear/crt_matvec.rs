@@ -1,7 +1,7 @@
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 use super::*;
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
@@ -18,7 +18,7 @@ pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usiz
     out
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(super) fn precompute_dense_mat_ntt_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -37,7 +37,7 @@ pub(super) fn precompute_dense_mat_ntt_with_params<
         .collect()
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 fn mat_vec_mul_dense_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -66,7 +66,7 @@ fn mat_vec_mul_dense_with_params<
         .collect()
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 fn mat_vec_mul_dense_many_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -100,7 +100,7 @@ fn mat_vec_mul_dense_many_with_params<
         .collect()
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
@@ -114,7 +114,7 @@ pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>
     Ok(out)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vecs: &[Vec<CyclotomicRing<F, D>>],

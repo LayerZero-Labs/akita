@@ -253,24 +253,6 @@ impl<F: FieldCore> FlatRingVec<F> {
         Ok(())
     }
 
-    /// Append the stored coefficients using the typed ring-vector transcript
-    /// encoding (alias for [`Self::append_as_ring_commitment`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
-    /// well-formed for ring dimension `D`.
-    pub fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
-        &self,
-        label: &[u8],
-        transcript: &mut T,
-    ) -> Result<(), AkitaError>
-    where
-        F: CanonicalField,
-    {
-        self.append_as_ring_commitment::<T, D>(label, transcript)
-    }
-
     /// Reconstruct a `RingCommitment`.
     ///
     /// # Panics
@@ -617,85 +599,5 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
         self.offset = end;
         self.block_sizes = &self.block_sizes[1..];
         Some(&self.flat_digits[start..end])
-    }
-}
-
-/// ZK plain-opening hiding-factor commitment and payload.
-///
-/// `hiding_witness` contains all one-time pads used by the masked opening
-/// protocol. Deferred relations are written directly over these slots and
-/// public masked transcript values.
-#[cfg(feature = "zk")]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ZkHidingProof<F: FieldCore> {
-    /// Wire-visible hiding-factor commitment `u_blind`.
-    pub u_blind: Vec<F>,
-    /// Plain opening of the committed hiding witness.
-    pub hiding_witness: Vec<F>,
-    /// Dedicated short Ajtai blinding digits used for `u_blind`.
-    pub b_blinding_digits: Vec<i8>,
-}
-
-#[cfg(feature = "zk")]
-impl<F: FieldCore> ZkHidingProof<F> {
-    /// True when this proof carries no top-level hiding commitment or opening.
-    pub fn is_empty(&self) -> bool {
-        self.u_blind.is_empty()
-            && self.hiding_witness.is_empty()
-            && self.b_blinding_digits.is_empty()
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for ZkHidingProof<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.u_blind.serialize_with_mode(&mut writer, compress)?;
-        self.hiding_witness
-            .serialize_with_mode(&mut writer, compress)?;
-        self.b_blinding_digits
-            .serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.u_blind.serialized_size(compress)
-            + self.hiding_witness.serialized_size(compress)
-            + self.b_blinding_digits.serialized_size(compress)
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<F: FieldCore + Valid> Valid for ZkHidingProof<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.u_blind.check()?;
-        self.hiding_witness.check()?;
-        self.b_blinding_digits.check()
-    }
-}
-
-#[cfg(feature = "zk")]
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for ZkHidingProof<F> {
-    type Context = ();
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        (): &(),
-    ) -> Result<Self, SerializationError> {
-        Ok(Self {
-            u_blind: Vec::<F>::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            hiding_witness: Vec::<F>::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            b_blinding_digits: Vec::<i8>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
-        })
     }
 }

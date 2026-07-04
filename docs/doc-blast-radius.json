@@ -63,9 +63,9 @@
       "consider_updating": [
         "book/src/how/security.md",
         "book/src/foundations/lattices-sis.md",
-        "book/src/foundations/operator-norm-certification.md",
         "specs/akita-sis-*.md",
-        "specs/l2-msis-*.md",
+        "specs/sis-euclidean-estimator.md",
+        "specs/fold-linf-rejection.md",
         "specs/bounded-l1-sparse-challenge.md",
         "docs/security-posture.md"
       ]
@@ -152,22 +152,6 @@
       "description": "Public PCS API, examples, integration tests",
       "code": ["crates/akita-pcs/**"],
       "consider_updating": ["book/src/usage/**", "README.md"]
-    },
-    {
-      "id": "zk-r1cs",
-      "description": "Zero-knowledge path and deferred R1CS",
-      "code": [
-        "crates/akita-r1cs/**",
-        "crates/akita-prover/src/protocol/masking.rs",
-        "crates/akita-prover/src/protocol/zk_*"
-      ],
-      "consider_updating": [
-        "book/src/foundations/zero-knowledge.md",
-        "book/src/roadmap/zero-knowledge.md",
-        "book/src/roadmap/verifier-offloading.md",
-        "book/src/roadmap/euclidean-security.md",
-        "specs/akita-zk-*.md"
-      ]
     },
     {
       "id": "ci-tooling",

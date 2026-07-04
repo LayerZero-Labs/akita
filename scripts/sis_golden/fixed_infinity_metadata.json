@@ -1,0 +1,187 @@
+{
+  "description": "8 fixed-beta, fixed-zeta SIS infinity golden cells using norm=oo, ADPS16, LGSA, and target_bits=138.0.",
+  "profile": {
+    "norm": "infinity",
+    "red_cost_model": "ADPS16",
+    "red_shape_model": "LGSA",
+    "zeta": "fixed",
+    "adps16_mode": "classical",
+    "nearest_neighbor": "classical"
+  },
+  "target_bits": 138.0,
+  "lattice_estimator_remote": "https://github.com/quangvdao/lattice-estimator.git",
+  "lattice_estimator_sha": "c667a48546f140c3a5454c7503c3ca44a264cce2",
+  "expected_lattice_estimator_sha": "c667a48546f140c3a5454c7503c3ca44a264cce2",
+  "families": {
+    "q32": {
+      "q": 4294967197,
+      "label": "2^32 - 99"
+    },
+    "q64": {
+      "q": 18446744073709551557,
+      "label": "2^64 - 59"
+    },
+    "q128": {
+      "q": 340282366920938463463374607427473266697,
+      "label": "2^128 - (2^32 - 22537)"
+    }
+  },
+  "grid": {
+    "cells": [
+      {
+        "family": "q32",
+        "d": 32,
+        "rank": 1,
+        "width": 2,
+        "coeff_linf_bound": 2,
+        "beta": 63,
+        "zeta": 0
+      },
+      {
+        "family": "q32",
+        "d": 32,
+        "rank": 1,
+        "width": 2,
+        "coeff_linf_bound": 15,
+        "beta": 63,
+        "zeta": 0
+      },
+      {
+        "family": "q32",
+        "d": 32,
+        "rank": 1,
+        "width": 2,
+        "coeff_linf_bound": 15,
+        "beta": 40,
+        "zeta": 0
+      },
+      {
+        "family": "q32",
+        "d": 32,
+        "rank": 1,
+        "width": 2,
+        "coeff_linf_bound": 15,
+        "beta": 40,
+        "zeta": 5
+      },
+      {
+        "family": "q32",
+        "d": 32,
+        "rank": 5,
+        "width": 10,
+        "coeff_linf_bound": 15,
+        "beta": 50,
+        "zeta": 0
+      },
+      {
+        "family": "q32",
+        "d": 64,
+        "rank": 1,
+        "width": 2,
+        "coeff_linf_bound": 15,
+        "beta": 63,
+        "zeta": 0
+      },
+      {
+        "family": "q64",
+        "d": 32,
+        "rank": 1,
+        "width": 2,
+        "coeff_linf_bound": 15,
+        "beta": 63,
+        "zeta": 0
+      },
+      {
+        "family": "q128",
+        "d": 32,
+        "rank": 1,
+        "width": 2,
+        "coeff_linf_bound": 15,
+        "beta": 63,
+        "zeta": 0
+      }
+    ]
+  },
+  "rows": [
+    {
+      "family": "q128",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "beta_input": 63,
+      "zeta_input": 0,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 2,
+      "beta_input": 63,
+      "zeta_input": 0,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "beta_input": 40,
+      "zeta_input": 0,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "beta_input": 40,
+      "zeta_input": 5,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "beta_input": 63,
+      "zeta_input": 0,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 32,
+      "rank": 5,
+      "width": 10,
+      "coeff_linf_bound": 15,
+      "beta_input": 50,
+      "zeta_input": 0,
+      "trust": "trusted"
+    },
+    {
+      "family": "q32",
+      "d": 64,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "beta_input": 63,
+      "zeta_input": 0,
+      "trust": "trusted"
+    },
+    {
+      "family": "q64",
+      "d": 32,
+      "rank": 1,
+      "width": 2,
+      "coeff_linf_bound": 15,
+      "beta_input": 63,
+      "zeta_input": 0,
+      "trust": "trusted"
+    }
+  ]
+}

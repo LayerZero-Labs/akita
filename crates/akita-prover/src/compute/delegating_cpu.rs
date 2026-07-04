@@ -72,28 +72,6 @@ macro_rules! delegate_digit_rows {
             ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
                 CpuBackend.digit_rows(prepared, row_len, digits, log_basis)
             }
-
-            #[cfg(feature = "zk")]
-            fn zk_b_digit_rows<const D: usize>(
-                &self,
-                prepared: &Self::PreparedSetup<D>,
-                row_len: usize,
-                row_width: usize,
-                digits: &[[i8; D]],
-            ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-                CpuBackend.zk_b_digit_rows(prepared, row_len, row_width, digits)
-            }
-
-            #[cfg(feature = "zk")]
-            fn zk_d_digit_rows<const D: usize>(
-                &self,
-                prepared: &Self::PreparedSetup<D>,
-                row_len: usize,
-                row_width: usize,
-                digits: &[[i8; D]],
-            ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-                CpuBackend.zk_d_digit_rows(prepared, row_len, row_width, digits)
-            }
         }
     };
 }
@@ -112,28 +90,6 @@ macro_rules! delegate_cyclic_rows {
                 log_basis: u32,
             ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
                 CpuBackend.cyclic_digit_rows(prepared, row_len, digits, log_basis)
-            }
-
-            #[cfg(feature = "zk")]
-            fn zk_b_cyclic_digit_rows<const D: usize>(
-                &self,
-                prepared: &Self::PreparedSetup<D>,
-                row_len: usize,
-                row_width: usize,
-                digits: &[[i8; D]],
-            ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-                CpuBackend.zk_b_cyclic_digit_rows(prepared, row_len, row_width, digits)
-            }
-
-            #[cfg(feature = "zk")]
-            fn zk_d_cyclic_digit_rows<const D: usize>(
-                &self,
-                prepared: &Self::PreparedSetup<D>,
-                row_len: usize,
-                row_width: usize,
-                digits: &[[i8; D]],
-            ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-                CpuBackend.zk_d_cyclic_digit_rows(prepared, row_len, row_width, digits)
             }
         }
     };

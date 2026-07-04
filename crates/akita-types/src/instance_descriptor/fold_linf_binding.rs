@@ -3,6 +3,7 @@
 use crate::golomb_rice::TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO;
 use crate::sis::{
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
 };
 use crate::tail_golomb_rice_low_bits::{
@@ -22,7 +23,7 @@ pub const FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE: u8 = 1;
 /// Fold-l∞ rejection protocol identity bound into every transcript preamble.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoldLinfProtocolBinding {
-    /// Tail-bound formula tag (`2` = integer `t*` with explicit grind accept target).
+    /// Tail-bound formula tag (`3` = flat/tensor integer `t*` with descriptor-bound snap policy).
     pub formula_tag: u8,
     /// Per-challenge grind acceptance target `p_grind = NUM / DEN` in the union bound.
     pub grind_target_accept_prob_num: u32,
@@ -41,30 +42,27 @@ pub struct FoldLinfProtocolBinding {
     pub wire_rice_low_bits_rule_id: u8,
     /// Subtrahend δ when [`Self::wire_rice_low_bits_rule_id`] is [`WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA`].
     pub wire_rice_low_bits_delta: u8,
+    /// Minimum retained fraction of `t*` when snapping `δ_fold` downward (numerator).
+    pub snap_min_tstar_retain_num: u32,
+    /// Minimum retained fraction of `t*` when snapping `δ_fold` downward (denominator).
+    pub snap_min_tstar_retain_den: u32,
 }
 
 impl FoldLinfProtocolBinding {
     /// Active fold-l∞ rejection cutover parameters.
     pub const CURRENT: Self = Self {
-        formula_tag: 2,
+        formula_tag: 3,
         grind_target_accept_prob_num: FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
         grind_target_accept_prob_den: FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
         max_grind_attempts: MAX_FOLD_GRIND_ATTEMPTS,
         grind_nonce_wire_bytes: 4,
         grind_entropy_bits_per_level: 12,
-        grind_probe_order: {
-            #[cfg(feature = "zk")]
-            {
-                FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE
-            }
-            #[cfg(not(feature = "zk"))]
-            {
-                FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN
-            }
-        },
+        grind_probe_order: FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
         tail_z_planner_model_id: TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
         wire_rice_low_bits_rule_id: WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
         wire_rice_low_bits_delta: WIRE_RICE_LOW_BITS_DELTA,
+        snap_min_tstar_retain_num: FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
+        snap_min_tstar_retain_den: FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
     };
 
     /// Rational grind acceptance target `(NUM, DEN)` for tail-bound sizing.
@@ -114,6 +112,10 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             .serialize_with_mode(&mut writer, compress)?;
         self.wire_rice_low_bits_delta
             .serialize_with_mode(&mut writer, compress)?;
+        self.snap_min_tstar_retain_num
+            .serialize_with_mode(&mut writer, compress)?;
+        self.snap_min_tstar_retain_den
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -128,6 +130,8 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             + self.tail_z_planner_model_id.serialized_size(compress)
             + self.wire_rice_low_bits_rule_id.serialized_size(compress)
             + self.wire_rice_low_bits_delta.serialized_size(compress)
+            + self.snap_min_tstar_retain_num.serialized_size(compress)
+            + self.snap_min_tstar_retain_den.serialized_size(compress)
     }
 }
 
@@ -181,6 +185,18 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
                 &(),
             )?,
             wire_rice_low_bits_delta: u8::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            snap_min_tstar_retain_num: u32::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            snap_min_tstar_retain_den: u32::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,

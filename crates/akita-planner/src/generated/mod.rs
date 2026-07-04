@@ -7,18 +7,9 @@ pub struct GeneratedFoldStep {
     pub m_vars: u32,
     pub r_vars: u32,
     pub n_a: u32,
-    /// Stored first-tier `B` rank. This is the actual committed rank: the shrunk
-    /// `B'` rank when the step is tiered (`tier_split.is_some()`), and the full
-    /// `B` rank otherwise.
+    /// Stored first-tier `B` rank.
     pub n_b: u32,
     pub n_d: u32,
-    /// Tiered split factor `f`. `None` for single-tier steps; `Some(f)` when the
-    /// step reuses a smaller `B'` across `f` column-slices (paired with `n_f`).
-    pub tier_split: Option<u32>,
-    /// Second-tier `F` rank. `None` for single-tier steps; `Some` iff
-    /// `tier_split` is `Some`. Expansion sizes `F` from `tier_split`, `n_b`, and
-    /// the level's `num_digits_open`.
-    pub n_f: Option<u32>,
 }
 
 /// Terminal direct-send step in a generated schedule.
@@ -44,22 +35,27 @@ pub enum GeneratedStep {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedScheduleKey {
-    pub num_vars: usize,
-    pub num_polynomials: usize,
+pub struct GeneratedScheduleTableEntry {
+    pub final_group: akita_types::PolynomialGroupLayout,
+    pub precommitteds: &'static [akita_types::PrecommittedGroupParams],
+    pub steps: &'static [GeneratedStep],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedScheduleTableEntry {
-    pub key: GeneratedScheduleKey,
-    pub steps: &'static [GeneratedStep],
+impl GeneratedScheduleTableEntry {
+    /// Build the runtime schedule lookup key represented by this generated row.
+    pub(crate) fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
+        akita_types::AkitaScheduleLookupKey {
+            final_group: self.final_group,
+            precommitteds: self.precommitteds.to_vec(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
-    pub zk_enabled: bool,
     pub sis_family: SisModulusFamily,
+    pub min_sis_security_bits: u16,
     pub ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
     pub ring_subfield_norm_bound: u32,
@@ -67,7 +63,11 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
     pub onehot_chunk_size: usize,
-    pub tiered: bool,
+    /// Multi-chunk witness layout this table was emitted under. A chunked policy
+    /// never aliases a single-chunk table (and vice versa), even when row keys
+    /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
+    pub witness_chunk: akita_types::ChunkedWitnessCfg,
+
     pub root_fold_shape: akita_challenges::TensorChallengeShape,
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,
@@ -82,11 +82,164 @@ pub struct GeneratedScheduleTable {
 }
 
 pub mod expand;
+pub mod validate;
+pub(crate) mod walk;
 pub use akita_types::SisModulusFamily;
+pub use akita_types::{PolynomialGroupLayout, PrecommittedGroupParams};
+pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
+
+/// Returns true when `entries` are ordered for [`table_entry`] binary search.
+pub fn catalog_entries_sorted_for_lookup(entries: &[GeneratedScheduleTableEntry]) -> bool {
+    entries
+        .windows(2)
+        .all(|window| generated_schedule_key_cmp(&window[0], &window[1]).is_lt())
+}
 
 pub fn table_entry(
     table: GeneratedScheduleTable,
-    key: GeneratedScheduleKey,
+    key: &akita_types::AkitaScheduleLookupKey,
 ) -> Option<&'static GeneratedScheduleTableEntry> {
-    table.entries.iter().find(|entry| entry.key == key)
+    debug_assert!(catalog_entries_sorted_for_lookup(table.entries));
+    table
+        .entries
+        .binary_search_by(|entry| generated_schedule_key_cmp_runtime(entry, key))
+        .ok()
+        .map(|idx| &table.entries[idx])
+}
+
+pub fn generated_schedule_key_cmp(
+    left: &GeneratedScheduleTableEntry,
+    right: &GeneratedScheduleTableEntry,
+) -> std::cmp::Ordering {
+    let left_main = (
+        left.final_group.num_vars(),
+        left.final_group.num_polynomials(),
+    );
+    let right_main = (
+        right.final_group.num_vars(),
+        right.final_group.num_polynomials(),
+    );
+    left_main
+        .cmp(&right_main)
+        .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
+        .then_with(|| {
+            left.precommitteds
+                .iter()
+                .map(precommitted_group_sort_key)
+                .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
+        })
+}
+
+pub fn generated_schedule_key_cmp_runtime(
+    generated: &GeneratedScheduleTableEntry,
+    runtime: &akita_types::AkitaScheduleLookupKey,
+) -> std::cmp::Ordering {
+    let left_main = (
+        generated.final_group.num_vars(),
+        generated.final_group.num_polynomials(),
+    );
+    let right_main = (
+        runtime.final_group.num_vars(),
+        runtime.final_group.num_polynomials(),
+    );
+    left_main
+        .cmp(&right_main)
+        .then_with(|| {
+            generated
+                .precommitteds
+                .len()
+                .cmp(&runtime.precommitteds.len())
+        })
+        .then_with(|| precommitted_groups_cmp(generated.precommitteds, &runtime.precommitteds))
+}
+
+/// Sort order for runtime keys; matches [`generated_schedule_key_cmp`].
+pub fn runtime_schedule_key_cmp(
+    left: &akita_types::AkitaScheduleLookupKey,
+    right: &akita_types::AkitaScheduleLookupKey,
+) -> std::cmp::Ordering {
+    let left_main = (
+        left.final_group.num_vars(),
+        left.final_group.num_polynomials(),
+    );
+    let right_main = (
+        right.final_group.num_vars(),
+        right.final_group.num_polynomials(),
+    );
+    left_main
+        .cmp(&right_main)
+        .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
+        .then_with(|| {
+            left.precommitteds
+                .iter()
+                .map(precommitted_group_sort_key)
+                .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
+        })
+}
+
+fn precommitted_groups_cmp(
+    generated: &[akita_types::PrecommittedGroupParams],
+    runtime: &[akita_types::PrecommittedGroupParams],
+) -> std::cmp::Ordering {
+    generated
+        .iter()
+        .zip(runtime)
+        .map(|(left, right)| {
+            precommitted_group_sort_key(left).cmp(&precommitted_group_sort_key(right))
+        })
+        .find(|ord| *ord != std::cmp::Ordering::Equal)
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
+fn precommitted_group_sort_key(
+    key: &akita_types::PrecommittedGroupParams,
+) -> (usize, usize, usize, usize, u32, usize, usize) {
+    (
+        key.group.num_vars(),
+        key.group.num_polynomials(),
+        key.m_vars,
+        key.r_vars,
+        key.log_basis,
+        key.n_a,
+        key.conservative_n_b,
+    )
+}
+
+fn schedule_key_eq(
+    generated: &GeneratedScheduleTableEntry,
+    key: &akita_types::AkitaScheduleLookupKey,
+) -> bool {
+    generated.final_group == key.final_group
+        && generated.precommitteds.len() == key.precommitteds.len()
+        && generated
+            .precommitteds
+            .iter()
+            .zip(&key.precommitteds)
+            .all(|(generated, layout)| precommitted_group_key_eq(generated, layout))
+}
+
+fn precommitted_group_key_eq(
+    generated: &akita_types::PrecommittedGroupParams,
+    layout: &akita_types::PrecommittedGroupParams,
+) -> bool {
+    generated.group == layout.group
+        && generated.m_vars == layout.m_vars
+        && generated.r_vars == layout.r_vars
+        && generated.log_basis == layout.log_basis
+        && generated.n_a == layout.n_a
+        && generated.conservative_n_b == layout.conservative_n_b
+}
+
+/// Returns an error when the generated key does not match the runtime key.
+pub(crate) fn validate_entry_key(
+    generated: &GeneratedScheduleTableEntry,
+    key: &akita_types::AkitaScheduleLookupKey,
+) -> Result<(), akita_field::AkitaError> {
+    if schedule_key_eq(generated, key) {
+        Ok(())
+    } else {
+        Err(akita_field::AkitaError::InvalidSetup(
+            "generated schedule key mismatch".to_string(),
+        ))
+    }
 }

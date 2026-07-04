@@ -17,6 +17,10 @@ pub(crate) fn push_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
+pub(crate) fn push_u16(bytes: &mut Vec<u8>, value: u16) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
 pub(crate) fn push_u128(bytes: &mut Vec<u8>, value: u128) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }

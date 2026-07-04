@@ -1,7 +1,7 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{CleartextWitnessShape, LevelParams, OpeningBatchShape};
+use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -69,66 +69,172 @@ impl ExecutionSchedule {
     }
 }
 
-/// Public runtime key that selects a concrete root schedule context.
-///
-/// Describes the supported scalar same-point opening batch: `num_vars`
-/// coordinates in the shared point and `num_polynomials` committed polynomials
-/// opened at that point (one claim per polynomial).
+/// Root layout metadata frozen when a standalone commitment group is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PrecommittedGroupParams {
+    /// Per-group root schedule entry shape.
+    pub group: PolynomialGroupLayout,
+    /// Root block size exponent used for this group's committed `t_hat` shape.
+    pub m_vars: usize,
+    /// Root block count exponent used for this group's committed `t_hat` shape.
+    pub r_vars: usize,
+    /// Gadget basis selected for the standalone group commit.
+    pub log_basis: u32,
+    /// A-role row count selected for the committed inner rows.
+    pub n_a: usize,
+    /// Conservative B-role row count used by the standalone precommit.
+    pub conservative_n_b: usize,
+}
+
+impl PrecommittedGroupParams {
+    /// Build frozen group metadata from the concrete commit params.
+    pub fn from_params(group: PolynomialGroupLayout, params: &LevelParams) -> Self {
+        Self {
+            group,
+            m_vars: params.m_vars,
+            r_vars: params.r_vars,
+            log_basis: params.log_basis,
+            n_a: params.a_key.row_len(),
+            conservative_n_b: params.b_key.row_len(),
+        }
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        push_usize(bytes, self.group.num_vars());
+        push_usize(bytes, self.group.num_polynomials());
+        push_usize(bytes, self.m_vars);
+        push_usize(bytes, self.r_vars);
+        push_u32(bytes, self.log_basis);
+        push_usize(bytes, self.n_a);
+        push_usize(bytes, self.conservative_n_b);
+    }
+
+    /// Validate that this layout is a well-formed standalone commitment group.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        self.group.validate()?;
+        if self.n_a == 0 || self.conservative_n_b == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout requires nonzero A rows and conservative B rows"
+                    .to_string(),
+            ));
+        }
+        if self.log_basis == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout requires nonzero log_basis".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate that frozen `(m_vars, r_vars)` geometry matches `group.num_vars`.
+    pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError> {
+        let alpha = ring_dimension.trailing_zeros() as usize;
+        let Some(outer) = self
+            .m_vars
+            .checked_add(self.r_vars)
+            .and_then(|sum| sum.checked_add(alpha))
+        else {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout geometry overflow".to_string(),
+            ));
+        };
+        if outer != self.group.num_vars() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "precommitted group geometry does not match group.num_vars: \
+                 m_vars={} r_vars={} alpha={} group.num_vars={}",
+                self.m_vars,
+                self.r_vars,
+                alpha,
+                self.group.num_vars()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate metadata frozen by a precommitted group at precommit time.
+    pub fn validate_frozen_precommit(
+        &self,
+        ring_dimension: usize,
+        min_log_basis: u32,
+    ) -> Result<(), AkitaError> {
+        self.validate()?;
+        self.validate_root_geometry(ring_dimension)?;
+        if self.log_basis != min_log_basis {
+            return Err(AkitaError::InvalidSetup(format!(
+                "precommitted group log_basis must equal min_basis({min_log_basis}), got {}",
+                self.log_basis
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Canonical runtime schedule lookup key.
+///
+/// Scalar same-point openings use an empty `precommitteds` vector and store the
+/// sole group in `final_group`. Multi-group roots list earlier groups in
+/// `precommitteds` and the final group in `final_group`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
-    /// Root polynomial variable count.
-    pub num_vars: usize,
-    /// Number of polynomials in the single commitment group.
-    pub num_polynomials: usize,
+    /// Final group shape for the grouped root commitment.
+    pub final_group: PolynomialGroupLayout,
+    /// Previously committed groups in caller-supplied transcript order.
+    pub precommitteds: Vec<PrecommittedGroupParams>,
 }
 
 impl AkitaScheduleLookupKey {
-    /// Singleton root-opening context.
-    pub const fn singleton(num_vars: usize) -> Self {
+    /// Scalar root-opening context with no precommitted groups.
+    pub fn single(final_group: PolynomialGroupLayout) -> Self {
         Self {
-            num_vars,
-            num_polynomials: 1,
+            final_group,
+            precommitteds: Vec::new(),
         }
     }
 
-    /// General root-opening context for a scalar same-point batch.
-    pub const fn new(num_vars: usize, num_polynomials: usize) -> Self {
-        Self {
-            num_vars,
-            num_polynomials,
-        }
-    }
-
-    /// Build a schedule lookup key from a validated [`OpeningBatchShape`].
-    ///
-    /// Projects `num_vars` and the total polynomial count. Assumes the batch
-    /// was already validated at the opening boundary (`OpeningBatchShape::check`
-    /// or an infallible constructor).
-    ///
-    /// Folded schedule lookup currently treats every batch as one commitment
-    /// group; see `akita_planner::generated_schedule_lookup_key`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the batch is multi-group.
-    pub fn new_from_opening_batch(opening_batch: &OpeningBatchShape) -> Result<Self, AkitaError> {
-        if opening_batch.num_commitment_groups() != 1 {
+    /// Scalar schedule lookup from a single-group opening layout.
+    pub fn from_layout(layout: &OpeningClaimsLayout) -> Result<Self, AkitaError> {
+        if layout.num_groups() != 1 {
             return Err(AkitaError::InvalidSetup(
-                "scalar schedule lookup cannot collapse a multi-commitment batch; use the grouped schedule key from specs/multi-group-batching.md".to_string(),
+                "scalar schedule lookup cannot collapse a multi-group layout; build an explicit grouped key".to_string(),
             ));
         }
-        Ok(Self::new(
-            opening_batch.num_vars(),
-            opening_batch.num_polynomials(),
-        ))
+        Ok(Self::single(layout.groups()[0]))
     }
 
-    /// Validate that the key dimensions are usable.
-    pub fn validate(self) -> Result<(), AkitaError> {
-        if self.num_vars == 0 || self.num_polynomials == 0 {
+    /// Number of commitment groups in this schedule key.
+    pub fn num_commitment_groups(&self) -> usize {
+        self.precommitteds.len() + 1
+    }
+
+    /// Total number of polynomials across the final and precommitted groups.
+    pub fn num_polynomials(&self) -> Result<usize, AkitaError> {
+        let mut total = self.final_group.num_polynomials();
+        for layout in &self.precommitteds {
+            total = total
+                .checked_add(layout.group.num_polynomials())
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("grouped root polynomial count overflow".to_string())
+                })?;
+        }
+        Ok(total)
+    }
+
+    /// Validate per-group metadata.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        self.final_group.validate()?;
+        if self.final_group.num_vars() == 0 {
             return Err(AkitaError::InvalidSetup(
                 "schedule lookup key dimensions must be at least 1".to_string(),
             ));
+        }
+        for layout in &self.precommitteds {
+            layout.validate()?;
+            if layout.group.num_vars() > self.final_group.num_vars() / 2 {
+                return Err(AkitaError::InvalidInput(
+                    "grouped root requires precommitted groups to have at most half the final num_vars"
+                        .to_string(),
+                ));
+            }
         }
         Ok(())
     }
@@ -148,30 +254,6 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
     (-F::one()).to_canonical_u128() + 1
 }
 
-/// Total ring elements in the recursive witness polynomial.
-///
-/// Components: `e_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
-pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts::<F>(lp, 1, 1)
-}
-
-/// Total ring elements in a recursive witness polynomial for an explicit batch.
-///
-/// The scalar same-point batch opens one claim per polynomial, so a single
-/// `num_polynomials` drives both the `e`/`t` witness widths.
-pub fn w_ring_element_count_with_counts<F: CanonicalField>(
-    lp: &LevelParams,
-    num_polynomials: usize,
-    num_public_rows: usize,
-) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts_for_layout::<F>(
-        lp,
-        num_polynomials,
-        num_public_rows,
-        crate::layout::MRowLayout::WithDBlock,
-    )
-}
-
 /// Total ring elements in a recursive witness polynomial for an explicit
 /// M-row layout. The terminal layout drops the D-block from the M-matrix,
 /// which shrinks the per-row `r` quotients by `n_d * r_decomp_levels` ring
@@ -179,7 +261,7 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
 pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     lp: &LevelParams,
     num_polynomials: usize,
-    num_public_rows: usize,
+    num_z_segments: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
     let modulus = detect_field_modulus::<F>();
@@ -188,25 +270,8 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
         field_bits,
         lp,
         num_polynomials,
-        num_public_rows,
+        num_z_segments,
         layout,
-    )
-}
-
-/// Non-generic variant of [`w_ring_element_count_with_counts`] for callers
-/// that already know the effective field bit width.
-pub fn w_ring_element_count_with_counts_bits(
-    field_bits: u32,
-    lp: &LevelParams,
-    num_polynomials: usize,
-    num_public_rows: usize,
-) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts_for_layout_bits(
-        field_bits,
-        lp,
-        num_polynomials,
-        num_public_rows,
-        crate::layout::MRowLayout::WithDBlock,
     )
 }
 
@@ -217,9 +282,10 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     field_bits: u32,
     lp: &LevelParams,
     num_polynomials: usize,
-    num_public_rows: usize,
+    num_z_segments: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
+    lp.reject_grouped_root("w_ring_element_count_with_counts_for_layout_bits")?;
     let e_hat_count = num_polynomials
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
@@ -229,60 +295,128 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let u_concat_count = lp.u_concat_ring_len_per_group();
     let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
-    let z_pre_count = num_public_rows
+    let z_pre_count = num_z_segments
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    // Public-output M rows bind via the fused trace term; omit from r width.
-    let r_rows = lp.m_row_count_for(1, 0, layout)?;
+    let r_rows = lp.m_row_count_for(1, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
             lp.log_basis,
         ))
         .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    {
-        // Terminal layout drops the D-block from the relation entirely, so
-        // its per-row blinding is also unused. Intermediate layout keeps the
-        // D-block blinding as before.
-        let d_blinding_count = match layout {
-            crate::layout::MRowLayout::WithDBlock => {
-                crate::lhl_blinding::blinding_column_count_from_bits(
-                    lp.d_key.row_len(),
-                    lp.ring_dimension,
-                    lp.log_basis,
-                    field_bits as usize,
-                )
-            }
-            crate::layout::MRowLayout::WithoutDBlock => 0,
-        };
-        let b_blinding_count = crate::lhl_blinding::blinding_column_count_from_bits(
-            lp.b_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-            field_bits as usize,
+
+    e_hat_count
+        .checked_add(t_hat_count)
+        .and_then(|n| n.checked_add(z_pre_count))
+        .and_then(|n| n.checked_add(r_count))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
+}
+
+/// Witness ring-element count for a chunked (multi-chunk) or single-chunk layout.
+///
+/// `num_chunks == 1` delegates to
+/// [`w_ring_element_count_with_counts_for_layout_bits`] with `num_public_rows = 1`,
+/// so it is byte-identical to the historical single-chunk pricing.
+///
+/// `num_chunks > 1` prices the multi-chunk witness layout used by the distributed
+/// prover: `num_chunks` chunks each holding a partitioned slice of `ê`/`t̂` plus a
+/// **replicated full-width** `ẑ`, followed by a single shared `r`-tail. The
+/// per-node relations stack *horizontally* (`M = [M_0 | … | M_{num_chunks-1}]`),
+/// sharing the same row blocks (concatenation adds columns, not rows) and summing
+/// the partial commitments `u_j` into one `u`, so the quotient `r = Σ_j r_j` keeps
+/// the **single-machine shape** — its row count is priced with `num_commitments =
+/// 1`, unchanged from the single-chunk layout. The **only** extra cost over the
+/// single-chunk layout is `(num_chunks - 1) · z_chunk` ring elements (the
+/// replicated `ẑ`).
+///
+/// The `ê`/`t̂` block window is partitioned (`blocks_per_chunk = num_blocks /
+/// num_chunks`), so `num_chunks · e_chunk` and `num_chunks · t_chunk` equal the
+/// single-chunk totals; neither those segments nor the shared `r`-tail grow — only
+/// the replicated `ẑ` does.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `num_chunks == 0`, `num_chunks > 1`
+/// is not a power of two, `lp.num_blocks` is not divisible by `num_chunks`, the
+/// level is tiered (multi-chunk + tiered is unsupported), or any width product
+/// overflows. Never panics — verifier-reachable through the runtime DP fallback.
+pub fn w_ring_element_count_for_chunks(
+    field_bits: u32,
+    lp: &LevelParams,
+    num_polynomials: usize,
+    layout: crate::layout::MRowLayout,
+    num_chunks: usize,
+) -> Result<usize, AkitaError> {
+    if num_chunks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "w_ring_element_count_for_chunks: num_chunks must be >= 1".to_string(),
+        ));
+    }
+    if num_chunks == 1 {
+        return w_ring_element_count_with_counts_for_layout_bits(
+            field_bits,
+            lp,
+            num_polynomials,
+            1,
+            layout,
         );
-        e_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(u_concat_count))
-            .and_then(|n| n.checked_add(b_blinding_count))
-            .and_then(|n| n.checked_add(d_blinding_count))
-            .and_then(|n| n.checked_add(z_pre_count))
-            .and_then(|n| n.checked_add(r_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
     }
-    #[cfg(not(feature = "zk"))]
-    {
-        e_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(u_concat_count))
-            .and_then(|n| n.checked_add(z_pre_count))
-            .and_then(|n| n.checked_add(r_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
+    if !num_chunks.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "w_ring_element_count_for_chunks: num_chunks must be a power of two".to_string(),
+        ));
     }
+    if !lp.num_blocks.is_multiple_of(num_chunks) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "w_ring_element_count_for_chunks: num_blocks={} not divisible by num_chunks={num_chunks}",
+            lp.num_blocks
+        )));
+    }
+    let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
+    let blocks_per_chunk = lp.num_blocks / num_chunks;
+    // ê / t̂: partitioned over the per-chunk block window.
+    let e_chunk = num_polynomials
+        .checked_mul(blocks_per_chunk)
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(overflow)?;
+    let t_chunk = num_polynomials
+        .checked_mul(blocks_per_chunk)
+        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(overflow)?;
+    // ẑ: replicated full fold width in every chunk (not divided by num_chunks).
+    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
+    let z_chunk = lp
+        .inner_width()
+        .checked_mul(num_digits_fold)
+        .ok_or_else(overflow)?;
+    let body = e_chunk
+        .checked_add(t_chunk)
+        .and_then(|n| n.checked_add(z_chunk))
+        .ok_or_else(overflow)?;
+    // Shared r-tail: one summed quotient (r = Σ_j r_j) for all chunks. The
+    // per-node relations stack horizontally (M = [M_0 | … | M_{num_chunks-1}]),
+    // sharing the same row blocks — concatenation adds columns, not rows — and
+    // the partial commitments u_j are summed into one u. So the quotient keeps the
+    // single-machine shape (priced with `num_commitments = 1`, UNCHANGED from the
+    // single-chunk layout); only the replicated ẑ grows. Pricing it with
+    // `num_chunks` here would over-count the tail and break the prover's
+    // `emitted == next_w_len` and the verifier's single-machine `r_len`.
+    let r_rows = lp.m_row_count_for(1, layout)?;
+    let r_count = r_rows
+        .checked_mul(crate::sis::compute_num_digits_full_field(
+            field_bits,
+            lp.log_basis,
+        ))
+        .ok_or_else(overflow)?;
+
+    num_chunks
+        .checked_mul(body)
+        .and_then(|n| n.checked_add(r_count))
+        .ok_or_else(overflow)
 }
 
 /// Parameters for one fold level in the computed schedule.
@@ -321,7 +455,7 @@ pub struct DirectStep {
     /// loudly and `setup_level_params_from_runtime_schedule` returns
     /// an empty list. Don't commit through such a schedule.
     ///
-    /// Terminal-direct steps (`witness_shape = PackedDigits`, schedule
+    /// Terminal-direct steps (`witness_shape = SegmentTyped`, schedule
     /// is `[Fold, …, Fold, Direct]`) ship the cleartext witness without
     /// committing — the verifier absorbs the bytes into the transcript
     /// and re-evaluates the witness directly. They always carry
@@ -334,10 +468,9 @@ pub struct DirectStep {
 }
 
 impl DirectStep {
-    /// Active terminal log-basis for packed direct witnesses.
+    /// Active terminal log-basis for segment-typed direct witnesses.
     pub fn log_basis(&self, field_bits: u32) -> u32 {
         match &self.witness_shape {
-            CleartextWitnessShape::PackedDigits((_, bits)) => *bits,
             CleartextWitnessShape::FieldElements(_) => field_bits,
             CleartextWitnessShape::SegmentTyped(shape) => shape.layout.log_basis,
         }
@@ -453,11 +586,6 @@ fn append_direct_witness_shape_descriptor_bytes(
     shape: &CleartextWitnessShape,
 ) {
     match shape {
-        CleartextWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
-            bytes.push(0);
-            push_usize(bytes, *num_elems);
-            push_u32(bytes, *bits_per_elem);
-        }
         CleartextWitnessShape::FieldElements(coeff_len) => {
             bytes.push(1);
             push_usize(bytes, *coeff_len);
@@ -526,6 +654,21 @@ pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
     }
 }
 
+/// Root commit layout read from the first step of a grouped runtime schedule.
+pub fn grouped_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
+    match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+        Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "grouped root-direct schedule is missing commit params".to_string(),
+            )
+        }),
+        None => Err(AkitaError::InvalidSetup(
+            "grouped schedule has no steps".to_string(),
+        )),
+    }
+}
+
 /// Return the terminal direct witness shape from a runtime schedule.
 ///
 /// # Errors
@@ -548,7 +691,7 @@ pub fn schedule_terminal_direct_witness_shape(
 /// Resolve one scheduled level's active Akita params.
 ///
 /// `Fold` steps return the baked-in `params` set by the planner DP and
-/// table materializer. A terminal `Direct(PackedDigits)` step has no
+/// table materializer. A terminal `Direct(SegmentTyped)` step has no
 /// commitment of its own (the cleartext witness is absorbed into the
 /// transcript directly), so it ships no `LevelParams`; this function
 /// instead returns a [`LevelParams::log_basis_stub`] carrying only the
@@ -568,9 +711,6 @@ pub fn scheduled_next_level_params(
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
         Some(Step::Direct(step)) => match &step.witness_shape {
-            CleartextWitnessShape::PackedDigits((_, log_basis)) => {
-                Ok(LevelParams::log_basis_stub(*log_basis))
-            }
             CleartextWitnessShape::SegmentTyped(shape) => {
                 Ok(LevelParams::log_basis_stub(shape.layout.log_basis))
             }
@@ -587,25 +727,118 @@ pub fn scheduled_next_level_params(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::golomb_rice::golomb_rice_encode_vec;
+    use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
+    use crate::tail_golomb_rice_z_params;
     use crate::{
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
         AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-        MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
-        EXTENSION_OPENING_REDUCTION_DEGREE,
+        MRowLayout, SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
-    #[cfg(not(feature = "zk"))]
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
-    #[cfg(feature = "zk")]
-    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn chunked_witness_count_matches_chunk_layout_arithmetic() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        // num_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
+        let lp = LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, stage1_config)
+            .with_decomp(2, 3, 2, 2, 0)
+            .unwrap();
+        let field_bits = 128u32;
+        let num_poly = 3usize;
+
+        for layout in [MRowLayout::WithDBlock, MRowLayout::WithoutDBlock] {
+            let single = w_ring_element_count_with_counts_for_layout_bits(
+                field_bits, &lp, num_poly, 1, layout,
+            )
+            .unwrap();
+            // num_chunks = 1 must be byte-identical to the single-chunk delegate.
+            assert_eq!(
+                w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, 1).unwrap(),
+                single
+            );
+
+            let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
+            for num_chunks in [2usize, 4, 8] {
+                let chunked =
+                    w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, num_chunks)
+                        .unwrap();
+                // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
+                // a single summed quotient that keeps the single-machine row count
+                // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
+                // (num_chunks - 1) full-width copies.
+                assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
+                assert!(chunked > single, "chunked layout must grow vs single chunk");
+            }
+        }
+    }
+
+    #[test]
+    fn chunked_witness_count_rejects_invalid_chunk_counts() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        // num_blocks = 2^3 = 8.
+        let lp = LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, stage1_config)
+            .with_decomp(2, 3, 2, 2, 0)
+            .unwrap();
+        // Non-power-of-two chunk count.
+        assert!(matches!(
+            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 6),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        // num_chunks does not divide num_blocks (8 % 16 != 0).
+        assert!(matches!(
+            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 16),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        // Zero chunks.
+        assert!(matches!(
+            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 0),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+
+    fn segment_typed_final_witness(
+        lp: &LevelParams,
+        num_claims: usize,
+    ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
+        let field_bits = F::modulus_bits();
+        let shape = segment_typed_witness_shape(lp, field_bits, num_claims, num_claims, 1, 1)
+            .expect("segment-typed witness shape");
+        let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
+            panic!("expected segment-typed witness shape");
+        };
+        let layout = segment_shape.layout;
+        let (rice_low_bits, zigzag_w) =
+            tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
+        let z_payload =
+            golomb_rice_encode_vec(&vec![0i64; layout.z_coords], rice_low_bits, zigzag_w)
+                .expect("encode zero z segment");
+        let witness = SegmentTypedWitness {
+            layout,
+            z_payload,
+            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+        };
+        (CleartextWitnessProof::SegmentTyped(witness), shape)
+    }
 
     #[test]
     fn root_direct_schedule_uses_field_element_payload() {
@@ -634,7 +867,6 @@ mod tests {
         assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
     }
 
-    #[cfg(not(feature = "zk"))]
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
@@ -645,24 +877,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zk")]
-    fn dummy_sumcheck_proof_masked<F: FieldCore>(
-        rounds: usize,
-        degree: usize,
-    ) -> SumcheckProofMasked<F> {
-        let compressed_rounds = || {
-            (0..rounds)
-                .map(|_| CompressedUniPoly {
-                    coeffs_except_linear_term: vec![F::zero(); degree],
-                })
-                .collect()
-        };
-        SumcheckProofMasked {
-            masked_round_polys: compressed_rounds(),
-        }
-    }
-
-    #[cfg(not(feature = "zk"))]
     fn dummy_eq_factored_sumcheck<F: FieldCore>(
         rounds: usize,
         degree: usize,
@@ -679,38 +893,12 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zk")]
-    fn dummy_eq_factored_sumcheck_proof_masked<F: FieldCore>(
-        rounds: usize,
-        degree: usize,
-    ) -> EqFactoredSumcheckProofMasked<F> {
-        let rounds_for = || {
-            (0..rounds)
-                .map(|_| EqFactoredUniPoly {
-                    coeffs_except_linear_term: vec![
-                        F::zero();
-                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                    ],
-                })
-                .collect()
-        };
-        EqFactoredSumcheckProofMasked {
-            masked_round_polys: rounds_for(),
-        }
-    }
-
     fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {
             stages: stage1_tree_stage_shapes(rounds, b)
                 .into_iter()
                 .map(|shape| AkitaStage1StageProof {
-                    #[cfg(not(feature = "zk"))]
                     sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
-                    #[cfg(feature = "zk")]
-                    sumcheck_proof_masked: dummy_eq_factored_sumcheck_proof_masked(
-                        rounds,
-                        shape.sumcheck_proof.1,
-                    ),
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
                 .collect(),
@@ -746,15 +934,9 @@ mod tests {
             fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
                 next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
-                #[cfg(not(feature = "zk"))]
                 next_w_eval: F::zero(),
-                #[cfg(feature = "zk")]
-                next_w_eval_masked: F::zero(),
             }),
             stage3_sumcheck_proof: None,
         };
@@ -809,8 +991,6 @@ mod tests {
         };
         let next_w_len = D * 8;
         let num_claims = 3;
-        let final_w_num_elems = 1024;
-        let final_w_bits = 5;
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
@@ -826,17 +1006,11 @@ mod tests {
             .unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
 
-            let final_witness = CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
-                &vec![0i8; final_w_num_elems],
-                final_w_bits,
-            ));
+            let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
-                #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
-                #[cfg(feature = "zk")]
-                dummy_sumcheck_proof_masked(rounds, 3),
                 final_witness,
                 0,
             );
@@ -863,17 +1037,11 @@ mod tests {
                  (less final_witness) at log_basis={log_basis}"
             );
 
-            // Sanity-check `direct_witness_bytes` against the runtime
-            // packed-digit serialization so any future drift in either
-            // accounting path is caught here too.
-            assert_eq!(
-                direct_witness_bytes(
-                    128,
-                    &CleartextWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
-                ),
-                final_witness_bytes_runtime,
-                "direct_witness_bytes should match the serialized packed-digit \
-                 final witness at log_basis={log_basis}"
+            let scheduled_bytes = direct_witness_bytes(128, &witness_shape);
+            assert!(
+                scheduled_bytes >= final_witness_bytes_runtime,
+                "scheduled direct witness budget must cover serialized segment-typed witness \
+                 at log_basis={log_basis}"
             );
         }
     }
@@ -913,10 +1081,7 @@ mod tests {
                     None,
                     vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
                     dummy_stage1_proof(rounds, b),
-                    #[cfg(not(feature = "zk"))]
                     dummy_sumcheck(rounds, 3),
-                    #[cfg(feature = "zk")]
-                    dummy_sumcheck_proof_masked(rounds, 3),
                     next_commitment,
                     F::zero(),
                 );
@@ -946,23 +1111,12 @@ mod tests {
         let partials = extension_width.saturating_mul(num_claims);
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![F::zero(); partials],
-            #[cfg(not(feature = "zk"))]
             sumcheck: dummy_sumcheck(
                 opening_vars - extension_width.trailing_zeros() as usize,
                 EXTENSION_OPENING_REDUCTION_DEGREE,
             ),
-            #[cfg(feature = "zk")]
-            sumcheck_proof_masked: dummy_sumcheck_proof_masked(
-                opening_vars - extension_width.trailing_zeros() as usize,
-                EXTENSION_OPENING_REDUCTION_DEGREE,
-            ),
         };
-        #[cfg(not(feature = "zk"))]
         let sumcheck_bytes = reduction.sumcheck.serialized_size(Compress::No);
-        #[cfg(feature = "zk")]
-        let sumcheck_bytes = reduction
-            .sumcheck_proof_masked
-            .serialized_size(Compress::No);
 
         assert_eq!(
             extension_opening_reduction_proof_bytes(128, partials, opening_vars, extension_width)
@@ -978,17 +1132,107 @@ mod tests {
     }
 
     #[test]
-    fn new_from_opening_batch_rejects_multi_group() {
-        let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped shape");
-        let err = AkitaScheduleLookupKey::new_from_opening_batch(&batch)
+    fn from_layout_rejects_multi_group() {
+        let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped layout");
+        let err = AkitaScheduleLookupKey::from_layout(&layout)
             .expect_err("scalar lookup must reject grouped batches");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
     fn validate_rejects_zero_dimensions() {
-        assert!(AkitaScheduleLookupKey::new(0, 1).validate().is_err());
-        assert!(AkitaScheduleLookupKey::new(20, 0).validate().is_err());
-        assert!(AkitaScheduleLookupKey::new(20, 4).validate().is_ok());
+        assert!(
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(0, 1))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 0))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 4))
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn group_batch_key_rejects_precommitted_num_vars_above_main() {
+        let pre = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(24, 1),
+            m_vars: 4,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let grouped = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(20, 3),
+            precommitteds: vec![pre],
+        };
+
+        let err = grouped
+            .validate()
+            .expect_err("precommitted groups above the main num_vars must be rejected");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
+        let pre_small = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(12, 1),
+            m_vars: 4,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let grouped = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(20, 3),
+            precommitteds: vec![pre_small],
+        };
+
+        grouped
+            .validate()
+            .expect_err("precommitted groups above half the main key must be rejected");
+    }
+
+    #[test]
+    fn group_batch_key_allows_mixed_polynomial_counts() {
+        let pre = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(10, 1),
+            m_vars: 12,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let grouped = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(20, 3),
+            precommitteds: vec![pre],
+        };
+
+        grouped
+            .validate()
+            .expect("unequal K_g is allowed for a supported precommitted dimension");
+        assert_eq!(grouped.num_commitment_groups(), 2);
+    }
+
+    #[test]
+    fn validate_frozen_precommit_rejects_geometry_mismatch() {
+        let layout = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::new(20, 1),
+            m_vars: 4,
+            r_vars: 2,
+            log_basis: 2,
+            n_a: 3,
+            conservative_n_b: 4,
+        };
+        let err = layout
+            .validate_frozen_precommit(64, 2)
+            .expect_err("geometry must match num_vars");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

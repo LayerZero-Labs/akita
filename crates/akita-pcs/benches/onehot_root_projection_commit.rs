@@ -11,9 +11,11 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
-use akita_prover::{commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly};
+use akita_prover::{
+    batched_commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly,
+};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{FpExtEncoding, OpeningBatchShape};
+use akita_types::{FpExtEncoding, OpeningClaimsLayout};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
@@ -132,7 +134,7 @@ where
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let opening_batch =
-        OpeningBatchShape::new(num_vars, num_polys).expect("benchmark opening_batch");
+        OpeningClaimsLayout::new(num_vars, num_polys).expect("benchmark opening_batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)
         .expect("benchmark commitment params");
 
@@ -172,7 +174,7 @@ where
             for _ in 0..iters {
                 let start = Instant::now();
                 let committed =
-                    commit_with_params::<F, D, RootTensorProjectionPoly<F, D>, CpuBackend>(
+                    batched_commit_with_params::<F, D, RootTensorProjectionPoly<F, D>, CpuBackend>(
                         &transformed_polys,
                         setup.expanded.as_ref(),
                         stack.commit(),
@@ -192,9 +194,10 @@ where
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed =
-                    <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&setup, &polys, &stack)
-                        .expect("benchmark scheme commitment");
+                let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+                    &setup, &polys, &stack,
+                )
+                .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

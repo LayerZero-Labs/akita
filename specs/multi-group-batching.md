@@ -18,7 +18,8 @@ commitment groups in one root proof. The first supported shape is deliberately
 narrow:
 
 - every opened polynomial is a one-hot polynomial;
-- all commitment groups have the same `num_vars`;
+- the final group defines the shared padded opening arity, and every
+  precommitted group has `num_vars <= final_group.num_vars / 2`;
 - all groups are opened at one shared point;
 - group sizes `K_g` may differ;
 - multi-group structure exists only at the root fold;
@@ -88,7 +89,7 @@ commitments, witness shapes, and descriptors must return `AkitaError`.
 
 - Multipoint openings. The batch still has one shared opening point.
 - Dense polynomial support for the initial multi-group root batching rollout.
-- Heterogeneous `num_vars`.
+- Precommitted groups whose `num_vars` exceed `final_group.num_vars / 2`.
 - Tiered multi-group commitments. Existing tiered paths may keep rejecting
 `G > 1`.
 - Recursive setup-contribution support for `G > 1` in the first rollout, unless
@@ -111,9 +112,11 @@ objects that are produced over time and later opened together:
 commit_group(group_0), ..., commit_group(group_{G-2}), commit_final(group_{G-1})
 ```
 
-For `G = 1`, grouped APIs must normalize to the existing scalar schedule and
-proof bytes. They must not introduce a parallel planner path or extra descriptor
-fields beyond the versioned grouped encoding.
+For `G = 1`, grouped APIs must eventually normalize to the existing scalar
+schedule and proof bytes. They must not introduce a parallel planner path or
+extra descriptor fields beyond the versioned grouped encoding. Until that
+normalization is implemented, public grouped schedule/proof APIs must reject or
+avoid exposing `G = 1` grouped requests.
 
 ## Terminology
 
@@ -148,11 +151,12 @@ groups.
 
 Already useful:
 
-- `OpeningBatch` has been cleaned up around the new commitment-group design:
-  one shared point plus an ordered list of `CommitmentGroup` records.
-- `CommitmentGroup` carries the point-coordinate selection for that group and
-  dense claimed evaluations for the group's committed polynomials.
-- `OpeningBatch::from_commitment_groups` already builds the shape-only grouped
+- `OpeningClaims` / `OpeningClaimsLayout` have been cleaned up around the new
+  commitment-group design: one shared point plus an ordered list of polynomial
+  group records.
+- `PolynomialGroupClaims` carries the point-coordinate selection for that group
+  and dense claimed evaluations for the group's committed polynomials.
+- `OpeningClaimsLayout::from_group_sizes` already builds the shape-only grouped
   batch for group sizes such as `[1, 3]`, and descriptor bytes bind the group
   partition and point-variable selections.
 - `batched_commit` and its input preparation can commit several group slices
@@ -167,10 +171,11 @@ computation and padding for unequal `K_g`.
 
 Still missing or scalar today:
 
-- `AkitaScheduleLookupKey` is scalar and only describes one group.
-- `GeneratedScheduleKey` is scalar and only describes one group.
+- `PolynomialGroupLayout` is scalar and only describes one group.
+- Generated table entries inline `PolynomialGroupLayout` for the final group.
 - Planner root witness sizing treats the root as one group.
-- `GroupBatchAkitaScheduleLookupKey` and `CommitmentGroupLayout` do not exist.
+- `AkitaScheduleLookupKey` and `PrecommittedGroupParams` exist, but grouped
+  root proof support is still incomplete.
 - Conservative-rank presets and conservative B rank selection do not exist.
 - Public `commit_group` and `commit_final` APIs do not exist.
 - `compute_relation_quotient`, verifier ring-switch replay, terminal witness
@@ -181,9 +186,9 @@ grouped final-commit shape, commitment group layouts, or conservative B ranks.
 
 This spec describes the target state and the staged path to get there.
 
-## Opening Batch Shape
+## Opening Claims Shape
 
-Do not introduce a separate root-only incidence type. `OpeningBatch` is the
+Do not introduce a separate root-only incidence type. `OpeningClaimsLayout` is the
 canonical normalized shape for one shared opening point. The old flattened
 slot/routing vocabulary has been removed in favor of explicit commitment
 groups:
@@ -193,38 +198,41 @@ pub struct PointVariableSelection {
     indices: Vec<usize>,
 }
 
-pub struct CommitmentGroup<F> {
-    pub point_vars: PointVariableSelection,
-    pub claims: Vec<F>,
+pub struct PolynomialGroupClaims<'a, F, C> {
+    point_vars: PointVariableSelection,
+    evaluations: Vec<F>,
+    commitment: C,
+    // ...
 }
 
-pub struct OpeningBatch<F = ()> {
-    pub point: Vec<F>,
-    pub groups: Vec<CommitmentGroup<F>>,
+pub struct OpeningClaims<'a, F, C> {
+    point: OpeningPoints<'a, F>,
+    groups: Vec<PolynomialGroupClaims<'a, F, C>>,
 }
 ```
 
 Required constructors and accessors:
 
 ```rust
-impl OpeningBatch<()> {
+impl OpeningClaimsLayout {
     pub fn new(num_vars: usize, num_polys: usize) -> Result<Self, AkitaError>;
 
-    pub fn from_commitment_groups(
+    pub fn from_group_sizes(
         num_vars: usize,
         num_polys_per_commitment_group: &[usize],
     ) -> Result<Self, AkitaError>;
 }
 
-impl<F> OpeningBatch<F> {
-    pub fn new(point: Vec<F>, groups: Vec<CommitmentGroup<F>>) -> Result<Self, AkitaError>;
-    pub fn with_claims(point: Vec<F>, claims: Vec<F>) -> Result<Self, AkitaError>;
-    pub fn to_shape(&self) -> OpeningBatch<()>;
-
+impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
+    pub fn from_groups(
+        point: impl Into<OpeningPoints<'a, F>>,
+        groups: Vec<PolynomialGroupClaims<'a, F, C>>,
+    ) -> Result<Self, AkitaError>;
+    pub fn layout(&self) -> OpeningClaimsLayout;
     pub fn num_vars(&self) -> usize;
-    pub fn num_claims(&self) -> usize;
-    pub fn num_commitment_groups(&self) -> usize;
-    pub fn num_polys_per_commitment_group(&self) -> Vec<usize>;
+    pub fn num_total_polynomials(&self) -> usize;
+    pub fn num_groups(&self) -> usize;
+    pub fn group_sizes(&self) -> Vec<usize>;
 }
 ```
 
@@ -307,46 +315,50 @@ The root planner and proof-size formulas must keep these two worlds separate.
 
 ## Schedule Keys
 
-Keep the existing scalar `AkitaScheduleLookupKey` as the per-group entry shape:
+Keep `PolynomialGroupLayout` as the per-group entry shape:
 
 ```rust
-pub struct AkitaScheduleLookupKey {
+pub struct PolynomialGroupLayout {
     pub num_vars: usize,
-    pub num_t_vectors: usize,
-    pub num_w_vectors: usize,
-    pub num_z_vectors: usize,
+    pub num_polynomials: usize,
 }
 ```
 
-For scheduler adoption, each group entry is:
+For scheduler adoption, each group entry records that group's committed arity:
 
 ```text
-num_vars      = shared padded opening arity
+num_vars      = committed arity for this group
 num_t_vectors = K_g
 num_w_vectors = 1
 num_z_vectors = 1
 ```
 
-Add a group-batch key for final commit/prove planning:
+The final group sets the shared padded opening arity used by the grouped
+root. Precommitted group entries may have smaller arity; their
+`PointVariableSelection` chooses the coordinates they use from the shared point.
+Precommitted entries with arity greater than `final_group.num_vars / 2` must
+reject. This is the integer-division bound enforced by
+`AkitaScheduleLookupKey::validate`.
+
+Use the group-batch key for final commit/prove planning:
 
 ```rust
-pub struct GroupBatchAkitaScheduleLookupKey {
-    pub new: CommitmentGroupLayout,
-    pub precommitteds: Vec<CommitmentGroupLayout>,
+pub struct AkitaScheduleLookupKey {
+    pub final_group: PolynomialGroupLayout,
+    pub precommitteds: Vec<PrecommittedGroupParams>,
 }
 
-pub struct CommitmentGroupLayout {
-    pub key: AkitaScheduleLookupKey,
+pub struct PrecommittedGroupParams {
+    pub group: PolynomialGroupLayout,
     pub m_vars: usize,
     pub r_vars: usize,
     pub log_basis: u32,
     pub n_a: usize,
-    pub b_width: usize,
     pub conservative_n_b: usize,
 }
 ```
 
-`CommitmentGroupLayout` records the root layout that was used to create the
+`PrecommittedGroupParams` records the root layout that was used to create the
 group commitment. The final planner must use the same `t_hat_g` shape for that
 group. In the `commit_final`/opening phase, every precommitted group must verify against the frozen
 `conservative_n_b`. The final group may use a non-conservative B rank because it
@@ -368,7 +380,7 @@ Derived aggregate counts:
 
 ```text
 G                   = 1 + precommitteds.len()
-num_t_vectors_total = new.num_t_vectors + sum(precommitted.key.num_t_vectors)
+num_t_vectors_total = new.num_polynomials + sum(precommitted.group.num_polynomials)
 num_w_vectors_root  = G
 num_z_vectors_root  = G
 num_public_rows     = G
@@ -376,30 +388,13 @@ num_public_rows     = G
 
 ## Generated Schedule Keys
 
-Generated schedule keys must be lifted to the same shape as
-`GroupBatchAkitaScheduleLookupKey`:
+Generated schedule entries must inline the same shape as `AkitaScheduleLookupKey`:
 
 ```rust
-pub struct GeneratedGroupBatchScheduleKey {
-    pub new: GeneratedScheduleKey,
-    pub precommitteds: &'static [GeneratedPrecommittedGroupKey],
-}
-
-pub struct GeneratedPrecommittedGroupKey {
-    pub key: GeneratedScheduleKey,
-    pub m_vars: usize,
-    pub r_vars: usize,
-    pub log_basis: u32,
-    pub n_a: usize,
-    pub b_width: usize,
-    pub conservative_n_b: usize,
-}
-
-pub struct GeneratedScheduleKey {
-    pub num_vars: usize,
-    pub num_t_vectors: usize,
-    pub num_w_vectors: usize,
-    pub num_z_vectors: usize,
+pub struct GeneratedScheduleTableEntry {
+    pub final_group: PolynomialGroupLayout,
+    pub precommitteds: &'static [PrecommittedGroupParams],
+    pub steps: &'static [GeneratedStep],
 }
 ```
 
@@ -421,19 +416,9 @@ num_vars in supported family ranges
 
 ## Conservative-Rank Configuration
 
-Add a new `akita-config` family:
-
-```text
-akita_config::conservative_rank
-```
-
-It should mirror `proof_optimized` naming and presets, for example:
-
-```text
-conservative_rank::fp128::D64OneHot
-```
-
-Conservative-rank presets are one-hot-only for the initial grouped rollout. Dense backends and tiered
+Conservative-rank standalone group commits use the existing one-hot
+`proof_optimized` presets. The widening is selected by
+`CommitmentConfig::get_params_for_group_commit`; dense backends and tiered
 multi-group roots should return explicit `AkitaError`.
 
 ### Standalone Conservative Commit
@@ -470,7 +455,7 @@ For a group committed before the final grouped proof is known:
    m_g, r_g, n_a_g, b_width_g, n_b'_g, log_basis = l_g, num_digits_open(l_g), ...
    ```
 
-8. Store the frozen fields and `n_b'_g` in `CommitmentGroupLayout`.
+8. Store the frozen fields and `n_b'_g` in `PrecommittedGroupParams`.
 
 This protects the B relation for the precommitted group against any later
 root-group choice whose `log_basis <= l_max`, but only for the B role and only
@@ -490,8 +475,8 @@ commit_final(new_group, precommitteds)
 
 `commit_final` must:
 
-- build the full `GroupBatchAkitaScheduleLookupKey`;
-- use the precommitted groups' `CommitmentGroupLayout` values and conservative
+- build the full `AkitaScheduleLookupKey`;
+- use the precommitted groups' `PrecommittedGroupParams` values and conservative
   `n_b'` values;
 - commit the last group with the final grouped plan;
 - materialize the grouped root schedule and singleton suffix schedule;
@@ -504,16 +489,19 @@ Extend `CommitmentConfig` with grouped hooks:
 
 ```rust
 fn get_params_for_group_commit(
-    key: &AkitaScheduleLookupKey,
+    key: &PolynomialGroupLayout,
 ) -> Result<LevelParams, AkitaError>;
 
-fn get_group_batch_schedule(
-    key: &GroupBatchAkitaScheduleLookupKey,
-) -> Result<GroupedRootSchedule, AkitaError>;
+fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>;
+
+fn get_params_for_grouped_batched_commitment(
+    key: &AkitaScheduleLookupKey,
+) -> Result<LevelParams, AkitaError>;
 ```
 
 `get_params_for_group_commit` is the standalone conservative commit planner.
-`get_group_batch_schedule` is the final grouped root planner.
+`runtime_schedule` is the unified scalar and grouped root planner.
+`get_params_for_grouped_batched_commitment` reads the main group's root commit params from that schedule.
 
 `GroupedRootSchedule` is a root-only plan:
 
@@ -532,7 +520,7 @@ Add explicit group handles:
 
 ```rust
 pub struct CommittedGroupScheduleMeta {
-    pub layout: CommitmentGroupLayout,
+    pub layout: PrecommittedGroupParams,
 }
 
 pub struct CommittedGroupHandle<C, H> {
@@ -543,7 +531,7 @@ pub struct CommittedGroupHandle<C, H> {
 ```
 
 There is no `params_digest` in this phase. The verifier and final planner
-recompute the relevant params from `CommitmentGroupLayout`, setup, and config
+recompute the relevant params from `PrecommittedGroupParams`, setup, and config
 policy. If a later design allows non-deterministic or externally supplied group
 params, it can add canonical params bytes or a digest then.
 
@@ -692,7 +680,7 @@ Add a descriptor section:
 
 ```rust
 pub struct CommitSection {
-    pub group_batch_key: GroupBatchAkitaScheduleLookupKey,
+    pub group_batch_key: AkitaScheduleLookupKey,
     pub grouped_root_schedule_digest: DescriptorDigest,
     pub singleton_suffix_schedule_digest: DescriptorDigest,
 }
@@ -703,8 +691,8 @@ The instance descriptor must bind:
 - group count;
 - `num_polys_per_commitment_group`;
 - claim-to-group and claim-to-poly routing;
-- the full `GroupBatchAkitaScheduleLookupKey`;
-- each precommitted group's `CommitmentGroupLayout`;
+- the full `AkitaScheduleLookupKey`;
+- each precommitted group's `PrecommittedGroupParams`;
 - each precommitted group's conservative B rank;
 - the grouped root schedule digest;
 - the singleton suffix schedule digest;
@@ -746,34 +734,31 @@ usize[] -> usize length prefix, then each element in order
 digest  -> 32 raw bytes (Blake2b-256 output)
 ```
 
-`CommitmentGroupLayout` encodes in this fixed order:
+`PrecommittedGroupParams` encodes in this fixed order:
 
 ```text
-key.num_vars
-key.num_t_vectors
-key.num_w_vectors
-key.num_z_vectors
+group.num_vars
+group.num_polynomials
 m_vars
 r_vars
 log_basis
 n_a
-b_width
 conservative_n_b
 ```
 
-`GroupBatchAkitaScheduleLookupKey` encodes in this fixed order:
+`AkitaScheduleLookupKey` encodes in this fixed order:
 
 ```text
 precommitteds.len()
 for g in 0..precommitteds.len():
-    CommitmentGroupLayout(precommitteds[g])
-CommitmentGroupLayout(new)
+    PrecommittedGroupParams(precommitteds[g])
+final_group PolynomialGroupLayout
 ```
 
 `CommitSection` encodes in this fixed order:
 
 ```text
-GroupBatchAkitaScheduleLookupKey
+AkitaScheduleLookupKey
 grouped_root_schedule_digest[32]
 singleton_suffix_schedule_digest[32]
 ```
@@ -811,7 +796,7 @@ cases:
 descriptor version < AKITA_INSTANCE_DESCRIPTOR_VERSION for a grouped proof -> SerializationError
 precommitteds.len() == 0 && grouped proof claims G>1 -> AkitaError::InvalidProof
 precommitteds.len() + 1 != G                         -> AkitaError::InvalidProof
-any CommitmentGroupLayout field overflow or zero where forbidden -> AkitaError::InvalidProof
+any PrecommittedGroupParams field overflow or zero where forbidden -> AkitaError::InvalidProof
 group vector order differs from commitment vector order -> AkitaError::InvalidProof
 grouped_root_schedule_digest mismatch after recompute  -> AkitaError::InvalidProof
 scalar [4] descriptor bytes presented as grouped [1,3] -> reject at descriptor parse
@@ -819,15 +804,15 @@ scalar [4] descriptor bytes presented as grouped [1,3] -> reject at descriptor p
 
 ### Verifier Boundary
 
-`CommitmentGroupLayout` values are not a separate prover-supplied side channel
+`PrecommittedGroupParams` values are not a separate prover-supplied side channel
 in the `commit_final`/opening phase. They are serialized inside `CommitSection` in the instance
 descriptor.
 The verifier must follow this order:
 
 1. Parse and validate the instance descriptor bytes at the current schema version.
 2. Reject malformed `CommitSection` bytes before Fiat-Shamir replay continues.
-3. Reconstruct `GroupBatchAkitaScheduleLookupKey` from `CommitSection`.
-4. Recompute each `CommitmentGroupLayout` deterministically from setup, config
+3. Reconstruct `AkitaScheduleLookupKey` from `CommitSection`.
+4. Recompute each `PrecommittedGroupParams` deterministically from setup, config
    policy, and the public opening batch.
 5. Reject if any recomputed layout differs from the descriptor-bound layout.
 6. Reject if any precommitted group's commitment row count differs from its
@@ -886,7 +871,9 @@ batches.
 
 The planner should therefore expose three modes:
 
-- `G = 1` normalizes to the scalar schedule.
+- `G = 1` normalizes to the scalar schedule once singleton grouped APIs are
+exposed. In the current phase, grouped-root planning is only supported for
+`G >= 2`.
 - All groups known before any commit use the existing scalar same-point batch,
 unless the caller explicitly needs separate commitment objects.
 - Staggered workflows use `commit_group` and `commit_final`, and pay the
@@ -899,9 +886,9 @@ At standalone `commit_group` time:
 - the group must be one-hot;
 - the group must be nonempty;
 - `log_basis` must be `min_basis(Cfg)`;
-- the `CommitmentGroupLayout` must be derived by the proof-optimized planner
+- the `PrecommittedGroupParams` must be derived by the proof-optimized planner
   with `basis_range = (min_basis(Cfg), min_basis(Cfg))`;
-- the `CommitmentGroupLayout` must determine the same `t_hat_g` shape used by
+- the `PrecommittedGroupParams` must determine the same `t_hat_g` shape used by
   the commit witness;
 - conservative `n_b'` must pass `AjtaiKeyParams::try_new` for
   `(b_width_g, norm_B(l_max))`;
@@ -910,10 +897,11 @@ At standalone `commit_group` time:
 At `commit_final` time:
 
 - `precommitteds` must be well-formed group metadata;
-- the full `GroupBatchAkitaScheduleLookupKey` must be derivable from
+- the full `AkitaScheduleLookupKey` must be derivable from
   `precommitteds + new`;
-- all groups must use the same `num_vars`;
-- each precommitted group must keep its `CommitmentGroupLayout` `m`, `r`,
+- each precommitted group must have
+  `group.num_vars <= final_group.num_vars / 2`;
+- each precommitted group must keep its `PrecommittedGroupParams` `m`, `r`,
   `log_basis`, `n_a`, and B width;
 - each precommitted group must use the frozen conservative B row count in the
   grouped root relation;
@@ -922,7 +910,7 @@ At `commit_final` time:
 
 At prove time:
 
-- `OpeningBatch` must be internally consistent.
+- `OpeningClaimsLayout` must be internally consistent.
 - `commitments.len() == G`.
 - `hints.len() == G`.
 - `sum_g K_g == num_claims`.
@@ -932,11 +920,11 @@ At prove time:
 
 At verify time:
 
-- The verifier must reconstruct the `GroupBatchAkitaScheduleLookupKey` from
+- The verifier must reconstruct the `AkitaScheduleLookupKey` from
   public claims and descriptor data.
 - The verifier must recompute grouped root params from the key.
 - The verifier must reject if a precommitted group's final root layout differs
-  from its `CommitmentGroupLayout`.
+  from its `PrecommittedGroupParams`.
 - The verifier must reject if a precommitted group's B row count differs from
   its frozen conservative `n_b'`.
 - The verifier must recompute root `w_len` from the grouped witness layout.
@@ -951,7 +939,7 @@ At verify time:
 | ----------------------------------------------- | ------------------------------------------ | ---------------------------------------- |
 | Tiered preset + `G > 1`                         | Root relation quotient / prove entry       | `AkitaError::InvalidSetup`               |
 | Dense polynomial + `G > 1`                      | `commit_group` / `commit_final`            | `AkitaError::InvalidInput`               |
-| Heterogeneous `num_vars` across groups          | `commit_final` / `OpeningBatch` validation | `AkitaError::InvalidInput`               |
+| Precommitted `num_vars > final_group.num_vars / 2` | `commit_final` / grouped key validation | `AkitaError::InvalidInput`               |
 | Recursive setup contribution + `G > 1`          | Prove / verify entry                       | `AkitaError::InvalidSetup`               |
 | Scalar table lookup collapsing `[1,3]` to `[4]` | Generated schedule lookup                  | table miss or `AkitaError::InvalidSetup` |
 | Grouped proof with descriptor version 1         | Descriptor parse                           | `SerializationError`                     |
@@ -960,15 +948,15 @@ At verify time:
 
 ## Rollout Plan
 
-### Phase 0: OpeningBatch Cleanup and Guards
+### Phase 0: Opening Claims Cleanup and Guards
 
-- Clean up the old flattened commitment-group routing from `OpeningBatch`.
-- Make `OpeningBatch` follow the new group design:
+- Clean up the old flattened commitment-group routing from `OpeningClaimsLayout`.
+- Make `OpeningClaimsLayout` follow the new group design:
   - one shared `point`;
   - ordered `groups`;
   - each `CommitmentGroup` has `PointVariableSelection` plus dense `claims`.
-- Keep `OpeningBatch::new` as the scalar same-bundle constructor.
-- Add `OpeningBatch::from_commitment_groups` for shape-only grouped batches.
+- Keep `OpeningClaimsLayout::new` as the scalar same-bundle constructor.
+- Add `OpeningClaimsLayout::from_group_sizes` for shape-only grouped batches.
 - Bind group partition and point-variable selections in the instance descriptor.
 - Add explicit rejects for unsupported proof paths while the grouped proof is not
 implemented:
@@ -980,12 +968,12 @@ implemented:
 to point here.
 
 Phase 0 done means: the old slot/routing vocabulary is gone from
-`OpeningBatch`, grouped batch shape and descriptor binding exist, scalar paths
+`OpeningClaimsLayout`, grouped batch shape and descriptor binding exist, scalar paths
 still work, and unsupported grouped proof paths fail explicitly.
 
 ### Phase 1: Scheduler and commit_group
 
-- Add `GroupBatchAkitaScheduleLookupKey`.
+- Add `AkitaScheduleLookupKey`.
 - Add generated/DP schedule resolution for grouped keys without collapsing
 `[K_0, K_1, ...]` into `[sum_g K_g]`.
 - Thread grouped root counts through planner and proof-size formulas:
@@ -994,16 +982,15 @@ still work, and unsupported grouped proof paths fail explicitly.
   - `num_w_vectors_root = G`;
   - `num_z_vectors_root = G`;
   - `num_public_rows = G`.
-- Add `CommitmentGroupLayout`.
+- Add `PrecommittedGroupParams`.
 - Add `CommittedGroupScheduleMeta` and `CommittedGroupHandle`.
 - Add standalone `commit_group`.
-- Add `conservative_rank` one-hot presets.
 - Implement conservative B rank selection for standalone groups.
 - Keep `commit_final`, grouped opening, and folded grouped root prove guarded
 until Phase 2.
 
 Phase 1 done means: standalone `commit_group` returns commitment metadata with a
-frozen `CommitmentGroupLayout`, grouped scheduler lookup/DP fallback is available
+frozen `PrecommittedGroupParams`, grouped scheduler lookup/DP fallback is available
 for final planning, conservative B rank selection works, and grouped schedule
 negative tests pass. No grouped opening proof is required yet.
 
@@ -1012,7 +999,7 @@ negative tests pass. No grouped opening proof is required yet.
 - Add `commit_final(new_group, precommitteds)`.
 - Bind `CommitSection`, precommitted group metadata, final group metadata, and
 the final grouped root schedule in descriptor bytes at the current schema version.
-- Reconstruct and validate the full `GroupBatchAkitaScheduleLookupKey` from
+- Reconstruct and validate the full `AkitaScheduleLookupKey` from
 `commit_final` metadata and public opening claims.
 - Commit the final group with the final grouped plan.
 - Implement grouped root witness layout with `concat(w_hat_g)`.
@@ -1044,17 +1031,17 @@ B-row time is a bottleneck.
 
 ### Unit Tests
 
-- `OpeningBatch::from_commitment_groups(nv, &[1, 3])` derives two groups.
+- `OpeningClaimsLayout::from_group_sizes(nv, &[1, 3])` derives two groups.
 - `[1, 3]` and `[4]` produce different keys and descriptor bytes.
 - Generated group-batch schedule lookup compares precommitted group keys,
   commitment group layout fields, and `conservative_n_b`.
-- Descriptor bytes change when a precommitted group's `CommitmentGroupLayout`
+- Descriptor bytes change when a precommitted group's `PrecommittedGroupParams`
   `m`, `r`, `log_basis`, `n_a`, B width, or conservative `n_b'` changes.
 - Grouped root witness layout reports `z_hat_segments = G`.
 - Grouped root witness layout reports `total_d_w_rings = sum_g w_hat_rings_g`.
 - Root terminal witness shape uses `G` segments at level 0 and singleton segments
   below level 0.
-- Conservative B rank uses `CommitmentGroupLayout.b_width` and norm from
+- Conservative B rank uses the frozen precommit geometry and norm from
   `l_max`.
 - `log_basis != min_basis(Cfg)` rejects.
 
@@ -1064,7 +1051,7 @@ B-row time is a bottleneck.
 - `commit_group(group1)` does not require `group0` metadata.
 - `commit_final(group_last, precommitteds)` returns a grouped batch plan.
 - `commit_final` rejects if a precommitted group metadata record does not
-  recompute to its `CommitmentGroupLayout`.
+  recompute to its `PrecommittedGroupParams`.
 - Undersized conservative `n_b` rejects.
 - Exceeding setup group capacity rejects.
 - Dense polys reject for `G > 1`.
@@ -1085,7 +1072,7 @@ B-row time is a bottleneck.
 - Tampering group `1` opening rejects.
 - Tampering group `1` hint or `t_hat` segment rejects.
 - Truncating one group's commitment rows rejects.
-- Changing a precommitted group's `CommitmentGroupLayout` rejects.
+- Changing a precommitted group's `PrecommittedGroupParams` rejects.
 - Changing a precommitted group's conservative `n_b'` rejects.
 - Descriptor `[1, 3]` with proof `[4]` rejects.
 - Tiered two-group proof rejects with a clear error.
@@ -1097,7 +1084,9 @@ B-row time is a bottleneck.
 key.
 - Generated grouped entries, once emitted, match DP.
 - Root `w_len` from planner matches prover-built grouped witness length.
-- Singleton `G = 1` schedules remain byte-identical.
+- Singleton `G = 1` grouped APIs reject or remain unexposed until scalar
+normalization lands; once exposed, their schedules remain byte-identical to the
+scalar path.
 - Setup envelope scans include unequal partitions such as `[1, 3]`.
 
 ### Performance Tests
@@ -1212,7 +1201,7 @@ The following choices close the open questions from the first draft:
 3. **Recursive setup contribution:** explicitly delay generalization until
   a later root-layout generalization. The `commit_final`/opening phase keeps the
   existing reject.
-4. **Planner key exposure:** keep `GroupBatchAkitaScheduleLookupKey` as an
+4. **Planner key exposure:** keep `AkitaScheduleLookupKey` as an
   internal planner input behind `commit_group` / `commit_final`. Public callers
    use `CommittedGroupScheduleMeta` and grouped claim vectors.
 

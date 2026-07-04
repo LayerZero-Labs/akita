@@ -21,25 +21,12 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
-#[cfg(feature = "zk")]
-fn eq_factored_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
-    sumcheck_bytes(rounds, degree, elem_bytes)
-}
-
 fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
     stage1_tree_stage_shapes(rounds, b)
         .into_iter()
         .map(|stage| {
-            ({
-                #[cfg(feature = "zk")]
-                {
-                    eq_factored_round_mask_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
-                }
-                #[cfg(not(feature = "zk"))]
-                {
-                    sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
-                }
-            }) + stage.child_claims * elem_bytes
+            ({ sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes) })
+                + stage.child_claims * elem_bytes
         })
         .sum::<usize>()
         + elem_bytes
@@ -92,10 +79,8 @@ pub fn level_proof_bytes(
                 .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
             let v_bytes =
                 proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
-            // Sent next-level commitment length: the second-tier `F` rows when
-            // the next level is tiered, else the first-tier `B` rows.
             let next_commit_bytes = proof_ring_vec_bytes(
-                next_lp.effective_commit_rows(),
+                next_lp.b_key.row_len(),
                 next_lp.ring_dimension,
                 base_elem_bytes,
             );
@@ -161,21 +146,46 @@ mod tests {
     use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
-    #[cfg(not(feature = "zk"))]
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
-    #[cfg(feature = "zk")]
-    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 
+    use crate::golomb_rice::golomb_rice_encode_vec;
+    use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
+    use crate::tail_golomb_rice_z_params;
     use crate::{
         direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
         AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape,
-        FlatRingVec, PackedDigits, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof,
+        FlatRingVec, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof,
         SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
 
-    #[cfg(not(feature = "zk"))]
+    fn segment_typed_final_witness(
+        lp: &LevelParams,
+        num_claims: usize,
+    ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
+        let field_bits = F::modulus_bits();
+        let shape = segment_typed_witness_shape(lp, field_bits, num_claims, num_claims, 1, 1)
+            .expect("segment-typed witness shape");
+        let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
+            panic!("expected segment-typed witness shape");
+        };
+        let layout = segment_shape.layout;
+        let (rice_low_bits, zigzag_w) =
+            tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
+        let z_payload =
+            golomb_rice_encode_vec(&vec![0i64; layout.z_coords], rice_low_bits, zigzag_w)
+                .expect("encode zero z segment");
+        let witness = SegmentTypedWitness {
+            layout,
+            z_payload,
+            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+        };
+        (CleartextWitnessProof::SegmentTyped(witness), shape)
+    }
+
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
@@ -186,24 +196,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zk")]
-    fn dummy_sumcheck_proof_masked<F: FieldCore>(
-        rounds: usize,
-        degree: usize,
-    ) -> SumcheckProofMasked<F> {
-        let compressed_rounds = || {
-            (0..rounds)
-                .map(|_| CompressedUniPoly {
-                    coeffs_except_linear_term: vec![F::zero(); degree],
-                })
-                .collect()
-        };
-        SumcheckProofMasked {
-            masked_round_polys: compressed_rounds(),
-        }
-    }
-
-    #[cfg(not(feature = "zk"))]
     fn dummy_eq_factored_sumcheck<F: FieldCore>(
         rounds: usize,
         degree: usize,
@@ -220,38 +212,12 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zk")]
-    fn dummy_eq_factored_sumcheck_proof_masked<F: FieldCore>(
-        rounds: usize,
-        degree: usize,
-    ) -> EqFactoredSumcheckProofMasked<F> {
-        let rounds_for = || {
-            (0..rounds)
-                .map(|_| EqFactoredUniPoly {
-                    coeffs_except_linear_term: vec![
-                        F::zero();
-                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                    ],
-                })
-                .collect()
-        };
-        EqFactoredSumcheckProofMasked {
-            masked_round_polys: rounds_for(),
-        }
-    }
-
     fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {
             stages: stage1_tree_stage_shapes(rounds, b)
                 .into_iter()
                 .map(|shape| AkitaStage1StageProof {
-                    #[cfg(not(feature = "zk"))]
                     sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
-                    #[cfg(feature = "zk")]
-                    sumcheck_proof_masked: dummy_eq_factored_sumcheck_proof_masked(
-                        rounds,
-                        shape.sumcheck_proof.1,
-                    ),
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
                 .collect(),
@@ -313,15 +279,9 @@ mod tests {
             fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
                 next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
-                #[cfg(not(feature = "zk"))]
                 next_w_eval: F::zero(),
-                #[cfg(feature = "zk")]
-                next_w_eval_masked: F::zero(),
             }),
             stage3_sumcheck_proof: stage3_setup_ring_len.map(|setup_ring_len| {
                 dummy_stage3_proof::<F>(lp.ring_dimension, setup_ring_len, next_w_len)
@@ -461,8 +421,6 @@ mod tests {
         };
         let next_w_len = D * 8;
         let num_claims = 3;
-        let final_w_num_elems = 1024;
-        let final_w_bits = 5;
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
@@ -478,17 +436,11 @@ mod tests {
             .unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
 
-            let final_witness = CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
-                &vec![0i8; final_w_num_elems],
-                final_w_bits,
-            ));
+            let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
-                #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
-                #[cfg(feature = "zk")]
-                dummy_sumcheck_proof_masked(rounds, 3),
                 final_witness,
                 0,
             );
@@ -511,14 +463,11 @@ mod tests {
                  (less final_witness) at log_basis={log_basis}"
             );
 
-            assert_eq!(
-                direct_witness_bytes(
-                    128,
-                    &CleartextWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
-                ),
-                final_witness_bytes_runtime,
-                "direct_witness_bytes should match the serialized packed-digit \
-                 final witness at log_basis={log_basis}"
+            let scheduled_bytes = direct_witness_bytes(128, &witness_shape);
+            assert!(
+                scheduled_bytes >= final_witness_bytes_runtime,
+                "scheduled direct witness budget must cover serialized segment-typed witness \
+                 at log_basis={log_basis}"
             );
         }
     }

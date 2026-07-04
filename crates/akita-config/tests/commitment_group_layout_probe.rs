@@ -1,9 +1,15 @@
+//! Diagnostic: print limited-vs-full basis planner layout summaries for
+//! multi-group sizing exploration.
+//!
+//! Marked `#[ignore]` so it never runs in default CI; invoke with
+//! `cargo test -p akita-config --test commitment_group_layout_probe -- --ignored --nocapture`.
+
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_planner::{find_schedule, PlannerPolicy};
-use akita_types::sis::{min_secure_rank, rounded_up_collision_norm_t};
-use akita_types::{AkitaScheduleLookupKey, LevelParams, Step};
+use akita_types::sis::{min_secure_rank, rounded_up_collision_linf_t, SisTableKey};
+use akita_types::{LevelParams, PolynomialGroupLayout, Step};
 
 type Cfg = fp128::D64OneHot;
 
@@ -12,7 +18,6 @@ struct LayoutSummary {
     r_vars: usize,
     log_basis: u32,
     n_a: usize,
-    b_width: usize,
     n_b_at_layout_basis: usize,
     conservative_n_b: usize,
     t_hat_g: usize,
@@ -33,7 +38,7 @@ fn layout_summary(
     num_vars: usize,
     max_basis: u32,
 ) -> Result<LayoutSummary, AkitaError> {
-    let key = AkitaScheduleLookupKey::new(num_vars, 1);
+    let key = PolynomialGroupLayout::new(num_vars, 1);
     let schedule = find_schedule(
         key,
         policy,
@@ -42,12 +47,20 @@ fn layout_summary(
     )?;
     let params = root_params(&schedule)?;
     let b_width = params.b_key.col_len();
-    let norm_at_lmax = rounded_up_collision_norm_t(Cfg::sis_modulus_family(), Cfg::D, max_basis)
-        .ok_or_else(|| AkitaError::InvalidSetup("B norm overflow".to_string()))?;
-    let conservative_n_b = min_secure_rank(
+    let norm_at_lmax = rounded_up_collision_linf_t(
+        policy.min_sis_security_bits,
         Cfg::sis_modulus_family(),
-        Cfg::D as u32,
-        norm_at_lmax,
+        Cfg::D,
+        max_basis,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("B norm overflow".to_string()))?;
+    let conservative_n_b = min_secure_rank(
+        SisTableKey {
+            min_security_bits: policy.min_sis_security_bits,
+            family: Cfg::sis_modulus_family(),
+            ring_dimension: Cfg::D as u32,
+            coeff_linf_bound: norm_at_lmax,
+        },
         b_width as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("B rank lookup failed".to_string()))?;
@@ -62,7 +75,6 @@ fn layout_summary(
         r_vars: params.r_vars,
         log_basis: params.log_basis,
         n_a: params.a_key.row_len(),
-        b_width,
         n_b_at_layout_basis: params.b_key.row_len(),
         conservative_n_b,
         t_hat_g,
@@ -72,21 +84,21 @@ fn layout_summary(
 fn print_layout(result: Result<LayoutSummary, AkitaError>) {
     match result {
         Ok(layout) => print!(
-            ",ok,{},{},{},{},{},{},{},{}",
+            ",ok,{},{},{},{},{},{},{}",
             layout.m_vars,
             layout.r_vars,
             layout.log_basis,
             layout.n_a,
-            layout.b_width,
             layout.n_b_at_layout_basis,
             layout.conservative_n_b,
             layout.t_hat_g
         ),
-        Err(err) => print!(",error:{err:?},,,,,,,,",),
+        Err(err) => print!(",error:{err:?},,,,,,,",),
     }
 }
 
 #[test]
+#[ignore = "diagnostic"]
 fn print_commitment_group_layout_probe() -> Result<(), AkitaError> {
     let mut limited_policy = policy_of::<Cfg>();
     let full_policy = policy_of::<Cfg>();

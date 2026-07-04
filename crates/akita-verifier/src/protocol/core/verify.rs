@@ -1,7 +1,5 @@
 use super::suffix::{verify_suffix, SuffixVerifierState};
 use super::*;
-#[cfg(feature = "zk")]
-use akita_r1cs::zk_ext_mask_lc_at;
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
@@ -16,11 +14,10 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
+    schedule_root_fold_step, should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    FpExtEncoding, LevelParams, OpeningBatchLimits, OpeningBatchShape, RingCommitment, Schedule,
-    SetupContributionMode, Step, VerifierOpeningBatch, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED,
+    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingCommitment, Schedule,
+    SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -33,6 +30,11 @@ where
     if D == 0 || !D.is_power_of_two() || !evals.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }
+    // Borrow flat coeffs as fixed-width ring rows: tail slots in the final row
+    // are zero-filled when `evals.len()` is not a multiple of `D`. Root-direct
+    // verify validates witness length before calling here; padding keeps this
+    // helper aligned with the runtime-ring view where `D` is a local packing
+    // width, not a protocol-wide invariant on flat vector length.
     Ok(evals
         .chunks(D)
         .map(|chunk| {
@@ -71,7 +73,7 @@ where
 }
 
 fn effective_batched_schedule<Cfg, const D: usize>(
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     opening_point: &[Cfg::ExtField],
 ) -> Result<Schedule, AkitaError>
 where
@@ -79,7 +81,7 @@ where
     Cfg::Field: FieldCore,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
 {
-    let num_vars = opening_batch.num_vars();
+    let num_vars = opening_batch.max_num_vars();
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
@@ -97,34 +99,25 @@ where
     Ok(schedule)
 }
 
-fn reject_unsupported_grouped_root<Cfg>(
-    opening_batch: &OpeningBatchShape,
+fn reject_unsupported_grouped_root(
+    opening_batch: &OpeningClaimsLayout,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<(), AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    if opening_batch.num_commitment_groups() <= 1 {
-        return Ok(());
+) -> Result<(), AkitaError> {
+    if let Some(message) = should_reject_grouped_root(opening_batch, setup_contribution_mode, None)
+    {
+        return Err(if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
+            AkitaError::InvalidSetup(message.to_string())
+        } else {
+            AkitaError::InvalidProof
+        });
     }
-    if Cfg::TIERED_COMMITMENT {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
-        ));
-    }
-    if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
-        ));
-    }
-    // Unsupported grouped claims: `InvalidProof` (unit variant). See `GROUPED_ROOT_UNSUPPORTED`.
-    Err(AkitaError::InvalidProof)
+    Ok(())
 }
 
 fn validate_root_direct_recommitment_shape<F, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup_seed: &AkitaSetupSeed,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
@@ -143,7 +136,9 @@ where
         ));
     }
     let expected_witness_len = 1usize
-        .checked_shl(u32::try_from(opening_batch.num_vars()).map_err(|_| AkitaError::InvalidProof)?)
+        .checked_shl(
+            u32::try_from(opening_batch.max_num_vars()).map_err(|_| AkitaError::InvalidProof)?,
+        )
         .ok_or(AkitaError::InvalidProof)?;
     let direct_capacity = params
         .num_blocks
@@ -154,7 +149,7 @@ where
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    if opening_batch.num_polynomials() != witnesses.len() {
+    if opening_batch.num_total_polynomials() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -219,41 +214,6 @@ where
             )
         })
         .collect()
-}
-
-#[cfg(feature = "zk")]
-pub(crate) fn zk_b_blinding_rows<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
-    params: &LevelParams,
-    blinding_digits: &[i8],
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if D == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    let row_len = params.b_key.row_len();
-    let row_width =
-        akita_types::lhl_blinding::blinding_column_count::<F>(row_len, D, params.log_basis);
-    let expected_digits = row_width.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
-    if blinding_digits.len() != expected_digits {
-        return Err(AkitaError::InvalidProof);
-    }
-    let digits = blinding_digits
-        .chunks_exact(D)
-        .map(|chunk| {
-            let mut plane = [0i8; D];
-            plane.copy_from_slice(chunk);
-            plane
-        })
-        .collect::<Vec<_>>();
-    let b_zk_view = setup
-        .expanded
-        .zk_b_matrix()
-        .ring_view::<D>(row_len, row_width)?;
-    let b_zk_rows: Vec<_> = b_zk_view.rows().collect();
-    Ok(mat_vec_mul_i8_plain::<F, D>(&b_zk_rows, &digits))
 }
 
 fn decompose_rows_i8<F, const D: usize>(
@@ -324,22 +284,10 @@ fn recommit_direct_witness_group<F, const D: usize>(
     group_witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
-    #[cfg(feature = "zk")] blinding_digits: &[i8],
 ) -> Result<RingCommitment<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    // Root-direct commitments are single-tier only: the sent commitment is the
-    // plain `B·t̂`. Tiering is never planned on the root-direct (small-instance)
-    // path.
-    if params.f_key.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "root-direct recommitment does not support tiered commitment \
-             (f_key must be absent on the root-direct path)"
-                .to_string(),
-        ));
-    }
-
     let mut outer_input = Vec::new();
     for witness in group_witnesses {
         let field_witness = witness
@@ -356,19 +304,7 @@ where
         .ring_view::<D>(params.b_key.row_len(), outer_input.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     let u = mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input);
-    #[cfg(feature = "zk")]
-    {
-        let mut u = u;
-        let blinding_rows = zk_b_blinding_rows::<F, D>(setup, params, blinding_digits)?;
-        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
-            *row += blinding;
-        }
-        Ok(RingCommitment { u })
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        Ok(RingCommitment { u })
-    }
+    Ok(RingCommitment { u })
 }
 
 /// Recompute root-direct commitments from direct witnesses and compare them to
@@ -382,9 +318,8 @@ where
 pub(crate) fn verify_root_direct_commitments_with_params<F, E, const D: usize>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    claims: &VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: &OpeningClaims<'_, E, &RingCommitment<F, D>>,
     params: &LevelParams,
-    #[cfg(feature = "zk")] b_blinding_digits: &[Vec<i8>],
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
@@ -394,11 +329,7 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
-    let opening_batch = claims.to_shape();
-    #[cfg(feature = "zk")]
-    if b_blinding_digits.len() != 1 {
-        return Err(AkitaError::InvalidProof);
-    }
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     validate_root_direct_recommitment_shape::<F, D>(
         witnesses,
         setup.expanded.seed(),
@@ -406,13 +337,7 @@ where
         params,
     )?;
 
-    let recomputed = recommit_direct_witness_group::<F, D>(
-        witnesses,
-        setup,
-        params,
-        #[cfg(feature = "zk")]
-        &b_blinding_digits[0],
-    )?;
+    let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, params)?;
     if &recomputed != commitment {
         return Err(AkitaError::InvalidProof);
     }
@@ -460,7 +385,7 @@ pub fn batched_verify<Cfg, T, const D: usize>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    claims: OpeningClaims<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -478,19 +403,11 @@ where
     // would silently skip past.
     check_batched_proof_step_shape(proof)?;
 
-    let group_sizes = claims
-        .groups()
-        .iter()
-        .map(|group| group.claims.len())
-        .collect::<Vec<_>>();
-    validate_batched_inputs(&setup.expanded, claims.point(), &group_sizes, false)?;
-    let opening_batch = claims
-        .validate(OpeningBatchLimits {
-            max_num_vars: setup.expanded.seed().max_num_vars,
-            max_num_polynomials: setup.expanded.seed().max_num_batched_polys,
-        })
+    claims
+        .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
-    reject_unsupported_grouped_root::<Cfg>(&opening_batch, setup_contribution_mode)?;
+    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
+    reject_unsupported_grouped_root(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg, D>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
@@ -532,7 +449,7 @@ pub(crate) fn verify<Cfg, T, const D: usize>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    claims: OpeningClaims<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -549,10 +466,6 @@ where
 {
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
-            #[cfg(feature = "zk")]
-            if !proof.zk_hiding.is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
             let Some(Step::Direct(direct)) = schedule.steps.first() else {
                 return Err(AkitaError::InvalidProof);
             };
@@ -560,18 +473,8 @@ where
             verify_zero_fold_openings_with_opening_batch::<Cfg::Field, Cfg::ExtField, _>(
                 witnesses, &claims, basis,
             )?;
-            #[cfg(feature = "zk")]
-            let direct_commitment_payload = proof
-                .root
-                .direct_b_blinding_digits()
-                .ok_or(AkitaError::InvalidProof)?;
             verify_root_direct_commitments_with_params::<Cfg::Field, Cfg::ExtField, D>(
-                witnesses,
-                setup,
-                &claims,
-                params,
-                #[cfg(feature = "zk")]
-                direct_commitment_payload,
+                witnesses, setup, &claims, params,
             )?;
         }
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
@@ -606,7 +509,7 @@ pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
     proof: &AkitaBatchedProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: VerifierOpeningBatch<'_, E, &RingCommitment<F, D>>,
+    claims: OpeningClaims<'_, E, &RingCommitment<F, D>>,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
@@ -629,19 +532,6 @@ where
             Step::Fold(_) => None,
         })
         .ok_or(AkitaError::InvalidProof)?;
-
-    #[cfg(feature = "zk")]
-    let mut zk_relations = ZkRelationAccumulator::new();
-    #[cfg(feature = "zk")]
-    {
-        if proof.zk_hiding.u_blind.is_empty() || proof.zk_hiding.hiding_witness.is_empty() {
-            return Err(AkitaError::InvalidProof);
-        }
-        verify_zk_hiding_commitment::<F, D>(setup, root_lp, &proof.zk_hiding)?;
-        transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &proof.zk_hiding.u_blind);
-    }
-    #[cfg(feature = "zk")]
-    let mut zk_hiding_cursor = 0usize;
 
     match &proof.root {
         AkitaBatchedRootProof::ZeroFold { .. } => Err(AkitaError::InvalidProof),
@@ -670,10 +560,6 @@ where
                 setup_contribution_mode,
                 None,
                 root_step.next_w_len,
-                #[cfg(feature = "zk")]
-                &mut zk_hiding_cursor,
-                #[cfg(feature = "zk")]
-                &mut zk_relations,
             )?;
             Ok(())
         }
@@ -719,10 +605,6 @@ where
                 setup_contribution_mode,
                 Some(&first_recursive_params),
                 root_step.next_w_len,
-                #[cfg(feature = "zk")]
-                &mut zk_hiding_cursor,
-                #[cfg(feature = "zk")]
-                &mut zk_relations,
             )?;
 
             let first_level_d = first_recursive_params.ring_dimension;
@@ -737,10 +619,6 @@ where
             let current_state = SuffixVerifierState {
                 opening_point: root_challenges,
                 opening: root_next_opening,
-                #[cfg(feature = "zk")]
-                opening_mask: zk_ext_mask_lc_at::<F, E>(
-                    zk_hiding_cursor - <E as ExtField<F>>::EXT_DEGREE,
-                ),
                 commitment: &root_stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
@@ -752,23 +630,10 @@ where
                 schedule,
                 current_state,
                 setup_contribution_mode,
-                #[cfg(feature = "zk")]
-                &mut zk_hiding_cursor,
-                #[cfg(feature = "zk")]
-                &mut zk_relations,
             )?;
             Ok(())
         }
     }?;
-
-    #[cfg(feature = "zk")]
-    {
-        if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        let lifted = lift_hiding_witness::<F, E>(&proof.zk_hiding.hiding_witness);
-        zk_relations.verify_all(&lifted)?;
-    }
 
     Ok(())
 }
@@ -778,7 +643,7 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily};
+    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -790,8 +655,8 @@ mod tests {
         }
     }
 
-    fn opening_batch(num_vars: usize) -> OpeningBatchShape {
-        OpeningBatchShape::new(num_vars, 1).expect("valid opening batch summary")
+    fn opening_batch(num_vars: usize) -> OpeningClaimsLayout {
+        OpeningClaimsLayout::new(num_vars, 1).expect("valid opening batch summary")
     }
 
     fn setup_seed(max_setup_len: usize) -> AkitaSetupSeed {
@@ -800,10 +665,6 @@ mod tests {
             max_num_batched_polys: 1,
             gen_ring_dim: D,
             max_setup_len,
-            #[cfg(feature = "zk")]
-            max_zk_b_len: 1,
-            #[cfg(feature = "zk")]
-            max_zk_d_len: 1,
             public_matrix_seed: [0u8; 32],
         }
     }
@@ -834,7 +695,14 @@ mod tests {
             LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
                 .with_decomp(1, 0, 2, 1, 0)
                 .expect("valid direct layout");
-        params.b_key = AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, 1, 128, 0, D);
+        params.b_key = AjtaiKeyParams::new_unchecked(
+            DEFAULT_SIS_SECURITY_BITS,
+            SisModulusFamily::Q32,
+            1,
+            128,
+            0,
+            D,
+        );
         let setup_seed = setup_seed(128);
         let witnesses = vec![CleartextWitnessProof::FieldElements(
             FlatRingVec::from_coeffs(vec![F::zero(); 32]),
@@ -851,14 +719,9 @@ mod tests {
 
     #[test]
     fn reject_unsupported_grouped_root_rejects_generic_multi_group() {
-        use akita_config::proof_optimized::fp128;
-
-        let batch = OpeningBatchShape::from_commitment_groups(4, &[1, 2]).expect("grouped batch");
-        let err = reject_unsupported_grouped_root::<fp128::D64OneHot>(
-            &batch,
-            SetupContributionMode::Direct,
-        )
-        .expect_err("multi-group verify must reject before schedule lookup");
+        let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped batch");
+        let err = reject_unsupported_grouped_root(&batch, SetupContributionMode::Direct)
+            .expect_err("multi-group verify must reject before schedule lookup");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

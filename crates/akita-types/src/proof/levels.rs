@@ -1,6 +1,4 @@
 use super::shapes::level_proof_shape;
-#[cfg(feature = "zk")]
-use super::shapes::sumcheck_proof_masked_shape;
 use super::shapes::sumcheck_shape;
 use super::*;
 use crate::{LevelParams, MRowLayout, SetupContributionMode};
@@ -9,11 +7,7 @@ use crate::{LevelParams, MRowLayout, SetupContributionMode};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaStage1StageProof<F: FieldCore> {
     /// Eq-factored sumcheck proof for this stage.
-    #[cfg(not(feature = "zk"))]
     pub sumcheck_proof: EqFactoredSumcheckProof<F>,
-    /// ZK plain-opening masked round payload.
-    #[cfg(feature = "zk")]
-    pub sumcheck_proof_masked: EqFactoredSumcheckProofMasked<F>,
     /// Claimed child-node evaluations at this stage's output point.
     ///
     /// Non-leaf stages populate these so the verifier can seed the next stage;
@@ -34,36 +28,18 @@ pub struct AkitaStage1Proof<F: FieldCore> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaIntermediateStage2Proof<F: FieldCore, L: FieldCore> {
     /// Stage-2 fused sumcheck proof.
-    #[cfg(not(feature = "zk"))]
     pub sumcheck_proof: SumcheckProof<L>,
-    /// ZK plain-opening masked compressed round payload.
-    #[cfg(feature = "zk")]
-    pub sumcheck_proof_masked: SumcheckProofMasked<L>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from `v`).
     pub next_w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
-    #[cfg(not(feature = "zk"))]
     pub next_w_eval: L,
-    /// Masked claimed evaluation of the next witness `w` at the stage-2 challenge point.
-    #[cfg(feature = "zk")]
-    pub next_w_eval_masked: L,
 }
 
 impl<F: FieldCore, L: FieldCore> AkitaIntermediateStage2Proof<F, L> {
-    /// Wire value for the next-witness evaluation claim.
-    ///
-    /// In transparent builds this is the true evaluation; in ZK builds this is
-    /// the masked evaluation carried on the proof transcript.
+    /// Wire value for the next-witness evaluation claim at stage 2.
     pub fn next_w_eval(&self) -> L {
-        #[cfg(not(feature = "zk"))]
-        {
-            self.next_w_eval
-        }
-        #[cfg(feature = "zk")]
-        {
-            self.next_w_eval_masked
-        }
+        self.next_w_eval
     }
 }
 
@@ -71,11 +47,7 @@ impl<F: FieldCore, L: FieldCore> AkitaIntermediateStage2Proof<F, L> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaTerminalStage2Proof<F: FieldCore, L: FieldCore> {
     /// Stage-2 fused sumcheck proof.
-    #[cfg(not(feature = "zk"))]
     pub sumcheck_proof: SumcheckProof<L>,
-    /// ZK plain-opening masked compressed round payload.
-    #[cfg(feature = "zk")]
-    pub sumcheck_proof_masked: SumcheckProofMasked<L>,
     /// Terminal witness, absorbed via `ABSORB_NEXT_LEVEL_WITNESS_BINDING` in place of
     /// `next_w_commitment`.
     pub final_witness: CleartextWitnessProof<F>,
@@ -131,20 +103,10 @@ impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
     }
 
     /// Borrow the transparent stage-2 sumcheck proof.
-    #[cfg(not(feature = "zk"))]
     pub fn sumcheck(&self) -> &SumcheckProof<L> {
         match self {
             Self::Intermediate(proof) => &proof.sumcheck_proof,
             Self::Terminal(proof) => &proof.sumcheck_proof,
-        }
-    }
-
-    /// Borrow the masked ZK stage-2 sumcheck proof.
-    #[cfg(feature = "zk")]
-    pub fn sumcheck_masked(&self) -> &SumcheckProofMasked<L> {
-        match self {
-            Self::Intermediate(proof) => &proof.sumcheck_proof_masked,
-            Self::Terminal(proof) => &proof.sumcheck_proof_masked,
         }
     }
 
@@ -182,11 +144,7 @@ pub struct ExtensionOpeningReductionProof<L: FieldCore> {
     /// check.
     pub partials: Vec<L>,
     /// Degree-two reduction sumcheck.
-    #[cfg(not(feature = "zk"))]
     pub sumcheck: SumcheckProof<L>,
-    /// ZK plain-opening masked compressed degree-two reduction sumcheck.
-    #[cfg(feature = "zk")]
-    pub sumcheck_proof_masked: SumcheckProofMasked<L>,
 }
 
 /// Fused stage-3 proof for the public setup contribution and carried witness opening.
@@ -214,23 +172,13 @@ impl<L: FieldCore> ExtensionOpeningReductionProof<L> {
     pub fn shape(&self) -> ExtensionOpeningReductionShape {
         ExtensionOpeningReductionShape {
             partials: self.partials.len(),
-            #[cfg(not(feature = "zk"))]
             sumcheck: sumcheck_shape(&self.sumcheck),
-            #[cfg(feature = "zk")]
-            sumcheck: sumcheck_proof_masked_shape(&self.sumcheck_proof_masked),
         }
     }
 
     /// Number of sumcheck rounds in the reduction proof.
     pub fn num_rounds(&self) -> usize {
-        #[cfg(not(feature = "zk"))]
-        {
-            self.sumcheck.round_polys.len()
-        }
-        #[cfg(feature = "zk")]
-        {
-            self.sumcheck_proof_masked.masked_round_polys.len()
-        }
+        self.sumcheck.round_polys.len()
     }
 }
 
@@ -293,8 +241,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     pub fn new_two_stage<const D: usize>(
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
-        #[cfg(not(feature = "zk"))] stage2_sumcheck_proof: SumcheckProof<L>,
-        #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+        stage2_sumcheck_proof: SumcheckProof<L>,
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: L,
     ) -> Self {
@@ -302,39 +249,10 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             v,
             stage1,
             AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck_proof,
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: stage2_sumcheck_proof_masked,
                 next_w_commitment: next_w_commitment.into_compact(),
-                #[cfg(not(feature = "zk"))]
                 next_w_eval,
-                #[cfg(feature = "zk")]
-                next_w_eval_masked: next_w_eval,
             }),
-        )
-    }
-
-    /// Construct a level proof for a multi-row public opening relation.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_two_stage_many<const D: usize>(
-        v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<L>,
-        #[cfg(not(feature = "zk"))] stage2_sumcheck_proof: SumcheckProof<L>,
-        #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
-        next_w_commitment: FlatRingVec<F>,
-        next_w_eval: L,
-    ) -> Self {
-        Self::new_two_stage_many_with_extension_opening_reduction::<D>(
-            None,
-            v,
-            stage1,
-            #[cfg(not(feature = "zk"))]
-            stage2_sumcheck_proof,
-            #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
-            next_w_commitment,
-            next_w_eval,
         )
     }
 
@@ -345,8 +263,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<L>,
-        #[cfg(not(feature = "zk"))] stage2_sumcheck_proof: SumcheckProof<L>,
-        #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+        stage2_sumcheck_proof: SumcheckProof<L>,
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: L,
     ) -> Self {
@@ -356,15 +273,9 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             fold_grind_nonce: 0,
             stage1,
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck_proof,
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: stage2_sumcheck_proof_masked,
                 next_w_commitment: next_w_commitment.into_compact(),
-                #[cfg(not(feature = "zk"))]
                 next_w_eval,
-                #[cfg(feature = "zk")]
-                next_w_eval_masked: next_w_eval,
             }),
             stage3_sumcheck_proof: None,
         }
@@ -374,8 +285,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     #[allow(clippy::too_many_arguments)]
     pub fn new_terminal_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-        #[cfg(not(feature = "zk"))] stage2_sumcheck: SumcheckProof<L>,
-        #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+        stage2_sumcheck: SumcheckProof<L>,
         final_witness: CleartextWitnessProof<F>,
         final_w_len: usize,
         fold_grind_nonce: u32,
@@ -384,10 +294,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             extension_opening_reduction,
             fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck,
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: stage2_sumcheck_proof_masked,
                 final_witness,
             }),
             final_w_len,
@@ -687,16 +594,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             extension_opening_reduction: extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            stage2_sumcheck: {
-                #[cfg(not(feature = "zk"))]
-                {
-                    sumcheck_shape(stage2.sumcheck())
-                }
-                #[cfg(feature = "zk")]
-                {
-                    sumcheck_proof_masked_shape(stage2.sumcheck_masked())
-                }
-            },
+            stage2_sumcheck: { sumcheck_shape(stage2.sumcheck()) },
             final_witness: self
                 .stage2()
                 .final_witness()
@@ -719,7 +617,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 /// Ships `final_witness` in cleartext, absorbed into the transcript at the
 /// `ABSORB_NEXT_LEVEL_WITNESS_BINDING` position in place of the prior `next_w_commitment`.
 /// Drops the redundant proof components at the terminal: `stage1`
-/// (`PackedDigits` structurally enforces digit range), `next_w_commitment`
+/// (segment-typed tail encodes digit range), `next_w_commitment`
 /// (replaced by `final_witness`), and `next_w_eval` (verifier computes
 /// directly from `final_witness`). The terminal M-row layout also drops the
 /// D-row block, so `v` is not serialized at the terminal.
@@ -740,8 +638,7 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
     /// not use extension-opening reduction.
     pub fn new_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-        #[cfg(not(feature = "zk"))] stage2_sumcheck: SumcheckProof<L>,
-        #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+        stage2_sumcheck: SumcheckProof<L>,
         final_witness: CleartextWitnessProof<F>,
         fold_grind_nonce: u32,
     ) -> Self {
@@ -749,10 +646,7 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
             extension_opening_reduction,
             fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                #[cfg(not(feature = "zk"))]
                 sumcheck_proof: stage2_sumcheck,
-                #[cfg(feature = "zk")]
-                sumcheck_proof_masked: stage2_sumcheck_proof_masked,
                 final_witness,
             }),
         }
@@ -772,16 +666,7 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
                 .extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            stage2_sumcheck: {
-                #[cfg(not(feature = "zk"))]
-                {
-                    sumcheck_shape(self.stage2.sumcheck())
-                }
-                #[cfg(feature = "zk")]
-                {
-                    sumcheck_proof_masked_shape(self.stage2.sumcheck_masked())
-                }
-            },
+            stage2_sumcheck: { sumcheck_shape(self.stage2.sumcheck()) },
             final_witness: self.final_witness().shape(),
         }
     }
@@ -827,10 +712,6 @@ pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
     ZeroFold {
         /// Per-claim cleartext witnesses.
         witnesses: Vec<CleartextWitnessProof<F>>,
-        /// Per-commitment B-blinding digit streams revealed for verifier
-        /// recommitment in the zero-fold ZK fast path.
-        #[cfg(feature = "zk")]
-        b_blinding_digits: Vec<Vec<i8>>,
     },
 }
 
@@ -887,22 +768,8 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Construct the zero-fold batched variant with one witness per claim.
-    #[cfg(not(feature = "zk"))]
     pub fn new_zero_fold(witnesses: Vec<CleartextWitnessProof<F>>) -> Self {
         Self::ZeroFold { witnesses }
-    }
-
-    /// Construct the zero-fold batched variant with one witness per claim and
-    /// one revealed B-blinding payload per opening-point commitment.
-    #[cfg(feature = "zk")]
-    pub fn new_zero_fold(
-        witnesses: Vec<CleartextWitnessProof<F>>,
-        b_blinding_digits: Vec<Vec<i8>>,
-    ) -> Self {
-        Self::ZeroFold {
-            witnesses,
-            b_blinding_digits,
-        }
     }
 
     /// Borrow the fold payload when this is a fold root.
@@ -1037,17 +904,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         }
     }
 
-    /// Borrow the revealed zero-fold B-blinding payloads.
-    #[cfg(feature = "zk")]
-    pub fn direct_b_blinding_digits(&self) -> Option<&[Vec<i8>]> {
-        match self {
-            Self::ZeroFold {
-                b_blinding_digits, ..
-            } => Some(b_blinding_digits.as_slice()),
-            Self::Fold(_) | Self::Terminal(_) => None,
-        }
-    }
-
     /// True when this root proof is a zero-fold batched fast path.
     pub fn is_zero_fold(&self) -> bool {
         matches!(self, Self::ZeroFold { .. })
@@ -1114,9 +970,6 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedFoldRoot<F, L> {
 /// Akita PCS proof for fused batched openings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaBatchedProof<F: FieldCore, L: FieldCore> {
-    /// Plain-opening ZK hiding-factor commitment and opening payload.
-    #[cfg(feature = "zk")]
-    pub zk_hiding: ZkHidingProof<F>,
     /// Batched root proof over all original-polynomial claims.
     pub root: AkitaBatchedRootProof<F, L>,
     /// Recursive proof steps following the batched root proof.

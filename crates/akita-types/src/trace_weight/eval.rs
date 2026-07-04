@@ -382,6 +382,32 @@ where
         .collect()
 }
 
+/// Ring-subfield coordinates of the product of high-bit block weights selecting
+/// chunk `chunk`: `⊛_{s} coords(w_s(chunk_s))` over the high block bits `b_high`.
+/// For `k = 1` this is the scalar `∏_s w_s(chunk_s)`; the empty product (no high
+/// bits) is the coordinate-algebra identity.
+fn high_chunk_weight_coords<F, E>(
+    b_high: &[E],
+    chunk: usize,
+    basis: BasisMode,
+    k: usize,
+    gamma: &[Vec<Vec<F>>],
+) -> Vec<E>
+where
+    F: FieldCore,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore,
+{
+    let mut acc = vec![E::zero(); k];
+    acc[0] = E::one();
+    for (s, &b) in b_high.iter().enumerate() {
+        let (cw0, cw1) = block_weight_coords::<F, E>(b, basis, k);
+        let bit = (chunk >> s) & 1;
+        let cw = if bit == 1 { &cw1 } else { &cw0 };
+        acc = cstar_mul::<F, E>(&acc, cw, gamma);
+    }
+    acc
+}
+
 /// Evaluate the fused trace-weight MLE at `(ring_point, col_point)` in closed
 /// form from short per-claim opening data.
 ///
@@ -427,35 +453,103 @@ where
             AkitaError::InvalidInput("trace term block span overflow".to_string())
         })?;
         layout.validate_trace_term_block_range(term.block_offset, block_span)?;
-        let base = layout
-            .opening_digit_offset
-            .checked_add(term.block_offset)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace term column base overflow".to_string())
-            })?;
 
-        let col_low = &col_point[..r_pc];
-        let col_high = &col_point[r_pc..];
-        let bit_coords: Vec<(Vec<E>, Vec<E>)> = term
-            .b_open
-            .iter()
-            .map(|&b| block_weight_coords::<F, E>(b, term.basis, k))
-            .collect();
-
-        // `V = Σ_plane gadget[plane] · Σ_j eq(col, off + j) · coords(b_j)`, where
-        // `off = base + plane · num_blocks` is the plane's column offset.
+        // `V = Σ_plane gadget[plane] · Σ_j eq(col, col(j, plane)) · coords(b_j)`.
+        // Single-chunk: blocks map to contiguous columns `base + plane·num_blocks
+        // + j`. Multi-chunk: the block axis splits into a chunk (high bits) and a
+        // block-local window (low bits) at distinct chunk offsets, so we fold the
+        // low bits per chunk and weight each chunk by its high-bit block weight.
         let mut v = vec![E::zero(); k];
-        for (plane, &gadget) in gadget_row.iter().enumerate() {
-            let off = plane
-                .checked_mul(layout.num_blocks)
-                .and_then(|plane_offset| plane_offset.checked_add(base))
+        if layout.chunk.num_chunks <= 1 {
+            let base = layout
+                .opening_digit_offset
+                .checked_add(term.block_offset)
                 .ok_or_else(|| {
-                    AkitaError::InvalidInput("trace term column index overflow".to_string())
+                    AkitaError::InvalidInput("trace term column base overflow".to_string())
                 })?;
-            let plane_fold =
-                fold_blocks_for_plane::<F, E>(col_low, col_high, &bit_coords, off, k, &gamma);
-            for (slot, value) in v.iter_mut().zip(plane_fold) {
-                *slot += gadget * value;
+            let col_low = &col_point[..r_pc];
+            let col_high = &col_point[r_pc..];
+            let bit_coords: Vec<(Vec<E>, Vec<E>)> = term
+                .b_open
+                .iter()
+                .map(|&b| block_weight_coords::<F, E>(b, term.basis, k))
+                .collect();
+            for (plane, &gadget) in gadget_row.iter().enumerate() {
+                let off = plane
+                    .checked_mul(layout.num_blocks)
+                    .and_then(|plane_offset| plane_offset.checked_add(base))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("trace term column index overflow".to_string())
+                    })?;
+                let plane_fold =
+                    fold_blocks_for_plane::<F, E>(col_low, col_high, &bit_coords, off, k, &gamma);
+                for (slot, value) in v.iter_mut().zip(plane_fold) {
+                    *slot += gadget * value;
+                }
+            }
+        } else {
+            let c = &layout.chunk;
+            let rb_low = c.blocks_per_chunk.trailing_zeros() as usize;
+            let rb_high = c.num_chunks.trailing_zeros() as usize;
+            if rb_low + rb_high != r_pc {
+                return Err(AkitaError::InvalidInput(
+                    "trace term block bits do not match chunked block axis".to_string(),
+                ));
+            }
+            let claim = term
+                .block_offset
+                .checked_div(c.num_blocks_global)
+                .unwrap_or(0);
+            let plane_stride = c.num_claims * c.blocks_per_chunk;
+            let claim_base = claim * c.blocks_per_chunk;
+            let b_low = &term.b_open[..rb_low];
+            let b_high = &term.b_open[rb_low..];
+            let bit_coords: Vec<(Vec<E>, Vec<E>)> = b_low
+                .iter()
+                .map(|&b| block_weight_coords::<F, E>(b, term.basis, k))
+                .collect();
+            let col_low = &col_point[..rb_low];
+            let col_high = &col_point[rb_low..];
+            for chunk in 0..c.num_chunks {
+                let high_w = high_chunk_weight_coords::<F, E>(b_high, chunk, term.basis, k, &gamma);
+                if high_w.iter().all(|x| x.is_zero()) {
+                    continue;
+                }
+                let chunk_offset_e = chunk
+                    .checked_mul(c.chunk_stride)
+                    .and_then(|o| o.checked_add(layout.opening_digit_offset))
+                    .and_then(|o| o.checked_add(claim_base))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("chunked trace column base overflow".to_string())
+                    })?;
+                let mut v_chunk = vec![E::zero(); k];
+                for (plane, &gadget) in gadget_row.iter().enumerate() {
+                    let off = plane
+                        .checked_mul(plane_stride)
+                        .and_then(|p| p.checked_add(chunk_offset_e))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput(
+                                "chunked trace column index overflow".to_string(),
+                            )
+                        })?;
+                    let plane_fold = fold_blocks_for_plane::<F, E>(
+                        col_low,
+                        col_high,
+                        &bit_coords,
+                        off,
+                        k,
+                        &gamma,
+                    );
+                    for (slot, value) in v_chunk.iter_mut().zip(plane_fold) {
+                        *slot += gadget * value;
+                    }
+                }
+                // Weight this chunk by its high-bit block weight (coordinate-algebra
+                // product), then accumulate into the term's folded `V`.
+                let combined = cstar_mul::<F, E>(&high_w, &v_chunk, &gamma);
+                for (slot, value) in v.iter_mut().zip(combined) {
+                    *slot += value;
+                }
             }
         }
 

@@ -22,7 +22,7 @@ use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
-    FlatMatrix, SetupPrefixProverRegistry,
+    FlatMatrix, PolynomialGroupLayout, SetupPrefixProverRegistry,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -80,17 +80,7 @@ where
                     .expanded
                     .shared_matrix()
                     .total_ring_elements_at::<D>()?;
-                #[cfg(feature = "zk")]
-                let cached_zk_b_total =
-                    setup.expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
-                #[cfg(feature = "zk")]
-                let cached_zk_d_total =
-                    setup.expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
                 let cached_shape_covers_request = cached_total >= max_setup_len;
-                #[cfg(feature = "zk")]
-                let cached_shape_covers_request = cached_shape_covers_request
-                    && cached_zk_b_total >= setup_envelope.max_zk_b_len
-                    && cached_zk_d_total >= setup_envelope.max_zk_d_len;
                 if cached_shape_covers_request {
                     tracing::info!("Loaded setup from disk; backend preparation is explicit");
                     return Ok(setup);
@@ -152,30 +142,33 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule_lookup_key = AkitaScheduleLookupKey::new(max_num_vars, max_num_batched_polys);
+    let schedule_lookup_key = PolynomialGroupLayout::new(max_num_vars, max_num_batched_polys);
     // Fingerprint the resolved schedule shape so cached setup files get
     // invalidated when the planner's per-level layout (including the
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
     // key — the full per-level params are hashed by
     // `digest_effective_schedule`. The `planner_v7_` prefix marks the
     // two-field lookup key cutover; old `planner_v6_*` files are not reused.
-    let raw_schedule = match Cfg::runtime_schedule(schedule_lookup_key) {
-        Ok(schedule) => {
-            let digest = digest_effective_schedule(&schedule);
-            let mut hex = String::with_capacity(digest.len() * 2);
-            for byte in digest {
-                let _ = write!(hex, "{byte:02x}");
+    let raw_schedule =
+        match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
+            Ok(schedule) => {
+                let digest = digest_effective_schedule(&schedule);
+                let mut hex = String::with_capacity(digest.len() * 2);
+                for byte in digest {
+                    let _ = write!(hex, "{byte:02x}");
+                }
+                format!(
+                    "planner_v7_nv{}_batch{}_{hex}",
+                    schedule_lookup_key.num_vars(),
+                    schedule_lookup_key.num_polynomials(),
+                )
             }
-            format!(
-                "planner_v7_nv{}_batch{}_{hex}",
-                schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
-            )
-        }
-        Err(_) => format!(
-            "miss_nv{}_batch{}",
-            schedule_lookup_key.num_vars, schedule_lookup_key.num_polynomials,
-        ),
-    };
+            Err(_) => format!(
+                "miss_nv{}_batch{}",
+                schedule_lookup_key.num_vars(),
+                schedule_lookup_key.num_polynomials(),
+            ),
+        };
     let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -377,14 +370,6 @@ fn deserialize_cached_setup<
             "cached setup seed matrix shape does not match cache key".to_string(),
         ));
     }
-    #[cfg(feature = "zk")]
-    if seed.max_zk_b_len != expected_envelope.max_zk_b_len
-        || seed.max_zk_d_len != expected_envelope.max_zk_d_len
-    {
-        return Err(SerializationError::InvalidData(
-            "cached setup seed ZK matrix shape does not match cache key".to_string(),
-        ));
-    }
     let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
         &mut *reader,
         Compress::Yes,
@@ -393,34 +378,7 @@ fn deserialize_cached_setup<
         seed.gen_ring_dim,
         seed.matrix_field_elements()?,
     )?;
-    #[cfg(feature = "zk")]
-    let zk_b_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
-        &mut *reader,
-        Compress::Yes,
-        Validate::Yes,
-        seed.max_zk_b_len,
-        seed.gen_ring_dim,
-        seed.zk_b_matrix_field_elements()?,
-    )?;
-    #[cfg(feature = "zk")]
-    let zk_d_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
-        &mut *reader,
-        Compress::Yes,
-        Validate::Yes,
-        seed.max_zk_d_len,
-        seed.gen_ring_dim,
-        seed.zk_d_matrix_field_elements()?,
-    )?;
-    Ok(
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            seed,
-            shared_matrix,
-            #[cfg(feature = "zk")]
-            zk_b_matrix,
-            #[cfg(feature = "zk")]
-            zk_d_matrix,
-        ),
-    )
+    Ok(AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix))
 }
 
 #[cfg(feature = "disk-persistence")]
@@ -501,10 +459,6 @@ mod tests {
             }
         }
 
-        fn cleanup_setup_file(max_num_vars: usize) {
-            cleanup_setup_file_shape(max_num_vars, 1);
-        }
-
         fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
             let _guard = DISK_TEST_ENV_LOCK.lock().unwrap();
             let cache_root = std::env::temp_dir().join(format!("akita-disk-tests-{test_name}"));
@@ -525,14 +479,14 @@ mod tests {
             with_test_cache_dir("roundtrip", || {
                 const MAX_VARS: usize = 12;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
                 let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 assert_eq!(loaded.expanded, prover_setup.expanded);
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -547,7 +501,7 @@ mod tests {
 
                 const MAX_VARS: usize = 13;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let mut setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 let id = SetupPrefixSlotId {
@@ -559,13 +513,6 @@ mod tests {
                 };
                 let decomposed = FlatDigitBlocks::<TEST_D>::from_blocks(vec![Vec::new()]);
                 let recomposed = vec![Vec::new()];
-                #[cfg(feature = "zk")]
-                let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-                    decomposed,
-                    recomposed,
-                    FlatDigitBlocks::empty(),
-                );
-                #[cfg(not(feature = "zk"))]
                 let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
                     decomposed, recomposed,
                 );
@@ -586,7 +533,7 @@ mod tests {
                 let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 assert_eq!(loaded.prefix_slots, setup.prefix_slots);
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -595,7 +542,7 @@ mod tests {
             with_test_cache_dir("second-call", || {
                 const MAX_VARS: usize = 13;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let first = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
@@ -603,7 +550,7 @@ mod tests {
 
                 assert_eq!(first.expanded, second.expanded);
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -614,17 +561,13 @@ mod tests {
 
                 const MAX_VARS: usize = 13;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 let total = prover_setup.expanded.shared_matrix().total_ring_elements();
                 let corrupt = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     prover_setup.expanded.seed().clone(),
                     FlatMatrix::from_flat_data(vec![TestF::zero(); total * TEST_D], TEST_D),
-                    #[cfg(feature = "zk")]
-                    prover_setup.expanded.zk_b_matrix().clone(),
-                    #[cfg(feature = "zk")]
-                    prover_setup.expanded.zk_d_matrix().clone(),
                 );
                 let corrupt = AkitaProverSetup {
                     expanded: Arc::new(corrupt),
@@ -638,7 +581,7 @@ mod tests {
                     .to_string()
                     .contains("setup shared_matrix does not match public matrix seed"));
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -649,7 +592,7 @@ mod tests {
 
                 const MAX_VARS: usize = 13;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
                 let path = get_storage_path::<Cfg>(MAX_VARS, 1).unwrap();
@@ -660,7 +603,7 @@ mod tests {
                     .expect_err("cache with trailing bytes must be rejected");
                 assert!(err.to_string().contains("trailing bytes"));
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
 
@@ -680,10 +623,6 @@ mod tests {
                 let stale = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     stale_seed,
                     prover_setup.expanded.shared_matrix().clone(),
-                    #[cfg(feature = "zk")]
-                    prover_setup.expanded.zk_b_matrix().clone(),
-                    #[cfg(feature = "zk")]
-                    prover_setup.expanded.zk_d_matrix().clone(),
                 );
                 let stale = AkitaProverSetup {
                     expanded: Arc::new(stale),
@@ -711,14 +650,14 @@ mod tests {
 
                 const MAX_VARS: usize = 14;
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let fresh_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
                 let disk_setup = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1).unwrap();
 
                 let lp = Cfg::get_params_for_batched_commitment(
-                    &akita_types::OpeningBatchShape::new(MAX_VARS, 1)
+                    &akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
                         .expect("singleton opening batch"),
                 )
                 .unwrap();
@@ -751,7 +690,7 @@ mod tests {
 
                 assert_eq!(fresh_u, disk_u);
 
-                cleanup_setup_file(MAX_VARS);
+                cleanup_setup_file_shape(MAX_VARS, 1);
             });
         }
     }

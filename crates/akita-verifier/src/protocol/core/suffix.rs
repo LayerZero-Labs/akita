@@ -1,11 +1,6 @@
 use super::*;
-#[cfg(feature = "zk")]
-use akita_r1cs::zk_ext_mask_lc_at;
-#[cfg(feature = "zk")]
 use akita_types::dispatch_ring_dim_result;
-#[cfg(not(feature = "zk"))]
-use akita_types::dispatch_ring_dim_result;
-use akita_types::{terminal_witness_segment_layout, OpeningBatchShape};
+use akita_types::{terminal_witness_segment_layout, OpeningClaimsLayout};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -13,9 +8,6 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub opening_point: Vec<L>,
     /// Claimed opening value for the current commitment.
     pub opening: L,
-    /// Hidden mask added to `opening` in the public proof.
-    #[cfg(feature = "zk")]
-    pub opening_mask: ZkR1csLinearCombination<L>,
     /// Current suffix witness commitment.
     pub commitment: &'a FlatRingVec<F>,
     /// Basis used to interpret the current opening point.
@@ -43,8 +35,6 @@ fn prepare_fold_data<'a, F, L, T, const D: usize>(
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -64,24 +54,16 @@ where
     }
     current_state
         .commitment
-        .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
+        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
-    let opening_batch = OpeningBatchShape::new(num_vars, num_claims)?;
+    let opening_batch = OpeningClaimsLayout::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
     let row_coefficients = vec![L::one()];
-    #[cfg(feature = "zk")]
-    let opening_masks = vec![Some(&current_state.opening_mask)];
     let FoldEorReplay {
         prepared_points,
-        #[cfg(not(feature = "zk"))]
-            reduction_challenges: _,
-        #[cfg(feature = "zk")]
-            reduction_challenges: _,
-        #[cfg(not(feature = "zk"))]
-            final_relation: eor_trace_final,
-        #[cfg(feature = "zk")]
-            final_relation: zk_eor_final,
+        reduction_challenges: _,
+        final_relation: eor_trace_final,
         ..
     } = verify_fold_eor::<F, L, T, D>(
         proof.extension_opening_reduction(),
@@ -95,14 +77,6 @@ where
         block_order,
         true,
         transcript,
-        #[cfg(feature = "zk")]
-        &opening_masks,
-        #[cfg(feature = "zk")]
-        "suffix extension-opening partial claim",
-        #[cfg(feature = "zk")]
-        zk_hiding_cursor,
-        #[cfg(feature = "zk")]
-        zk_relations,
     )?;
     if prepared_points.len() != 1 {
         return Err(AkitaError::InvalidProof);
@@ -114,9 +88,28 @@ where
 
     let w_len = match proof.final_w_len() {
         Some(final_w_len) => final_w_len,
-        None => w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims)?
-            .checked_mul(D)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?,
+        None => {
+            let nc = lp.witness_chunk.num_chunks;
+            let ring = if nc > 1 {
+                akita_types::w_ring_element_count_for_chunks(
+                    F::modulus_bits(),
+                    lp,
+                    num_claims,
+                    MRowLayout::WithDBlock,
+                    nc,
+                )?
+            } else {
+                w_ring_element_count_with_counts_for_layout::<F>(
+                    lp,
+                    num_claims,
+                    num_claims,
+                    MRowLayout::WithDBlock,
+                )?
+            };
+            ring.checked_mul(D).ok_or_else(|| {
+                AkitaError::InvalidSetup("next witness length overflow".to_string())
+            })?
+        }
     };
     let terminal_replay = if proof.final_w_len().is_some() {
         let layout =
@@ -138,7 +131,6 @@ where
     let next_w_commitment = proof.next_w_commitment_opt();
     let stage3 = proof.stage3_for_mode(setup_contribution_mode, next_fold_level_params)?;
     let stage2 = proof.stage2();
-    #[cfg(not(feature = "zk"))]
     let (trace_eval_target, trace_eval_scale) = match eor_trace_final.as_ref() {
         Some((final_claim, factors_by_point)) => (
             *final_claim,
@@ -146,30 +138,18 @@ where
         ),
         None => (current_state.opening, L::one()),
     };
-    #[cfg(feature = "zk")]
-    let (trace_eval_target, trace_eval_scale, trace_eval_target_mask) =
-        if let Some((final_claim, factors_by_point)) = zk_eor_final.as_ref() {
-            (
-                final_claim.public,
-                *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
-                final_claim.mask.clone(),
-            )
-        } else {
-            (
-                current_state.opening,
-                L::one(),
-                current_state.opening_mask.clone(),
-            )
-        };
 
     let fold_grind_nonce = proof.fold_grind_nonce();
-    let replay_opening_batch = VerifierOpeningBatch::from_shape_and_groups(
+    let replay_opening_batch = OpeningClaims::from_groups(
         current_state.opening_point.as_slice(),
-        opening_batch,
-        vec![CommitmentGroup {
-            claims: openings,
-            commitment: commitment_u,
-        }],
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(
+                opening_batch.max_num_vars(),
+                current_state.opening_point.len(),
+            )?,
+            openings,
+            commitment_u,
+        )?],
     )?;
     Ok(PreparedFoldReplay {
         lp,
@@ -190,8 +170,6 @@ where
         trace_block_opening: None,
         trace_eval_target,
         trace_eval_scale,
-        #[cfg(feature = "zk")]
-        trace_eval_target_mask,
         trace_claim_scales: None,
         trace_basis: current_state.basis,
     })
@@ -217,8 +195,6 @@ pub(super) fn verify_suffix<'a, F, L, T>(
     schedule: &Schedule,
     mut current_state: SuffixVerifierState<'a, F, L>,
     setup_contribution_mode: SetupContributionMode,
-    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
-    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -254,20 +230,8 @@ where
                         &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(
-                        setup,
-                        transcript,
-                        prepared,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
-                    )
+                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
                 })?;
 
                 let next_level_d = next_params.ring_dimension;
@@ -276,9 +240,25 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                let computed_next_w_len = w_ring_element_count_with_counts::<F>(current_lp, 1, 1)?
-                    .checked_mul(level_d)
-                    .ok_or_else(|| {
+                let next_chunks = current_lp.witness_chunk.num_chunks;
+                let computed_next_w_ring = if next_chunks > 1 {
+                    akita_types::w_ring_element_count_for_chunks(
+                        F::modulus_bits(),
+                        current_lp,
+                        1,
+                        MRowLayout::WithDBlock,
+                        next_chunks,
+                    )?
+                } else {
+                    w_ring_element_count_with_counts_for_layout::<F>(
+                        current_lp,
+                        1,
+                        1,
+                        MRowLayout::WithDBlock,
+                    )?
+                };
+                let computed_next_w_len =
+                    computed_next_w_ring.checked_mul(level_d).ok_or_else(|| {
                         AkitaError::InvalidSetup("next witness length overflow".to_string())
                     })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
@@ -287,10 +267,6 @@ where
                     opening: level_proof
                         .stage3_sumcheck_proof()
                         .map_or_else(|| level_proof.next_w_eval(), |proof| proof.next_w_eval),
-                    #[cfg(feature = "zk")]
-                    opening_mask: zk_ext_mask_lc_at::<F, L>(
-                        *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
-                    ),
                     commitment: level_proof.next_w_commitment(),
                     basis: BasisMode::Lagrange,
                     w_len: next_w_len,
@@ -316,20 +292,8 @@ where
                         &scheduled,
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(
-                        setup,
-                        transcript,
-                        prepared,
-                        #[cfg(feature = "zk")]
-                        zk_hiding_cursor,
-                        #[cfg(feature = "zk")]
-                        zk_relations,
-                    )
+                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
                 })?;
                 // The trailing-Direct witness shape is already validated in
                 // `verify_folded_batched_proof` before this loop.

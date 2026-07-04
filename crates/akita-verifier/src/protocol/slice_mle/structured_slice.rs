@@ -348,9 +348,9 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningBatchShape,
-        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-        RingRelationSegmentLayout, SisModulusFamily,
+        gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningClaimsLayout,
+        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SisModulusFamily,
+        WitnessLayout,
     };
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
@@ -397,14 +397,14 @@ mod tests {
         lp: &LevelParams,
         m_row_layout: MRowLayout,
         num_polys: usize,
-    ) -> Result<RingRelationSegmentLayout, AkitaError> {
-        let opening_batch = OpeningBatchShape::new(32, num_polys)?;
+    ) -> Result<WitnessLayout, AkitaError> {
+        let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
         let opening_point = RingOpeningPoint {
             a: vec![F::zero(); lp.block_len],
             b: vec![F::zero(); lp.num_blocks],
         };
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let num_claims = opening_batch.num_polynomials();
+        let num_claims = opening_batch.num_total_polynomials();
         let challenges = akita_challenges::Challenges::Sparse {
             challenges: Vec::new(),
             num_blocks_per_claim: lp.num_blocks,
@@ -421,7 +421,7 @@ mod tests {
             vec![CyclotomicRing::<F, D>::zero(); num_claims],
             Vec::new(),
         )?;
-        instance.segment_layout(lp)
+        instance.segment_layout(lp, None)
     }
 
     fn fixture() -> StructuredFixture {
@@ -438,20 +438,20 @@ mod tests {
         let n_d = 2usize;
         let num_claims = 3usize;
         let num_points = 1usize;
-        let num_public_rows = 0usize;
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
+        let rows = 1 + n_a + n_b * num_points + n_d;
         let inner_width = block_len * depth_commit;
 
         let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
-        let witness_segment_layout =
+        let chunk_layout =
             ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
                 .expect("witness segment layout");
-        let offset_e = witness_segment_layout.offset_e;
-        let offset_t = witness_segment_layout.offset_t;
-        let offset_z = witness_segment_layout.offset_z;
-        let offset_r = witness_segment_layout.offset_r;
+        let chunk0 = chunk_layout.chunks[0];
+        let offset_e = chunk0.offset_e;
+        let offset_t = chunk0.offset_t;
+        let offset_z = chunk0.offset_z;
+        let offset_r = chunk0.offset_r.expect("single chunk carries r-tail");
         let total_len = offset_r + rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
@@ -474,12 +474,6 @@ mod tests {
             depth_open,
             depth_commit,
             depth_fold,
-            #[cfg(feature = "zk")]
-            d_blinding_segment_len: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_digit_planes_per_point: 0,
-            #[cfg(feature = "zk")]
-            b_blinding_segment_len: 0,
             block_len,
             inner_width,
             log_basis,
@@ -487,11 +481,9 @@ mod tests {
             n_d,
             m_row_layout: MRowLayout::WithDBlock,
             n_b,
-            tier_split: 1,
-            n_f: 0,
             rows,
             num_polys: num_claims,
-            witness_segment_layout,
+            chunk_layout,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
@@ -589,17 +581,17 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         let c_alphas = p.c_alphas.as_flat().unwrap();
-        let a_start = 1 + p.n_d_active() + p.n_b;
+        let a_start = 1;
         let t_high = &fx.full_vec_randomness[offset_low_bits..];
         let t_offset_high = fx.offset_t >> offset_low_bits;
-        let t_outer = challenge_block_summaries.len() * fx.g1_open.len() * (p.rows - a_start);
+        let t_outer = challenge_block_summaries.len() * fx.g1_open.len() * p.n_a;
         let eq_hi_t: Vec<F> = (0..=t_outer)
             .map(|k| eq_eval_at_index(t_high, t_offset_high + k))
             .collect();
         let got = TStructuredSlicesEvaluator {
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
-            a_row_weights: &p.eq_tau1[a_start..p.rows],
+            a_row_weights: &p.eq_tau1[a_start..(a_start + p.n_a)],
             high_eq_table: &eq_hi_t,
         }
         .evaluate();
