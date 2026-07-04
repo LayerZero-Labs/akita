@@ -458,6 +458,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             b_required,
             a_required,
             d_start,
+            b_start,
             a_start,
             n_d_active,
             stride_t,
@@ -465,15 +466,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             b_per_claim_e,
             n_cols_e,
             n_cols_t,
-            a_end: d_end,
+            a_end,
             ..
         } = compute_setup_layout(inputs)?;
-        if d_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
+        if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
             return Err(AkitaError::InvalidSetup(
                 "M-row weights are inconsistent with setup evaluator layout".into(),
             ));
         }
-        let b_start = a_start;
 
         let mut group_offsets = Vec::with_capacity(inputs.num_polys_per_segment.len());
         let mut next_offset = 0usize;
@@ -615,7 +615,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             e_eq_slice,
             t_eq_slice_per_group,
             z_eq_slice,
-            d_weights: inputs.eq_tau1[d_start..d_end].to_vec(),
+            d_weights: inputs.eq_tau1[d_start..a_end].to_vec(),
             b_weights_by_row,
             a_weights: inputs.eq_tau1[a_start..(a_start + inputs.n_a)].to_vec(),
             endpoints,
