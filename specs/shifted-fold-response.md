@@ -177,6 +177,41 @@ instead of saying "the committed segment is semantic `z`", it says "the
 committed segment is `z_comm`, and semantic `z` is obtained by adding the public
 shift."
 
+## Multi-chunk witness layout (`W > 1`)
+
+When [`distributed-prover.md`](distributed-prover.md) sets `num_chunks = W > 1`,
+each block window still carries its own semantic partial fold `z_i`, but the
+committed wire segment per window is the shifted partial fold
+
+```text
+z_comm_i = z_i - eta
+```
+
+with the **same** public `eta` on every coordinate. Digit expansion is nonlinear,
+so `decompose(z_comm_i)` is built **per window** from semantic `z_i`, then
+concatenated in chunk order for `build_w_coeffs` and
+`compute_relation_quotient`. Do not slice a single global `decompose(z - eta)`
+buffer across chunks, and do not sum already-shifted witnesses before
+decomposing.
+
+Summing the fold rows over `W` replicated full-width `z` columns contributes
+`W * eta * <a, G 1>` on the consistency row and `W * eta * A 1` on the `A`
+rows. The public RHS therefore uses
+
+```text
+effective_shift = W * eta
+```
+
+via `fold_response_effective_rhs_shift`. With `W = 1` this is `eta`.
+
+Grind acceptance, semantic caps, and `eta` itself are unchanged: grind still
+runs on semantic `z_i` and global `z = sum_i z_i`; `eta` still derives only
+from `(log_basis, delta_fold)`.
+
+The quotient tail `r_hat` stays a single shared segment. The consistency
+quotient kernel sums one contribution per chunked `z_comm_i` segment; the `A`
+quotient path already loops segments.
+
 ## Security Pricing
 
 There are three different bounds, and the implementation must keep them

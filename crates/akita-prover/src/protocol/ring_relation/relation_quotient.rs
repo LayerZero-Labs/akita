@@ -246,6 +246,51 @@ where
     Ok((CyclotomicRing::from_coefficients(cyclic), reduced))
 }
 
+fn consistency_z_quotient_from_committed_digits<F, const D: usize>(
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    z_committed_digits: &[[i8; D]],
+    block_len: usize,
+    depth_commit: usize,
+    num_digits_fold: usize,
+    log_basis: u32,
+) -> Result<CyclotomicRing<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
+{
+    let inner_width = block_len
+        .checked_mul(depth_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("z inner width overflow".to_string()))?;
+    if inner_width == 0 || num_digits_fold == 0 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let segment_planes = inner_width
+        .checked_mul(num_digits_fold)
+        .ok_or(AkitaError::InvalidProof)?;
+    if !z_committed_digits.len().is_multiple_of(segment_planes) {
+        return Err(AkitaError::InvalidInput(format!(
+            "ring-multiplier z layout mismatch: z_digit_len={} block_len={} depth_commit={} depth_fold={} segment_planes={}",
+            z_committed_digits.len(),
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            segment_planes
+        )));
+    }
+    let mut quotient = CyclotomicRing::<F, D>::zero();
+    for segment in z_committed_digits.chunks(segment_planes) {
+        let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
+            ring_multiplier_point,
+            segment,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        )?;
+        quotient += quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced);
+    }
+    Ok(quotient)
+}
+
 fn a_quotients_from_committed_digits<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -438,15 +483,14 @@ where
         // row is identically zero.
         CyclotomicRing::<F, D>::zero()
     } else {
-        let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
+        consistency_z_quotient_from_committed_digits::<F, D>(
             ring_multiplier_point,
             z_committed_digits,
             lp.block_len,
             lp.num_digits_commit,
             num_digits_fold,
             lp.log_basis,
-        )?;
-        quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
+        )?
     };
 
     let mut result = Vec::with_capacity(num_rows);

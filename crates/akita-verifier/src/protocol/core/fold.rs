@@ -422,18 +422,20 @@ where
         MRowLayout::WithDBlock => prepared.v.as_slice(),
         MRowLayout::WithoutDBlock => &[],
     };
-    let num_digits_fold = prepared
-        .lp
-        .num_digits_fold(opening_shape.num_total_polynomials(), F::modulus_bits())?;
+    let num_digits_fold = prepared.lp.num_digits_fold(
+        opening_shape.num_total_polynomials(),
+        prepared.lp.field_bits_for_cache(),
+    )?;
     let committed_shift = fold_response_shift(prepared.lp.log_basis, num_digits_fold);
+    let effective_shift = fold_response_effective_rhs_shift(prepared.lp, committed_shift);
     let consistency_shift_row = fold_shift_consistency_row::<F, D>(
         &prepared.ring_multiplier_point,
         prepared.lp.block_len,
         prepared.lp.num_digits_commit,
         prepared.lp.log_basis,
-        committed_shift,
+        effective_shift,
     )?;
-    let a_shift_rows = a_ones_table.a_shift_rows::<D>(prepared.lp, committed_shift)?;
+    let a_shift_rows = a_ones_table.a_shift_rows::<D>(prepared.lp, effective_shift)?;
     let relation_y = generate_y::<F, D>(
         consistency_shift_row,
         a_shift_rows.as_ref(),

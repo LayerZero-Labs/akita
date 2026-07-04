@@ -1,4 +1,5 @@
 use super::*;
+use crate::backend::poly_helpers::committed_fold_digits_concat_per_chunk;
 use crate::compute::{OperationCtx, RingSwitchProveBackend};
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use crate::validation::validate_i8_setup_log_basis;
@@ -62,7 +63,13 @@ where
         AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
     })?;
     let opening_batch = instance.opening_batch();
-    let num_digits_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let num_digits_fold = lp.num_digits_fold(num_claims, lp.field_bits_for_cache())?;
+    let z_committed_digits = committed_fold_digits_concat_per_chunk(
+        &z_folded_centered_per_chunk,
+        lp.log_basis,
+        num_digits_fold,
+        z_folded_rings.committed_shift,
+    )?;
 
     let r = compute_relation_quotient::<F, B, D>(
         ring_switch_ctx,
@@ -74,7 +81,7 @@ where
         &e_folded,
         instance.ring_multiplier_point(),
         instance.row_coefficient_rings(),
-        &z_folded_rings.committed_digits,
+        &z_committed_digits,
         num_digits_fold,
         instance.y(),
         opening_batch.num_total_polynomials(),
@@ -88,7 +95,7 @@ where
         build_w_coeffs::<F, D>(
             &e_hat,
             &decomposed_inner_rows,
-            &z_folded_rings.committed_digits,
+            &z_committed_digits,
             &z_folded_centered_per_chunk,
             &r,
             lp,

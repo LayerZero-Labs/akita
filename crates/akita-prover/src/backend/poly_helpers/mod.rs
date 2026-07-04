@@ -438,6 +438,28 @@ pub(crate) fn committed_fold_digits_from_centered<const D: usize>(
     Ok((committed_shift, committed_digits))
 }
 
+/// Balanced digit planes for each chunked window's semantic fold `z_i - eta`,
+/// concatenated in chunk order for witness emission and quotient kernels.
+pub(crate) fn committed_fold_digits_concat_per_chunk<const D: usize>(
+    z_folded_centered_per_chunk: &[Vec<[i32; D]>],
+    log_basis: u32,
+    num_digits_fold: usize,
+    expected_shift: u128,
+) -> Result<Vec<[i8; D]>, AkitaError> {
+    let mut out = Vec::new();
+    for chunk in z_folded_centered_per_chunk {
+        let (shift, digits) =
+            committed_fold_digits_from_centered(chunk, log_basis, num_digits_fold)?;
+        if shift != expected_shift {
+            return Err(AkitaError::InvalidInput(
+                "chunked fold witness shift mismatch".to_string(),
+            ));
+        }
+        out.extend_from_slice(&digits);
+    }
+    Ok(out)
+}
+
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
     centered_coeffs: Vec<[i32; D]>,
     modulus: u128,

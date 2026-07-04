@@ -18,8 +18,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    fold_shift_consistency_row, AkitaCommitmentHint, FlatDigitBlocks, FoldAOnesTable, MRowLayout,
-    RingSliceSerializer,
+    fold_response_effective_rhs_shift, fold_shift_consistency_row, AkitaCommitmentHint,
+    FlatDigitBlocks, FoldAOnesTable, MRowLayout, RingSliceSerializer,
 };
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -559,14 +559,16 @@ impl RingRelationProver {
             MRowLayout::WithDBlock => (v.as_slice(), lp.d_key.row_len()),
             MRowLayout::WithoutDBlock => (&[][..], 0usize),
         };
+        let effective_shift =
+            fold_response_effective_rhs_shift(&lp, z_folded_rings.committed_shift);
         let consistency_shift_row = fold_shift_consistency_row::<F, D>(
             &ring_multiplier_point,
             lp.block_len,
             lp.num_digits_commit,
             lp.log_basis,
-            z_folded_rings.committed_shift,
+            effective_shift,
         )?;
-        let a_shift_rows = a_ones_table.a_shift_rows::<D>(&lp, z_folded_rings.committed_shift)?;
+        let a_shift_rows = a_ones_table.a_shift_rows::<D>(&lp, effective_shift)?;
         let y = generate_y::<F, D>(
             consistency_shift_row,
             &a_shift_rows,

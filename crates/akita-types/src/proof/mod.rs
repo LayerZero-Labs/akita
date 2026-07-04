@@ -47,7 +47,8 @@ pub use direct_witness::{
 };
 pub use fold_response_rhs::{
     a_ones_from_setup, all_coeffs_one_ring, fold_a_shift_rows_from_setup,
-    fold_shift_consistency_row, relation_claim_from_fold_active_rows_for_level,
+    fold_response_effective_rhs_shift, fold_shift_consistency_row,
+    relation_claim_from_fold_active_rows_for_level,
     relation_claim_from_fold_active_rows_for_level_extension, scale_a_shift_rows,
     FoldAOnesGeometryKey, FoldAOnesTable,
 };

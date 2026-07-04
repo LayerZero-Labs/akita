@@ -784,6 +784,18 @@ where
     ))
 }
 
+/// Effective shift for fold-row RHS corrections when the witness carries
+/// `num_chunks` replicated `z_comm_i = z_i - eta` columns.
+///
+/// With `W = 1` this is `eta`; with `W > 1` the summed fold rows pick up
+/// `W * eta * <a, G 1>` and `W * eta * A 1`.
+#[inline]
+#[must_use]
+pub fn fold_response_effective_rhs_shift(lp: &LevelParams, committed_shift: u128) -> u128 {
+    let num_chunks = lp.witness_chunk.num_chunks.max(1);
+    committed_shift.saturating_mul(u128::from(num_chunks as u64))
+}
+
 /// Public consistency-row correction `η⟨a, G_commit 1⟩` at the ring opening.
 ///
 /// # Errors
@@ -1012,6 +1024,15 @@ mod tests {
             })],
             total_bytes: 0,
         }
+    }
+
+    #[test]
+    fn fold_response_effective_rhs_shift_scales_with_num_chunks() {
+        let mut lp = sample_lp();
+        lp.witness_chunk.num_chunks = 1;
+        assert_eq!(fold_response_effective_rhs_shift(&lp, 3), 3);
+        lp.witness_chunk.num_chunks = 8;
+        assert_eq!(fold_response_effective_rhs_shift(&lp, 3), 24);
     }
 
     #[test]

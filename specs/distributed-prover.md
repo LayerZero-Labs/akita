@@ -252,8 +252,8 @@ consume `m_evals_x` and `w_evals_compact` exactly as before.
 
 ### Reused unchanged
 
-- **Quotient.** `compute_relation_quotient` is **value-identical**. The modified
-  relation's row values equal the original's: on the consistency row,
+- **Quotient.** `compute_relation_quotient` is **value-identical** for the
+  **unshifted** chunked relation: on the consistency row,
   $\sum_i\bigl[(\mathbf c^{(i)\top}\!\otimes G)\widehat{\mathbf e}_i - \mathbf a^{\top}G\,\mathbf z_i\bigr]
    = \sum_j c_j G\widehat{\mathbf e}_j - \mathbf a^{\top}G\sum_i\mathbf z_i
    = \sum_j c_j G\widehat{\mathbf e}_j - \mathbf a^{\top}G\,\mathbf z$
@@ -261,6 +261,9 @@ consume `m_evals_x` and `w_evals_compact` exactly as before.
   $\mathbf M\mathbf w = \mathbf h$ has the same lifted value as the original and
   the quotient $\widehat{\mathbf r} = (\mathbf M\mathbf w - \mathbf h)/(X^d+1)$ is
   identical; the prover computes it as today and emits it as one shared tail.
+  With shifted-z (`specs/shifted-fold-response.md` §Multi-chunk), each window
+  commits `z_comm_i = z_i - eta`, the fold-row RHS uses `W * eta`, and the
+  quotient consumes concatenated per-chunk committed digit planes.
 - **Commit.** `commit_next_w` commits the assembled witness using the next level's
   `LevelParams` (sized by the planner). The witness is longer; the matvec kernels
   are unchanged.

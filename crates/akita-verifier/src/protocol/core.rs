@@ -32,9 +32,9 @@ use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::sis::fold_response_shift;
 use akita_types::{
     append_claim_values_to_transcript, build_trace_claim_root, ensure_trace_stage2_supported,
-    fold_shift_consistency_row, generate_y, prepare_opening_point,
-    relation_claim_from_fold_active_rows_for_level_extension, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, root_trace_block_opening,
+    fold_response_effective_rhs_shift, fold_shift_consistency_row, generate_y,
+    prepare_opening_point, relation_claim_from_fold_active_rows_for_level_extension,
+    reorder_stage1_coords, ring_subfield_packed_extension_opening_point, root_trace_block_opening,
     sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, trace_terms_recursive,
     trace_weight_layout_from_segment, w_ring_element_count_with_counts_for_layout,
