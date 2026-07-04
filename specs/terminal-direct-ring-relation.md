@@ -4,13 +4,13 @@
 |-------------|--------------------------------------------------------------|
 | Author(s)   | Quang Dao                                                    |
 | Created     | 2026-05-31                                                   |
-| Status      | accepted for implementation; base = `main`, no PR-#165/#166 dependency |
+| Status      | accepted for implementation; base = `main` (transparent path); ZK quarantined in [Deferred: ZK reintroduction](#deferred-zk-reintroduction-out-of-scope) |
 | PR          | #141                                                         |
 
 ## Summary
 
 Akita's transparent folded terminal tail is now segment-typed.
-After #190, non-zk terminal folds serialize `CleartextWitnessProof::SegmentTyped` with a Golomb-Rice `z` segment and raw-field `e`, `t`, and `r` segments.
+After #190, terminal folds serialize `CleartextWitnessProof::SegmentTyped` with a Golomb-Rice `z` segment and raw-field `e`, `t`, and `r` segments.
 That cutover changed the wire encoding, but it did not change the terminal relation proof.
 The prover still computes the terminal quotient `r`, sends it as the raw `r` segment, samples terminal ring-switch aggregation challenges, and proves the terminal relation with a relation-only stage-2 sumcheck.
 
@@ -39,7 +39,7 @@ pub enum TerminalProofMode {
 
 `RingSwitchSumcheck` is the current terminal path:
 
-- terminal witness encoding is `SegmentTyped(z, e, t, r)` in non-zk builds,
+- terminal witness encoding is `SegmentTyped(z, e, t, r)`,
 - terminal ring-switch `alpha` and `tau1` are squeezed after the terminal witness remainder,
 - terminal stage 2 proves the relation-only sumcheck,
 - and the verifier expands the terminal witness to the legacy digit stream for stage-2 replay.
@@ -62,14 +62,16 @@ The proof shape must also carry the mode, because Akita proof serialization is s
 - Do not add a compatibility decoder for old terminal proof bytes.
 - Do not overload `MRowLayout::WithoutDBlock` to mean quotient omission.
 - Do not implement terminal `t`-state / `u`-elision in this slice.
-- Do not support direct terminal mode under `feature = "zk"` in this slice.
 - Do not claim a prover, verifier, or Jolt cycle speedup until direct-mode profiling exists.
+
+This spec targets the **transparent prove/verify path only**.
+ZK-specific terminal shapes, masking, and feature-gated sumcheck variants are **not** part of the implementation contract here; see [Deferred: ZK reintroduction](#deferred-zk-reintroduction-out-of-scope).
 
 ## Current Baseline After #190
 
 ### Terminal Tail Encoding
 
-The current non-zk terminal witness is `CleartextWitnessProof::SegmentTyped`.
+The current terminal witness is `CleartextWitnessProof::SegmentTyped`.
 Its public layout is `TailSegmentLayout`:
 
 ```rust
@@ -132,8 +134,8 @@ The current folded terminal prover path:
 `TerminalLevelProof` on the wire is headerless and carries only:
 
 - optional extension-opening reduction,
-- terminal stage-2 sumcheck (non-zk) or masked sumcheck (zk),
-- and `final_witness` (`SegmentTyped` in non-zk folded builds).
+- terminal stage-2 sumcheck,
+- and `final_witness` (`SegmentTyped` on folded terminal levels).
 
 Public terminal `y` is not serialized in that payload.
 Since #154 (`specs/y-ring-trace-internalization.md`), on-wire `y_ring` / `y_rings` was dropped at every fold level, including the terminal.
@@ -338,8 +340,8 @@ The mode must also be reflected in proof shape because the terminal stage-2 byte
 - **Verifier no-panic boundary.** Malformed direct terminal shapes, witness payloads, segment lengths, row counts, or setup layouts reject with `AkitaError` or `SerializationError`.
   New verifier code must avoid `unwrap`, `expect`, unchecked indexing, unchecked slicing, and overflow-prone arithmetic on verifier-reachable inputs.
 
-- **Transparent-only first slice.** Under `feature = "zk"`, selecting direct terminal mode rejects with `InvalidSetup`.
-  A masked direct relation design is a separate protocol.
+- **Transparent path only.** This implementation slice does not add ZK terminal variants, masked sumchecks, or `feature = "zk"` branches.
+  Future ZK reintroduction is documented separately and must not block the transparent cutover.
 
 - **Single-tier terminal only.** Segment-typed terminal witnesses require `tier_split == 1` and forbid hidden `û_concat` digit planes.
   Configs with `tier_split > 1` must reject before terminal witness construction in both sumcheck and direct modes.
@@ -358,8 +360,8 @@ pub enum TerminalProofMode {
 ```
 
 The mode is **runtime config policy**, not a compile-time feature.
-`ProtocolFeatureSet` on `main` holds only `zk` and is built from `ProtocolFeatureSet::current()`, which reads `cfg!(feature = "zk")` (`crates/akita-types/src/instance_descriptor/mod.rs:135-150`).
-The terminal mode is chosen by `CommitmentConfig`, so it must not flow through `current()`.
+`SetupSection` already carries protocol policy fields (`decomposition`, `sis_modulus_family`, `fold_linf`, etc.; `crates/akita-types/src/instance_descriptor/mod.rs`).
+The terminal mode is chosen by `CommitmentConfig`, so it must not be inferred from compile-time feature flags.
 Add it as a runtime field on `SetupSection` (directly or via a small `ProtocolPolicySet`):
 
 ```rust
@@ -404,10 +406,7 @@ This spec keeps that nesting (the narrowest cutover) and replaces only the `sumc
 
 ```rust
 pub enum TerminalRelationProof<L> {
-    RingSwitchSumcheck(
-        #[cfg(not(feature = "zk"))] SumcheckProof<L>,
-        #[cfg(feature = "zk")] SumcheckProofMasked<L>,
-    ),
+    RingSwitchSumcheck(SumcheckProof<L>),
     DirectRingRelations,
 }
 
@@ -419,6 +418,7 @@ pub struct AkitaTerminalStage2Proof<F, L> {
 
 `AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof)` and the existing `final_witness()` / `final_witness_mut()` accessors stay; only the inner sumcheck field becomes the relation enum.
 This keeps direct mode an explicit enum variant, not an empty sumcheck (`stage2_sumcheck = []`).
+Do not introduce `SumcheckProofMasked`, `#[cfg(feature = "zk")]`, or dual transparent/ZK terminal proof arms in this slice; see [Deferred: ZK reintroduction](#deferred-zk-reintroduction-out-of-scope).
 
 The proof shape mirrors the body:
 
@@ -439,8 +439,6 @@ This replaces the current `TerminalLevelProofShape { extension_opening_reduction
 
 Do not reintroduce a `y_rings` shape field.
 On-wire `y` was removed in #154 and is not part of `TerminalLevelProof` today.
-
-Under `feature = "zk"`, the `RingSwitchSumcheck` arm carries the masked sumcheck and `DirectRingRelations` is rejected at the config / setup boundary before construction (see ZK Policy).
 
 ### Terminal Witness Layout Changes
 
@@ -604,7 +602,7 @@ not:
 ceil(r_digit_count * bits_per_elem / 8)
 ```
 
-The latter was the pre-#190 packed-digit estimate and is now stale for non-zk tails.
+The latter was the pre-#190 packed-digit estimate and is now stale for segment-typed tails.
 
 Terminal level bytes follow the same split as today: proof body (`level_proof_bytes`) plus scheduled witness (`direct_witness_bytes`).
 Neither term includes on-wire `y`; that was removed in #154.
@@ -636,22 +634,46 @@ Planner and schedule materialization must derive the same terminal witness shape
 If direct mode is exposed by production configs, generated schedule tables must be regenerated under the direct-mode policy and protected by the drift guard.
 Until then, direct mode should be test-only or runtime-DP-only with explicit proof-size assertions.
 
-### ZK Policy
+## Deferred: ZK reintroduction (out of scope)
 
-Direct terminal mode is transparent-only in this spec.
-Under `feature = "zk"`, selecting `DirectRingRelations` must reject with `InvalidSetup` before proof construction or verification.
+This section quarantines ZK-specific design that **must not** land in the transparent implementation slices above.
+It exists so a future ZK restoration pass has a written anchor without baking masking, dual proof arms, or `feature = "zk"` branches into the near-term cutover.
 
-This is a protocol boundary, not merely missing code.
-The current ZK terminal path relies on:
+### Context after #218
 
-- `stage2_sumcheck_proof_masked`,
+The codebase is cutting over to a transparent-first orchestration path (`specs/akita-zk-strip-for-audit.md`, #218).
+Shipped presets, descriptor binding, and terminal proof shapes in this spec assume **one** terminal sumcheck representation: `SumcheckProof<L>`.
+Do not reintroduce `SumcheckProofMasked`, `akita-r1cs`, or compile-time ZK terminal variants while implementing S1.
+
+### Sumcheck-mode terminal (future ZK)
+
+When ZK is restored, the legacy sumcheck terminal path may again need:
+
+- `stage2_sumcheck_proof_masked` instead of plain `SumcheckProof<L>`,
 - verifier-side relation-claim masking,
-- and B-side blinding carried through the terminal stage-2 row-evaluation path.
+- and B-side blinding through the terminal stage-2 row-evaluation path.
 
 On-wire `y_ring` masking was removed with #154; the fused trace term in stage 2 binds the public opening instead.
+Any restored ZK terminal sumcheck must re-derive that binding against the post-#154 trace model, not copy pre-strip masking assumptions blindly.
 
-Removing terminal stage 2 removes that masking mechanism.
-A future ZK direct mode needs a separate masked direct-row relation argument.
+### Direct-mode terminal (future ZK)
+
+Direct terminal mode removes terminal stage 2 entirely, so it also removes the stage-2 masking mechanism.
+A future ZK direct mode needs a **separate** masked direct-row relation argument; it is not a cfg-gated variant of the transparent checker in this spec.
+
+Until that design exists:
+
+- do not add `DirectRingRelations` arms that differ only by `feature = "zk"`,
+- do not add descriptor or config hooks whose only purpose is to reject direct mode under ZK builds,
+- and do not block the transparent direct-mode cutover on ZK API shape decisions.
+
+### Future acceptance / test hooks (not S1 gates)
+
+When ZK returns, add explicitly scoped tests rather than folding them into the transparent checklist:
+
+- masked sumcheck terminal round-trip under a restored ZK feature surface,
+- direct terminal policy under ZK (likely reject until a masked direct design lands),
+- and descriptor/feature-set binding if `ProtocolFeatureSet` or an equivalent ZK policy bit is reintroduced.
 
 ## Evaluation
 
@@ -671,9 +693,9 @@ A future ZK direct mode needs a separate masked direct-row relation argument.
 - [ ] Direct terminal verifier binds the public opening claim via the #154 trace-opening identity with EOR-aware `trace_eval_target` derivation (replacing the removed stage-2 trace term); tampering the opening claim, EOR final claim, `e_folded` recomposition, or the witness rejects.
 - [ ] Direct terminal verifier supports suffix-terminal and terminal-root surfaces.
 - [ ] Cross-mode descriptor or proof-shape mismatch rejects before row checking.
-- [ ] Direct mode under `feature = "zk"` rejects with `InvalidSetup`.
 - [ ] Proof-size accounting reports exact serialized proof bytes for direct and sumcheck terminal modes.
 - [ ] Existing sumcheck terminal mode remains tested until production configs intentionally cut over.
+- [ ] Transparent implementation contains no new `feature = "zk"` terminal branches (see [Deferred: ZK reintroduction](#deferred-zk-reintroduction-out-of-scope)).
 
 ### Tests
 
@@ -717,11 +739,6 @@ Add transcript tests:
 - Direct terminal event stream contains no terminal `CHALLENGE_SUMCHECK_BATCH`.
 - Sumcheck terminal event order remains unchanged.
 
-Add ZK tests:
-
-- A direct terminal config under `feature = "zk"` rejects with `InvalidSetup`.
-- Existing ZK sumcheck terminal tests remain green.
-
 Minimum local validation:
 
 ```bash
@@ -730,7 +747,6 @@ cargo test -p akita-types
 cargo test -p akita-pcs ring_switch
 cargo test -p akita-pcs akita_e2e
 cargo test -p akita-pcs transcript_hardening
-cargo test -p akita-pcs zk --features zk
 ```
 
 If production tables are regenerated:
@@ -751,7 +767,7 @@ stage2_sumcheck_bytes
 
 This supersedes older packed-digit estimates.
 Before #190, the terminal `r_hat` bytes were priced as balanced digit planes.
-After #190, non-zk terminal `r` is raw field data, so direct mode's r-drop may save more bytes than the old `ceil(r_digits * bits_per_elem / 8)` estimate.
+After #190, terminal `r` is raw field data, so direct mode's r-drop may save more bytes than the old `ceil(r_digits * bits_per_elem / 8)` estimate.
 
 Expected runtime effects:
 
@@ -783,7 +799,7 @@ Profile reporting should include:
 
 1. Land this refreshed spec as the S1 direct-relation contract.
 2. Keep `specs/tail-wire-encoding.md` as the umbrella.
-3. Update `specs/terminal-fold-cutover.md` to say #190 changed the terminal tail from `PackedDigits` to segment-typed encoding in non-zk builds.
+3. Update `specs/terminal-fold-cutover.md` to say #190 changed the terminal tail from `PackedDigits` to segment-typed encoding.
 4. Update `specs/transcript-immediate-fixes.md` to use `e` / `e_folded`, `z_folded`, and segment-typed terminology instead of stale `w_hat` / `z_pre` wording where it refers to the transparent tail.
 
 ### Slice 1: Mode And Shape Plumbing
@@ -813,8 +829,7 @@ This slice should still be able to build sumcheck terminal witnesses unchanged.
 2. In direct mode, build `SegmentTyped(z, e, t)` without computing `r`.
 3. Absorb terminal transcript bytes through the same `terminal_transcript_parts` path.
 4. Emit `TerminalRelationProof::DirectRingRelations`.
-5. Reject direct mode under `feature = "zk"`.
-6. Add prover-side shape and proof-size assertions.
+5. Add prover-side shape and proof-size assertions.
 
 ### Slice 4: Verifier Direct Terminal Checker
 
@@ -873,6 +888,7 @@ The implementation should be fresh and based on current `SegmentTyped` surfaces.
 ## References
 
 - `specs/tail-wire-encoding.md`, umbrella tail-wire spec and #190 implementation scope.
+- `specs/akita-zk-strip-for-audit.md`, transparent-first cutover; ZK restoration is out of scope for S1 here.
 - `specs/terminal-fold-cutover.md`, implemented terminal witness binding and D-block drop.
 - `specs/transcript-immediate-fixes.md`, terminal transcript ordering.
 - `crates/akita-types/src/proof/direct_witness.rs`, `CleartextWitnessProof` and terminal witness shape selection.
@@ -881,7 +897,7 @@ The implementation should be fresh and based on current `SegmentTyped` surfaces.
 - `crates/akita-types/src/proof/shapes.rs`, `TerminalLevelProofShape`.
 - `crates/akita-types/src/proof/wire.rs`, proof serialization and shape-driven terminal deserialization.
 - `crates/akita-types/src/schedule.rs`, `DirectStep` and schedule descriptor bytes.
-- `crates/akita-types/src/instance_descriptor/mod.rs`, `ProtocolFeatureSet`, `SetupSection`, `AKITA_INSTANCE_DESCRIPTOR_VERSION`, and descriptor binding.
+- `crates/akita-types/src/instance_descriptor/mod.rs`, `SetupSection`, `AKITA_INSTANCE_DESCRIPTOR_VERSION`, and descriptor binding.
 - `crates/akita-config/src/transcript_binding.rs`, `bind_transcript_instance_descriptor` (sole `SetupSection::from_parts` caller).
 - `crates/akita-config/src/lib.rs`, `CommitmentConfig` (home of the new `terminal_proof_mode()` hook).
 - `crates/akita-prover/src/protocol/ring_switch/coeffs.rs`, `ring_switch_build_w` / `build_w_coeffs` and `RingSwitchTerminalArtifacts`.
