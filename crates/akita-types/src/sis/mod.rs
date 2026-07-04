@@ -33,18 +33,21 @@ pub use ajtai_key::{
 };
 pub use decomposition_digits::{
     compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, fold_witness_verifier_linf_bound, num_digits_fold,
-    num_digits_for_bound, num_digits_open, num_digits_s_commit,
+    decomposed_w_ring_count, fold_witness_representable_linf_bounds,
+    fold_witness_verifier_linf_bound, num_digits_fold, num_digits_for_bound, num_digits_open,
+    num_digits_s_commit,
 };
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use norm_bound::{
     committed_fold_a_role_rank, committed_fold_collision_linf_bound, fold_challenge_norms,
     fold_level_witness_scoring_cost, fold_witness_beta, fold_witness_honest_prover_linf_cap,
-    fold_witness_linf_cap_policy, fold_witness_linf_ln_term,
+    fold_witness_linf_cap_policy, fold_witness_linf_digit_plan,
     fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
     fold_witness_linf_tensor_tail_bound_sq, isqrt_ceil, l2_sq_from_linf,
     ring_product_infinity_norm_bound, rounded_up_collision_linf_t, rounded_up_collision_linf_w,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    snap_min_tstar_retain_floor, snap_num_digits_fold_down, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessLinfDigitPlan, FoldWitnessNorms,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
 };
