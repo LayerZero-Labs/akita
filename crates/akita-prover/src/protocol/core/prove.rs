@@ -11,7 +11,7 @@ use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::{
-    schedule_terminal_direct_witness_shape, should_reject_grouped_root, ValidatedScheduleContext,
+    schedule_terminal_direct_witness_shape, should_reject_grouped_root, RingDimPlan,
     GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 
@@ -147,7 +147,7 @@ where
         return Err(grouped_root_prover_error(message));
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
-    let schedule_ctx = ValidatedScheduleContext::new(&schedule, expanded.seed().gen_ring_dim)?;
+    let ring_plan = RingDimPlan::from_schedule(&schedule, expanded.seed())?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => &root.params,
         Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {
@@ -199,7 +199,7 @@ where
         transcript,
         claims,
         &schedule,
-        &schedule_ctx,
+        &ring_plan,
         basis,
         setup_contribution_mode,
     )
@@ -234,7 +234,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
     transcript: &mut T,
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &Schedule,
-    schedule_ctx: &ValidatedScheduleContext<'_>,
+    ring_plan: &RingDimPlan,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
@@ -281,12 +281,10 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    // `RingDimPlan` (via `schedule_ctx`) is the sole ring-dimension authority:
-    // every level's dims were validated against the setup envelope when the
-    // context was built, and each operation adapter takes its dimension from
-    // the schedule data at the operation.
-    for level in 0..schedule_ctx.ring_plan().num_folds() {
-        let role_dims = schedule_ctx.ring_plan().dims_at(level)?;
+    // `RingDimPlan` is the sole ring-dimension authority: every level's dims were
+    // validated against the setup envelope when the plan was built.
+    for level in 0..ring_plan.num_folds() {
+        let role_dims = ring_plan.dims_at(level)?;
         stacks
             .prove_stack_at_level(level)
             .ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;

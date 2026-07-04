@@ -12,6 +12,7 @@ pub mod flat_matrix;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
+pub mod ring_dims;
 
 pub use digit_math::gadget_row_scalars;
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
@@ -21,6 +22,10 @@ pub use opening_point::{
     RingOpeningPoint,
 };
 pub use params::{AjtaiKeyParams, GroupRootParams, LevelParams, MRowLayout, SisModulusFamily};
+pub use ring_dims::{
+    validate_role_dims, CommitmentRingDims, RingDimPlan, RingLevelContext, RingRole,
+    MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
+};
 pub use proof_size::{
     direct_witness_bytes, extension_opening_reduction_level_bytes,
     extension_opening_reduction_proof_bytes, field_bytes, packed_digits_bytes,

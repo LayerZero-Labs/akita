@@ -1,6 +1,6 @@
 //! Runtime-to-const-generic dispatch shared by prover and verifier.
 
-use crate::schedule_context::{CommitmentRingDims, RingRole};
+use crate::layout::{CommitmentRingDims, RingRole};
 use crate::LevelParams;
 use akita_field::AkitaError;
 

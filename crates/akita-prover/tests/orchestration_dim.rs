@@ -6,9 +6,19 @@ use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
-    validate_level_dispatch, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
-    LevelParams, OpeningClaimsLayout, Schedule, Step, ValidatedScheduleContext,
+    validate_level_dispatch, AkitaScheduleLookupKey, AkitaSetupSeed, CleartextWitnessShape,
+    DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, RingDimPlan, Schedule, Step,
 };
+
+fn test_seed(gen_ring_dim: usize) -> AkitaSetupSeed {
+    AkitaSetupSeed {
+        max_num_vars: 20,
+        max_num_batched_polys: 1,
+        gen_ring_dim,
+        max_setup_len: 1 << 20,
+        public_matrix_seed: [0u8; 32],
+    }
+}
 
 fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
     Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
@@ -42,7 +52,7 @@ fn batched_schedule_selection_matches_config_preset() {
 }
 
 #[test]
-fn validated_schedule_context_rejects_level_dim_larger_than_gen_ring_dim() {
+fn ring_dim_plan_rejects_level_dim_larger_than_gen_ring_dim() {
     let schedule = Schedule {
         steps: vec![
             Step::Fold(make_fold_step(128)),
@@ -55,7 +65,7 @@ fn validated_schedule_context_rejects_level_dim_larger_than_gen_ring_dim() {
         ],
         total_bytes: 0,
     };
-    let err = ValidatedScheduleContext::new(&schedule, 64)
+    let err = RingDimPlan::from_schedule(&schedule, &test_seed(64))
         .expect_err("gen_ring_dim=64 cannot host a fold level at ring_dimension=128");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
@@ -69,15 +79,15 @@ fn validate_level_dispatch_rejects_stack_d_mismatch() {
 }
 
 #[test]
-fn validated_schedule_context_accepts_uniform_d64_preset() {
+fn ring_dim_plan_accepts_uniform_d64_preset() {
     type Cfg = fp64::D64Full;
     let schedule = real_schedule::<Cfg>(10);
-    ValidatedScheduleContext::new(&schedule, Cfg::D).expect("uniform preset envelope");
+    RingDimPlan::from_schedule(&schedule, &test_seed(Cfg::D)).expect("uniform preset envelope");
 }
 
 #[test]
-fn validated_schedule_context_accepts_fp128_d64_preset() {
+fn ring_dim_plan_accepts_fp128_d64_preset() {
     type Cfg = fp128::D64Full;
     let schedule = real_schedule::<Cfg>(12);
-    ValidatedScheduleContext::new(&schedule, Cfg::D).expect("fp128 uniform preset envelope");
+    RingDimPlan::from_schedule(&schedule, &test_seed(Cfg::D)).expect("fp128 uniform preset envelope");
 }

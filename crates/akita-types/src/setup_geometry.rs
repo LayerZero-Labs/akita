@@ -6,30 +6,10 @@
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::{LevelParams, MRowLayout};
-use crate::proof::{AkitaExpandedSetup, OpeningClaimsLayout};
+use crate::layout::MRowLayout;
+use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;
-
-/// Shape projection for one setup-contribution level (no challenges, no weights).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SetupRelationShape {
-    pub num_t_vectors: usize,
-    pub num_blocks: usize,
-    pub num_claims: usize,
-    pub depth_open: usize,
-    pub depth_commit: usize,
-    pub depth_fold: usize,
-    pub block_len: usize,
-    pub inner_width: usize,
-    pub n_a: usize,
-    pub n_d: usize,
-    pub m_row_layout: MRowLayout,
-    pub n_b: usize,
-    pub num_segments: usize,
-    pub rows: usize,
-    pub num_polys_per_segment: Vec<usize>,
-}
 
 /// Full row-layout footprint used by weight materialization and geometry tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,117 +38,38 @@ pub struct SetupLayoutFootprint {
     pub b_per_claim_e: usize,
 }
 
-impl SetupRelationShape {
-    /// Build the setup-contribution layout shape from per-level params.
-    ///
-    /// Mirrors the prover's `create_setup_contribution_inputs` field derivation
-    /// without materializing `eq_tau1`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when level layout parameters are inconsistent.
-    pub fn from_level_params(
-        lp: &LevelParams,
-        num_polynomials: usize,
-        m_row_layout: MRowLayout,
-        depth_fold: usize,
-    ) -> Result<Self, AkitaError> {
-        let depth_commit = lp.num_digits_commit;
-        let depth_open = lp.num_digits_open;
-        if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "num_blocks must be a non-zero power of two".into(),
-            ));
-        }
-        if lp.block_len == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "setup evaluator layout has zero width".into(),
-            ));
-        }
-        let inner_width = lp
-            .block_len
-            .checked_mul(depth_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".into()))?;
-        if lp.a_key.col_len() < inner_width {
-            return Err(AkitaError::InvalidSetup(
-                "A-key column width is too small for setup contribution layout".into(),
-            ));
-        }
-        let rows = lp.m_row_count_for(1, m_row_layout)?;
-        Ok(Self {
-            num_t_vectors: num_polynomials,
-            num_blocks: lp.num_blocks,
-            num_claims: num_polynomials,
-            depth_open,
-            depth_commit,
-            depth_fold,
-            block_len: lp.block_len,
-            inner_width,
-            n_a: lp.a_key.row_len(),
-            n_d: lp.d_key.row_len(),
-            m_row_layout,
-            n_b: lp.b_key.row_len(),
-            num_segments: 1,
-            rows,
-            num_polys_per_segment: vec![num_polynomials],
-        })
-    }
-}
-
-impl<E: FieldCore> From<&SetupContributionPlanInputs<E>> for SetupRelationShape {
-    fn from(inputs: &SetupContributionPlanInputs<E>) -> Self {
-        Self {
-            num_t_vectors: inputs.num_t_vectors,
-            num_blocks: inputs.num_blocks,
-            num_claims: inputs.num_claims,
-            depth_open: inputs.depth_open,
-            depth_commit: inputs.depth_commit,
-            depth_fold: inputs.depth_fold,
-            block_len: inputs.block_len,
-            inner_width: inputs.inner_width,
-            n_a: inputs.n_a,
-            n_d: inputs.n_d,
-            m_row_layout: inputs.m_row_layout,
-            n_b: inputs.n_b,
-            num_segments: inputs.num_segments,
-            rows: inputs.rows,
-            num_polys_per_segment: inputs.num_polys_per_segment.clone(),
-        }
-    }
-}
-
 /// Pure, challenge-free row-layout footprint for a setup level.
 ///
 /// # Errors
 ///
 /// Returns an error when layout parameters are inconsistent with the canonical
 /// M-row packing used by setup sumcheck.
-pub fn compute_setup_layout(
-    shape: &SetupRelationShape,
+pub fn compute_setup_layout<E: FieldCore>(
+    inputs: &SetupContributionPlanInputs<E>,
 ) -> Result<SetupLayoutFootprint, AkitaError> {
-    if shape.num_blocks == 0 || !shape.num_blocks.is_power_of_two() {
+    if inputs.num_blocks == 0 || !inputs.num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "num_blocks must be a non-zero power of two".into(),
         ));
     }
-    if shape.block_len == 0
-        || shape.depth_open == 0
-        || shape.depth_commit == 0
-        || shape.depth_fold == 0
+    if inputs.block_len == 0
+        || inputs.depth_open == 0
+        || inputs.depth_commit == 0
+        || inputs.depth_fold == 0
     {
         return Err(AkitaError::InvalidSetup(
             "setup evaluator layout has zero width".into(),
         ));
     }
-    if shape.num_polys_per_segment.len() != shape.num_segments {
+    if inputs.num_polys_per_segment.len() != inputs.num_segments {
         return Err(AkitaError::InvalidSize {
-            expected: shape.num_segments,
-            actual: shape.num_polys_per_segment.len(),
+            expected: inputs.num_segments,
+            actual: inputs.num_polys_per_segment.len(),
         });
     }
 
-    let z_range = shape.inner_width;
-    let expected_z_range = checked_mul(shape.block_len, shape.depth_commit, "Z width")?;
+    let z_range = inputs.inner_width;
+    let expected_z_range = checked_mul(inputs.block_len, inputs.depth_commit, "Z width")?;
     if z_range != expected_z_range {
         return Err(AkitaError::InvalidSize {
             expected: expected_z_range,
@@ -176,27 +77,27 @@ pub fn compute_setup_layout(
         });
     }
 
-    let n_d_active = match shape.m_row_layout {
-        MRowLayout::WithDBlock => shape.n_d,
+    let n_d_active = match inputs.m_row_layout {
+        MRowLayout::WithDBlock => inputs.n_d,
         MRowLayout::WithoutDBlock => 0,
     };
     // Canonical row layout: consistency (1) | A | B | D.
     let a_start = 1usize;
-    let b_start = checked_add(a_start, shape.n_a, "B row start")?;
-    let b_rows_total = checked_mul(shape.n_b, shape.num_segments, "B row count")?;
+    let b_start = checked_add(a_start, inputs.n_a, "B row start")?;
+    let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
     let d_start = checked_add(b_start, b_rows_total, "D row start")?;
     let a_end = checked_add(d_start, n_d_active, "D row end")?;
-    if a_end > shape.rows {
+    if a_end > inputs.rows {
         return Err(AkitaError::InvalidSetup(
             "M-row weights are inconsistent with setup evaluator layout".into(),
         ));
     }
 
-    let stride_t = checked_mul(shape.n_a, shape.depth_open, "T stride")?;
-    let cols_per_poly_t = checked_mul(stride_t, shape.num_blocks, "T polynomial width")?;
-    let b_per_claim_e = checked_mul(shape.num_blocks, shape.depth_open, "e-hat claim width")?;
-    let n_cols_e = checked_mul(shape.num_claims, b_per_claim_e, "e-hat column width")?;
-    let max_group_poly_count = shape
+    let stride_t = checked_mul(inputs.n_a, inputs.depth_open, "T stride")?;
+    let cols_per_poly_t = checked_mul(stride_t, inputs.num_blocks, "T polynomial width")?;
+    let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
+    let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
+    let max_group_poly_count = inputs
         .num_polys_per_segment
         .iter()
         .copied()
@@ -205,8 +106,8 @@ pub fn compute_setup_layout(
     let n_cols_t = checked_mul(max_group_poly_count, cols_per_poly_t, "T column width")?;
 
     let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
-    let a_required = checked_mul(shape.n_a, z_range, "A setup footprint")?;
-    let b_required = checked_mul(shape.n_b, n_cols_t, "B setup footprint")?;
+    let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
+    let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
     let required = d_required.max(b_required).max(a_required);
     if required == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -240,40 +141,15 @@ pub fn compute_setup_layout(
     })
 }
 
-/// Required setup ring rows for one level shape (challenge-free).
+/// Required setup ring rows for one level (challenge-free).
 ///
 /// # Errors
 ///
 /// Returns an error when layout parameters are inconsistent.
-pub fn setup_required_for_shape(relation_shape: &SetupRelationShape) -> Result<usize, AkitaError> {
-    Ok(compute_setup_layout(relation_shape)?.required)
-}
-
-/// Flat coefficient count for setup-prefix sizing at offload ring `d_setup`.
-///
-/// Uses the same [`compute_setup_layout`] footprint as setup sumcheck and
-/// [`setup_active_ring_elems_at`].
-///
-/// # Errors
-///
-/// Returns an error when layout parameters are inconsistent or the product overflows.
-pub fn active_setup_field_len(
-    level_params: &LevelParams,
-    opening_batch: &OpeningClaimsLayout,
-    m_row_layout: MRowLayout,
-    depth_fold: usize,
-    d_setup: usize,
+pub fn setup_required_for_inputs<E: FieldCore>(
+    inputs: &SetupContributionPlanInputs<E>,
 ) -> Result<usize, AkitaError> {
-    let shape = SetupRelationShape::from_level_params(
-        level_params,
-        opening_batch.num_total_polynomials(),
-        m_row_layout,
-        depth_fold,
-    )?;
-    let required = setup_required_for_shape(&shape)?;
-    required
-        .checked_mul(d_setup)
-        .ok_or_else(|| AkitaError::InvalidSetup("active setup field length overflow".into()))
+    Ok(compute_setup_layout(inputs)?.required)
 }
 
 /// Fail-closed envelope guard: `required` inner (`d_a`) rows must fit the shared
@@ -300,9 +176,6 @@ pub fn ensure_setup_envelope<F: FieldCore>(
 
 /// Flat coefficient count for stage-3 prefix offload (`natural_field_len`).
 ///
-/// Uses `d_setup` (setup-prefix slot ring dimension, today [`crate::SETUP_OFFLOAD_D_SETUP`]),
-/// not fold `ring_d`. Prefix slots are minted at `d_setup`; see `specs/setup-prefix-ladder.md`.
-///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] on overflow.
@@ -317,20 +190,16 @@ pub fn stage3_offload_natural_field_len(
 
 /// Active inner (`d_a`) setup ring rows for one fold, fail-closed on envelope overflow.
 ///
-/// Used by [`RingDimPlan::context_at`](crate::RingDimPlan::context_at), schedule
-/// validation, and stage-3 prove/verify. [`crate::SetupContributionPlan::prepare`] must
-/// agree with this count; geometry is authoritative for envelope sizing.
-///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the shared matrix
 /// prefix available at `fold_ring_d`.
-pub fn setup_active_ring_elems_for_fold<F: FieldCore>(
+pub fn setup_active_ring_elems_for_fold<F: FieldCore, E: FieldCore>(
     expanded: &AkitaExpandedSetup<F>,
-    relation_shape: &SetupRelationShape,
+    inputs: &SetupContributionPlanInputs<E>,
     fold_ring_d: usize,
 ) -> Result<usize, AkitaError> {
-    let required = setup_required_for_shape(relation_shape)?;
+    let required = setup_required_for_inputs(inputs)?;
     ensure_setup_envelope(expanded, required, fold_ring_d)?;
     Ok(required)
 }
@@ -341,14 +210,14 @@ pub fn setup_active_ring_elems_for_fold<F: FieldCore>(
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the shared matrix
 /// prefix available at the fold ring dimension.
-pub fn setup_active_ring_elems_at<F: FieldCore>(
+pub fn setup_active_ring_elems_at<F: FieldCore, E: FieldCore>(
     level: usize,
     schedule: &Schedule,
     expanded: &AkitaExpandedSetup<F>,
-    relation_shape: &SetupRelationShape,
+    inputs: &SetupContributionPlanInputs<E>,
 ) -> Result<usize, AkitaError> {
     let exec = schedule.get_execution_schedule(level)?;
-    setup_active_ring_elems_for_fold(expanded, relation_shape, exec.params.ring_dimension)
+    setup_active_ring_elems_for_fold(expanded, inputs, exec.params.ring_dimension)
 }
 
 #[inline]
@@ -415,7 +284,7 @@ mod tests {
             .map(|idx| test_scalar(101 + idx as u128))
             .collect::<Vec<_>>();
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
-        let inputs = SetupContributionPlanInputs {
+        let inputs = SetupContributionPlanInputs::<F> {
             eq_tau1: vec![test_scalar(11), test_scalar(12)],
             num_t_vectors: 0,
             num_blocks: 4,
@@ -433,8 +302,7 @@ mod tests {
             rows: 2,
             num_polys_per_segment: vec![0],
         };
-        let shape = SetupRelationShape::from(&inputs);
-        let layout = compute_setup_layout(&shape).expect("layout");
+        let layout = compute_setup_layout(&inputs).expect("layout");
         let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
         let plan = SetupContributionPlan::prepare::<F>(
             &inputs,
@@ -449,33 +317,12 @@ mod tests {
     }
 
     #[test]
-    fn setup_required_for_shape_is_challenge_free() {
+    fn setup_required_for_inputs_is_challenge_free() {
         let block_len = 12;
         let depth_commit = 3;
         let depth_fold = 2;
         let z_range = block_len * depth_commit;
-        let shape = SetupRelationShape {
-            num_t_vectors: 2,
-            num_blocks: 4,
-            num_claims: 1,
-            depth_open: 16,
-            depth_commit,
-            depth_fold,
-            block_len,
-            inner_width: z_range,
-            n_a: 1,
-            n_d: 0,
-            m_row_layout: MRowLayout::WithoutDBlock,
-            n_b: 0,
-            num_segments: 1,
-            rows: 2,
-            num_polys_per_segment: vec![2],
-        };
-        let required = setup_required_for_shape(&shape).expect("required");
-        assert!(required > 0);
-
-        let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
-        let mut inputs_a = SetupContributionPlanInputs {
+        let inputs = SetupContributionPlanInputs::<F> {
             eq_tau1: vec![test_scalar(11), test_scalar(12)],
             num_t_vectors: 2,
             num_blocks: 4,
@@ -493,6 +340,11 @@ mod tests {
             rows: 2,
             num_polys_per_segment: vec![2],
         };
+        let required = setup_required_for_inputs(&inputs).expect("required");
+        assert!(required > 0);
+
+        let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
+        let mut inputs_a = inputs.clone();
         let chunk_layout = single_chunk_layout(4, 0, z_range, 0, 64, 0);
         let plan_a = SetupContributionPlan::prepare::<F>(
             &inputs_a,
@@ -519,7 +371,8 @@ mod tests {
 
     #[test]
     fn ensure_setup_envelope_rejects_undersized_matrix() {
-        let shape = SetupRelationShape {
+        let inputs = SetupContributionPlanInputs::<F> {
+            eq_tau1: vec![],
             num_t_vectors: 1,
             num_blocks: 4,
             num_claims: 1,
@@ -536,7 +389,7 @@ mod tests {
             rows: 8,
             num_polys_per_segment: vec![1],
         };
-        let required = setup_required_for_shape(&shape).expect("required");
+        let required = setup_required_for_inputs(&inputs).expect("required");
         let seed = crate::AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
@@ -553,7 +406,8 @@ mod tests {
 
     #[test]
     fn compute_setup_layout_rejects_non_pow2_num_blocks() {
-        let shape = SetupRelationShape {
+        let inputs = SetupContributionPlanInputs::<F> {
+            eq_tau1: vec![],
             num_t_vectors: 1,
             num_blocks: 3,
             num_claims: 1,
@@ -570,7 +424,7 @@ mod tests {
             rows: 8,
             num_polys_per_segment: vec![1],
         };
-        let err = compute_setup_layout(&shape).expect_err("non-pow2 blocks");
+        let err = compute_setup_layout(&inputs).expect_err("non-pow2 blocks");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 

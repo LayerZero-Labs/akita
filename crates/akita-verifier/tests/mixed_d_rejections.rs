@@ -8,9 +8,9 @@ use akita_config::test_support::mixed_d_per_level_schedule;
 use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
-    validate_role_dims, validate_role_dispatch, CleartextWitnessShape, CommitmentRingDims,
-    DirectStep, FoldStep, LevelParams, RingDimPlan, RingRole, RingView, Schedule, Step,
-    ValidatedScheduleContext,
+    validate_role_dims, validate_role_dispatch, AkitaSetupSeed, CleartextWitnessShape,
+    CommitmentRingDims, DirectStep, FoldStep, LevelParams, RingDimPlan, RingRole, RingView,
+    Schedule, Step,
 };
 
 type Envelope = fp128::D128Full;
@@ -49,8 +49,18 @@ fn per_role_dispatch_rejects_wrong_stack_d() {
     validate_role_dispatch::<32>(dims, RingRole::Opening).expect("D-role at 32");
 }
 
+fn test_seed(gen_ring_dim: usize) -> AkitaSetupSeed {
+    AkitaSetupSeed {
+        max_num_vars: NUM_VARS,
+        max_num_batched_polys: 1,
+        gen_ring_dim,
+        max_setup_len: 1 << 20,
+        public_matrix_seed: [0u8; 32],
+    }
+}
+
 #[test]
-fn validated_schedule_context_rejects_fold_dim_above_gen_ring_dim() {
+fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
     let schedule = Schedule {
         steps: vec![
             Step::Fold({
@@ -75,7 +85,7 @@ fn validated_schedule_context_rejects_fold_dim_above_gen_ring_dim() {
         ],
         total_bytes: 0,
     };
-    let err = ValidatedScheduleContext::new(&schedule, 64)
+    let err = RingDimPlan::from_schedule(&schedule, &test_seed(64))
         .expect_err("gen_ring_dim=64 cannot host fold d_a=128");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }

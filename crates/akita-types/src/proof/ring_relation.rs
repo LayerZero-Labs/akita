@@ -1,7 +1,7 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
 use super::OpeningClaimsLayout;
-use crate::schedule_context::{CommitmentRingDims, RingRole};
+use crate::layout::{CommitmentRingDims, RingRole};
 use crate::validate_role_dispatch;
 use crate::witness::{WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
 use crate::FpExtEncoding;

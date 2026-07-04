@@ -1,5 +1,5 @@
-//! Integration tests for [`akita_types::ValidatedScheduleContext`] against real
-//! generated schedules.
+//! Integration tests for [`akita_types::RingDimPlan`] against real generated
+//! schedules.
 //!
 //! These tests exercise the S3 building blocks from Tier 2 of the runtime
 //! ring-dimension cutover plan.  They require real schedules from
@@ -19,13 +19,23 @@ use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, LevelParams, Schedule,
-    Step, ValidatedScheduleContext,
+    AkitaScheduleLookupKey, AkitaSetupSeed, CleartextWitnessShape, DirectStep, FoldStep,
+    LevelParams, RingDimPlan, Schedule, Step,
 };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn test_seed(gen_ring_dim: usize) -> AkitaSetupSeed {
+    AkitaSetupSeed {
+        max_num_vars: 20,
+        max_num_batched_polys: 1,
+        gen_ring_dim,
+        max_setup_len: 1 << 20,
+        public_matrix_seed: [0u8; 32],
+    }
+}
 
 /// Resolve a real schedule from a config preset at the given `num_vars`.
 fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
@@ -71,77 +81,69 @@ fn mixed_d_schedule(dims: &[(usize, usize, usize)]) -> Schedule {
     }
 }
 
+fn assert_fold_level_geometry(sched: &Schedule, level: usize, ring_dimension: usize) {
+    let Step::Fold(step) = &sched.steps[level] else {
+        panic!("level {level} is not a fold step");
+    };
+    let lp = &step.params;
+    assert_eq!(lp.ring_dimension, ring_dimension, "level {level} ring_dim");
+    assert_eq!(
+        lp.flat_field_len().expect("flat_field_len"),
+        lp.n_ring_elems().expect("n_ring_elems") * lp.ring_dimension,
+        "level {level} flat_field_len"
+    );
+}
+
 // ---------------------------------------------------------------------------
-// ValidatedScheduleContext against REAL schedules (fp64::D64Full, fp128)
+// RingDimPlan against REAL schedules (fp64::D64Full, fp128)
 // ---------------------------------------------------------------------------
 
 /// For fp64::D64Full, `Cfg::D == 64`, so `gen_ring_dim = 64` and every level
 /// must carry `ring_dimension = 64` (uniform-D preset).
 #[test]
-fn validated_ctx_accepts_fp64_d64_schedule_with_gen_ring_dim_64() {
+fn ring_dim_plan_accepts_fp64_d64_schedule_with_gen_ring_dim_64() {
     let sched = real_schedule::<fp64::D64Full>(20);
-    // For a uniform-D preset the gen_ring_dim equals the preset's D.
     let gen_ring_dim = fp64::D64Full::D;
     assert_eq!(gen_ring_dim, 64);
-    let ctx = ValidatedScheduleContext::new(&sched, gen_ring_dim)
+    let plan = RingDimPlan::from_schedule(&sched, &test_seed(gen_ring_dim))
         .expect("fp64 D64 schedule must be valid for gen_ring_dim=64");
-    // All fold levels must report ring_dimension == 64.
-    for shape in ctx.level_shapes() {
-        assert_eq!(
-            shape.ring_dimension, 64,
-            "level {}: expected ring_dim=64",
-            shape.level
-        );
-        // flat_field_len == n_ring_elems * ring_dimension
-        assert_eq!(
-            shape.flat_field_len,
-            shape.n_ring_elems * shape.ring_dimension,
-            "level {}: flat_field_len mismatch",
-            shape.level
-        );
+    for level in 0..plan.num_folds() {
+        assert_fold_level_geometry(&sched, level, 64);
     }
 }
 
 /// For fp128, `Cfg::D == 128`; validate against gen_ring_dim=128.
 #[test]
-fn validated_ctx_accepts_fp128_schedule_with_gen_ring_dim_128() {
-    // fp128 has different sub-presets; pick a commonly-used one.
+fn ring_dim_plan_accepts_fp128_schedule_with_gen_ring_dim_128() {
     type Cfg = fp128::D128Full;
     let sched = real_schedule::<Cfg>(18);
     let gen_ring_dim = Cfg::D;
     assert_eq!(gen_ring_dim, 128);
-    let ctx = ValidatedScheduleContext::new(&sched, gen_ring_dim)
+    let plan = RingDimPlan::from_schedule(&sched, &test_seed(gen_ring_dim))
         .expect("fp128 D128 schedule must be valid for gen_ring_dim=128");
-    for shape in ctx.level_shapes() {
-        assert_eq!(shape.ring_dimension, 128, "level {} ring_dim", shape.level);
-        assert_eq!(
-            shape.flat_field_len,
-            shape.n_ring_elems * shape.ring_dimension,
-            "level {} flat_field_len",
-            shape.level
-        );
+    for level in 0..plan.num_folds() {
+        assert_fold_level_geometry(&sched, level, 128);
     }
 }
 
 /// A fp64::D32Full schedule validated against gen_ring_dim=256 (32 | 256).
 #[test]
-fn validated_ctx_accepts_fp64_d32_schedule_against_larger_gen_ring_dim() {
+fn ring_dim_plan_accepts_fp64_d32_schedule_against_larger_gen_ring_dim() {
     type Cfg = fp64::D32Full;
     let sched = real_schedule::<Cfg>(16);
-    // 32 divides 256.
-    let ctx = ValidatedScheduleContext::new(&sched, 256)
+    let plan = RingDimPlan::from_schedule(&sched, &test_seed(256))
         .expect("D=32 schedule must be valid for gen_ring_dim=256 (32|256)");
-    for shape in ctx.level_shapes() {
-        assert_eq!(shape.ring_dimension, 32, "level {} ring_dim", shape.level);
+    for level in 0..plan.num_folds() {
+        assert_fold_level_geometry(&sched, level, 32);
     }
 }
 
 /// Passing gen_ring_dim=64 for a D=128 schedule must fail: 128 ∤ 64.
 #[test]
-fn validated_ctx_rejects_fp128_schedule_against_too_small_gen_ring_dim() {
+fn ring_dim_plan_rejects_fp128_schedule_against_too_small_gen_ring_dim() {
     type Cfg = fp128::D128Full;
     let sched = real_schedule::<Cfg>(16);
-    let err = ValidatedScheduleContext::new(&sched, 64)
+    let err = RingDimPlan::from_schedule(&sched, &test_seed(64))
         .expect_err("128 does not divide 64; must be rejected");
     assert!(
         matches!(err, AkitaError::InvalidSetup(_)),
@@ -150,44 +152,40 @@ fn validated_ctx_rejects_fp128_schedule_against_too_small_gen_ring_dim() {
 }
 
 // ---------------------------------------------------------------------------
-// ValidatedScheduleContext — hand-built mixed-D schedule
+// RingDimPlan — hand-built mixed-D schedule
 // ---------------------------------------------------------------------------
 
 /// A schedule where each fold level has a *different* ring dimension.
-/// This is the critical "type layer already allows mixed-D" fixture.
 ///
 /// gen_ring_dim = 256; levels use 32, 64, 128, 256 — all divide 256.
 #[test]
-fn validated_ctx_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
-    // (ring_dimension, num_blocks, block_len)
+fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
     let sched = mixed_d_schedule(&[
-        (32, 4, 8),  // level 0: D=32
-        (64, 4, 4),  // level 1: D=64
-        (128, 2, 4), // level 2: D=128
-        (256, 2, 2), // level 3: D=256
+        (32, 4, 8),
+        (64, 4, 4),
+        (128, 2, 4),
+        (256, 2, 2),
     ]);
-    let ctx = ValidatedScheduleContext::new(&sched, 256).expect("all dims divide 256");
+    let plan = RingDimPlan::from_schedule(&sched, &test_seed(256)).expect("all dims divide 256");
+    assert_eq!(plan.num_folds(), 4);
 
-    assert_eq!(ctx.num_fold_levels(), 4);
-
-    // Verify per-level shapes.
     let expected = [
         (32usize, 32usize, 1024usize),
         (64, 16, 1024),
         (128, 8, 1024),
         (256, 4, 1024),
     ];
-    for ((d, nr, ff), shape) in expected.iter().zip(ctx.level_shapes()) {
-        assert_eq!(shape.ring_dimension, *d, "level {} ring_dim", shape.level);
+    for (level, (d, nr, ff)) in expected.into_iter().enumerate() {
+        let Step::Fold(step) = &sched.steps[level] else {
+            panic!("level {level} is not a fold step");
+        };
+        let lp = &step.params;
+        assert_eq!(lp.ring_dimension, d, "level {level} ring_dim");
+        assert_eq!(lp.n_ring_elems().expect("n_ring_elems"), nr, "level {level} n_ring_elems");
         assert_eq!(
-            shape.n_ring_elems, *nr,
-            "level {} n_ring_elems",
-            shape.level
-        );
-        assert_eq!(
-            shape.flat_field_len, *ff,
-            "level {} flat_field_len",
-            shape.level
+            lp.flat_field_len().expect("flat_field_len"),
+            ff,
+            "level {level} flat_field_len"
         );
     }
 }
@@ -195,14 +193,13 @@ fn validated_ctx_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
 /// A mixed-D schedule where one level's ring_dimension does NOT divide
 /// gen_ring_dim — this must be rejected.
 #[test]
-fn validated_ctx_rejects_mixed_d_schedule_one_bad_level() {
-    // Level 1 uses D=96 which does not divide 256.
+fn ring_dim_plan_rejects_mixed_d_schedule_one_bad_level() {
     let sched = mixed_d_schedule(&[
         (64, 4, 4),
-        (96, 4, 4), // 96 ∤ 256
+        (96, 4, 4),
         (128, 2, 4),
     ]);
-    let err = ValidatedScheduleContext::new(&sched, 256)
+    let err = RingDimPlan::from_schedule(&sched, &test_seed(256))
         .expect_err("96 does not divide 256; must be rejected");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
@@ -210,11 +207,9 @@ fn validated_ctx_rejects_mixed_d_schedule_one_bad_level() {
 /// Divisibility holds at the first level but gen_ring_dim < ring_dimension
 /// at a later level — must be rejected.
 #[test]
-fn validated_ctx_rejects_level_ring_dim_larger_than_gen_ring_dim() {
-    let sched = mixed_d_schedule(&[
-        (64, 4, 4),
-        (512, 2, 2), // 512 ∤ 256
-    ]);
-    let err = ValidatedScheduleContext::new(&sched, 256).expect_err("512 does not divide 256");
+fn ring_dim_plan_rejects_level_ring_dim_larger_than_gen_ring_dim() {
+    let sched = mixed_d_schedule(&[(64, 4, 4), (512, 2, 2)]);
+    let err = RingDimPlan::from_schedule(&sched, &test_seed(256))
+        .expect_err("512 does not divide 256");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
