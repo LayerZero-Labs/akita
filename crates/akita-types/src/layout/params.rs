@@ -354,8 +354,9 @@ impl LevelParams {
         self.fold_linf_cap_config
     }
 
+    /// Field bit width for fold digit sizing and cached `δ_fold` values (`128` when unset).
     #[inline]
-    fn field_bits_for_cache(&self) -> u32 {
+    pub fn field_bits_for_cache(&self) -> u32 {
         let hint = self.field_bits_hint;
         if hint == 0 {
             128
@@ -407,23 +408,36 @@ impl LevelParams {
         Ok(self)
     }
 
+    /// Canonical fold-l∞ digit plan for this level at `num_claims`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`crate::sis::fold_witness_linf_digit_plan`] setup errors.
+    pub fn fold_witness_linf_digit_plan_for_claims(
+        &self,
+        num_claims: usize,
+    ) -> Result<crate::sis::FoldWitnessLinfDigitPlan, AkitaError> {
+        crate::sis::fold_witness_linf_digit_plan(
+            self.r_vars,
+            num_claims,
+            self.field_bits_for_cache(),
+            self.log_basis,
+            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape),
+            self.fold_witness_norms(),
+            &self.fold_linf_cap_config,
+        )
+    }
+
     /// Honest-prover per-coefficient `‖z‖_inf` target for fold digit sizing, grind,
     /// and terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
     ///
     /// # Errors
     ///
-    /// Propagates [`crate::sis::fold_witness_honest_prover_linf_cap`] setup errors.
+    /// Propagates [`crate::sis::fold_witness_linf_digit_plan`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        let witness = self.fold_witness_norms();
-        let challenge =
-            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
-        crate::sis::fold_witness_honest_prover_linf_cap(
-            challenge,
-            witness,
-            self.r_vars,
-            num_claims,
-            &self.fold_linf_cap_config,
-        )
+        Ok(self
+            .fold_witness_linf_digit_plan_for_claims(num_claims)?
+            .grind_cap)
     }
 
     /// Propagates fold-beta / tail-bound rejections for tail-bound-with-grind levels.
