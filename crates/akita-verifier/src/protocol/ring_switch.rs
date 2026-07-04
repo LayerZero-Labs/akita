@@ -333,7 +333,7 @@ where
     validate_log_basis(log_basis)?;
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let depth_fold = lp.num_digits_fold(num_claims, lp.field_bits_for_cache())?;
     let num_blocks = lp.num_blocks;
     if num_blocks == 0 || !num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(

@@ -381,7 +381,7 @@ where
     let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
     let num_t_vectors = relation.opening_batch().num_total_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
-        lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
+        lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?,
         lp.log_basis,
     );
     let layout = relation.segment_layout(lp, None)?;
@@ -407,7 +407,7 @@ where
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold(num_polynomials, F::modulus_bits())?;
+    let depth_fold = lp.num_digits_fold(num_polynomials, lp.field_bits_for_cache())?;
     if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "num_blocks must be a non-zero power of two".to_string(),
