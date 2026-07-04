@@ -591,3 +591,15 @@ where
 
     Ok(Schedule { steps, total_bytes })
 }
+
+/// Minimal setup seed for [`akita_types::RingDimPlan`] integration tests.
+#[must_use]
+pub fn ring_plan_test_seed(gen_ring_dim: usize) -> akita_types::AkitaSetupSeed {
+    akita_types::AkitaSetupSeed {
+        max_num_vars: 20,
+        max_num_batched_polys: 1,
+        gen_ring_dim,
+        max_setup_len: 1 << 20,
+        public_matrix_seed: [0u8; 32],
+    }
+}

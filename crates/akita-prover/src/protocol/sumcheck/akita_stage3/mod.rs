@@ -17,9 +17,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot, stage3_offload_natural_field_len,
+    AkitaExpandedSetup, FpExtEncoding, LevelParams, RingRelationInstance, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -256,17 +257,11 @@ where
     let (required, mut bar_omega, alpha_pows) =
         prepare_setup_sumcheck_terms::<F, E>(ring_d, lp, relation, tau1, alpha, x_challenges)?;
 
-    let natural_field_len = required.checked_mul(ring_d).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
-    })?;
+    ensure_setup_envelope(expanded, required, ring_d)?;
+    let natural_field_len = stage3_offload_natural_field_len(required, ring_d)?;
     let setup_len = expanded
         .shared_matrix()
         .total_ring_elements_at_dyn(ring_d)?;
-    if required > setup_len {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix is too small for selected setup product".to_string(),
-        ));
-    }
     let setup_eval_len = if ring_d == SETUP_OFFLOAD_D_SETUP {
         let setup_prefix_selection = select_setup_prefix_slot(
             expanded.seed(),
@@ -423,72 +418,9 @@ where
 {
     let opening_batch = relation.opening_batch();
     let num_polynomials = opening_batch.num_total_polynomials();
-
-    let depth_commit = lp.num_digits_commit;
-    let depth_open = lp.num_digits_open;
     let depth_fold = lp.num_digits_fold(num_polynomials, lp.field_bits_for_cache())?;
-    if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "num_blocks must be a non-zero power of two".to_string(),
-        ));
-    }
-    if lp.block_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "block_len must be non-zero".to_string(),
-        ));
-    }
-    if depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "digit depths must be non-zero".to_string(),
-        ));
-    }
-
-    let inner_width = lp
-        .block_len
-        .checked_mul(depth_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-    if lp.a_key.col_len() < inner_width {
-        return Err(AkitaError::InvalidSetup(
-            "A-key column width is too small for setup contribution layout".to_string(),
-        ));
-    }
-    let expected_b_width = num_polynomials
-        .checked_mul(lp.a_key.row_len())
-        .and_then(|width| width.checked_mul(depth_open))
-        .and_then(|width| width.checked_mul(lp.num_blocks))
-        .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
-    if lp.b_key.col_len() < expected_b_width {
-        return Err(AkitaError::InvalidSetup(
-            "B-key column width is too small for setup contribution layout".to_string(),
-        ));
-    }
-
     let m_row_layout = relation.m_row_layout();
     let rows = lp.m_row_count_for(1, m_row_layout)?;
-    let eq_tau1 = EqPolynomial::evals(tau1)?;
-    if eq_tau1.len() < rows {
-        return Err(AkitaError::InvalidSize {
-            expected: rows,
-            actual: eq_tau1.len(),
-        });
-    }
-
-    Ok(SetupContributionPlanInputs {
-        eq_tau1,
-        num_t_vectors: num_polynomials,
-        num_blocks: lp.num_blocks,
-        num_claims: num_polynomials,
-        depth_open,
-        depth_commit,
-        depth_fold,
-        block_len: lp.block_len,
-        inner_width,
-        n_a: lp.a_key.row_len(),
-        n_d: lp.d_key.row_len(),
-        m_row_layout,
-        n_b: lp.b_key.row_len(),
-        num_segments: 1,
-        rows,
-        num_polys_per_segment: vec![num_polynomials],
-    })
+    SetupContributionPlanInputs::from_level_params(lp, num_polynomials, m_row_layout, depth_fold)?
+        .with_eq_tau1_from_tau(tau1, rows)
 }

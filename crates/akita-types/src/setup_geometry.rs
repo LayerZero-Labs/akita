@@ -217,7 +217,7 @@ pub fn setup_active_ring_elems_at<F: FieldCore, E: FieldCore>(
     inputs: &SetupContributionPlanInputs<E>,
 ) -> Result<usize, AkitaError> {
     let exec = schedule.get_execution_schedule(level)?;
-    setup_active_ring_elems_for_fold(expanded, inputs, exec.params.ring_dimension)
+    setup_active_ring_elems_for_fold(expanded, inputs, exec.params.d_a())
 }
 
 #[inline]

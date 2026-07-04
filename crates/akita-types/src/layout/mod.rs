@@ -23,7 +23,7 @@ pub use opening_point::{
 };
 pub use params::{AjtaiKeyParams, GroupRootParams, LevelParams, MRowLayout, SisModulusFamily};
 pub use ring_dims::{
-    validate_role_dims, CommitmentRingDims, RingDimPlan, RingLevelContext, RingRole,
+    validate_role_dims, CommitmentRingDims, RingDimPlan, RingRole,
     MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
 };
 pub use proof_size::{

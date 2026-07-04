@@ -32,7 +32,7 @@ use akita_types::{
     ensure_trace_stage2_supported, prepare_opening_point,
     relation_claim_from_rows_extension_at_dims, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
-    sample_public_row_coefficients, schedule_num_fold_levels, scheduled_next_level_params,
+    sample_public_row_coefficients, scheduled_next_level_params,
     stage2_trace_coeff, tensor_equality_factor_eval_at_point, trace_terms_recursive,
     trace_weight_layout_from_segment, w_ring_element_count_with_counts_for_layout,
     AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,

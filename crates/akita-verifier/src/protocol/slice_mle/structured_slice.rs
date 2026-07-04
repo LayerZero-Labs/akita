@@ -317,11 +317,11 @@ where
             full_vec_randomness,
             offset_r,
             -denom,
-            &[&r_gadget_ext, &prepared.eq_tau1[..prepared.rows]],
+            &[&r_gadget_ext, &prepared.eq_tau1[..prepared.setup_contribution_inputs.rows]],
         )
     } else {
         let _span = tracing::info_span!("r_dense").entered();
-        let r_tail: Vec<E> = cfg_into_iter!(0..prepared.rows * levels)
+        let r_tail: Vec<E> = cfg_into_iter!(0..prepared.setup_contribution_inputs.rows * levels)
             .map(|idx| {
                 let row_idx = idx / levels;
                 let level_idx = idx % levels;
@@ -349,8 +349,8 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningClaimsLayout,
-        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SisModulusFamily,
-        WitnessLayout,
+        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SetupContributionPlanInputs,
+        SisModulusFamily, WitnessLayout,
     };
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
@@ -490,15 +490,29 @@ mod tests {
             depth_commit,
             depth_fold,
             block_len,
-            inner_width,
             log_basis,
             n_a,
-            n_d,
-            m_row_layout: MRowLayout::WithDBlock,
-            n_b,
-            rows,
-            num_polys: num_claims,
             chunk_layout,
+            setup_contribution_inputs: SetupContributionPlanInputs {
+                eq_tau1: (0..rows.next_power_of_two())
+                    .map(|idx| f(4_000 + idx as u128))
+                    .collect(),
+                num_t_vectors: num_claims,
+                num_blocks,
+                num_claims,
+                depth_open,
+                depth_commit,
+                depth_fold,
+                block_len,
+                inner_width,
+                n_a,
+                n_d,
+                m_row_layout: MRowLayout::WithDBlock,
+                n_b,
+                num_segments: 1,
+                rows,
+                num_polys_per_segment: vec![num_claims],
+            },
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
@@ -675,7 +689,8 @@ mod tests {
     fn z_dense_matches_materialized_range_inner_product() {
         let mut fx = fixture();
         fx.prepared.block_len = 510;
-        fx.prepared.inner_width = fx.prepared.block_len * fx.prepared.depth_commit;
+        fx.prepared.setup_contribution_inputs.inner_width =
+            fx.prepared.block_len * fx.prepared.depth_commit;
         let p = &fx.prepared;
         assert!(!p.block_len.is_power_of_two());
 
@@ -716,7 +731,7 @@ mod tests {
         let alpha = f(7_000);
         let alpha_pows = scalar_powers(alpha, D);
         let denom = alpha_pows[D - 1] * alpha + F::one();
-        let r_len = p.rows * fx.r_gadget.len();
+        let r_len = p.setup_contribution_inputs.rows * fx.r_gadget.len();
         let eq = eq_evals(fx.offset_r + r_len, &fx.full_vec_randomness);
 
         let got = compute_r_contribution::<F, F>(

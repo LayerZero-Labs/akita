@@ -13,7 +13,8 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_ring_dim_result, gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup,
+    dispatch_ring_dim_result, ensure_setup_envelope, gadget_row_scalars,
+    select_setup_prefix_slot, stage3_offload_natural_field_len, AkitaExpandedSetup,
     AkitaVerifierSetup, LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
     SETUP_SUMCHECK_DEGREE,
 };
@@ -146,9 +147,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         T: Transcript<F>,
     {
         if ring_d == SETUP_OFFLOAD_D_SETUP {
-            let natural_field_len = self.plan.required().checked_mul(ring_d).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
-            })?;
+            let natural_field_len = stage3_offload_natural_field_len(self.plan.required(), ring_d)?;
+            ensure_setup_envelope(&setup.expanded, self.plan.required(), ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
                 setup.expanded.seed(),
                 setup_len,

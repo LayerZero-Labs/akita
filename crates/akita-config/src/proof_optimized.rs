@@ -3,6 +3,7 @@
 //! Presets are unit structs that bind [`CommitmentConfig`] hooks to
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
+use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
 use super::CommitmentConfig;
 use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
@@ -278,15 +279,13 @@ pub fn setup_level_params_from_runtime_schedule(steps: &[akita_types::Step]) -> 
         .collect()
 }
 
-fn matrix_envelope_for_levels<Cfg>(
+fn matrix_envelope_for_levels(
     setup_levels: &[LevelParams],
 ) -> Result<SetupMatrixEnvelope, AkitaError>
-where
-    Cfg: CommitmentConfig,
 {
     let mut max_setup_len: usize = 1;
     for lp in setup_levels {
-        accumulate_matrix_envelope_for_level::<Cfg>(lp, &mut max_setup_len)?;
+        accumulate_matrix_envelope_for_level(lp, &mut max_setup_len)?;
     }
     Ok(SetupMatrixEnvelope { max_setup_len })
 }
@@ -315,37 +314,13 @@ where
     Cfg: CommitmentConfig,
 {
     let setup_levels: Vec<LevelParams> = setup_level_params_from_runtime_schedule(&schedule.steps);
-    let mut envelope = matrix_envelope_for_levels::<Cfg>(&setup_levels)?;
+    let mut envelope = matrix_envelope_for_levels(&setup_levels)?;
     accumulate_root_matrix_envelope_for_opening_batch(
         schedule,
         layout,
         &mut envelope.max_setup_len,
     )?;
     Ok(envelope)
-}
-
-fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
-    lp: &LevelParams,
-    max_setup_len: &mut usize,
-) -> Result<(), AkitaError> {
-    let _cfg_marker = core::marker::PhantomData::<Cfg>;
-    let a_len = lp
-        .a_key
-        .row_len()
-        .checked_mul(lp.inner_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup envelope overflow".to_string()))?;
-    let b_len = lp
-        .b_key
-        .row_len()
-        .checked_mul(lp.outer_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup envelope overflow".to_string()))?;
-    let d_len = lp
-        .d_key
-        .row_len()
-        .checked_mul(lp.d_matrix_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
-    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len);
-    Ok(())
 }
 
 fn accumulate_root_matrix_envelope_for_opening_batch(

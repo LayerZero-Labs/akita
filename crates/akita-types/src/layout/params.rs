@@ -180,6 +180,13 @@ impl LevelParams {
         self.role_dims
     }
 
+    /// A-role ring dimension (`d_a`); alias of [`CommitmentRingDims::d_a`] on [`Self::role_dims`].
+    #[inline]
+    #[must_use]
+    pub fn d_a(&self) -> usize {
+        self.role_dims.d_a()
+    }
+
     /// Replace per-role ring dimensions after validating nesting.
     ///
     /// # Errors
@@ -619,17 +626,17 @@ impl LevelParams {
             })
     }
 
-    /// Total flat field-element count (`n_ring_elems * ring_dimension`).
+    /// Total flat field-element count (`n_ring_elems * d_a`).
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] on overflow.
     pub fn flat_field_len(&self) -> Result<usize, AkitaError> {
         let n_ring_elems = self.n_ring_elems()?;
-        n_ring_elems.checked_mul(self.ring_dimension).ok_or_else(|| {
+        n_ring_elems.checked_mul(self.d_a()).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
-                "n_ring_elems={n_ring_elems} * ring_dimension={} overflows usize",
-                self.ring_dimension,
+                "n_ring_elems={n_ring_elems} * d_a={} overflows usize",
+                self.d_a(),
             ))
         })
     }
@@ -692,13 +699,13 @@ impl LevelParams {
     /// Logical opening-point variable count for recursive fold levels.
     ///
     /// Matches [`crate::prepare_opening_point`]: outer
-    /// block/position coordinates plus the inner `log2(ring_dimension)` bits.
+    /// block/position coordinates plus the inner `log2(d_a)` bits.
     ///
     /// # Errors
     ///
     /// Returns an error if the summed dimension overflows `usize`.
     pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
-        let alpha_bits = self.ring_dimension.trailing_zeros() as usize;
+        let alpha_bits = self.d_a().trailing_zeros() as usize;
         self.m_vars
             .checked_add(self.r_vars)
             .and_then(|n| n.checked_add(alpha_bits))

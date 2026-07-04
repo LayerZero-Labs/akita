@@ -92,6 +92,7 @@ pub mod generated_families;
 pub mod proof_optimized;
 pub mod schedule_selection;
 pub mod tensor_verifier;
+mod matrix_envelope;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;

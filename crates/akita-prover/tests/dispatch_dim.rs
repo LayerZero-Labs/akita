@@ -15,12 +15,13 @@
 
 #![allow(missing_docs)]
 
+use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
     AkitaScheduleLookupKey, AkitaSetupSeed, CleartextWitnessShape, DirectStep, FoldStep,
-    LevelParams, RingDimPlan, Schedule, Step,
+    LevelParams, RingDimPlan, Schedule, SisModulusFamily, Step,
 };
 
 // ---------------------------------------------------------------------------
@@ -47,11 +48,24 @@ fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
 
 /// Build a minimal `FoldStep` with explicit ring dimension and geometry.
 fn make_fold_step(ring_dimension: usize, num_blocks: usize, block_len: usize) -> FoldStep {
-    let mut params = LevelParams::log_basis_stub(3);
-    params.ring_dimension = ring_dimension;
+    let mut params = LevelParams::params_only(
+        SisModulusFamily::Q128,
+        ring_dimension,
+        3,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![1],
+        },
+    );
     params.role_dims = akita_types::CommitmentRingDims::uniform(ring_dimension);
     params.num_blocks = num_blocks;
     params.block_len = block_len;
+    params.num_digits_commit = 2;
+    params.num_digits_open = 2;
+    params.stamp_role_dims_from_keys();
     FoldStep {
         params,
         current_w_len: 0,
@@ -86,10 +100,10 @@ fn assert_fold_level_geometry(sched: &Schedule, level: usize, ring_dimension: us
         panic!("level {level} is not a fold step");
     };
     let lp = &step.params;
-    assert_eq!(lp.ring_dimension, ring_dimension, "level {level} ring_dim");
+    assert_eq!(lp.d_a(), ring_dimension, "level {level} d_a");
     assert_eq!(
         lp.flat_field_len().expect("flat_field_len"),
-        lp.n_ring_elems().expect("n_ring_elems") * lp.ring_dimension,
+        lp.n_ring_elems().expect("n_ring_elems") * lp.d_a(),
         "level {level} flat_field_len"
     );
 }
@@ -180,7 +194,7 @@ fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
             panic!("level {level} is not a fold step");
         };
         let lp = &step.params;
-        assert_eq!(lp.ring_dimension, d, "level {level} ring_dim");
+        assert_eq!(lp.d_a(), d, "level {level} d_a");
         assert_eq!(lp.n_ring_elems().expect("n_ring_elems"), nr, "level {level} n_ring_elems");
         assert_eq!(
             lp.flat_field_len().expect("flat_field_len"),

@@ -44,7 +44,7 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
     let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
         &challenges,
         F::one(),
-        &RingSwitchRowEvalLevel::from_lp(&lp),
+        &lp,
         &[],
         0,
         &[],
@@ -66,7 +66,7 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
     let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
         &challenges,
         F::one(),
-        &RingSwitchRowEvalLevel::from_lp(&lp),
+        &lp,
         &[],
         0,
         &[],

@@ -1,7 +1,6 @@
 //! Runtime-to-const-generic dispatch shared by prover and verifier.
 
 use crate::layout::{CommitmentRingDims, RingRole};
-use crate::LevelParams;
 use akita_field::AkitaError;
 
 /// Validate that a const-generic ring dimension is supported for dispatch.
@@ -20,16 +19,6 @@ pub fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {
 }
 
 /// Validate that schedule level params match the dispatched A-role (`d_a`).
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] when `lp.role_dims().d_a() != D`.
-#[inline]
-pub fn validate_level_dispatch<const D: usize>(lp: &LevelParams) -> Result<usize, AkitaError> {
-    validate_role_dispatch::<D>(lp.role_dims(), RingRole::Inner)
-}
-
-/// Validate that `dims.dim_for(role) == D` for a kernel dispatch arm.
 ///
 /// # Errors
 ///

@@ -183,7 +183,7 @@ where
         return prove_root_direct::<Cfg::Field, Cfg::ExtField, P>(
             &flat_polys,
             &commitment_hints,
-            root_commit_params.ring_dimension,
+            root_commit_params.role_dims.d_a(),
         );
     }
 
@@ -281,8 +281,8 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    // `RingDimPlan` is the sole ring-dimension authority: every level's dims were
-    // validated against the setup envelope when the plan was built.
+    // `RingDimPlan` validates every level's role dims against the setup seed at
+    // entry; NTT pre-warm reads the same plan-derived dims per level.
     for level in 0..ring_plan.num_folds() {
         let role_dims = ring_plan.dims_at(level)?;
         stacks
