@@ -23,8 +23,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::CommitmentProver;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid as _};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, SetupContributionMode,

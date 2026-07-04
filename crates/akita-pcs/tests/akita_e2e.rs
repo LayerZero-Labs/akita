@@ -616,7 +616,7 @@ fn full_d64_snap_regen_prove_verify_nv24() {
         let commitments = [commitment];
         let openings = [opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/snap-regen-nv24");
-        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        let result = AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
