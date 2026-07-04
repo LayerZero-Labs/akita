@@ -288,7 +288,7 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     shape: RelationQuotientShape,
     challenges: &Challenges,
     e_hat_flat: &[[i8; D]],
-    t_hat: &FlatDigitBlocks<D>,
+    t_hat: &DigitBlocks,
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     e_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
@@ -351,7 +351,7 @@ where
             .block_sizes()
             .iter()
             .any(|&block_size| block_size != expected_t_hat_block_digits)
-        || t_hat.flat_digits().len() != expected_t_hat_flat_digits
+        || t_hat.total_planes() != expected_t_hat_flat_digits
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -382,7 +382,7 @@ where
         prepared,
         RingSwitchRelationView {
             e_hat: e_hat_flat,
-            t_hat: t_hat.flat_digits(),
+            t_hat: t_hat.typed_planes::<D>()?,
             z_segment: first_z_segment,
             z_folded_centered_inf_norm,
         },

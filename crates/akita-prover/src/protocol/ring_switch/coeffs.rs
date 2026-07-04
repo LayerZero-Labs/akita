@@ -168,6 +168,7 @@ where
 {
     let dims = instance.role_dims();
     dispatch_ring_dim_result!(dims.d_a(), |D| {
+        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         witness.ensure_role_dim::<D>(RingRole::Opening)?;
         witness.ensure_role_dim::<D>(RingRole::Inner)?;
         let num_claims = instance.opening_batch().num_total_polynomials();
@@ -180,24 +181,22 @@ where
             hint,
             ..
         } = witness;
-        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+        e_hat.ensure_stride::<D>()?;
         validate_chunked_witness_cfg(lp)?;
-        let e_hat = if dims.d_d() == D {
-            FlatDigitBlocks::<D>::from_digit_blocks(&e_hat)?
-        } else {
+        if dims.d_d() != D {
             return Err(AkitaError::InvalidSetup(format!(
                 "mixed-role ring switch build requires d_d={} to match d_a={D} until nested views land",
                 dims.d_d()
             )));
-        };
+        }
         let e_folded = e_folded.as_ring_slice_trusted::<D>();
         let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
             &hint,
             lp.num_digits_open,
             lp.log_basis,
         )?;
-        let decomposed_inner_rows =
-            FlatDigitBlocks::<D>::from_digit_blocks(&hint.into_flat_parts()?)?;
+        let decomposed_inner_rows = hint.into_flat_parts()?;
+        decomposed_inner_rows.ensure_stride::<D>()?;
         let opening_batch = instance.opening_batch();
 
         instance.ensure_ring_dim::<D>()?;
@@ -224,7 +223,7 @@ where
                 instance.m_row_layout(),
             )?,
             &instance.challenges,
-            e_hat.flat_digits(),
+            e_hat.typed_planes::<D>()?,
             &decomposed_inner_rows,
             &recomposed_inner_rows,
             e_folded,
@@ -369,7 +368,7 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// Within each segment, the power-of-2 block index is the fastest-varying
 /// (innermost) dimension.
 ///
-/// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
+/// [`DigitBlocks`] stores ring-domain data in block-major order (all digit
 /// planes for one block contiguously), which is natural for ring-domain matvec
 /// and recomposition. This function transposes opening digits to digit-major at
 /// the ring-to-field boundary.
@@ -385,8 +384,8 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// the fold layout in `lp`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
-    e_hat: &FlatDigitBlocks<D>,
-    t_hat: &FlatDigitBlocks<D>,
+    e_hat: &DigitBlocks,
+    t_hat: &DigitBlocks,
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
@@ -405,8 +404,8 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let num_chunks = lp.witness_chunk.num_chunks;
     let blocks_per_chunk = num_blocks / num_chunks;
 
-    let e_hat_planes = e_hat.flat_digits().len();
-    let t_hat_planes = t_hat.flat_digits().len();
+    let e_hat_planes = e_hat.typed_planes::<D>()?.len();
+    let t_hat_planes = t_hat.typed_planes::<D>()?.len();
     let z_planes_total: usize = z_folded_centered_per_chunk
         .iter()
         .map(|z| z.len() * num_digits_fold)
@@ -470,7 +469,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         let block_lo = chunk * blocks_per_chunk;
         emit_witness_planes_block_window(
             &mut out,
-            e_hat.flat_digits(),
+            e_hat.typed_planes::<D>()?,
             e_num_outer,
             num_blocks,
             depth_open,
@@ -479,7 +478,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         );
         emit_witness_planes_block_window(
             &mut out,
-            t_hat.flat_digits(),
+            t_hat.typed_planes::<D>()?,
             t_num_outer,
             num_blocks,
             t_planes_per_block,

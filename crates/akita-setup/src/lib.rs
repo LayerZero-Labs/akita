@@ -683,7 +683,7 @@ mod tests {
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.b_key.row_len(),
-                            typed_digits.flat_digits(),
+                            typed_digits.typed_planes::<TEST_D>().unwrap(),
                             lp.log_basis,
                         )
                         .unwrap()

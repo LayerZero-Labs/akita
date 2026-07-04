@@ -545,7 +545,7 @@ where
         )?;
         let decomposed_inner_rows =
             decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
-        Ok(CommitInnerWitness::from_parts(t, decomposed_inner_rows))
+        Ok(CommitInnerWitness::from_parts(t, decomposed_inner_rows)?)
     }
 
     pub(crate) fn tensor_extension_column_partials<E>(

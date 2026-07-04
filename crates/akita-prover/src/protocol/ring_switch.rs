@@ -2,7 +2,6 @@
 use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
-use crate::compute::FlatDigitBlocks;
 use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
 use crate::{
@@ -23,6 +22,7 @@ use akita_field::{
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
+use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths, AkitaCommitmentHint,

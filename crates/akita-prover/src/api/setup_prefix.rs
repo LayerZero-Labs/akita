@@ -4,17 +4,15 @@ use crate::api::commitment::{
     commit_inner_block_digit_count, commit_inner_flat_digit_count,
     validate_commit_outer_input_nonempty,
 };
-use crate::compute::{
-    CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan, FlatDigitBlocks,
-};
+use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, LevelParams, RingVec,
-    SetupPrefixPublicCommitment, SetupPrefixSlot,
+    setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks, LevelParams,
+    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -136,8 +134,8 @@ where
         .iter()
         .map(|_| commit_inner_block_digit_count(shape.n_a, shape.num_digits_open))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut decomposed_inner_rows = FlatDigitBlocks::<D>::zeroed(block_sizes)?;
-    let dst_blocks = decomposed_inner_rows.split_blocks_mut();
+    let mut decomposed_inner_rows = DigitBlocks::zeroed(block_sizes, D)?;
+    let dst_blocks = decomposed_inner_rows.split_typed_blocks_mut::<D>()?;
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
         .zip(cfg_iter!(recomposed_inner_rows))
@@ -158,7 +156,8 @@ where
         commit_inner_flat_digit_count(shape.num_blocks, shape.n_a, shape.num_digits_open)?;
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
-    b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits());
+    let planes = decomposed_inner_rows.typed_planes::<D>()?;
+    b_input_digits.copy_from_slice(planes);
     let u = backend.digit_rows::<D>(prepared, shape.n_b, &b_input_digits, shape.log_basis)?;
     if u.len() != shape.n_b {
         return Err(AkitaError::InvalidSetup(format!(
@@ -173,7 +172,7 @@ where
     // D-free flat commitment. Recomposed rows are recomputed on demand
     // downstream (S5 re-home), not cached on the slot.
     let _ = &recomposed_inner_rows;
-    let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows.into_digit_blocks());
+    let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows);
     let id = setup_prefix_slot_id(
         setup_seed_digest,
         D,

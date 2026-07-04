@@ -1,6 +1,5 @@
 //! Prover-only secret witness for the negacyclic-ring relation.
 
-use crate::compute::FlatDigitBlocks;
 use crate::DecomposeFoldWitness;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{AkitaCommitmentHint, CommitmentRingDims, DigitBlocks, RingRole, RingVec};
@@ -114,9 +113,10 @@ impl<F: FieldCore> RingRelationWitness<F> {
     }
 
     /// Rebuild typed `e_hat` digit planes after [`Self::ensure_role_dim`].
-    pub fn e_hat_trusted<const D: usize>(&self) -> Result<FlatDigitBlocks<D>, AkitaError> {
+    pub fn e_hat_trusted<const D: usize>(&self) -> Result<&DigitBlocks, AkitaError> {
         self.ensure_role_dim::<D>(RingRole::Opening)?;
-        FlatDigitBlocks::from_digit_blocks(&self.e_hat)
+        self.e_hat.ensure_stride::<D>()?;
+        Ok(&self.e_hat)
     }
 
     /// Borrow folded `e` rows after [`Self::ensure_role_dim`].

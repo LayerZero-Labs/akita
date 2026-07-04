@@ -85,7 +85,7 @@ where
         )?;
 
         let typed_digits = inner.decomposed_inner_rows_trusted::<D>()?;
-        let outer_input = typed_digits.flat_digits().to_vec();
+        let outer_input = typed_digits.typed_planes::<D>()?.to_vec();
         validate_commit_outer_input_nonempty(outer_input.len())?;
         let u: Vec<CyclotomicRing<Cfg::Field, D>> = backend.digit_rows::<D>(
             prepared,

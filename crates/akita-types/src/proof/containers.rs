@@ -734,6 +734,102 @@ impl DigitBlocks {
     pub fn into_parts(self) -> (Vec<i8>, Vec<usize>, usize) {
         (self.digits, self.block_sizes, self.digit_stride)
     }
+
+    /// Validate that the per-plane stride matches the const-generic kernel `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidInput`] on stride mismatch.
+    pub fn ensure_stride<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.digit_stride != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "digit blocks stride {} does not match requested D={D}",
+                self.digit_stride
+            )));
+        }
+        Ok(())
+    }
+
+    /// Borrow digit planes as `&[[i8; D]]` after [`Self::ensure_stride`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on stride mismatch or if the flat stream is not an
+    /// exact multiple of `D`.
+    pub fn typed_planes<const D: usize>(&self) -> Result<&[[i8; D]], AkitaError> {
+        self.ensure_stride::<D>()?;
+        let (planes, remainder) = self.digits.as_chunks::<D>();
+        if !remainder.is_empty() {
+            return Err(AkitaError::InvalidSize {
+                expected: self.digits.len() - remainder.len() + D,
+                actual: self.digits.len(),
+            });
+        }
+        Ok(planes)
+    }
+
+    /// Mutably borrow digit planes as `&mut [[i8; D]]` after [`Self::ensure_stride`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on stride mismatch or if the flat stream is not an
+    /// exact multiple of `D`.
+    pub fn typed_planes_mut<const D: usize>(&mut self) -> Result<&mut [[i8; D]], AkitaError> {
+        self.ensure_stride::<D>()?;
+        let digits_len = self.digits.len();
+        let (planes, remainder) = self.digits.as_chunks_mut::<D>();
+        if !remainder.is_empty() {
+            return Err(AkitaError::InvalidSize {
+                expected: digits_len - remainder.len() + D,
+                actual: digits_len,
+            });
+        }
+        Ok(planes)
+    }
+
+    /// Split mutable digit planes into per-block `&mut [[i8; D]]` slices.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on stride mismatch or malformed block boundaries.
+    pub fn split_typed_blocks_mut<const D: usize>(
+        &mut self,
+    ) -> Result<Vec<&mut [[i8; D]]>, AkitaError> {
+        self.ensure_stride::<D>()?;
+        let block_sizes = self.block_sizes.clone();
+        let mut blocks = Vec::with_capacity(block_sizes.len());
+        let planes = self.typed_planes_mut::<D>()?;
+        let mut tail = planes;
+        for block_size in block_sizes {
+            let (head, rest) = tail
+                .split_at_mut_checked(block_size)
+                .ok_or_else(|| AkitaError::InvalidInput("digit block boundary overflow".into()))?;
+            blocks.push(head);
+            tail = rest;
+        }
+        if !tail.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "digit block sizes do not cover all planes".into(),
+            ));
+        }
+        Ok(blocks)
+    }
+
+    /// Construct from typed `[i8; D]` planes and explicit block sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the block sizes do not sum to the plane count.
+    pub fn from_typed_planes<const D: usize>(
+        flat_planes: Vec<[i8; D]>,
+        block_sizes: Vec<usize>,
+    ) -> Result<Self, AkitaError> {
+        let mut digits = Vec::with_capacity(flat_planes.len() * D);
+        for plane in &flat_planes {
+            digits.extend_from_slice(plane);
+        }
+        Self::new(digits, block_sizes, D)
+    }
 }
 
 impl Valid for DigitBlocks {

@@ -329,6 +329,29 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
     })
 }
 
+/// A-role root tensor projection at `transform_ring_d` when the schedule calls for it.
+fn tensor_project_roots<F, P, E, B>(
+    transform_ring_d: usize,
+    tensor_ctx: &OperationCtx<'_, F, B>,
+    polys: &[P],
+) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: FpExtEncoding<F>,
+    P: RuntimeRootCommitPoly<F>,
+    B: RuntimeRootCommitBackend<F, P, E>,
+{
+    let backend = tensor_ctx.backend();
+    let prepared = tensor_ctx.prepared();
+    dispatch_ring_dim_result!(transform_ring_d, |D| {
+        polys
+            .iter()
+            .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), poly))
+            .collect()
+    })
+}
+
 fn commit_with_validated_params<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
@@ -391,8 +414,8 @@ where
                     log_basis,
                 )?;
                 let typed_digits = inner.decomposed_inner_rows_trusted::<D_A>()?;
-                dst.copy_from_slice(typed_digits.flat_digits().as_flattened());
-                *decomposed = typed_digits.into_digit_blocks();
+                dst.copy_from_slice(typed_digits.typed_planes::<D_A>()?.as_flattened());
+                *decomposed = typed_digits.clone();
                 Ok(())
             })?;
         Ok::<_, AkitaError>((b_input_flat, decomposed_digit_blocks))
@@ -529,18 +552,11 @@ where
     if let Some(transform_ring_d) = root_transform_ring_dim::<Cfg>(&opening_batch)? {
         // A-role tensor-projection operation at the prove schedule's root fold
         // ring dimension.
-        let transformed = dispatch_ring_dim_result!(transform_ring_d, |D| {
-            polys
-                .iter()
-                .map(|poly| {
-                    tensor_root_projection::<Cfg::Field, P, Cfg::ExtField, B, D>(
-                        tensor_ctx.backend(),
-                        Some(tensor_ctx.prepared()),
-                        poly,
-                    )
-                })
-                .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field>>, _>>()
-        })?;
+        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+            transform_ring_d,
+            tensor_ctx,
+            polys,
+        )?;
         validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
         return commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
             &transformed,
@@ -655,18 +671,11 @@ where
             // A-role tensor-projection operation at the group layout's ring
             // dimension.
             let transform_d = params.role_dims().d_a();
-            let transformed = dispatch_ring_dim_result!(transform_d, |D| {
-                polys
-                    .iter()
-                    .map(|poly| {
-                        tensor_root_projection::<Cfg::Field, P, Cfg::ExtField, B, D>(
-                            tensor_ctx.backend(),
-                            Some(tensor_ctx.prepared()),
-                            poly,
-                        )
-                    })
-                    .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field>>, _>>()
-            })?;
+            let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+                transform_d,
+                tensor_ctx,
+                polys,
+            )?;
             commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
                 &transformed,
                 commit_ctx,
@@ -779,18 +788,11 @@ where
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {
         let transform_d = params.role_dims().d_a();
-        let transformed = dispatch_ring_dim_result!(transform_d, |D| {
-            polys
-                .iter()
-                .map(|poly| {
-                    tensor_root_projection::<Cfg::Field, P, Cfg::ExtField, B, D>(
-                        tensor_ctx.backend(),
-                        Some(tensor_ctx.prepared()),
-                        poly,
-                    )
-                })
-                .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field>>, _>>()
-        })?;
+        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+            transform_d,
+            tensor_ctx,
+            polys,
+        )?;
         commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
             &transformed,
             commit_ctx,
@@ -832,18 +834,11 @@ where
     if let Some(transform_ring_d) = root_transform_ring_dim::<Cfg>(&opening_batch)? {
         // A-role tensor-projection operation at the prove schedule's root fold
         // ring dimension.
-        let transformed = dispatch_ring_dim_result!(transform_ring_d, |D| {
-            polys
-                .iter()
-                .map(|poly| {
-                    tensor_root_projection::<Cfg::Field, P, Cfg::ExtField, B, D>(
-                        tensor_ctx.backend(),
-                        Some(tensor_ctx.prepared()),
-                        poly,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })?;
+        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+            transform_ring_d,
+            tensor_ctx,
+            polys,
+        )?;
         validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
         return commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
             &transformed,
@@ -890,12 +885,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::FlatDigitBlocks;
     use crate::kernels::linear::check_decomposed_rows_i8_match;
     use crate::{AkitaProverSetup, MultilinearPolynomial, OneHotPoly};
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
+    use akita_types::DigitBlocks;
     use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
 
     type F = Fp64<4294967197>;
@@ -908,8 +903,9 @@ mod tests {
     ) -> CommitInnerWitness<F> {
         CommitInnerWitness::from_parts(
             vec![vec![CyclotomicRing::<F, D>::zero(); rows_per_block]; recomposed_blocks],
-            FlatDigitBlocks::<D>::zeroed(block_sizes).expect("valid flat digit blocks"),
+            DigitBlocks::zeroed(block_sizes, D).expect("valid digit blocks"),
         )
+        .expect("valid inner witness")
     }
 
     #[test]

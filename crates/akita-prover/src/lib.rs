@@ -183,16 +183,17 @@ impl<F: FieldCore> CommitInnerWitness<F> {
     /// Construct from typed kernel output at a commit boundary.
     pub fn from_parts<const D: usize>(
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
-        decomposed_inner_rows: crate::compute::FlatDigitBlocks<D>,
-    ) -> Self {
-        Self {
+        decomposed_inner_rows: DigitBlocks,
+    ) -> Result<Self, AkitaError> {
+        decomposed_inner_rows.ensure_stride::<D>()?;
+        Ok(Self {
             recomposed_inner_rows: recomposed_inner_rows
                 .into_iter()
                 .map(|block| RingVec::from_ring_elems(&block))
                 .collect(),
-            decomposed_inner_rows: decomposed_inner_rows.into_digit_blocks(),
+            decomposed_inner_rows,
             ring_dim: D,
-        }
+        })
     }
 
     /// Stored ring dimension (coefficients per ring element).
@@ -248,11 +249,11 @@ impl<F: FieldCore> CommitInnerWitness<F> {
             .map(|rows| rows.as_ring_slice_trusted::<D>())
     }
 
-    /// Rebuild typed digit planes after [`Self::ensure_ring_dim`].
+    /// Borrow decomposed digit planes after [`Self::ensure_ring_dim`].
     pub fn decomposed_inner_rows_trusted<const D: usize>(
         &self,
-    ) -> Result<crate::compute::FlatDigitBlocks<D>, AkitaError> {
+    ) -> Result<&DigitBlocks, AkitaError> {
         self.ensure_ring_dim::<D>()?;
-        crate::compute::FlatDigitBlocks::from_digit_blocks(&self.decomposed_inner_rows)
+        Ok(&self.decomposed_inner_rows)
     }
 }

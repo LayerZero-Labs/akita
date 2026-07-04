@@ -4,7 +4,7 @@
 //! Uses the fp128 `D128Full` setup (`gen_ring_dim = 128`) with a hand-built
 //! schedule: fold levels `[0, MIXED_D_SWITCH_FOLD)` at `D = 128`, levels
 //! `[MIXED_D_SWITCH_FOLD, …)` at `D = 64` (stitched from the shipped
-//! `D64Full` table by `akita_config::test_support::mixed_d_per_level_schedule`).
+//! `D64Full` table by [`mixed_d_per_level_fixture::mixed_d_per_level_schedule`]).
 //!
 //! The proof is produced and checked exclusively through the **normal public
 //! PCS API** — `AkitaCommitmentScheme::{commit, batched_prove,
@@ -16,9 +16,9 @@
 #![allow(missing_docs)]
 
 mod common;
+mod mixed_d_per_level_fixture;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::test_support::mixed_d_per_level_schedule;
 use akita_field::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
@@ -30,6 +30,7 @@ use akita_types::{
     SetupContributionMode,
 };
 use common::*;
+use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
 
 /// Envelope preset: root levels at `D = 128`, generation ring dimension 128.
 type Envelope = fp128::D128Full;

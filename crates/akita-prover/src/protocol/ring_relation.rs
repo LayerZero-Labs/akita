@@ -3,8 +3,8 @@
 //! Builds the stage-1 relation instance and witness (`M`, `y`, `z`, `v`) via
 //! [`RingRelationProver`].
 use crate::compute::{
-    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, FlatDigitBlocks,
-    OpeningBatchKernel, OpeningFoldKernel, OperationCtx, RootOpeningSource, RootPolyMeta,
+    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
+    OpeningFoldKernel, OperationCtx, RootOpeningSource, RootPolyMeta,
     RuntimeOpeningProveBackendFor,
 };
 use crate::validation::validate_i8_setup_log_basis;
@@ -21,7 +21,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     assemble_relation_y, dispatch_ring_dim_result, RelationYLayout, RingVec, RingView,
 };
-use akita_types::{gadget_row_scalars, AkitaCommitmentHint, MRowLayout};
+use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, MRowLayout};
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
@@ -55,16 +55,16 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     pre_folded_e: &[&[CyclotomicRing<F, D>]],
     depth_open: usize,
     log_basis: u32,
-) -> Result<FlatDigitBlocks<D>, AkitaError> {
+) -> Result<DigitBlocks, AkitaError> {
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
     let total_rows: usize = pre_folded_e.iter().map(|rows| rows.len()).sum();
-    let mut e_hat = FlatDigitBlocks::zeroed(vec![depth_open; total_rows])?;
+    let mut e_hat = DigitBlocks::zeroed(vec![depth_open; total_rows], D)?;
     let mut offset = 0usize;
     for folded_rows in pre_folded_e {
         for w_i in *folded_rows {
             w_i.balanced_decompose_pow2_i8_into_with_params(
-                &mut e_hat.flat_digits_mut()[offset..offset + depth_open],
+                &mut e_hat.typed_planes_mut::<D>()?[offset..offset + depth_open],
                 &decompose_params,
             );
             offset += depth_open;
@@ -299,14 +299,14 @@ fn compute_v_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
     row_len: usize,
-    e_hat: &FlatDigitBlocks<D>,
+    e_hat: &DigitBlocks,
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
-    let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.flat_digits(), log_basis)?;
+    let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.typed_planes::<D>()?, log_basis)?;
     if rows.len() != row_len {
         return Err(AkitaError::InvalidProof);
     }
@@ -323,7 +323,7 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     transcript: &mut T,
     d_row_len: usize,
     log_basis: u32,
-    e_hat: &FlatDigitBlocks<D>,
+    e_hat: &DigitBlocks,
     m_row_layout: MRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -337,7 +337,7 @@ where
         MRowLayout::WithDBlock => {
             let _span = tracing::info_span!(
                 "compute_relation_v",
-                e_hat_planes = e_hat.flat_digits().len()
+                e_hat_planes = e_hat.typed_planes::<D>()?.len()
             )
             .entered();
             let v = compute_v_rows(backend, prepared, d_row_len, e_hat, log_basis)?;
@@ -541,7 +541,7 @@ impl RingRelationProver {
         // D-role operations: decompose the folded opening rows into `e_hat`
         // digits and (non-terminal layouts) compute + absorb the D-block rows
         // `v = D * e_hat`. Both consume the same digits at `d_d`, so they share
-        // one kernel-entry dispatch; the flat `FlatDigitBlocks` / `RingVec` come
+        // one kernel-entry dispatch; the flat `DigitBlocks` / `RingVec` come
         // back out as D-free carriers.
         //
         // Terminal layout drops the D-block from the M-matrix entirely:
@@ -566,10 +566,7 @@ impl RingRelationProver {
                 &e_hat_typed,
                 m_row_layout,
             )?;
-            Ok::<_, AkitaError>((
-                e_hat_typed.into_digit_blocks(),
-                RingVec::from_ring_elems(&v_typed),
-            ))
+            Ok::<_, AkitaError>((e_hat_typed, RingVec::from_ring_elems(&v_typed)))
         })?;
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F>(hints, &group_sizes)?;
         let opening_backend = opening_ctx.backend();

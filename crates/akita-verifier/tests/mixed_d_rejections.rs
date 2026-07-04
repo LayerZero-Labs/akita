@@ -3,8 +3,6 @@
 
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::fp128;
-use akita_config::test_support::mixed_d_per_level_schedule;
 use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
@@ -13,16 +11,7 @@ use akita_types::{
     Schedule, Step,
 };
 
-type Envelope = fp128::D128Full;
-type Suffix = fp128::D64Full;
-
-const MIXED_D_SWITCH_FOLD: usize = 2;
 const NUM_VARS: usize = 16;
-
-fn mixed_schedule() -> Schedule {
-    mixed_d_per_level_schedule::<Envelope, Suffix>(NUM_VARS, 1, MIXED_D_SWITCH_FOLD)
-        .expect("mixed-D schedule")
-}
 
 #[test]
 fn nested_role_dims_reject_non_nesting() {
@@ -111,34 +100,4 @@ fn nested_role_dims_b_role_row_count_differs_from_a_role() {
             .num_rings(),
         1
     );
-}
-
-#[test]
-fn ring_dim_plan_accepts_mixed_d_per_level_fixture() {
-    let schedule = mixed_schedule();
-    let seed = akita_types::AkitaSetupSeed {
-        max_num_vars: NUM_VARS,
-        max_num_batched_polys: 1,
-        gen_ring_dim: 128,
-        max_setup_len: 1 << 20,
-        public_matrix_seed: [0u8; 32],
-    };
-    let plan = RingDimPlan::from_schedule(&schedule, &seed).expect("mixed-D plan");
-    assert_eq!(plan.dim_at(0).expect("level 0"), 128);
-    assert_eq!(plan.dim_at(2).expect("level 2"), 64);
-    for (level, step) in schedule
-        .steps
-        .iter()
-        .filter_map(|s| match s {
-            Step::Fold(f) => Some(f),
-            _ => None,
-        })
-        .enumerate()
-    {
-        assert_eq!(
-            plan.dims_at(level).expect("plan dims"),
-            step.params.role_dims,
-            "level {level}"
-        );
-    }
 }
