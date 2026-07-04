@@ -136,7 +136,9 @@ jobs:
           mkdir -p "$artifact_dir"
           start_epoch=$(date +%s)
           set +e
-          cargo nextest run --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence \
+          # --lib --bins --tests matches the default test target set but skips
+          # compiling examples (clippy's --all-targets already compile-checks them).
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
