@@ -46,7 +46,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// `n_A` is the per-`r` minimum SIS-secure A-rank for the candidate's
 /// `inner_width(r) = block_len(r) · δ_commit` (via [`crate::sis::min_secure_rank`]). The
 /// A collision is itself recomputed per `r` via
-/// [`crate::sis::committed_fold_collision_l2_sq`], because the committed-level
+/// [`crate::sis::committed_fold_collision_linf_bound`], because the committed-level
 /// weak-binding norm grows with the fold arity `num_claims · 2^r`; scoring
 /// every split against a single bucket would rank the larger-`r` splits wrong.
 ///
@@ -77,6 +77,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// Panics if `log_basis` is 0 or at least 128.
 #[allow(clippy::too_many_arguments)]
 pub fn optimal_m_r_split(
+    min_security_bits: u16,
     sis_family: SisModulusFamily,
     d: u32,
     num_claims: usize,
@@ -114,6 +115,7 @@ pub fn optimal_m_r_split(
             continue;
         };
         let Some((_a_collision, n_a)) = committed_fold_a_role_rank(
+            min_security_bits,
             sis_family,
             d as usize,
             decomposition,
@@ -166,6 +168,7 @@ mod tests {
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
+        use crate::sis::fold_witness_linf_digit_plan;
         use akita_challenges::{D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2};
         let stage1_config = SparseChallengeConfig::ExactShell {
             count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
@@ -192,15 +195,25 @@ mod tests {
                 .1,
         )
         .unwrap();
+        let singleton_plan =
+            fold_witness_linf_digit_plan(5, 1, 128, 3, fold_challenge, fold_witness, &cap_config)
+                .expect("singleton fold plan");
+        let batched_plan =
+            fold_witness_linf_digit_plan(5, 4, 128, 3, fold_challenge, fold_witness, &cap_config)
+                .expect("batched fold plan");
+        assert!(
+            batched_plan.pre_snap_cap > singleton_plan.pre_snap_cap,
+            "pre-snap fold witness cap must grow with batched num_claims"
+        );
         let singleton_fold_digits =
             num_digits_fold(5, 1, 128, 3, fold_challenge, fold_witness, cap_config)
                 .expect("singleton fold digits");
         let batched_fold_digits =
             num_digits_fold(5, 4, 128, 3, fold_challenge, fold_witness, cap_config)
                 .expect("batched fold digits");
-        assert_ne!(
-            singleton_fold_digits, batched_fold_digits,
-            "fold digit depth must grow with batched num_claims"
+        assert!(
+            batched_fold_digits >= singleton_fold_digits,
+            "snapped fold digit depth must not shrink with batched num_claims"
         );
     }
 }

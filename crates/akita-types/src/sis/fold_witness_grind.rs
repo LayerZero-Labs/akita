@@ -33,6 +33,7 @@ impl FoldWitnessGrindContract {
                 Err(AkitaError::InvalidProof)
             }
             FoldWitnessLinfCapPolicy::TailBoundWithGrind
+            | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
                 if fold_grind_nonce >= self.max_nonce_exclusive =>
             {
                 Err(AkitaError::InvalidProof)

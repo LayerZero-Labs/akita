@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::commitment::validate_onehot_chunk_size_for_params;
+use crate::api::commitment::validate_batched_onehot_chunk_size_for_params;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     DirectRootWitnessSource, LevelProveStacks, OpeningProveBackendFor, ProveStackFor,
@@ -8,44 +8,19 @@ use crate::compute::{
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::{
-    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_TIERED_UNSUPPORTED, GROUPED_ROOT_UNSUPPORTED,
+    schedule_terminal_direct_witness_shape, should_reject_grouped_root,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 
-fn reject_unsupported_grouped_root<Cfg, F, P, const D: usize>(
-    opening_batch: &OpeningBatchShape,
-    polys: &[&P],
-    setup_contribution_mode: SetupContributionMode,
-) -> Result<(), AkitaError>
-where
-    Cfg: CommitmentConfig,
-    F: FieldCore,
-    P: RootPolyShape<F, D>,
-{
-    if opening_batch.num_commitment_groups() <= 1 {
-        return Ok(());
+fn grouped_root_prover_error(message: &'static str) -> AkitaError {
+    if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
+        AkitaError::InvalidSetup(message.to_string())
+    } else {
+        AkitaError::InvalidInput(message.to_string())
     }
-    if Cfg::TIERED_COMMITMENT {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_TIERED_UNSUPPORTED.to_string(),
-        ));
-    }
-    if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Err(AkitaError::InvalidSetup(
-            GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED.to_string(),
-        ));
-    }
-    if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
-        return Err(AkitaError::InvalidInput(
-            GROUPED_ROOT_DENSE_UNSUPPORTED.to_string(),
-        ));
-    }
-    Err(AkitaError::InvalidInput(
-        GROUPED_ROOT_UNSUPPORTED.to_string(),
-    ))
 }
+
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
 ///
@@ -98,7 +73,7 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
         Tensor = TS,
         RingSwitch = R,
     >,
-    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field, D>,
+    claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field, D>,
     transcript: &mut T,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -145,21 +120,28 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup<D>: 'a,
 {
-    let group_sizes = claims.group_sizes();
-    validate_batched_inputs(expanded.as_ref(), claims.point(), &group_sizes, true)?;
-    let opening_batch = claims.to_opening_shape::<Cfg::Field>()?;
+    claims.validate::<Cfg::Field>()?;
+    let opening_claims = claims.opening_claims();
+    opening_claims.validate(expanded.seed())?;
+    let opening_batch = opening_claims.layout()?;
     let flat_polys = claims.flat_polys();
-    reject_unsupported_grouped_root::<Cfg, Cfg::Field, P, D>(
+    if let Some(message) = should_reject_grouped_root(
         &opening_batch,
-        &flat_polys,
         setup_contribution_mode,
-    )?;
-    let num_vars = opening_batch.num_vars();
+        Some(
+            flat_polys
+                .iter()
+                .any(|poly| poly.onehot_chunk_size().is_none()),
+        ),
+    ) {
+        return Err(grouped_root_prover_error(message));
+    }
+    let num_vars = opening_batch.max_num_vars();
     let mut schedule = Cfg::get_params_for_prove(&opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
-            std::slice::from_ref(&claims.point()),
+            std::slice::from_ref(&opening_claims.point()),
             &root_step.params,
             alpha_bits,
         ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
@@ -174,7 +156,10 @@ where
         None => None,
     }
     .ok_or_else(|| AkitaError::InvalidSetup("root schedule is empty".to_string()))?;
-    validate_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(&flat_polys, root_commit_params)?;
+    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, &P>(
+        &flat_polys,
+        root_commit_params,
+    )?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         expanded.as_ref(),
@@ -185,11 +170,7 @@ where
     )?;
 
     if schedule_is_root_direct(&schedule) {
-        let commitment_hints = claims
-            .groups()
-            .iter()
-            .map(|group| group.commitment.1.clone())
-            .collect::<Vec<_>>();
+        let commitment_hints = claims.hints().to_vec();
         return prove_root_direct::<Cfg::Field, Cfg::ExtField, D, P>(
             &flat_polys,
             &commitment_hints,
@@ -243,7 +224,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R, const D: usize>(
         RingSwitch = R,
     >,
     transcript: &mut T,
-    claims: ProverOpeningBatch<'a, Cfg::ExtField, P, Cfg::Field, D>,
+    claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field, D>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -295,7 +276,7 @@ where
         let commitments = claims.commitments();
         if commitments
             .iter()
-            .any(|commitment| commitment.u.len() != root_scheduled.params.effective_commit_rows())
+            .any(|commitment| commitment.u.len() != root_scheduled.params.b_key.row_len())
         {
             return Err(AkitaError::InvalidInput(
                 "root commitment row count does not match scheduled root params".to_string(),

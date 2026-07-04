@@ -7,7 +7,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
-use akita_types::OpeningBatchShape;
+use akita_types::OpeningClaimsLayout;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use proptest::prelude::*;
@@ -27,7 +27,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let total_claims = batch_shape(shape_index);
     let opening_batch =
-        OpeningBatchShape::new(num_vars, total_claims).expect("valid opening batch");
+        OpeningClaimsLayout::new(num_vars, total_claims).expect("valid opening batch");
     let layout =
         DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("batched commit layout");
 

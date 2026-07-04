@@ -18,10 +18,6 @@ pub struct D64Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
 
-/// Binary onehot `D=64` preset with the tiered commitment matrix `F`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHotTiered;
-
 /// Full-field adaptive `D=32` preset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D32Full;
@@ -33,6 +29,23 @@ pub struct D32OneHot;
 /// Binary onehot `D=128` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
+
+/// Multi-chunk (distributed-prover) companion of [`D64OneHot`]. Shares every
+/// layout parameter with its sibling but prices the chunked witness layout.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64OneHotMultiChunk;
+
+/// Multi-chunk companion with `2` witness chunks and `2` leading fold levels.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64OneHotMultiChunkW2R2;
+
+/// Multi-chunk companion with `4` witness chunks and `2` leading fold levels.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64OneHotMultiChunkW4R2;
+
+/// Multi-chunk (distributed-prover) companion of [`D64Full`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64FullMultiChunk;
 
 impl_proof_optimized_preset!(
     D128Full,
@@ -91,21 +104,33 @@ impl_proof_optimized_preset!(
         fp128_d64_onehot_table
     )
 );
-impl_proof_optimized_preset!(
-    D64OneHotTiered,
-    Field,
-    Field,
-    akita_types::SisModulusFamily::Q128,
-    64,
-    128,
-    1,
-    256,
-    true,
-    schedules = (
-        "schedules-fp128-d64-onehot-tiered",
-        "fp128_d64_onehot_tiered",
-        fp128_d64_onehot_tiered_table
-    )
+impl_multi_chunk_companion!(
+    D64OneHotMultiChunk,
+    D64OneHot,
+    akita_types::MultiChunkProfileId::W8R2,
+    "schedules-fp128-d64-onehot-multi-chunk",
+    fp128_d64_onehot_multi_chunk_table
+);
+impl_multi_chunk_companion!(
+    D64OneHotMultiChunkW2R2,
+    D64OneHot,
+    akita_types::MultiChunkProfileId::W2R2,
+    "schedules-fp128-d64-onehot-multi-chunk-w2r2",
+    fp128_d64_onehot_multi_chunk_w2r2_table
+);
+impl_multi_chunk_companion!(
+    D64OneHotMultiChunkW4R2,
+    D64OneHot,
+    akita_types::MultiChunkProfileId::W4R2,
+    "schedules-fp128-d64-onehot-multi-chunk-w4r2",
+    fp128_d64_onehot_multi_chunk_w4r2_table
+);
+impl_multi_chunk_companion!(
+    D64FullMultiChunk,
+    D64Full,
+    akita_types::MultiChunkProfileId::W8R2,
+    "schedules-fp128-d64-full-multi-chunk",
+    fp128_d64_full_multi_chunk_table
 );
 impl_proof_optimized_preset!(
     D32Full,
@@ -184,14 +209,14 @@ pub struct Fp128ScheduleSelection {
 
 fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
-    key: AkitaScheduleLookupKey,
+    key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     // A genuine planner failure (invalid key shape, witness overflow,
     // SIS-floor gap) propagates rather than being swallowed into a missing
     // candidate. For any valid key the DP always yields a schedule (it falls
     // back to a root-direct cleartext schedule), so no preset is silently
     // dropped — the caller only ever sees `Err` on a real error.
-    let schedule = Cfg::runtime_schedule(key)?;
+    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))?;
     Ok(Some(Fp128ScheduleSelection { preset, schedule }))
 }
 
@@ -220,7 +245,7 @@ where
 /// Propagates a planner / runtime-schedule failure (invalid key shape,
 /// witness overflow, or an uncovered SIS-floor width).
 pub fn best_full_schedule(
-    key: AkitaScheduleLookupKey,
+    key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     Ok(best_by_exact_bytes([
         candidate::<D32Full>(Fp128Preset::D32Full, key)?,
@@ -239,7 +264,7 @@ pub fn best_full_schedule(
 /// Propagates a planner / runtime-schedule failure (invalid key shape,
 /// witness overflow, or an uncovered SIS-floor width).
 pub fn best_onehot_schedule(
-    key: AkitaScheduleLookupKey,
+    key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     Ok(best_by_exact_bytes([
         candidate::<D32OneHot>(Fp128Preset::D32OneHot, key)?,

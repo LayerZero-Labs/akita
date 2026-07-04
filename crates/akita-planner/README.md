@@ -4,7 +4,7 @@ The `akita-planner` crate is responsible for computing the parameters of each fo
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
-The planner covers the parameter-selection features supported by Akita, including batching, tiered commitments, tensor challenges, and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
+The planner covers the parameter-selection features supported by Akita, including batching, tensor challenges, and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
 
 The planner can also generate and cache schedule values when a preset wants a shipped table. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search. If no cached value is available, the same deterministic planner computes the schedule on demand.
 
@@ -18,27 +18,29 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
-`key: AkitaScheduleLookupKey` describes the supported scalar same-point root
-opening shape with two fields:
+`key: AkitaScheduleLookupKey` describes the supported root opening shape. Scalar
+same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
+`precommitteds` empty:
 
 - `num_vars`: the number of Boolean variables in the opened polynomial domain
   (shared opening-point arity).
 - `num_polynomials`: the number of polynomials in the single commitment group,
   opened at the shared point (one claim per polynomial).
 
-Root witness multiplicities are not stored in the key. For the scalar
-same-point batch, the `t` and `w` multiplicities are just `num_polynomials` and
-the `z` multiplicity is always `1`; call sites pass those directly where the
-width helpers need them.
+Grouped roots use the same lookup key with any earlier groups recorded as
+`PrecommittedGroupParams` in `precommitteds`. For the scalar same-point batch,
+the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
+multiplicity is always `1`; grouped roots derive those counts from
+`final_group` plus `precommitteds`.
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 
 - Ring dimension and SIS modulus family.
+- Minimum SIS security floor in bits.
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
 - Ring-subfield norm bound.
 - One-hot chunk size.
-- Whether tiered commitments are enabled.
 
 The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension, and the `fold_challenge_shape_at_level` closure supplies the fold challenge shape for a level. They are closures instead of config methods so the planner stays independent of `CommitmentConfig`.
 
@@ -61,7 +63,7 @@ For a fixed field, ring dimension, decomposition policy, and opening shape, the 
 - `r_vars`: the number of block-index variables, which determines `num_blocks = 2^r`.
 - `m_vars`: the number of variables inside each block.
 
-Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, collision bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
+Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
 
 Conceptually, a candidate level answers two questions:
 
@@ -119,10 +121,20 @@ For each level candidate, the planner derives the SIS layout in the same order:
 
 1. Compute the decomposition for the candidate `log_basis`.
 2. Compute the relevant digit counts for commitment and opening.
-3. Compute the collision norm bucket for each role.
+3. Compute the coefficient-`L∞` bucket for each role.
 4. Compute the decomposed matrix width for each role.
 5. Ask the SIS floor table for the minimum secure rank.
-6. Build `AjtaiKeyParams` with the audited rank, width, collision bucket, SIS family, and ring dimension.
+6. Build `AjtaiKeyParams` with the audited rank, width, coefficient-`L∞` bucket, SIS family, ring dimension, and security floor.
+
+Production SIS lookups use `SisTableKey`:
+
+```text
+(min_security_bits, sis_family, ring_dimension, coeff_linf_bound)
+```
+
+Only the 138-bit floor is generated today. The floor is part of `PlannerPolicy`,
+catalog identity, generated table expansion, and descriptor bytes, so a schedule
+generated for one SIS floor cannot be silently reused under another floor.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 
@@ -139,7 +151,6 @@ The planner owns the generated schedule-table representation and expansion logic
 - `n_a`
 - `n_b`
 - `n_d`
-- optional tiering fields `tier_split` and `n_f`
 
 Everything else in `LevelParams` is deterministically reconstructed by `GeneratedFoldStep::expand_to_level_params`.
 
@@ -160,12 +171,6 @@ The family list is in `akita-config::generated_families::ALL_GENERATED_FAMILIES`
 The lookup key carries the root vector counts needed for batched openings. Root B and D widths are sized with the batch factor directly, and the root proof-size formula uses the root `z` vector count.
 
 Recursive levels are always single-claim levels: after the root fold, the next witness is one packed object that is folded or shipped.
-
-### Tiered Commitments
-
-When `PlannerPolicy::tiered` is enabled, the planner may split an oversized first-tier B matrix into a smaller reused `B'` and a second-tier F commitment.
-
-`multi_tiered_keys` checks whether the B matrix is larger than A. If so, it scans split factors up to `MAX_TIERED_SPLIT_FACTOR` and takes the smallest divisor that makes `B'` fit under A. The generated table stores the resulting `tier_split`, shrunk B rank, and F rank directly, so expansion does not re-run the tiering search.
 
 ### Tensor Challenges
 
@@ -194,7 +199,7 @@ This boundary avoids a circular dependency while keeping a single source of trut
 
 - `src/lib.rs`: public planner surface and `PlannerPolicy`.
 - `src/resolve.rs`: cache-then-generate resolution, catalog validation, compact entry expansion, and proof-byte estimation.
-- `src/schedule_params.rs`: DP search, root enumeration, recursive suffix search, and tiering search.
+- `src/schedule_params.rs`: DP search, root enumeration, and recursive suffix search.
 - `src/generated/mod.rs`: generated table types and table lookup helpers.
 - `src/generated/expand.rs`: compact `GeneratedFoldStep` to runtime `LevelParams` expansion.
 - `src/emit/mod.rs`: reusable generated-table emitter.

@@ -2,8 +2,8 @@
 
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::schedule::AkitaScheduleLookupKey;
 use crate::sis::compute_num_digits_full_field;
+use crate::PolynomialGroupLayout;
 use crate::{CleartextWitnessShape, LevelParams, MRowLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
@@ -100,7 +100,7 @@ pub fn extension_opening_reduction_level_bytes(
     challenge_field_bits: u32,
     extension_opening_width: usize,
     fold_level: usize,
-    key: AkitaScheduleLookupKey,
+    key: PolynomialGroupLayout,
     current_w_len: usize,
 ) -> Result<usize, AkitaError> {
     if extension_opening_width <= 1 {
@@ -108,8 +108,8 @@ pub fn extension_opening_reduction_level_bytes(
     }
     let (partials, opening_vars) = if fold_level == 0 {
         (
-            extension_opening_width.saturating_mul(key.num_polynomials),
-            key.num_vars,
+            extension_opening_width.saturating_mul(key.num_polynomials()),
+            key.num_vars(),
         )
     } else {
         (
@@ -145,15 +145,12 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .checked_mul(lp.num_digits_fold(1, field_bits)?)
         .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
     let r_count = lp
-        .m_row_count_for(1, 1, MRowLayout::WithDBlock)?
+        .m_row_count_for(1, MRowLayout::WithDBlock)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
-    // Tiered single-group `û_concat` (one commitment bundle); `0` single-tier.
-    let u_concat_count = lp.u_concat_ring_len_per_group();
 
     e_hat_count
         .checked_add(t_hat_count)
-        .and_then(|n| n.checked_add(u_concat_count))
         .and_then(|n| n.checked_add(z_pre_count))
         .and_then(|n| n.checked_add(r_count))
         .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))

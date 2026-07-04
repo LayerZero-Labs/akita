@@ -196,7 +196,7 @@ fn segment_typed_z_fold_stats<FF: FieldCore>(
     let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
     let terminal_scheduled = schedule.get_execution_schedule(terminal_fold_level)?;
     let lp = &terminal_scheduled.params;
-    let Ok((_num_w_vectors, num_t_vectors, _num_public_rows)) =
+    let Ok((_num_w_vectors, num_t_vectors, _num_z_segments)) =
         tail_segment_multiplicities_from_layout(lp, &witness.layout)
     else {
         return Err(akita_field::AkitaError::InvalidSetup(
@@ -218,7 +218,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
         return;
     };
     let lp = &terminal_scheduled.params;
-    let Ok((_num_w_vectors, num_t_vectors, _num_public_rows)) =
+    let Ok((_num_w_vectors, num_t_vectors, _num_z_segments)) =
         tail_segment_multiplicities_from_layout(lp, &witness.layout)
     else {
         return;

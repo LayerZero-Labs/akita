@@ -1,6 +1,6 @@
 //! Public validation for generated schedule rows.
 //!
-//! Delegates to the shared generated-schedule walker; see
+//! Delegates to the shared generated-schedule walkers; see
 //! [`validate_generated_schedule_entry`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
@@ -26,10 +26,10 @@ pub fn validate_generated_schedule_table(
         fold_challenge_shape_at_level,
     )?;
     for entry in catalog.entries {
-        let key = AkitaScheduleLookupKey::new(entry.key.num_vars, entry.key.num_polynomials);
+        let key = entry.to_runtime_lookup_key();
         validate_generated_schedule_entry(
             entry,
-            key,
+            &key,
             policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
@@ -41,7 +41,7 @@ pub fn validate_generated_schedule_table(
 /// Validate one generated schedule row without running planner search.
 pub fn validate_generated_schedule_entry(
     entry: &GeneratedScheduleTableEntry,
-    key: AkitaScheduleLookupKey,
+    key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,

@@ -48,23 +48,21 @@ It already records the canonical public routing:
 - `point_claim_counts[point_idx]`: number of claims at each point.
 - `point_group_counts[point_idx]`: number of distinct groups touched by each point.
 
-After the scheduler cleanup, the main schedule-facing projection is
+After the opening-claims cutover, the main schedule-facing projection is
 `AkitaScheduleLookupKey` in `crates/akita-types/src/schedule.rs`:
 
 ```rust
 pub struct AkitaScheduleLookupKey {
-    pub num_vars: usize,
-    pub num_t_vectors: usize,
-    pub num_w_vectors: usize,
-    pub num_z_vectors: usize,
+    pub final_group: PolynomialGroupLayout,
+    pub precommitteds: Vec<PrecommittedGroupParams>,
 }
 ```
 
 This key intentionally no longer carries setup capacity. In particular,
 `max_num_vars` is not a scheduler/planner key dimension after preprocessing.
 Setup capacity still exists in `AkitaSetupSeed` and setup sizing policy, but
-runtime schedule selection is keyed only by actual root arity and protocol
-vector counts.
+runtime schedule selection is keyed only by actual root group geometry and any
+frozen precommit metadata.
 
 The current key is still an interim projection. It records only:
 
@@ -216,16 +214,16 @@ impl ClaimIncidenceSummary {
 Use `BTreeSet<usize>` or sorted `Vec<usize>` for canonical point-sets so the
 result is deterministic.
 
-Current interim status:
+Current superseded schedule-key status:
 
-- `AkitaScheduleLookupKey::new_from_incidence` already derives
-  `num_t_vectors` from `group_poly_counts`.
-- It already derives `num_z_vectors` from distinct commitment-group point sets.
-- It still derives `num_w_vectors` from `num_claims`; this should change to
-  `num_points` when the protocol witness layout is updated to match the desired
-  profile formula.
-- `num_commitment_groups` and `num_public_y_rows` are not yet persisted in the
-  generated key.
+- Scalar same-point paths use `AkitaScheduleLookupKey::from_layout` on an
+  `OpeningClaimsLayout`; that projection rejects multi-group layouts instead of
+  collapsing them.
+- Grouped-root planning uses `AkitaScheduleLookupKey` with `final_group` plus
+  `PrecommittedGroupParams` for earlier groups, as specified in
+  [`multi-group-batching.md`](multi-group-batching.md).
+- The older incidence-derived schedule-key plan in this file should not be
+  continued directly for production paths.
 
 For the production same-point multi-commitment rollout, do not continue this
 older aggregate-incidence plan directly. Follow
@@ -270,7 +268,8 @@ blinding = num_commitment_groups * blinding_cols(...)
 
 The main current shape carriers are:
 
-- `AkitaScheduleLookupKey` and `GeneratedScheduleKey`.
+- `AkitaScheduleLookupKey` and `GeneratedScheduleTableEntry` key fields
+  (`final_group`, `precommitteds`).
 - `w_ring_element_count_with_counts_for_layout`.
 - `root_w_ring_element_count` in `crates/akita-planner/src/schedule_params.rs`.
 - `find_optimal_schedule`.
@@ -289,7 +288,7 @@ The long-term direction should be:
    lookup.
 5. Keep `ClaimIncidenceSummary` as the canonical protocol routing object.
 
-`AkitaScheduleLookupKey` can either evolve into `RootPlannerProfile` or become a
+`AkitaScheduleLookupKey` can either evolve into a fuller root profile or become a
 thin wrapper around it. It should not regain setup-capacity fields.
 
 ## Generated Schedule Entries
@@ -297,14 +296,13 @@ thin wrapper around it. It should not regain setup-capacity fields.
 Generated schedule tables should persist only the planner decisions that are not
 cheaply derivable at runtime.
 
-The generated key is profile-shaped:
+Generated rows inline the runtime lookup-key fields:
 
 ```rust
-pub struct GeneratedScheduleKey {
-    pub num_vars: usize,
-    pub num_t_vectors: usize,
-    pub num_w_vectors: usize,
-    pub num_z_vectors: usize,
+pub struct GeneratedScheduleTableEntry {
+    pub final_group: PolynomialGroupLayout,
+    pub precommitteds: &'static [PrecommittedGroupParams],
+    pub steps: &'static [GeneratedStep],
 }
 ```
 

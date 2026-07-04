@@ -138,7 +138,7 @@ everyone shares at link time**.
 
 ```text
                     ┌─────────────────────────────────────┐
-  OpeningBatch      │  CommitmentConfig::runtime_schedule │
+  OpeningClaimsLayout │ CommitmentConfig::runtime_schedule │
   (same-point)  ──► │    resolve_schedule(                 │
                     │      key, policy,                    │
                     │      ring_challenge_config,          │
@@ -218,9 +218,10 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
   `akita-schedules` through a weak dependency feature, so the accessor cannot pair ZK
   planner semantics with non-ZK table data. Non-ZK-only families (currently tiered)
   are inert under `zk` and excluded from the ZK drift guard.
-- **Same-point batching only.** Lookup keys derive from `OpeningBatch` /
-  `OpeningBatch::new(num_vars, num_polys)` (and `new_from_opening_batch`).
-  No multipoint keys, no `ClaimIncidenceSummary` schedule path (type not in tree).
+- **Same-point batching only.** Scalar lookup keys derive from
+  `OpeningClaimsLayout` / `PolynomialGroupLayout` via
+  `AkitaScheduleLookupKey::from_layout`. No multipoint keys, no
+  `ClaimIncidenceSummary` schedule path (type not in tree).
 - **Table miss falls back to DP**, never errors solely because a row is absent (unless
   DP itself rejects the key).
 - **CI bench coverage.** Every mode in `AKITA_BENCH_CASES` must have its `schedules-*`
@@ -278,11 +279,11 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 - [ ] `gen_schedule_tables` writes into `akita-schedules/src/generated/`, emits catalog
   identities, and updates family feature wiring (not `akita-planner`). The binary
   itself stays in `akita-config` (only crate that can name presets).
-- [ ] Table **types** (`GeneratedScheduleTable`, `GeneratedStep`, `GeneratedFoldStep`,
-  `GeneratedScheduleKey`, `table_entry`, `expand`, `schedule_from_entry`) stay in
-  `akita-planner`; `akita-schedules` is data-only and depends on `akita-planner` for
-  them. No dependency cycle (`akita-schedules → akita-planner`; `akita-config →
-  akita-schedules`).
+- [ ] Table **types** (`GeneratedScheduleTable`, `GeneratedScheduleTableEntry`,
+  `GeneratedStep`, `GeneratedFoldStep`, `table_entry`, `expand`,
+  `schedule_from_entry`) stay in `akita-planner`; `akita-schedules` is data-only
+  and depends on `akita-planner` for them. No dependency cycle
+  (`akita-schedules → akita-planner`; `akita-config → akita-schedules`).
 - [ ] `akita-schedules` has `default = []`, one feature per family, `all-schedules`,
   and `zk`. Family features control modules; `zk` selects `_zk` data for every enabled
   ZK-capable family. Enabling `zk` alone does not enable any family. Non-ZK-only
@@ -328,7 +329,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 #### Same-point keys only
 
 - [ ] Schedule lookup for production prove/verify paths uses
-  `AkitaScheduleLookupKey::new_from_opening_batch` / `OpeningBatch::new`.
+  `AkitaScheduleLookupKey::from_layout` / `OpeningClaimsLayout::new`.
 - [ ] `GeneratedFamily` replaces the current hardcoded `[1, 4]` enumeration with a
   per-family `num_polys: &'static [usize]` list. Akita defaults use `[1, 4]`; Jolt can
   emit `[1, 38]` without changing Akita core.
@@ -634,7 +635,8 @@ existing `CommitmentConfig` hook name.
 
 ### Schedule lookup keys (same-point only)
 
-Production folded path uses `OpeningBatch::new(padded_num_vars, num_polys)`:
+Production folded path uses `OpeningClaimsLayout::new(padded_num_vars, num_polys)?`
+and `AkitaScheduleLookupKey::from_layout(&layout)?`:
 
 ```text
 num_t_vectors = num_polys        (polynomials in the bundled commitment)
@@ -643,7 +645,8 @@ num_z_vectors = 1                (one commitment group)
 num_commitment_groups = 1        (in generated key shape)
 ```
 
-`AkitaScheduleLookupKey::new_from_opening_batch` is the canonical projection.
+`AkitaScheduleLookupKey::from_layout` is the canonical scalar projection; grouped
+roots build an explicit key with `final_group` and `precommitteds`.
 
 **Generated table enumeration** (`family_keys` in emitter) crosses:
 
@@ -683,7 +686,6 @@ descriptor shape land, scalar lookup must not collapse grouped inputs through
 | `fp128-d32-onehot` | (new/emitted) | `fp128::D32OneHot` |
 | `fp32-d128-onehot` | `fp32_d128_onehot.rs` | `fp32::D128OneHot` |
 | … | … | … |
-| `fp128-d64-onehot-tiered` | `fp128_d64_onehot_tiered.rs` | `fp128::D64OneHotTiered` |
 | `fp128-d64-onehot-tensor` | `fp128_d64_onehot_tensor.rs` | `D64OneHotTensor` |
 
 Meta-features:

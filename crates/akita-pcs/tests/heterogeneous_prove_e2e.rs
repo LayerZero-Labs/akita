@@ -5,13 +5,13 @@ use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     batched_prove, CommitCluster, CommitmentProver, ComputeBackendSetup, CpuBackend, DensePoly,
-    OpeningCluster, ProverCommitmentGroup, ProverComputeStack, ProverOpeningBatch,
-    RingSwitchCluster, TensorCluster, UniformProverStack,
+    OpeningCluster, ProverComputeStack, ProverOpeningData, RingSwitchCluster, TensorCluster,
+    UniformProverStack,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    lagrange_weights, BasisMode, CommitmentGroup, OpeningBatchShape, PointVariableSelection,
-    VerifierOpeningBatch,
+    lagrange_weights, BasisMode, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims,
 };
 use akita_verifier::CommitmentVerifier;
 use std::any::TypeId;
@@ -40,7 +40,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     assert_distinct_cluster_types();
 
     const NUM_VARS: usize = 16;
-    let opening_batch = OpeningBatchShape::new(NUM_VARS, 1).expect("opening batch");
+    let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
     let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
     let alpha = D.trailing_zeros() as usize;
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
@@ -76,7 +76,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let commit_stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
         .expect("commit stack");
-    let (commitment, hint) = akita_prover::commit::<Cfg, D, DensePoly<F, D>, CpuBackend>(
+    let (commitment, hint) = akita_prover::batched_commit::<Cfg, D, DensePoly<F, D>, CpuBackend>(
         std::slice::from_ref(&poly),
         setup.expanded.as_ref(),
         &commit_stack,
@@ -101,18 +101,22 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         &setup.prefix_slots,
         &setup.fold_a_ones,
         &stack,
-        ProverOpeningBatch {
-            point: opening_point[..].into(),
-            groups: vec![ProverCommitmentGroup {
-                point_vars: PointVariableSelection::prefix(
-                    opening_point.len(),
-                    opening_point.len(),
+        ProverOpeningData::new(
+            OpeningClaims::from_groups(
+                opening_point.clone(),
+                vec![PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(opening_point.len(), opening_point.len())
+                        .expect("full-point prover group"),
+                    vec![opening],
+                    commitments[0].clone(),
                 )
-                .expect("full-point prover group"),
-                polynomials: &poly_refs[..],
-                commitment: (commitments[0].clone(), hint),
-            }],
-        },
+                .expect("valid prover group")],
+            )
+            .expect("valid prover claims"),
+            vec![hint],
+            vec![&poly_refs[..]],
+        )
+        .expect("valid prover opening data"),
         &mut prover_transcript,
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
@@ -129,12 +133,15 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        VerifierOpeningBatch::from_groups(
+        OpeningClaims::from_groups(
             opening_point.clone(),
-            vec![CommitmentGroup {
-                claims: vec![opening],
-                commitment: &commitments[0],
-            }],
+            vec![PolynomialGroupClaims::new(
+                PointVariableSelection::prefix(opening_point.len(), opening_point.len())
+                    .expect("full-point verifier group"),
+                vec![opening],
+                &commitments[0],
+            )
+            .expect("valid verifier group")],
         )
         .expect("valid verifier claims"),
         BasisMode::Lagrange,

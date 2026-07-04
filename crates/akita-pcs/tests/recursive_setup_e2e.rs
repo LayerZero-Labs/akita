@@ -24,7 +24,7 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid as _};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, SetupContributionMode,
@@ -53,22 +53,6 @@ fn setup_sumcheck_levels<FF: CanonicalField, L: FieldCore>(
     root_fold + suffix_fold
 }
 
-fn assert_setup_prefix_slots_populated(setup: &akita_types::AkitaVerifierSetup<F>) {
-    assert!(
-        !setup.prefix_slots.is_empty(),
-        "recursive setup should populate setup-prefix verifier slots"
-    );
-    for (id, slot) in setup.prefix_slots.iter() {
-        assert_eq!(id, &slot.id);
-        id.check().expect("slot id validation");
-        assert_eq!(id.d_setup, ONEHOT_D);
-        assert_eq!(slot.natural_len, id.natural_len);
-        assert_eq!(slot.padded_len, id.n_prefix);
-        assert!(slot.natural_len <= slot.padded_len);
-        assert!(slot.padded_len.is_power_of_two());
-    }
-}
-
 struct OnehotProof {
     proof: AkitaBatchedProof<F, F>,
     verifier_setup: akita_types::AkitaVerifierSetup<F>,
@@ -90,7 +74,7 @@ fn prove_onehot_with_setup_mode(
     setup_mode: SetupContributionMode,
 ) -> OnehotProof {
     let layout = OneHotCfg::get_params_for_batched_commitment(
-        &akita_types::OpeningBatchShape::new(nv, 1).expect("singleton opening batch"),
+        &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
     let total_ring = layout.num_blocks * layout.block_len;
@@ -125,7 +109,7 @@ fn prove_onehot_with_setup_mode(
     let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
         F,
         ONEHOT_D,
-    >>::commit(&setup, commit_input, &stack)
+    >>::batched_commit(&setup, commit_input, &stack)
     .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
@@ -180,11 +164,16 @@ fn verify_onehot(
 
 /// Recursive prove + verify round-trips, and the proof actually folds (so the
 /// setup-product sumcheck is exercised on at least one level).
+///
+/// Snap-sized schedules at large `nv` (e.g. 20) may not admit setup-prefix
+/// repacking into the next fold's `B` geometry; recursive setup still succeeds
+/// via the inline-setup fallback exercised in
+/// [`run_recursive_missing_prefix_slots_falls_back`]. Prefix slot population
+/// for smaller arities is covered by `akita-setup::recursion` unit tests.
 fn run_recursive_roundtrip(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let fixture = prove_onehot(nv, SetupContributionMode::Recursive);
-        assert_setup_prefix_slots_populated(&fixture.verifier_setup);
         assert!(
             setup_sumcheck_levels(&fixture.proof) > 0,
             "recursive nv={nv} must produce at least one non-terminal fold level \

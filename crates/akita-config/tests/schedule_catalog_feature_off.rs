@@ -5,7 +5,7 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
-use akita_types::{AkitaScheduleLookupKey, OpeningBatchShape};
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 #[test]
 fn schedule_catalog_none_without_feature_uses_dp() {
@@ -18,10 +18,7 @@ fn schedule_catalog_none_without_feature_uses_dp() {
         "schedule feature disabled: schedule_catalog must be None"
     );
 
-    let key = AkitaScheduleLookupKey::new_from_opening_batch(
-        &OpeningBatchShape::new(28, 1).expect("opening batch"),
-    )
-    .expect("lookup key");
+    let key = PolynomialGroupLayout::new(28, 1);
 
     let dp = find_schedule(
         key,
@@ -31,7 +28,8 @@ fn schedule_catalog_none_without_feature_uses_dp() {
     )
     .expect("dp schedule");
 
-    let runtime = fp128::D64OneHot::runtime_schedule(key).expect("runtime schedule");
+    let runtime = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
+        .expect("runtime schedule");
     assert_eq!(runtime.total_bytes, dp.total_bytes);
     assert_eq!(runtime.steps.len(), dp.steps.len());
 }

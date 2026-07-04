@@ -8,12 +8,10 @@ use crate::compute::{
     OpeningFoldKernel, OperationCtx, RootOpeningSource,
 };
 use crate::validation::validate_i8_setup_log_basis;
-use crate::{
-    CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningBatch,
-};
+use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{Challenges, IntegerChallenge, SparseChallenge};
+use akita_challenges::{Challenges, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
@@ -31,7 +29,6 @@ use super::ring_relation_witness::RingRelationWitness;
 use std::time::Instant;
 
 mod relation_quotient;
-mod repeated_b;
 
 pub use akita_types::generate_y;
 pub use relation_quotient::compute_relation_quotient;
@@ -114,7 +111,7 @@ where
     ))
 }
 
-fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
+pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F, D>>,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
     let Some((first, rest)) = witnesses.split_first() else {
@@ -348,6 +345,67 @@ where
     }
 }
 
+/// Validate the chunked-witness configuration at the prover boundary (no-panic
+/// contract), before any witness math. Mirrors the planner entry guard and the
+/// verifier layout resolution.
+pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
+    lp.witness_chunk.validate()?;
+    let w = lp.witness_chunk.num_chunks;
+    if w > 1 {
+        if !lp.num_blocks.is_multiple_of(w) {
+            return Err(AkitaError::InvalidSetup(
+                "witness chunk count must divide num_blocks".to_string(),
+            ));
+        }
+        if !(lp.num_blocks / w).is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "witness chunk block window must be a power of two".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Restrict sparse fold challenges to one chunk's global block window
+/// `[chunk·blocks_per_chunk, (chunk+1)·blocks_per_chunk)`, zeroing all other
+/// blocks. Folding under these yields the partial response `z_i = Σ_{j∈I_i}
+/// c_j s_j`.
+pub(super) fn window_sparse_challenges(
+    challenges: &Challenges,
+    chunk: usize,
+    blocks_per_chunk: usize,
+) -> Result<Challenges, AkitaError> {
+    match challenges {
+        Challenges::Sparse {
+            challenges: sparse,
+            num_blocks_per_claim,
+            num_claims,
+        } => {
+            let lo = chunk * blocks_per_chunk;
+            let hi = lo + blocks_per_chunk;
+            let windowed: Vec<SparseChallenge> = sparse
+                .iter()
+                .enumerate()
+                .map(|(idx, ch)| {
+                    let block = idx % num_blocks_per_claim;
+                    if (lo..hi).contains(&block) {
+                        ch.clone()
+                    } else {
+                        SparseChallenge {
+                            positions: Vec::new(),
+                            coeffs: Vec::new(),
+                        }
+                    }
+                })
+                .collect();
+            Challenges::from_sparse(windowed, *num_blocks_per_claim, *num_claims)
+        }
+        Challenges::Tensor { .. } => Err(AkitaError::InvalidSetup(
+            "chunked fold response requires sparse fold challenges".to_string(),
+        )),
+    }
+}
+
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
 pub struct RingRelationProver;
 
@@ -380,7 +438,7 @@ impl RingRelationProver {
         ring_switch_ctx: &OperationCtx<'_, F, RB, D>,
         opening_point: RingOpeningPoint<F>,
         ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
-        fold_claims: ProverOpeningBatch<'a, PointF, P, F, D>,
+        fold_claims: ProverOpeningData<'a, PointF, P, F, D>,
         pre_folded_e_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
         transcript: &mut T,
@@ -400,20 +458,19 @@ impl RingRelationProver {
         RB: DigitRowsComputeBackend<F>,
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-        let opening_batch = fold_claims.to_opening_shape::<F>()?;
+        validate_chunked_witness_cfg(&lp)?;
+        let opening_batch = fold_claims.opening_claims().layout()?;
         let polys = fold_claims.flat_polys();
-        let group_sizes = opening_batch.num_polys_per_commitment_group();
-        let mut hints = Vec::with_capacity(fold_claims.groups.len());
+        let group_sizes = opening_batch.group_sizes();
+        let hints = fold_claims.hints().to_vec();
         let mut commitment_rows = Vec::new();
-        for group in fold_claims.groups {
-            let (group_commitment, group_hint) = group.commitment;
-            if group_commitment.u.len() != lp.effective_commit_rows() {
+        for group_commitment in fold_claims.commitments() {
+            if group_commitment.u.len() != lp.b_key.row_len() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
             commitment_rows.extend_from_slice(&group_commitment.u);
-            hints.push(group_hint.clone());
         }
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
             return Err(AkitaError::InvalidInput(
@@ -427,7 +484,7 @@ impl RingRelationProver {
                 "batched prover ring-multiplier opening-point layout mismatch".to_string(),
             ));
         }
-        let num_claims = opening_batch.num_polynomials();
+        let num_claims = opening_batch.num_total_polynomials();
         if polys.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
@@ -480,7 +537,10 @@ impl RingRelationProver {
                 .collect();
             absorb_terminal_e_folded_fields::<F, T, D>(transcript, &e_folded_flat)?;
         }
-        let (z_folded_rings, challenges, fold_grind_nonce) =
+        // Distributed-prover chunked layout: the grind emits one folded response
+        // per block window (`z_i`), and the global response is their sum
+        // (`Σ_i z_i = z`, exact coefficient-wise i32 accumulation).
+        let (z_folded_rings, z_folded_centered_per_chunk, challenges, fold_grind_nonce) =
             fold_grind::sample_fold_decompose_witness::<F, _, OB, T, D>(
                 opening_backend,
                 Some(opening_ctx.prepared()),
@@ -509,12 +569,11 @@ impl RingRelationProver {
         let a_shift_rows = a_ones_table.a_shift_rows::<D>(&lp, z_folded_rings.committed_shift)?;
         let y = generate_y::<F, D>(
             consistency_shift_row,
+            &a_shift_rows,
             y_v_slice,
             &commitment_rows,
-            &a_shift_rows,
             n_d_active,
-            lp.effective_commit_rows(),
-            lp.b_inner_rows_per_group(),
+            lp.b_key.row_len(),
             lp.a_key.row_len(),
         )?;
         let e_folded = pre_folded_e_by_poly.into_iter().flatten().collect();
@@ -533,6 +592,7 @@ impl RingRelationProver {
         instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
             z_folded_rings,
+            z_folded_centered_per_chunk,
             fold_grind_nonce,
             e_hat,
             e_folded,

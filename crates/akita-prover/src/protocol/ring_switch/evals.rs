@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
@@ -62,7 +63,6 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     tau1: &[E],
     num_polys: usize,
     gamma: &[E],
-    num_public_rows: usize,
     m_row_layout: MRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -124,8 +124,7 @@ where
     let w_len = segment_lengths.e_len;
     let t_len = segment_lengths.t_len;
     let z_len = segment_lengths.z_len;
-    let u_seg_len = segment_lengths.u_len;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let depth_fold = lp.num_digits_fold(num_claims, lp.field_bits_for_cache())?;
     let inner_width = block_len * depth_commit;
     let z_base_len = inner_width;
     let n_a = lp.a_key.row_len();
@@ -137,12 +136,19 @@ where
         MRowLayout::WithDBlock => n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    let rows = lp.m_row_count_for(1, num_public_rows, m_row_layout)?;
+    let rows = lp.m_row_count_for(1, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
+    // Chunked layout replicates the `z` segment once per window; `e`/`t` are
+    // partitioned (their totals are unchanged). `num_chunks = 1` is the
+    // single-chunk case.
+    validate_chunked_witness_cfg(lp)?;
+    let num_chunks = lp.witness_chunk.num_chunks;
+    let z_cols_total = z_len
+        .checked_mul(num_chunks)
+        .ok_or_else(|| AkitaError::InvalidSetup("chunked Z width overflow".to_string()))?;
     let total_cols = w_len
         .checked_add(t_len)
-        .and_then(|cols| cols.checked_add(u_seg_len))
-        .and_then(|cols| cols.checked_add(z_len))
+        .and_then(|cols| cols.checked_add(z_cols_total))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
 
@@ -194,30 +200,7 @@ where
     let b_message_width = num_polys
         .checked_mul(t_cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
-    // Tiered: the stored first-tier matrix is `B'` of width `b_message_width /
-    // tier_split`, reused across `tier_split` column-slices; the second-tier
-    // `F` (`f_view`) commits the decomposed concatenated images `û_concat`.
-    let tiered = lp.f_key.is_some();
-    let tier_split = lp.tier_split;
-    let n_f = lp.f_key.as_ref().map_or(0, |fk| fk.row_len());
-    let b_width = if tiered {
-        if tier_split == 0 || !b_message_width.is_multiple_of(tier_split) {
-            return Err(AkitaError::InvalidSetup(
-                "tiered B' width does not divide the per-group B width".to_string(),
-            ));
-        }
-        b_message_width / tier_split
-    } else {
-        b_message_width
-    };
-    let width_f = if tiered {
-        tier_split
-            .checked_mul(n_b)
-            .and_then(|w| w.checked_mul(depth_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("tiered F width overflow".to_string()))?
-    } else {
-        0
-    };
+    let b_width = b_message_width;
     let a_width = inner_width;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, d_width)?;
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, b_width)?;
@@ -225,83 +208,21 @@ where
     let d_rows: Vec<_> = d_view.rows().collect();
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
-    let f_rows: Vec<_> = if tiered {
-        setup
-            .shared_matrix
-            .ring_view::<D>(n_f, width_f)?
-            .rows()
-            .collect()
-    } else {
-        Vec::new()
-    };
 
-    // Canonical row layout: consistency (1) | public (num_public_rows) |
-    //   D (n_d_active) | COMMIT (F when tiered, else B) | B_inner (tiered) | A.
-    let commit_rows_pg = if tiered { n_f } else { n_b };
-    let b_inner_rows_pg = if tiered { tier_split * n_b } else { 0 };
+    // Canonical row layout: consistency (1) | A | B | D.
+    let a_start = lp.a_start();
+    let b_start = lp.b_start()?;
+    let d_start = lp.d_start(1)?;
+    let a_weights = &eq_tau1[a_start..(a_start + n_a)];
     let consistency_weight = eq_tau1[0];
-    let public_weights = &eq_tau1[1..(1 + num_public_rows)];
-    let d_start = 1 + num_public_rows;
-    let f_start = d_start + n_d_active;
-    let b_inner_start = f_start + commit_rows_pg;
-    let a_start = b_inner_start + b_inner_rows_pg;
-    // Non-tiered alias used by the single-tier B-block scan below.
-    let b_start = f_start;
-    let a_weights = &eq_tau1[a_start..rows];
     let t_compound_per_block = n_a * depth_open;
-
-    let uses_ring_multipliers = ring_multiplier_point.as_base().is_none();
-    let row_coefficient_rings = if uses_ring_multipliers {
-        Some(
-            gamma
-                .iter()
-                .copied()
-                .map(|coefficient| {
-                    embed_ring_subfield_scalar::<F, E, D>(
-                        coefficient,
-                        AkitaError::InvalidInput(
-                            "public-row coefficient does not encode in the ring-subfield basis"
-                                .to_string(),
-                        ),
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        )
-    } else {
-        None
-    };
-    let public_b_evals = (0..num_claims)
-        .map(|claim_idx| {
-            let coefficient_ring = row_coefficient_rings
-                .as_ref()
-                .map(|rings| &rings[claim_idx]);
-            (0..num_blocks)
-                .map(|block_idx| {
-                    ring_multiplier_point.eval_b_with_coefficient(
-                        block_idx,
-                        gamma[claim_idx],
-                        coefficient_ring,
-                        alpha_pows,
-                    )
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
 
     let w_segment: Vec<E> = cfg_into_iter!(0..w_len)
         .map(|x| {
             let dig = x / total_blocks;
             let blk = x % total_blocks;
-            let claim_idx = blk / num_blocks;
-            let block_idx = blk % num_blocks;
             let d_phys_col = blk * depth_open + dig;
-            let b_eval = public_b_evals[claim_idx][block_idx];
-            let public_contrib = if num_public_rows == 0 {
-                E::zero()
-            } else {
-                public_weights[0] * b_eval
-            };
-            let mut acc = (public_contrib + consistency_weight * c_alphas[blk]) * g1_open[dig];
+            let mut acc = consistency_weight * c_alphas[blk] * g1_open[dig];
             // Terminal layout: `n_d_active == 0`, so this loop is empty and
             // the D-block contribution is omitted.
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
@@ -333,57 +254,15 @@ where
                 block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
             let local_col = t_vector_idx * t_cols_per_vector + phys_claim_offset;
             let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g1_open[digit_idx];
-            if tiered {
-                // B_inner block: the stored B' is reused across `tier_split`
-                // slices; `local_col` selects the slice and the within-slice
-                // stored-B' column.
-                let slice = local_col / b_width;
-                let within = local_col % b_width;
-                let base = b_inner_start + slice * n_b;
-                for row_idx in 0..n_b {
-                    let eq_i = eq_tau1[base + row_idx];
-                    if !eq_i.is_zero() {
-                        acc += eq_i * eval_ring_at_pows(&b_rows[row_idx][within], alpha_pows);
-                    }
-                }
-            } else {
-                let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
-                for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
-                    if !eq_i.is_zero() {
-                        acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
-                    }
+            let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
+            for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
                 }
             }
             acc
         })
         .collect();
-
-    // Tiered `û_concat` segment (flat, contiguous, right after `t̂`): the
-    // second-tier `F` commit-block image plus the `B_inner` `-recompose(û)`
-    // term, per `û` column. Empty for single-tier.
-    let u_segment: Vec<E> = if tiered {
-        let u_seg_len = width_f;
-        cfg_into_iter!(0..u_seg_len)
-            .map(|c| {
-                let slice_row = c / depth_open;
-                let digit = c % depth_open;
-                let mut acc = E::zero();
-                // F (commit) block: F·û_concat.
-                for f_row in 0..n_f {
-                    let eq_i = eq_tau1[f_start + f_row];
-                    if !eq_i.is_zero() {
-                        acc += eq_i * eval_ring_at_pows(&f_rows[f_row][c], alpha_pows);
-                    }
-                }
-                // B_inner RHS: -recompose(û) = -Σ_digit base^digit · û[digit].
-                let b_inner_w = eq_tau1[b_inner_start + slice_row];
-                acc -= b_inner_w * g1_open[digit];
-                acc
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
 
     let z_base: Vec<E> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
@@ -425,10 +304,20 @@ where
         })
         .collect();
 
-    out.extend(z_segment);
-    out.extend(w_segment);
-    out.extend(t_segment);
-    out.extend(u_segment);
+    // Chunked column layout `[z|e_i|t_i]…[r]`: `z` is replicated per window
+    // and `e`/`t` are partitioned by global block (same per-cell values as the
+    // flat segments, only repositioned).
+    let blocks_per_chunk = num_blocks / num_chunks;
+    for i in 0..num_chunks {
+        out.extend_from_slice(&z_segment);
+        let block_lo = i * blocks_per_chunk;
+        for outer in w_segment.chunks_exact(num_blocks) {
+            out.extend_from_slice(&outer[block_lo..block_lo + blocks_per_chunk]);
+        }
+        for outer in t_segment.chunks_exact(num_blocks) {
+            out.extend_from_slice(&outer[block_lo..block_lo + blocks_per_chunk]);
+        }
+    }
     out.extend(r_tail);
     out.resize(x_len, E::zero());
     Ok(out)

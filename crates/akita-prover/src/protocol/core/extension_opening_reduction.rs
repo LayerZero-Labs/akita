@@ -189,7 +189,7 @@ pub(in crate::protocol::core) fn prepare_extension_opening_reduction<
     backend: &B,
     prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
     polys: &[&P],
-    opening_batch: &VerifierOpeningBatch<'_, E>,
+    opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
 ) -> Result<PreparedExtensionOpeningReduction<E>, AkitaError>
@@ -202,7 +202,7 @@ where
         + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>
         + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
-    let num_claims = opening_batch.num_polynomials();
+    let num_claims = opening_batch.num_total_polynomials();
     let num_vars = opening_batch.num_vars();
     let _span =
         tracing::info_span!("prepare_extension_opening_reduction", num_claims, num_vars).entered();
@@ -261,7 +261,7 @@ where
     } else {
         let transcript_openings = openings.as_slice();
         append_claim_values_to_transcript::<F, E, T>(transcript_openings, transcript);
-        let opening_shape = opening_batch.to_shape();
+        let opening_shape = opening_batch.layout()?;
         sample_public_row_coefficients::<F, E, T>(&opening_shape, transcript)?
     };
     if row_partials_by_claim.len() != row_coefficients.len() {
@@ -341,7 +341,7 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B
     tensor_backend: &B,
     tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup<D>>,
     polys: &[&P],
-    opening_batch: &VerifierOpeningBatch<'_, E>,
+    opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
     path: &'static str,
@@ -358,7 +358,7 @@ where
     let _span = tracing::info_span!(
         "prove_extension_opening_reduction",
         path,
-        num_claims = opening_batch.num_polynomials()
+        num_claims = opening_batch.num_total_polynomials()
     )
     .entered();
     let backend = tensor_backend;

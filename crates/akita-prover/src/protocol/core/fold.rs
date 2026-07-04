@@ -19,10 +19,25 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField, const D: usize>(
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
-) -> Result<(RingRelationSegmentLayout, akita_types::TraceWeightLayout), AkitaError> {
-    let segment = instance.segment_layout(lp)?;
-    let layout =
-        trace_weight_layout_from_segment(lp, &segment, col_bits, ring_bits, num_trace_blocks)?;
+) -> Result<
+    (
+        akita_types::WitnessChunkLayout,
+        akita_types::TraceWeightLayout,
+    ),
+    AkitaError,
+> {
+    let witness_layout = instance.segment_layout(lp, None)?;
+    let segment = *witness_layout
+        .chunks
+        .first()
+        .ok_or_else(|| AkitaError::InvalidSetup("empty witness layout".to_string()))?;
+    let layout = trace_weight_layout_from_segment(
+        lp,
+        &witness_layout,
+        col_bits,
+        ring_bits,
+        num_trace_blocks,
+    )?;
     Ok((segment, layout))
 }
 
@@ -64,7 +79,7 @@ where
 {
     let num_trace_blocks = instance
         .opening_batch()
-        .num_polynomials()
+        .num_total_polynomials()
         .checked_mul(lp.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     let (_, layout) =
@@ -86,6 +101,7 @@ pub(in crate::protocol::core) struct TraceTarget<L: FieldCore> {
 }
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, L: FieldCore, const D: usize> {
+    pub(in crate::protocol::core) commitment: FlatRingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F, D>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F, D>,
     pub(in crate::protocol::core) extension_opening_reduction:
@@ -178,7 +194,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     protocol_point: &[E],
     alpha_bits: usize,
     basis: BasisMode,
-    opening_batch: &OpeningBatchShape,
+    opening_batch: &OpeningClaimsLayout,
     row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
@@ -203,14 +219,14 @@ where
         row_coefficients
     } else {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        if opening_batch.num_polynomials() == 1 {
+        if opening_batch.num_total_polynomials() == 1 {
             vec![E::one()]
         } else {
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
         }
     };
     let ordinary_trace_eval_target =
-        batched_eval_target_from_opening_batch(opening_batch, &row_coefficients, &openings)?;
+        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
     let trace_eval_target =
         reduction
             .as_ref()
@@ -224,7 +240,7 @@ where
             })?;
     let trace_claim_scales = reduction
         .as_ref()
-        .map(|reduction| vec![reduction.final_factor; opening_batch.num_polynomials()]);
+        .map(|reduction| vec![reduction.final_factor; opening_batch.num_total_polynomials()]);
     let trace_scale = reduction
         .as_ref()
         .map_or(E::one(), |reduction| reduction.final_factor);
@@ -255,9 +271,9 @@ pub(in crate::protocol::core) fn prepare_fold_inner<
 >(
     stack: &ProverComputeStack<'_, F, D, C, O, TS, R>,
     needs_extension_reduction: bool,
-    fold_claims: ProverOpeningBatch<'a, E, P, F, D>,
+    fold_claims: ProverOpeningData<'a, E, P, F, D>,
     eor_polys: &[&P],
-    eor_opening_batch: &VerifierOpeningBatch<'_, E>,
+    eor_opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
     non_eor_protocol_point: Vec<E>,
@@ -291,7 +307,7 @@ where
         + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = fold_claims.to_opening_shape::<F>()?;
+    let opening_batch = fold_claims.opening_claims().layout()?;
     let fold_polys = fold_claims.flat_polys();
     let tensor = stack.tensor();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
@@ -412,12 +428,12 @@ where
     R: ComputeBackendSetup<F>,
 {
     stack: &'a ProverComputeStack<'a, F, D, C, O, TS, R>,
-    fold_claims: ProverOpeningBatch<'a, E, Q, F, D>,
+    fold_claims: ProverOpeningData<'a, E, Q, F, D>,
     fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
     row_coefficients: Option<Vec<E>>,
-    trace_opening_batch: &'a OpeningBatchShape,
+    trace_opening_batch: &'a OpeningClaimsLayout,
     level_params: &'a LevelParams,
     alpha_bits: usize,
     basis: BasisMode,
@@ -500,11 +516,7 @@ where
         transcript,
     )?;
     let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-    if fold_claims.single_group().is_none() {
-        return Err(AkitaError::InvalidInput(
-            "multi-group fold proving is not supported yet".to_string(),
-        ));
-    }
+    let commitment = fold_claims.single_fold_commitment()?;
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
@@ -531,6 +543,7 @@ where
         trace_target.trace_claim_scales
     };
     Ok(PreparedFold {
+        commitment,
         instance,
         witness,
         extension_opening_reduction,
@@ -626,6 +639,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = L>,
 {
     let lp = &scheduled.params;
+    let commitment_u = prepared_fold.commitment.as_ring_slice::<D>()?;
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
     let build_output = ring_switch_build_w::<F, R, D>(
         &prepared_fold.instance,
@@ -675,10 +689,24 @@ where
         m_row_layout,
     )?;
 
-    let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
+    let relation_rows = if is_terminal_fold {
+        &[][..]
+    } else {
+        prepared_fold.instance.v.as_slice()
+    };
+    let y = prepared_fold.instance.y();
+    let b_start = lp.b_start()?;
+    let num_commitments = commitment_u.len() / lp.b_key.row_len();
+    let relation_claim = relation_claim_from_fold_active_rows_for_level_extension::<F, L, D>(
+        lp,
+        m_row_layout,
+        num_commitments,
         &rs.tau1,
         rs.alpha,
-        prepared_fold.instance.y(),
+        &y[0],
+        relation_rows,
+        commitment_u,
+        &y[lp.a_start()..b_start],
     )?;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
         (None, vec![L::zero(); rs.col_bits + rs.ring_bits], L::zero())
@@ -850,11 +878,6 @@ where
             AkitaError::InvalidInput("terminal fold missing final witness basis".to_string())
         })?;
         if let Some(artifacts) = terminal_artifacts {
-            if artifacts.u_concat_planes != 0 {
-                return Err(AkitaError::InvalidInput(
-                    "segment-typed terminal witness does not support tiered u_concat".to_string(),
-                ));
-            }
             let CleartextWitnessShape::SegmentTyped(scheduled_shape) =
                 terminal_direct_witness_shape.ok_or_else(|| {
                     AkitaError::InvalidSetup(
@@ -866,7 +889,7 @@ where
                     "terminal fold expected segment-typed witness shape".to_string(),
                 ));
             };
-            let (num_w_vectors, num_t_vectors, num_public_rows) =
+            let (num_w_vectors, num_t_vectors, num_z_segments) =
                 akita_types::tail_segment_multiplicities_from_layout(lp, &scheduled_shape.layout)?;
             let segment = build_segment_typed_witness::<D, F>(
                 &artifacts.e_folded,
@@ -876,7 +899,7 @@ where
                 lp,
                 num_w_vectors,
                 num_t_vectors,
-                num_public_rows,
+                num_z_segments,
                 1,
             )?;
             if segment.layout != scheduled_shape.layout {

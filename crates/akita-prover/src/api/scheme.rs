@@ -5,8 +5,7 @@ use crate::compute::{
     LevelProveStacks, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootProvePoly,
     UniformProverStack,
 };
-use crate::CommittedGroupHandle;
-use crate::ProverOpeningBatch;
+use crate::ProverOpeningData;
 use crate::ProverTranscriptGrind;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
@@ -14,7 +13,7 @@ use akita_field::{
     RandomSampling,
 };
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, FpExtEncoding, SetupContributionMode};
+use akita_types::{BasisMode, FpExtEncoding, PolynomialGroupLayout, SetupContributionMode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -66,26 +65,6 @@ where
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
-    /// Commit a single opening-point bundle.
-    ///
-    /// All polynomials in `polys` are aggregated into one commitment using a
-    /// layout derived from the single shared opening-batch shape.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when setup/parameter constraints are not satisfied.
-    fn commit<P, B>(
-        setup: &Self::ProverSetup,
-        polys: &[P],
-        stack: &UniformProverStack<'_, F, B, D>,
-    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
-    where
-        F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-        Self::ExtField: FpExtEncoding<F>,
-        P: RootCommitPoly<F, D>,
-        B: RootCommitBackend<F, P, Self::ExtField, D>;
-
     /// Commit the polynomial bundle used by a batched prove.
     ///
     /// The input bundle produces one commitment. All polynomials share one
@@ -107,21 +86,23 @@ where
         P: RootCommitPoly<F, D>,
         B: RootCommitBackend<F, P, Self::ExtField, D>;
 
-    /// Commit one standalone one-hot commitment group with conservative B rank.
+    /// Commit the final polynomial bundle for a grouped root commitment.
     ///
-    /// The returned metadata freezes the group layout for a later grouped final
-    /// plan. Grouped opening proofs remain unsupported until the next rollout
-    /// phase.
+    /// `precommitteds` contains schedule keys for prior commitment groups in
+    /// transcript order. The implementation derives the final group shape from
+    /// `polys`, freezes precommitted layouts, and resolves the grouped root
+    /// commitment layout internally.
     ///
     /// # Errors
     ///
-    /// Returns an error if the group is empty, dense, exceeds setup capacity, or
-    /// cannot be conservatively planned.
-    fn commit_group<P, B>(
+    /// Returns an error if input validation, grouped layout selection, or
+    /// commitment execution fails.
+    fn commit_final_group<P, B>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B, D>,
-    ) -> Result<CommittedGroupHandle<Self::Commitment, Self::CommitHint>, AkitaError>
+        precommitteds: Vec<PolynomialGroupLayout>,
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -141,7 +122,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
-        claims: ProverOpeningBatch<'a, Self::ExtField, P, F, D>,
+        claims: ProverOpeningData<'a, Self::ExtField, P, F, D>,
         stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,

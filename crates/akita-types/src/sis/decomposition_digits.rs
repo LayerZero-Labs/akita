@@ -34,9 +34,7 @@
 use akita_field::AkitaError;
 
 use super::fold_linf_cap::FoldWitnessLinfCapConfig;
-use super::norm_bound::{
-    fold_witness_honest_prover_linf_cap, FoldChallengeNorms, FoldWitnessNorms,
-};
+use super::norm_bound::{fold_witness_linf_digit_plan, FoldChallengeNorms, FoldWitnessNorms};
 use crate::DecompositionParams;
 
 /// Maximum semantic coefficient `L∞` envelope accepted for folded witness `z`
@@ -98,6 +96,21 @@ pub fn fold_response_semantic_linf_bound(log_basis: u32, num_digits_fold: usize)
         .saturating_mul(series)
         .saturating_add(1)
         / 2
+}
+
+/// Signed coefficient interval represented by `num_digits_fold` balanced
+/// base-`2^log_basis` digits, returned as `(negative_abs_reach, positive_reach)`.
+#[inline]
+#[must_use]
+pub fn fold_witness_representable_linf_bounds(
+    log_basis: u32,
+    num_digits_fold: usize,
+) -> (u128, u128) {
+    let num_digits_fold = num_digits_fold.max(1);
+    (
+        balanced_digit_abs_max(log_basis, num_digits_fold),
+        balanced_digit_max(log_basis, num_digits_fold),
+    )
 }
 
 /// Maximum positive value representable by `num_digits` balanced base-`b`
@@ -237,9 +250,9 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 /// Computes the folded-witness L∞ bound
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
 /// (via [`crate::sis::fold_witness_beta`]) from the per-level fold challenge and witness
-/// norms. Under [`crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind`], `δ_fold`
-/// is sized from [`super::norm_bound::fold_witness_honest_prover_linf_cap`]
-/// (`min(β_inf, t*)`); deterministic policies use `β_inf` alone.
+/// norms. Under tail-bound-with-grind, `δ_fold` comes from
+/// [`super::norm_bound::fold_witness_linf_digit_plan`] (pre-snap `min(β_inf, t*)`,
+/// optional snap-down, positive-reach grind cap); deterministic policies use `β_inf` alone.
 ///
 /// # Errors
 ///
@@ -256,17 +269,21 @@ pub fn num_digits_fold(
     witness: FoldWitnessNorms,
     cap_config: FoldWitnessLinfCapConfig,
 ) -> Result<usize, AkitaError> {
-    let cap =
-        fold_witness_honest_prover_linf_cap(challenge, witness, r_vars, num_claims, &cap_config)?;
-    if cap == 0 {
+    let plan = fold_witness_linf_digit_plan(
+        r_vars,
+        num_claims,
+        field_bits,
+        log_basis,
+        challenge,
+        witness,
+        &cap_config,
+    )?;
+    if plan.grind_cap == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_digits_fold: fold witness L∞ cap is zero".to_string(),
         ));
     }
-    // `cap` bounds `|v|`, so `+cap` itself must be representable: add one bit
-    // so the signed range's positive end covers `+cap`.
-    let log_cap = (128 - cap.leading_zeros()).saturating_add(1);
-    Ok(num_digits_for_bound(log_cap, field_bits, log_basis))
+    Ok(plan.delta_fold)
 }
 
 /// A-matrix committed width (ring columns): `block_len · δ_commit`.

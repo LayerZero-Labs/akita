@@ -822,24 +822,17 @@ where
     Ok(acc.scale(&shift))
 }
 
-const FOLD_RELATION_NUM_PUBLIC_OUTPUTS: usize = 0;
-
 fn fold_active_row_starts(
     lp: &LevelParams,
-    layout: MRowLayout,
     num_commitments: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
-    Ok((
-        lp.d_start(FOLD_RELATION_NUM_PUBLIC_OUTPUTS)?,
-        lp.f_start(FOLD_RELATION_NUM_PUBLIC_OUTPUTS, layout)?,
-        lp.a_start(num_commitments, FOLD_RELATION_NUM_PUBLIC_OUTPUTS, layout)?,
-    ))
+    Ok((lp.a_start(), lp.b_start()?, lp.d_start(num_commitments)?))
 }
 
 /// Evaluate the stage-2 relation claim over active M rows for one fold level.
 ///
-/// Row offsets are derived from [`LevelParams`] helpers. Skips zero `B_inner`
-/// rows while matching the full `y` layout used by [`super::generate_y`].
+/// Row offsets are derived from [`LevelParams`] helpers and match the layout
+/// emitted by [`super::generate_y`].
 ///
 /// # Errors
 ///
@@ -849,7 +842,7 @@ fn fold_active_row_starts(
 #[tracing::instrument(skip_all, name = "relation_claim_from_fold_active_rows_for_level")]
 pub fn relation_claim_from_fold_active_rows_for_level<F, const D: usize>(
     lp: &LevelParams,
-    layout: MRowLayout,
+    _layout: MRowLayout,
     num_commitments: usize,
     tau1: &[F],
     alpha: F,
@@ -861,30 +854,30 @@ pub fn relation_claim_from_fold_active_rows_for_level<F, const D: usize>(
 where
     F: FieldCore + CanonicalField,
 {
-    validate_commitment_grouping(lp.effective_commit_rows(), commitment_rows)?;
-    let (d_start, f_start, a_start) = fold_active_row_starts(lp, layout, num_commitments)?;
+    validate_commitment_grouping(lp.b_key.row_len(), commitment_rows)?;
+    let (a_start, b_start, d_start) = fold_active_row_starts(lp, num_commitments)?;
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
     let mut acc = F::zero();
     if !eq_tau1.is_empty() {
         acc += eq_tau1[0] * eval_ring_at_pows(consistency_row, &alpha_pows);
     }
-    for (offset, row) in v.iter().enumerate() {
-        let row_idx = d_start + offset;
+    for (offset, row) in a_rows.iter().enumerate() {
+        let row_idx = a_start + offset;
         if row_idx >= eq_tau1.len() {
             break;
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(row, &alpha_pows);
     }
     for (offset, row) in commitment_rows.iter().enumerate() {
-        let row_idx = f_start + offset;
+        let row_idx = b_start + offset;
         if row_idx >= eq_tau1.len() {
             break;
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(row, &alpha_pows);
     }
-    for (offset, row) in a_rows.iter().enumerate() {
-        let row_idx = a_start + offset;
+    for (offset, row) in v.iter().enumerate() {
+        let row_idx = d_start + offset;
         if row_idx >= eq_tau1.len() {
             break;
         }
@@ -901,7 +894,7 @@ where
 )]
 pub fn relation_claim_from_fold_active_rows_for_level_extension<F, E, const D: usize>(
     lp: &LevelParams,
-    layout: MRowLayout,
+    _layout: MRowLayout,
     num_commitments: usize,
     tau1: &[E],
     alpha: E,
@@ -914,30 +907,30 @@ where
     F: FieldCore + CanonicalField,
     E: FieldCore + MulBase<F>,
 {
-    validate_commitment_grouping(lp.effective_commit_rows(), commitment_rows)?;
-    let (d_start, f_start, a_start) = fold_active_row_starts(lp, layout, num_commitments)?;
+    validate_commitment_grouping(lp.b_key.row_len(), commitment_rows)?;
+    let (a_start, b_start, d_start) = fold_active_row_starts(lp, num_commitments)?;
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
     if !eq_tau1.is_empty() {
         acc += eq_tau1[0] * eval_ring_at_pows(consistency_row, &alpha_pows);
     }
-    for (offset, row) in v.iter().enumerate() {
-        let row_idx = d_start + offset;
+    for (offset, row) in a_rows.iter().enumerate() {
+        let row_idx = a_start + offset;
         if row_idx >= eq_tau1.len() {
             break;
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(row, &alpha_pows);
     }
     for (offset, row) in commitment_rows.iter().enumerate() {
-        let row_idx = f_start + offset;
+        let row_idx = b_start + offset;
         if row_idx >= eq_tau1.len() {
             break;
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(row, &alpha_pows);
     }
-    for (offset, row) in a_rows.iter().enumerate() {
-        let row_idx = a_start + offset;
+    for (offset, row) in v.iter().enumerate() {
+        let row_idx = d_start + offset;
         if row_idx >= eq_tau1.len() {
             break;
         }
@@ -966,7 +959,6 @@ fn validate_commitment_grouping(
 mod tests {
     use super::*;
     use crate::generate_y;
-    use crate::proof::relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
     use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr};
 
     type F = Fp32<251>;
@@ -1142,12 +1134,11 @@ mod tests {
         ])];
         let y = generate_y::<F, D>(
             consistency,
+            &a_rows,
             &v,
             &commitment_rows,
-            &a_rows,
             v.len(),
             commitment_rows.len(),
-            lp.b_inner_rows_per_group(),
             a_rows.len(),
         )
         .expect("y");
@@ -1173,7 +1164,7 @@ mod tests {
             &a_rows,
         )
         .expect("partial");
-        let full = relation_claim_from_rows::<F, D>(&tau1, alpha, &y).expect("full");
+        let full = relation_claim_from_full_y::<F, D>(&tau1, alpha, &y).expect("full");
         assert_eq!(partial, full);
 
         let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
@@ -1190,8 +1181,49 @@ mod tests {
         )
         .expect("partial ext");
         let full_ext =
-            relation_claim_from_rows_extension::<F, E, D>(&lifted_tau1, E::lift_base(alpha), &y)
+            relation_claim_from_full_y_extension::<F, E, D>(&lifted_tau1, E::lift_base(alpha), &y)
                 .expect("full ext");
         assert_eq!(partial_ext, full_ext);
+    }
+
+    fn relation_claim_from_full_y<F, const D: usize>(
+        tau1: &[F],
+        alpha: F,
+        y: &[CyclotomicRing<F, D>],
+    ) -> Result<F, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+    {
+        let eq_tau1 = EqPolynomial::evals(tau1)?;
+        let alpha_pows = scalar_powers(alpha, D);
+        let mut acc = F::zero();
+        for (row_idx, row) in y.iter().enumerate() {
+            if row_idx >= eq_tau1.len() {
+                break;
+            }
+            acc += eq_tau1[row_idx] * eval_ring_at_pows(row, &alpha_pows);
+        }
+        Ok(acc)
+    }
+
+    fn relation_claim_from_full_y_extension<F, E, const D: usize>(
+        tau1: &[E],
+        alpha: E,
+        y: &[CyclotomicRing<F, D>],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: FieldCore + MulBase<F>,
+    {
+        let eq_tau1 = EqPolynomial::evals(tau1)?;
+        let alpha_pows = scalar_powers(alpha, D);
+        let mut acc = E::zero();
+        for (row_idx, row) in y.iter().enumerate() {
+            if row_idx >= eq_tau1.len() {
+                break;
+            }
+            acc += eq_tau1[row_idx] * eval_ring_at_pows(row, &alpha_pows);
+        }
+        Ok(acc)
     }
 }

@@ -16,9 +16,17 @@ enum Mode {
     Zeta,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Profile {
+    LocalMinimum,
+    ExhaustiveSerial,
+    ExhaustiveParallel,
+}
+
 #[derive(Debug)]
 struct Args {
     mode: Mode,
+    profile: Profile,
     family: AkitaModulusFamily,
     raw_n: Option<u32>,
     raw_m: Option<u64>,
@@ -42,7 +50,7 @@ fn main() {
     for _ in 0..args.iterations {
         let start = Instant::now();
         let cost = match args.mode {
-            Mode::Estimate => estimate(black_box(&params), black_box(&EstimateConfig::default())),
+            Mode::Estimate => estimate(black_box(&params), black_box(&args.profile.config())),
             Mode::Fixed => {
                 let beta = args
                     .beta
@@ -52,7 +60,7 @@ fn main() {
                     .unwrap_or_else(|| fatal("--zeta is required for --mode fixed"));
                 let config = EstimateConfig {
                     optimizer: OptimizerConfig::Fixed { beta, zeta },
-                    ..EstimateConfig::default()
+                    ..args.profile.config()
                 };
                 cost_infinity(
                     black_box(beta),
@@ -68,9 +76,9 @@ fn main() {
                 let config = EstimateConfig {
                     optimizer: OptimizerConfig::OptimizeBeta {
                         zeta,
-                        beta: SearchMode::PythonLocalMinimum,
+                        beta: args.profile.beta_search_mode(),
                     },
-                    ..EstimateConfig::default()
+                    ..args.profile.config()
                 };
                 cost_zeta(black_box(zeta), black_box(&params), black_box(&config))
             }
@@ -111,6 +119,7 @@ impl Args {
         let mut args = env::args().skip(1);
         let mut parsed = Self {
             mode: Mode::Estimate,
+            profile: Profile::LocalMinimum,
             family: AkitaModulusFamily::Q32,
             raw_n: None,
             raw_m: None,
@@ -132,6 +141,7 @@ impl Args {
                         .unwrap_or_else(|| fatal(&format!("missing value for {arg}")));
                     match arg.as_str() {
                         "--mode" => parsed.mode = parse_mode(&value),
+                        "--profile" => parsed.profile = parse_profile(&value),
                         "--family" => {
                             parsed.family = AkitaModulusFamily::parse(&value)
                                 .unwrap_or_else(|error| fatal(&format!("{error}")));
@@ -198,12 +208,47 @@ impl Mode {
     }
 }
 
+impl Profile {
+    fn config(self) -> EstimateConfig {
+        match self {
+            Self::LocalMinimum => EstimateConfig::lattice_estimator_parity(),
+            Self::ExhaustiveSerial => EstimateConfig::akita_infinity_table(),
+            Self::ExhaustiveParallel => EstimateConfig {
+                optimizer: OptimizerConfig::OptimizeZeta {
+                    beta: SearchMode::ExhaustiveParallel,
+                    zeta: SearchMode::ExhaustiveParallel,
+                },
+                ..EstimateConfig::default()
+            },
+        }
+    }
+
+    const fn beta_search_mode(self) -> SearchMode {
+        match self {
+            Self::LocalMinimum => SearchMode::PythonLocalMinimum,
+            Self::ExhaustiveSerial => SearchMode::Exhaustive,
+            Self::ExhaustiveParallel => SearchMode::ExhaustiveParallel,
+        }
+    }
+}
+
 fn parse_mode(value: &str) -> Mode {
     match value {
         "estimate" => Mode::Estimate,
         "fixed" => Mode::Fixed,
         "zeta" => Mode::Zeta,
         _ => fatal("mode must be one of: estimate, fixed, zeta"),
+    }
+}
+
+fn parse_profile(value: &str) -> Profile {
+    match value {
+        "local-minimum" | "local_minimum" => Profile::LocalMinimum,
+        "exhaustive-serial" | "exhaustive_serial" => Profile::ExhaustiveSerial,
+        "exhaustive-parallel" | "exhaustive_parallel" => Profile::ExhaustiveParallel,
+        _ => {
+            fatal("--profile must be one of: local-minimum, exhaustive-serial, exhaustive-parallel")
+        }
     }
 }
 
@@ -234,7 +279,7 @@ fn optional_u64_text(value: Option<u64>) -> String {
 
 fn usage(code: i32) -> ! {
     eprintln!(
-        "usage: sis_estimator_once --family q32|q64|q128 (--n N --m N | --d N --rank N --width N) --coeff-linf-bound N [--mode estimate|fixed|zeta] [--beta N] [--zeta N] [--iterations N]"
+        "usage: sis_estimator_once --family q32|q64|q128 (--n N --m N | --d N --rank N --width N) --coeff-linf-bound N [--mode estimate|fixed|zeta] [--profile local-minimum|exhaustive-serial|exhaustive-parallel] [--beta N] [--zeta N] [--iterations N]"
     );
     process::exit(code);
 }
