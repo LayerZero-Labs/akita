@@ -133,7 +133,7 @@ where
     let w_len = segment_lengths.e_len;
     let t_len = segment_lengths.t_len;
     let z_len = segment_lengths.z_len;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let depth_fold = lp.num_digits_fold(num_claims, lp.field_bits_for_cache())?;
     let inner_width = block_len * depth_commit;
     let z_base_len = inner_width;
     let n_a = lp.a_key.row_len();

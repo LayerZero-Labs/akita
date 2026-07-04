@@ -11,12 +11,16 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    golomb_rice_flat_rows_admit_terminal_wire,
-    sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
+    golomb_rice_rows_admit_terminal_wire,
+    sis::{
+        fold_witness_beta, fold_witness_verifier_linf_bound, FoldWitnessGrindContract,
+        FoldWitnessLinfCapPolicy,
+    },
     FoldLinfProtocolBinding, LevelParams, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
+use super::fold_grind_observer::{self, FoldGrindLevelMeta, FoldGrindObservation};
 use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
     window_sparse_challenges, PointFoldShape,
@@ -46,25 +50,82 @@ where
 {
 }
 
-fn accepts_fold_witness<F: CanonicalField>(
+struct FoldGrindAcceptanceCtx {
+    check_grind_cap: bool,
+    check_golomb: bool,
+    witness_linf_cap: u128,
+    digit_negative_abs_bound: u128,
+    digit_positive_bound: u128,
+}
+
+fn fold_grind_acceptance_ctx(
+    contract: &FoldWitnessGrindContract,
+    witness_linf_cap: u128,
+    digit_negative_abs_bound: u128,
+    digit_positive_bound: u128,
+    tail_t_vectors: Option<usize>,
+) -> FoldGrindAcceptanceCtx {
+    FoldGrindAcceptanceCtx {
+        check_grind_cap: contract.policy != FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
+        check_golomb: tail_t_vectors.is_some(),
+        witness_linf_cap,
+        digit_negative_abs_bound,
+        digit_positive_bound,
+    }
+}
+
+fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
+    if coeff < 0 {
+        u128::from(coeff.unsigned_abs()) <= ctx.digit_negative_abs_bound
+    } else {
+        (coeff as u128) <= ctx.digit_positive_bound
+    }
+}
+
+fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     contract: &FoldWitnessGrindContract,
     witness: &DecomposeFoldWitness<F>,
-    ring_d: usize,
+    z_folded_centered_per_chunk: &[Vec<[i32; D]>],
     witness_linf_cap: u128,
+    digit_negative_abs_bound: u128,
+    digit_positive_bound: u128,
     tail_t_vectors: Option<usize>,
 ) -> bool {
-    if contract.policy != FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
-        && u128::from(witness.centered_inf_norm) > witness_linf_cap
+    let ctx = fold_grind_acceptance_ctx(
+        contract,
+        witness_linf_cap,
+        digit_negative_abs_bound,
+        digit_positive_bound,
+        tail_t_vectors,
+    );
+    for coeff in z_folded_centered_per_chunk
+        .iter()
+        .flat_map(|chunk| chunk.iter())
+        .flat_map(|coeffs| coeffs.iter())
+    {
+        if !coeff_within_digit_bounds(*coeff, &ctx) {
+            return false;
+        }
+        if ctx.check_grind_cap && u128::from(coeff.unsigned_abs()) > ctx.witness_linf_cap {
+            return false;
+        }
+    }
+    if ctx.check_grind_cap && u128::from(witness.centered_inf_norm) > ctx.witness_linf_cap {
+        return false;
+    }
+    if ctx.check_golomb
+        && golomb_rice_rows_admit_terminal_wire(
+            witness.centered_coeffs_trusted::<D>(),
+            ctx.witness_linf_cap,
+        )
+        .is_err()
     {
         return false;
     }
-    if tail_t_vectors.is_some()
-        && golomb_rice_flat_rows_admit_terminal_wire(
-            witness.centered_coeffs_flat(),
-            ring_d,
-            witness_linf_cap,
-        )
-        .is_err()
+    if ctx.check_golomb
+        && z_folded_centered_per_chunk
+            .iter()
+            .any(|chunk| golomb_rice_rows_admit_terminal_wire(chunk, ctx.witness_linf_cap).is_err())
     {
         return false;
     }
@@ -205,6 +266,9 @@ fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
     ring_d: usize,
     contract: &FoldWitnessGrindContract,
     witness_linf_cap: u128,
+    digit_negative_abs_bound: u128,
+    digit_positive_bound: u128,
+    level_meta: FoldGrindLevelMeta,
     fold_probe_params: FoldProbeParams,
     probe_nonces: &[u32],
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
@@ -240,15 +304,28 @@ where
             &point_indices,
             fold_probe_params,
         )?;
-        if !accepts_fold_witness::<F>(contract, &witness, ring_d, witness_linf_cap, tail_t_vectors)
-        {
+        if !accepts_fold_witness::<F, D>(
+            contract,
+            &witness,
+            &z_per_chunk,
+            witness_linf_cap,
+            digit_negative_abs_bound,
+            digit_positive_bound,
+            tail_t_vectors,
+        ) {
             continue;
         }
         let z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>> = z_per_chunk
             .into_iter()
             .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
             .collect();
-        super::fold_grind_observer::record_fold_grind_acceptance(nonce, grind_probe_count);
+        fold_grind_observer::record_fold_grind_acceptance(FoldGrindObservation {
+            level_index: fold_grind_observer::next_fold_grind_level_index(),
+            grind_nonce: nonce,
+            grind_probe_count,
+            observed_linf: witness.centered_inf_norm,
+            level_meta,
+        });
         let challenges = sample_folding_challenges::<F, T>(
             transcript,
             ring_d,
@@ -301,7 +378,30 @@ where
     let ring_d = lp.role_dims().d_a();
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
+    // Tail Golomb grinding sizes caps from `tail_t_vectors`; keep observer metrics on the
+    // same claim count so snap hints do not mix β/t*/δ from one count with cap from another.
+    let sizing_claims = tail_t_vectors.unwrap_or(num_claims);
     let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;
+    let digit_plan = lp.fold_witness_linf_digit_plan_for_claims(sizing_claims)?;
+    let delta_fold = digit_plan.delta_fold;
+    let (digit_negative_abs_bound, digit_positive_bound) =
+        akita_types::sis::fold_witness_representable_linf_bounds(lp.log_basis, delta_fold);
+    let verifier_linf_bound = fold_witness_verifier_linf_bound(lp.log_basis, delta_fold);
+    let challenge =
+        akita_types::sis::fold_challenge_norms(&lp.stage1_config, lp.fold_challenge_shape);
+    let witness_norms = lp.fold_witness_norms();
+    let beta_inf = fold_witness_beta(lp.r_vars, sizing_claims, challenge, witness_norms)?;
+    let level_meta = FoldGrindLevelMeta {
+        beta_inf,
+        t_star: digit_plan.t_star,
+        honest_cap: witness_linf_cap,
+        delta_fold,
+        verifier_linf_bound,
+        policy: contract.policy,
+        log_basis: lp.log_basis,
+        r_vars: u32::try_from(lp.r_vars).unwrap_or(u32::MAX),
+        num_claims: u32::try_from(sizing_claims).unwrap_or(u32::MAX),
+    };
     let fold_probe_params = FoldProbeParams::from_level(lp);
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
 
@@ -323,6 +423,9 @@ where
             ring_d,
             &contract,
             witness_linf_cap,
+            digit_negative_abs_bound,
+            digit_positive_bound,
+            level_meta,
             fold_probe_params,
             &probe_nonces,
         )
@@ -386,12 +489,59 @@ mod tests {
             vec![[cap as i32; D]],
             cap as u32,
         );
-        assert!(!accepts_fold_witness::<F>(
+        let chunks = vec![witness.centered_coeffs_owned::<D>()];
+        let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
+        assert!(!accepts_fold_witness::<F, D>(
             &contract,
             &witness,
-            D,
+            &chunks,
             cap,
+            neg_bound,
+            pos_bound,
             Some(1),
+        ));
+    }
+
+    #[test]
+    fn grind_rejects_chunk_payload_outside_snapped_cap() {
+        const D: usize = 4;
+        let cap = 32u128;
+        let contract = FoldWitnessGrindContract {
+            policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
+            witness_linf_cap: cap,
+            max_nonce_exclusive: 8,
+        };
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[12; D]],
+            12,
+        );
+        let chunks = vec![vec![[33, 0, 0, 0]], vec![[-12; D]]];
+        let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
+        assert!(!accepts_fold_witness::<F, D>(
+            &contract, &witness, &chunks, cap, neg_bound, pos_bound, None,
+        ));
+    }
+
+    #[test]
+    fn grind_rejects_positive_coefficients_past_balanced_digit_reach() {
+        const D: usize = 4;
+        let contract = FoldWitnessGrindContract {
+            policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
+            witness_linf_cap: 2080,
+            max_nonce_exclusive: 8,
+        };
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[2022, 0, 0, 0]],
+            2022,
+        );
+        let chunks = vec![witness.centered_coeffs_owned::<D>()];
+        let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(6, 2);
+        assert_eq!(neg_bound, 2080);
+        assert_eq!(pos_bound, 2015);
+        assert!(!accepts_fold_witness::<F, D>(
+            &contract, &witness, &chunks, 2080, neg_bound, pos_bound, None,
         ));
     }
 }

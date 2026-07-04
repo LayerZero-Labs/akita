@@ -107,6 +107,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 name = "profile"
 path = "examples/profile/main.rs"
 
+[[example]]
+name = "fold_linf_stats"
+path = "examples/fold_linf_stats.rs"
+
 [[bench]]
 name = "ring_ntt"
 harness = false

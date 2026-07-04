@@ -393,7 +393,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     num_claims: usize,
 ) -> Result<RecursiveWitnessFlat, AkitaError> {
     let log_basis = lp.log_basis;
-    let num_digits_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let num_digits_fold = lp.num_digits_fold(num_claims, lp.field_bits_for_cache())?;
     let depth_open = lp.num_digits_open;
     let depth_commit = lp.num_digits_commit;
     let block_len = lp.block_len;
