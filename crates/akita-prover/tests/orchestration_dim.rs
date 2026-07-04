@@ -2,8 +2,8 @@
 
 #![allow(missing_docs)]
 
-use akita_config::test_support::ring_plan_test_seed;
 use akita_config::proof_optimized::{fp128, fp64};
+use akita_config::test_support::ring_plan_test_seed;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
@@ -76,12 +76,14 @@ fn validate_role_dispatch_rejects_stack_d_mismatch() {
 fn ring_dim_plan_accepts_uniform_d64_preset() {
     type Cfg = fp64::D64Full;
     let schedule = real_schedule::<Cfg>(10);
-    RingDimPlan::from_schedule(&schedule, &ring_plan_test_seed(Cfg::D)).expect("uniform preset envelope");
+    RingDimPlan::from_schedule(&schedule, &ring_plan_test_seed(Cfg::D))
+        .expect("uniform preset envelope");
 }
 
 #[test]
 fn ring_dim_plan_accepts_fp128_d64_preset() {
     type Cfg = fp128::D64Full;
     let schedule = real_schedule::<Cfg>(12);
-    RingDimPlan::from_schedule(&schedule, &ring_plan_test_seed(Cfg::D)).expect("fp128 uniform preset envelope");
+    RingDimPlan::from_schedule(&schedule, &ring_plan_test_seed(Cfg::D))
+        .expect("fp128 uniform preset envelope");
 }

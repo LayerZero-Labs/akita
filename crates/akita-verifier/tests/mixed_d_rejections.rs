@@ -126,10 +126,15 @@ fn ring_dim_plan_accepts_mixed_d_per_level_fixture() {
     let plan = RingDimPlan::from_schedule(&schedule, &seed).expect("mixed-D plan");
     assert_eq!(plan.dim_at(0).expect("level 0"), 128);
     assert_eq!(plan.dim_at(2).expect("level 2"), 64);
-    for (level, step) in schedule.steps.iter().filter_map(|s| match s {
-        Step::Fold(f) => Some(f),
-        _ => None,
-    }).enumerate() {
+    for (level, step) in schedule
+        .steps
+        .iter()
+        .filter_map(|s| match s {
+            Step::Fold(f) => Some(f),
+            _ => None,
+        })
+        .enumerate()
+    {
         assert_eq!(
             plan.dims_at(level).expect("plan dims"),
             step.params.role_dims,

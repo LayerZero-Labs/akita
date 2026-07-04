@@ -317,7 +317,10 @@ where
             full_vec_randomness,
             offset_r,
             -denom,
-            &[&r_gadget_ext, &prepared.eq_tau1[..prepared.setup_contribution_inputs.rows]],
+            &[
+                &r_gadget_ext,
+                &prepared.eq_tau1[..prepared.setup_contribution_inputs.rows],
+            ],
         )
     } else {
         let _span = tracing::info_span!("r_dense").entered();
@@ -349,8 +352,8 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningClaimsLayout,
-        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SetupContributionPlanInputs,
-        SisModulusFamily, WitnessLayout,
+        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+        SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
     };
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;

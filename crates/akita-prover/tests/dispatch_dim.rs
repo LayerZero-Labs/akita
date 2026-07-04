@@ -174,12 +174,7 @@ fn ring_dim_plan_rejects_fp128_schedule_against_too_small_gen_ring_dim() {
 /// gen_ring_dim = 256; levels use 32, 64, 128, 256 — all divide 256.
 #[test]
 fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
-    let sched = mixed_d_schedule(&[
-        (32, 4, 8),
-        (64, 4, 4),
-        (128, 2, 4),
-        (256, 2, 2),
-    ]);
+    let sched = mixed_d_schedule(&[(32, 4, 8), (64, 4, 4), (128, 2, 4), (256, 2, 2)]);
     let plan = RingDimPlan::from_schedule(&sched, &test_seed(256)).expect("all dims divide 256");
     assert_eq!(plan.num_folds(), 4);
 
@@ -195,7 +190,11 @@ fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
         };
         let lp = &step.params;
         assert_eq!(lp.d_a(), d, "level {level} d_a");
-        assert_eq!(lp.n_ring_elems().expect("n_ring_elems"), nr, "level {level} n_ring_elems");
+        assert_eq!(
+            lp.n_ring_elems().expect("n_ring_elems"),
+            nr,
+            "level {level} n_ring_elems"
+        );
         assert_eq!(
             lp.flat_field_len().expect("flat_field_len"),
             ff,
@@ -208,11 +207,7 @@ fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
 /// gen_ring_dim — this must be rejected.
 #[test]
 fn ring_dim_plan_rejects_mixed_d_schedule_one_bad_level() {
-    let sched = mixed_d_schedule(&[
-        (64, 4, 4),
-        (96, 4, 4),
-        (128, 2, 4),
-    ]);
+    let sched = mixed_d_schedule(&[(64, 4, 4), (96, 4, 4), (128, 2, 4)]);
     let err = RingDimPlan::from_schedule(&sched, &test_seed(256))
         .expect_err("96 does not divide 256; must be rejected");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
@@ -223,7 +218,7 @@ fn ring_dim_plan_rejects_mixed_d_schedule_one_bad_level() {
 #[test]
 fn ring_dim_plan_rejects_level_ring_dim_larger_than_gen_ring_dim() {
     let sched = mixed_d_schedule(&[(64, 4, 4), (512, 2, 2)]);
-    let err = RingDimPlan::from_schedule(&sched, &test_seed(256))
-        .expect_err("512 does not divide 256");
+    let err =
+        RingDimPlan::from_schedule(&sched, &test_seed(256)).expect_err("512 does not divide 256");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }

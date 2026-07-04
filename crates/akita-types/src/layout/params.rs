@@ -8,8 +8,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
-use crate::schedule::PrecommittedGroupParams;
 use crate::layout::ring_dims::CommitmentRingDims;
+use crate::schedule::PrecommittedGroupParams;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
@@ -616,14 +616,12 @@ impl LevelParams {
     ///
     /// Returns [`AkitaError::InvalidSetup`] on overflow.
     pub fn n_ring_elems(&self) -> Result<usize, AkitaError> {
-        self.num_blocks
-            .checked_mul(self.block_len)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "num_blocks={} * block_len={} overflows usize",
-                    self.num_blocks, self.block_len,
-                ))
-            })
+        self.num_blocks.checked_mul(self.block_len).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "num_blocks={} * block_len={} overflows usize",
+                self.num_blocks, self.block_len,
+            ))
+        })
     }
 
     /// Total flat field-element count (`n_ring_elems * d_a`).

@@ -13,10 +13,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_ring_dim_result, ensure_setup_envelope, gadget_row_scalars,
-    select_setup_prefix_slot, stage3_offload_natural_field_len, AkitaExpandedSetup,
-    AkitaVerifierSetup, LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    dispatch_ring_dim_result, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
+    SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product

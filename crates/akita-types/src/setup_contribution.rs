@@ -1082,14 +1082,12 @@ mod tests {
         lp.block_len = 8;
         lp.num_digits_commit = 2;
         lp.num_digits_open = 3;
-        assert!(
-            SetupContributionPlanInputs::<F>::from_level_params(
-                &lp,
-                2,
-                MRowLayout::WithoutDBlock,
-                2,
-            )
-            .is_err()
-        );
+        assert!(SetupContributionPlanInputs::<F>::from_level_params(
+            &lp,
+            2,
+            MRowLayout::WithoutDBlock,
+            2,
+        )
+        .is_err());
     }
 }

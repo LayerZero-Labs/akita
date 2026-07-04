@@ -3,8 +3,8 @@
 //! Presets are unit structs that bind [`CommitmentConfig`] hooks to
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
-use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
 use super::CommitmentConfig;
+use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
 use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
@@ -281,8 +281,7 @@ pub fn setup_level_params_from_runtime_schedule(steps: &[akita_types::Step]) -> 
 
 fn matrix_envelope_for_levels(
     setup_levels: &[LevelParams],
-) -> Result<SetupMatrixEnvelope, AkitaError>
-{
+) -> Result<SetupMatrixEnvelope, AkitaError> {
     let mut max_setup_len: usize = 1;
     for lp in setup_levels {
         accumulate_matrix_envelope_for_level(lp, &mut max_setup_len)?;

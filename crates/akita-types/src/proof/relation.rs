@@ -1,8 +1,8 @@
 //! Shared protocol relation helpers.
 
 use crate::dispatch_ring_dim_result;
-use crate::proof::RingVec;
 use crate::layout::CommitmentRingDims;
+use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;

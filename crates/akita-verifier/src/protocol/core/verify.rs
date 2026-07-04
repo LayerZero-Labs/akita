@@ -18,9 +18,8 @@ use akita_types::dispatch_ring_dim_result;
 use akita_types::{
     should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, Commitment,
-    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingVec, RingView, Schedule,
-    SetupContributionMode, Step, RingDimPlan,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingDimPlan, RingVec, RingView,
+    Schedule, SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 use std::array::from_fn;
 

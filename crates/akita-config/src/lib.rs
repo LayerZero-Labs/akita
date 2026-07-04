@@ -89,10 +89,10 @@ macro_rules! impl_multi_chunk_companion {
 
 pub mod conservative_commitment;
 pub mod generated_families;
+mod matrix_envelope;
 pub mod proof_optimized;
 pub mod schedule_selection;
 pub mod tensor_verifier;
-mod matrix_envelope;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;

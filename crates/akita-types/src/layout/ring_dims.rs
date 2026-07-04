@@ -268,8 +268,8 @@ mod tests {
     use super::*;
     use crate::layout::LevelParams;
     use crate::schedule::{DirectStep, FoldStep, Schedule, Step};
-    use crate::CleartextWitnessShape;
     use crate::sis::SisModulusFamily;
+    use crate::CleartextWitnessShape;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::AkitaError;
 

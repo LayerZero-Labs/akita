@@ -17,10 +17,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot, stage3_offload_natural_field_len,
-    AkitaExpandedSetup, FpExtEncoding, LevelParams, RingRelationInstance, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    stage3_offload_natural_field_len, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
