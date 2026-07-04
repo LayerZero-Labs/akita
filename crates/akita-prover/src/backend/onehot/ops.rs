@@ -836,6 +836,6 @@ where
             plan.log_basis,
         )?;
 
-        Ok(CommitInnerWitness::from_parts(t, decomposed_inner_rows)?)
+        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
     }
 }
