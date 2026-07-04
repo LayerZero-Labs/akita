@@ -42,11 +42,6 @@ pub(crate) fn group_root_params_from_layout(
         layout.validate()?;
         layout.validate_root_geometry(policy.ring_dimension)?;
     }
-    if policy.tiered {
-        return Err(AkitaError::InvalidSetup(
-            "tiered grouped roots are not supported; see specs/multi-group-batching.md".to_string(),
-        ));
-    }
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let d = policy.ring_dimension;
@@ -353,7 +348,7 @@ fn grouped_root_m_row_count(params: &LevelParams, layout: MRowLayout) -> Result<
     // The grouped root has one public output row and one commitment/A block per group.
     rows = rows
         .checked_add(params.precommitted_groups.len() + 1)
-        .and_then(|n| n.checked_add(params.effective_commit_rows()))
+        .and_then(|n| n.checked_add(params.b_key.row_len()))
         .and_then(|n| n.checked_add(params.a_key.row_len()))
         .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
     for group in &params.precommitted_groups {
@@ -535,8 +530,6 @@ fn grouped_root_main_level_params_candidate(
         num_digits_commit,
         num_digits_open,
         onehot_chunk_size,
-        tier_split: 1,
-        f_key: None,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
         num_digits_fold_one: 1,
         field_bits_hint: 0,
@@ -634,12 +627,6 @@ pub fn find_group_batch_schedule(
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );
-    }
-    if policy.tiered {
-        return Err(AkitaError::InvalidSetup(
-            "tiered multi-group root batching is not supported; see specs/multi-group-batching.md"
-                .to_string(),
-        ));
     }
     if policy.decomposition.log_commit_bound != 1 {
         return Err(AkitaError::InvalidSetup(
@@ -854,7 +841,6 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
-            tiered: false,
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         }
     }

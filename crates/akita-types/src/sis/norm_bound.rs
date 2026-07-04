@@ -10,15 +10,17 @@ use akita_field::AkitaError;
 
 use super::ajtai_key::{ceil_supported_linf_bound, min_secure_rank, SisModulusFamily, SisTableKey};
 use super::decomposition_digits::{
-    fold_witness_verifier_linf_bound, num_digits_fold, num_digits_for_bound,
+    fold_witness_representable_linf_bounds, fold_witness_verifier_linf_bound, num_digits_fold,
+    num_digits_for_bound,
 };
-use crate::DecompositionParams;
+use crate::{DecompositionParams, FoldLinfProtocolBinding};
 
 pub use super::fold_linf_cap::{
     fold_witness_linf_cap_policy, fold_witness_linf_ln_term,
     fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
     fold_witness_linf_tensor_tail_bound_sq, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
 };
 
@@ -144,6 +146,134 @@ impl FoldWitnessNorms {
     }
 }
 
+/// Result of sizing `δ_fold` and the grind cap together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FoldWitnessLinfDigitPlan {
+    /// Balanced digit depth for folded witness `z`.
+    pub delta_fold: usize,
+    /// Honest-prover grind threshold after optional digit snap-down.
+    pub grind_cap: u128,
+    /// Pre-snap cap `min(β_inf, t*)` (or `β_inf` alone).
+    pub pre_snap_cap: u128,
+    /// Sub-Gaussian tail cap `t*` when tail-bound-with-grind is active.
+    pub t_star: Option<u128>,
+}
+
+fn fold_witness_pre_snap_linf_cap(
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+    r_vars: usize,
+    num_claims: usize,
+    cap_config: &FoldWitnessLinfCapConfig,
+) -> Result<(u128, Option<u128>), AkitaError> {
+    let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
+    if beta == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "fold_witness_honest_prover_linf_cap: folded-witness bound β = 0".to_string(),
+        ));
+    }
+    let witness_linf_sq = witness
+        .infinity_norm()
+        .saturating_mul(witness.infinity_norm());
+    match cap_config.policy {
+        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok((beta, None)),
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
+            let t_sq = fold_witness_linf_tail_bound_for_config_sq(
+                r_vars,
+                num_claims,
+                witness_linf_sq,
+                cap_config,
+            )?;
+            let t_star = isqrt_ceil(t_sq);
+            Ok((beta.min(t_star), Some(t_star)))
+        }
+    }
+}
+
+/// Integer retain floor `⌊retain_num/retain_den · t*⌋`, clamped to at least 1.
+#[must_use]
+pub fn snap_min_tstar_retain_floor(t_star: u128, retain_num: u128, retain_den: u128) -> u128 {
+    if t_star == 0 || retain_den == 0 {
+        return 1;
+    }
+    (t_star.saturating_mul(retain_num) / retain_den).max(1)
+}
+
+/// Walk `δ_fold` downward while the symmetric honest-prover digit envelope at
+/// `δ-1` still clears `retain_num/retain_den · t*`.
+#[must_use]
+pub fn snap_num_digits_fold_down(
+    log_basis: u32,
+    delta_base: usize,
+    pre_snap_cap: u128,
+    t_star: u128,
+    retain_num: u128,
+    retain_den: u128,
+) -> (usize, u128) {
+    if delta_base <= 1 || t_star == 0 || retain_den == 0 {
+        return (delta_base, pre_snap_cap);
+    }
+    let floor = snap_min_tstar_retain_floor(t_star, retain_num, retain_den);
+    let mut delta = delta_base;
+    let mut grind_cap = pre_snap_cap;
+    while delta > 1 {
+        let (_, positive_lower) = fold_witness_representable_linf_bounds(log_basis, delta - 1);
+        if positive_lower < floor {
+            break;
+        }
+        delta -= 1;
+        let (_, positive_at) = fold_witness_representable_linf_bounds(log_basis, delta);
+        grind_cap = pre_snap_cap.min(positive_at);
+    }
+    (delta, grind_cap)
+}
+
+/// Canonical fold-l∞ digit sizing: pre-snap tail cap, optional digit snap-down,
+/// and the grind cap aligned with the snapped `δ_fold`.
+///
+/// # Errors
+///
+/// Propagates [`fold_witness_beta`] / tail-bound setup errors.
+pub fn fold_witness_linf_digit_plan(
+    r_vars: usize,
+    num_claims: usize,
+    field_bits: u32,
+    log_basis: u32,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+    cap_config: &FoldWitnessLinfCapConfig,
+) -> Result<FoldWitnessLinfDigitPlan, AkitaError> {
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let snap_retain_num = u128::from(binding.snap_min_tstar_retain_num);
+    let snap_retain_den = u128::from(binding.snap_min_tstar_retain_den);
+    let (pre_snap_cap, t_star) =
+        fold_witness_pre_snap_linf_cap(challenge, witness, r_vars, num_claims, cap_config)?;
+    let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);
+    let delta_base = num_digits_for_bound(log_cap, field_bits, log_basis);
+    let (delta_fold, grind_cap) = match (cap_config.policy, t_star) {
+        (
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind
+            | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
+            Some(t),
+        ) if snap_retain_den > 0 => snap_num_digits_fold_down(
+            log_basis,
+            delta_base,
+            pre_snap_cap,
+            t,
+            snap_retain_num,
+            snap_retain_den,
+        ),
+        _ => (delta_base, pre_snap_cap),
+    };
+    Ok(FoldWitnessLinfDigitPlan {
+        delta_fold,
+        grind_cap,
+        pre_snap_cap,
+        t_star,
+    })
+}
+
 /// Honest-prover coefficient-`L∞` target for the folded witness `z`.
 ///
 /// Drives grind retries and sizes `δ_fold` via [`super::decomposition_digits::num_digits_fold`].
@@ -159,30 +289,14 @@ pub fn fold_witness_honest_prover_linf_cap(
     witness: FoldWitnessNorms,
     r_vars: usize,
     num_claims: usize,
+    field_bits: u32,
+    log_basis: u32,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<u128, AkitaError> {
-    let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
-    if beta == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "fold_witness_honest_prover_linf_cap: folded-witness bound β = 0".to_string(),
-        ));
-    }
-    let witness_linf_sq = witness
-        .infinity_norm()
-        .saturating_mul(witness.infinity_norm());
-    match cap_config.policy {
-        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Ok(beta),
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind
-        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
-            let t_sq = fold_witness_linf_tail_bound_for_config_sq(
-                r_vars,
-                num_claims,
-                witness_linf_sq,
-                cap_config,
-            )?;
-            Ok(beta.min(isqrt_ceil(t_sq)))
-        }
-    }
+    Ok(fold_witness_linf_digit_plan(
+        r_vars, num_claims, field_bits, log_basis, challenge, witness, cap_config,
+    )?
+    .grind_cap)
 }
 
 /// A-role committed-level coefficient-`L∞` collision bucket.
@@ -377,18 +491,6 @@ pub fn rounded_up_collision_linf_w(
     rounded_up_collision_linf_t(min_security_bits, sis_family, d, log_basis)
 }
 
-/// Tiered-commitment second-tier (`F`) rounded-up SIS coefficient-`L∞` bucket. The
-/// matrix `F` commits the balanced base-`2^log_basis` digits of `u_1 ‖ … ‖ u_f`,
-/// so its collision is the same digit-range difference as the B/D roles.
-pub fn rounded_up_collision_linf_tiered_commitment(
-    min_security_bits: u16,
-    sis_family: SisModulusFamily,
-    d: usize,
-    log_basis: u32,
-) -> Option<u128> {
-    rounded_up_collision_linf_t(min_security_bits, sis_family, d, log_basis)
-}
-
 /// Deterministic coefficient-`L∞` envelope on the folded witness sum
 /// `z = Σ c_i·s_i` (written `β_inf` in specs):
 ///
@@ -560,8 +662,16 @@ mod tests {
         };
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&stage1_config, fold_shape, 64, 2).unwrap();
-        let honest_cap =
-            fold_witness_honest_prover_linf_cap(challenge, witness, 4, 1, &cap_config).unwrap();
+        let honest_cap = fold_witness_honest_prover_linf_cap(
+            challenge,
+            witness,
+            4,
+            1,
+            decomposition.field_bits(),
+            decomposition.log_basis,
+            &cap_config,
+        )
+        .unwrap();
         let delta_fold = num_digits_fold(
             4,
             1,
@@ -574,8 +684,8 @@ mod tests {
         .unwrap();
         let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
         assert!(
-            z_bound > honest_cap,
-            "verifier envelope {z_bound} must exceed honest cap {honest_cap}"
+            z_bound >= honest_cap,
+            "verifier envelope {z_bound} must cover honest cap {honest_cap}"
         );
         let digit_priced = committed_fold_collision_linf_bound(
             DEFAULT_SIS_SECURITY_BITS,
@@ -606,6 +716,73 @@ mod tests {
             digit_priced > cap_priced,
             "digit-priced {digit_priced} must exceed honest-cap-priced {cap_priced}",
         );
+    }
+
+    #[test]
+    fn snap_min_tstar_retain_floor_uses_integer_division() {
+        assert_eq!(snap_min_tstar_retain_floor(739, 1, 2), 369);
+        assert_eq!(snap_min_tstar_retain_floor(739, 5_000, 10_000), 369);
+    }
+
+    #[test]
+    fn snap_num_digits_fold_down_uses_positive_digit_reach() {
+        // δ=5 has negative reach 682 but positive reach only 341, so it cannot
+        // serve a symmetric honest cap at the 50% floor of 739.
+        let (delta, grind_cap) = snap_num_digits_fold_down(2, 6, 739, 739, 1, 2);
+        assert_eq!(delta, 6);
+        assert_eq!(grind_cap, 739);
+
+        let (delta, grind_cap) = snap_num_digits_fold_down(2, 6, 600, 600, 1, 2);
+        assert_eq!(delta, 5);
+        assert_eq!(grind_cap, 341);
+        assert_eq!(
+            grind_cap,
+            fold_witness_representable_linf_bounds(2, delta).1
+        );
+    }
+
+    #[test]
+    fn fold_linf_digit_plan_applies_snap_for_tail_bound_levels() {
+        use crate::DecompositionParams;
+        use akita_challenges::{
+            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_EXACT_SHELL_MAG1,
+            D64_PRODUCTION_EXACT_SHELL_MAG2,
+        };
+
+        let stage1_config = SparseChallengeConfig::ExactShell {
+            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
+            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+        };
+        let fold_shape = TensorChallengeShape::Flat;
+        let challenge = fold_challenge_norms(&stage1_config, fold_shape);
+        let witness = FoldWitnessNorms::new(3, 64, 1, false);
+        let decomposition = DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: 128,
+            log_open_bound: None,
+        };
+        let cap_config =
+            FoldWitnessLinfCapConfig::for_fold_level(&stage1_config, fold_shape, 64, 2).unwrap();
+        let plan = fold_witness_linf_digit_plan(
+            5,
+            1,
+            decomposition.field_bits(),
+            decomposition.log_basis,
+            challenge,
+            witness,
+            &cap_config,
+        )
+        .unwrap();
+        let t_star = plan.t_star.expect("tail-bound level should expose t*");
+        let delta_unsnapped = num_digits_for_bound(
+            (128 - plan.pre_snap_cap.leading_zeros()).saturating_add(1),
+            decomposition.field_bits(),
+            decomposition.log_basis,
+        );
+        if plan.delta_fold < delta_unsnapped {
+            assert!(plan.grind_cap <= plan.pre_snap_cap);
+            assert!(plan.grind_cap >= t_star / 2);
+        }
     }
 
     #[test]

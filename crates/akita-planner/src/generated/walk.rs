@@ -711,16 +711,6 @@ fn validate_expanded_level_params(
             "generated one-hot root has mismatched chunk size".to_string(),
         ));
     }
-    if step.tier_split.is_some() != step.n_f.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "generated tiered step must set both tier_split and n_f, or neither".to_string(),
-        ));
-    }
-    if !policy.tiered && (step.tier_split.is_some() || step.n_f.is_some()) {
-        return Err(AkitaError::InvalidSetup(
-            "generated tiered step is not allowed by the planner policy".to_string(),
-        ));
-    }
     lp.num_digits_fold(num_claims, policy.decomposition.field_bits())?;
     Ok(lp.clone())
 }

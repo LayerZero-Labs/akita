@@ -426,8 +426,7 @@ where
         y_v_slice,
         commitment_rows,
         n_d_active,
-        prepared.lp.effective_commit_rows(),
-        prepared.lp.b_inner_rows_per_group(),
+        prepared.lp.b_key.row_len(),
         prepared.lp.a_key.row_len(),
     )?;
     let relation_instance = RingRelationInstance::new(
@@ -472,6 +471,7 @@ where
     let relation_claim = relation_claim_from_rows_extension::<F, E, D>(
         &rs.tau1,
         rs.alpha,
+        prepared.lp.a_key.row_len(),
         &relation_instance.v,
         commitment_rows,
     )?;

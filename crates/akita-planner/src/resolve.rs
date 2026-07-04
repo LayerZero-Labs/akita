@@ -134,7 +134,6 @@ mod tests {
             chal_ext_degree: 4,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
-            tiered: false,
             witness_chunk: ChunkedWitnessCfg::default(),
         }
     }
@@ -159,12 +158,6 @@ mod tests {
             n_a: lp.a_key.row_len() as u32,
             n_b: lp.b_key.row_len() as u32,
             n_d: lp.d_key.row_len() as u32,
-            tier_split: if lp.tier_split > 1 {
-                Some(lp.tier_split as u32)
-            } else {
-                None
-            },
-            n_f: lp.f_key.as_ref().map(|f| f.row_len() as u32),
         }
     }
 
@@ -276,17 +269,6 @@ mod tests {
         let key = PolynomialGroupLayout::new(20, 1);
         let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
             .expect_err("non-power-of-two chunk count must be rejected");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn find_schedule_rejects_tiered_multi_chunk() {
-        let mut policy = flat_policy();
-        policy.tiered = true;
-        policy.witness_chunk = ChunkedWitnessCfg::d64_production();
-        let key = PolynomialGroupLayout::new(20, 1);
-        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
-            .expect_err("tiered + multi-chunk must be rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 

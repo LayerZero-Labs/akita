@@ -10,13 +10,11 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::{
     schedule_terminal_direct_witness_shape, should_reject_grouped_root,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, GROUPED_ROOT_TIERED_UNSUPPORTED,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 
 fn grouped_root_prover_error(message: &'static str) -> AkitaError {
-    if message == GROUPED_ROOT_TIERED_UNSUPPORTED
-        || message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED
-    {
+    if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
         AkitaError::InvalidSetup(message.to_string())
     } else {
         AkitaError::InvalidInput(message.to_string())
@@ -128,7 +126,6 @@ where
     let flat_polys = claims.flat_polys();
     if let Some(message) = should_reject_grouped_root(
         &opening_batch,
-        Cfg::TIERED_COMMITMENT,
         setup_contribution_mode,
         Some(
             flat_polys

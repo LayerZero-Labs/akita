@@ -334,17 +334,16 @@ num_commitment_groups = G
 num_t_vectors_total   = sum_g K_g
 num_w_vectors_root    = sum_g W_g
 num_z_vectors_root    = G
-num_public_rows       = 1
+num_z_segments        = G
 ```
 
 `W_g` is the number of opening-side `w_hat` vectors contributed by group `g`.
 The current first rollout has `W_g = 1` for every group, so
-`num_w_vectors_root = G` in the implemented scheduler. `num_z_vectors_root = G`
-means each group contributes one folded response segment `z_hat_g`.
-`num_public_rows = 1` means the root M relation has one public output claim row
-for the entire grouped batch, matching the trace-style batching model. All
-groups' claimed evaluations are folded into that single public row rather than
-becoming per-group or per-polynomial public rows.
+`num_w_vectors_root = G` in the implemented scheduler. `num_z_segments = G`
+means each group contributes one folded response segment `z_hat_g`. Public
+openings bind through the fused trace term in stage-2 sumcheck, not through
+dedicated M-matrix rows (see
+[`specs/commitment-compression-cutover.md`](commitment-compression-cutover.md)).
 
 Recursive suffix levels continue to use:
 
@@ -440,13 +439,13 @@ G                   = 1 + precommitteds.len()
 num_t_vectors_total = final_group.num_polynomials + sum(precommitted.group.num_polynomials)
 num_w_vectors_root  = sum_g W_g
 num_z_vectors_root  = G
-num_public_rows     = 1
+num_z_segments      = G
 ```
 
 For the current supported grouped root, each group contributes one `w_hat_g`, so
-`sum_g W_g = G`. `num_public_rows` is the number of public output rows in the
-root M relation. In this grouped same-point design that is one row for the whole
-batch, not one row per commitment group or polynomial claim.
+`sum_g W_g = G`. `num_z_segments` is the witness `z_folded` segment count, not
+an M-row count. Public openings bind through the fused trace term, not through
+dedicated M-matrix rows.
 
 ## Generated Schedule Keys
 
@@ -792,14 +791,18 @@ M-row count is:
 
 ```text
 1 consistency row
-optional D rows, present for MRowLayout::WithDBlock
-1 public output row
-final/main group COMMIT rows
 final/main group A rows
+final/main group B rows
 for each precommitted group:
-    B rows for that group
     A rows for that group
+    B rows for that group
+optional D rows, present for MRowLayout::WithDBlock
 ```
+
+This matches the scalar post-PR1 layout (`consistency | A | B | D`) extended
+per group: each group relation has its own A and B blocks, and the shared D block
+trails all group blocks. Public openings bind through the fused trace term, not
+through M rows.
 
 There is no shared A block in the grouped root model. Each group relation has
 its own A role, even if two groups happen to use identical dimensions or the same
@@ -810,8 +813,8 @@ stores the params needed to derive them in the root `LevelParams`: the normal
 fields describe the final group, and `precommitted_groups` describes the earlier
 groups. Scalar row-offset helpers reject grouped roots today. Any future proof or
 verifier path that consumes grouped params must account for `G` group blocks and
-one shared public output row. Hardcoding `G = 1` in a verifier-reachable grouped
-path is invalid.
+one shared D block. Hardcoding `G = 1` in a verifier-reachable grouped path is
+invalid.
 
 ## Phase 2 Relation Quotient Requirements
 
@@ -820,8 +823,8 @@ The grouped root quotient must:
 - validate `commitments.len() == G`;
 - validate `hints.len() == G` on the prover side;
 - validate each commitment's row length against that group's params;
-- produce one public output row for the whole grouped batch;
-- produce `G` COMMIT row blocks;
+- bind public openings through the fused trace term for the whole grouped batch;
+- produce `G` B (commitment) row blocks;
 - produce one `z_hat_g` segment per group;
 - compute the D rows over `concat(w_hat_0, ..., w_hat_{G-1})`;
 - compute per-group A/B quotient rows with the correct per-group `m`, `r`,
@@ -1071,8 +1074,7 @@ The grouped root is expected to cost more than a scalar same-point batch when al
 polynomials are known up front. The grouped root pays for:
 
 - one `z_hat_g` segment per group;
-- one public output row for the whole grouped batch;
-- one COMMIT block per group;
+- one B block per group;
 - one A block per group in the initial grouped relation;
 - repeated B traversal and padding for unequal `K_g`;
 - conservative B ranks for precommitted groups.
@@ -1231,7 +1233,7 @@ paths still work, and unsupported grouped proof paths fail explicitly.
   - `num_t_vectors_total = sum_g K_g`;
   - `num_w_vectors_root = sum_g W_g`;
   - `num_z_vectors_root = G`;
-  - `num_public_rows = 1`.
+  - `num_z_segments = G`.
 - Implemented `PrecommittedGroupParams`.
 - Implemented conservative B rank selection for standalone groups through
   `ConservativeCommitmentConfig<Cfg>`.

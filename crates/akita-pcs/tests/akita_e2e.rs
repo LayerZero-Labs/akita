@@ -628,6 +628,38 @@ fn full_d64_prove_verify() {
     });
 }
 
+/// Snap-regenerated `fp128_d64_full` schedules must verify at production `nv` keys.
+#[test]
+fn full_d64_snap_regen_prove_verify_nv24() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::D64Full;
+        const D: usize = Cfg::D;
+        const NV: usize = 24;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+            make_dense_fixture::<F, D, Cfg>(NV, b"akita_e2e/snap-regen-nv24");
+
+        let commitments = [commitment];
+        let openings = [opening];
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/snap-regen-nv24");
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&opening_point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert!(
+            result.is_ok(),
+            "snap-regen dense fp128_d64 nv={NV} must verify: {:?}",
+            result.err()
+        );
+    });
+}
+
 #[test]
 fn trace_internalization_rejects_tampered_root_fold_handle() {
     init_rayon_pool();

@@ -116,10 +116,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_d: usize,
     pub(crate) m_row_layout: MRowLayout,
     pub(crate) n_b: usize,
-    /// Tiered split factor `f` (`1` = single-tier).
-    pub(crate) tier_split: usize,
-    /// Second-tier `F` rank (`0` = single-tier); the sent-commitment length.
-    pub(crate) n_f: usize,
     pub(crate) rows: usize,
     pub(crate) num_polys: usize,
     /// Resolved witness column layout (one chunk for the single-chunk case,
@@ -237,7 +233,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
-    let m_rows = lp.m_row_count_for(1, 0, m_row_layout)?;
+    let m_rows = lp.m_row_count_for(1, m_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
@@ -337,7 +333,7 @@ where
     validate_log_basis(log_basis)?;
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
+    let depth_fold = lp.num_digits_fold(num_claims, lp.field_bits_for_cache())?;
     let num_blocks = lp.num_blocks;
     if num_blocks == 0 || !num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
@@ -394,19 +390,12 @@ where
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(num_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
-    // Tiered: the stored first-tier `B'` is the full B width divided by the
-    // reuse factor `tier_split`.
-    let expected_stored_b_width = if lp.f_key.is_some() {
-        expected_b_width.div_ceil(lp.tier_split.max(1))
-    } else {
-        expected_b_width
-    };
-    if lp.b_key.col_len() < expected_stored_b_width {
+    if lp.b_key.col_len() < expected_b_width {
         return Err(AkitaError::InvalidSetup(
             "B-key column width is too small for verifier layout".to_string(),
         ));
     }
-    let rows = lp.m_row_count_for(1, 0, m_row_layout)?;
+    let rows = lp.m_row_count_for(1, m_row_layout)?;
 
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
@@ -468,8 +457,6 @@ where
         n_d,
         m_row_layout,
         n_b,
-        tier_split: lp.tier_split,
-        n_f: lp.f_key.as_ref().map_or(0, |fk| fk.row_len()),
         rows,
         num_polys,
         chunk_layout,
@@ -484,14 +471,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
     #[inline(always)]
     pub(crate) fn total_blocks(&self) -> usize {
         self.num_blocks * self.num_claims
-    }
-
-    /// Number of active D rows in the selected M-row layout.
-    pub(crate) fn n_d_active(&self) -> usize {
-        match self.m_row_layout {
-            MRowLayout::WithDBlock => self.n_d,
-            MRowLayout::WithoutDBlock => 0,
-        }
     }
 
     pub(crate) fn chunk_layout(&self) -> &WitnessLayout {
@@ -516,9 +495,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             num_segments: 1,
             rows: self.rows,
             num_polys_per_segment: vec![self.num_polys],
-            num_public_rows: 0,
-            tier_split: self.tier_split,
-            n_f: self.n_f,
         }
     }
 
@@ -602,20 +578,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             }
         }
 
-        // Canonical A-block start (tiered-aware): consistency | public | D |
-        // COMMIT (F when tiered, else B) | B_inner (tiered) | A.
-        let commit_rows_pg = if self.tier_split > 1 {
-            self.n_f
-        } else {
-            self.n_b
-        };
-        let b_inner_rows_pg = if self.tier_split > 1 {
-            self.tier_split * self.n_b
-        } else {
-            0
-        };
-        let a_start = 1 + self.n_d_active() + (commit_rows_pg + b_inner_rows_pg);
-        let a_row_count = self.rows.saturating_sub(a_start);
+        // Canonical A-block start: consistency (1) | A | B | D.
+        let a_start = 1usize;
+        let a_row_count = self.n_a;
 
         // ----- E-hat / T-hat / Z structured: fold over chunks ----------------
         // `e`/`t` are partitioned (each chunk covers a disjoint global block
@@ -664,7 +629,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 t_structured_contribution += TStructuredSlicesEvaluator {
                     gadget_vector: &g1_open,
                     challenge_block_summaries: &summaries,
-                    a_row_weights: &self.eq_tau1[a_start..self.rows],
+                    a_row_weights: &self.eq_tau1[a_start..(a_start + a_row_count)],
                     high_eq_table: &eq_hi_t_table,
                 }
                 .evaluate();
@@ -754,43 +719,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             compute_r_contribution(self, x_challenges, offset_r, denom, &r_gadget)?
         };
 
-        // ----- Tiered B_inner RHS: -recompose(û_concat) (single-chunk only) --
-        let u_recompose_contribution = if self.tier_split > 1 {
-            let (last_chunk, _) = layout.last_chunk()?;
-            let offset_u = last_chunk.offset_u.ok_or_else(|| {
-                AkitaError::InvalidSetup("tiered level is missing the û_concat offset".to_string())
-            })?;
-            let n_d_active = self.n_d_active();
-            let f_start = 1 + n_d_active;
-            let b_inner_start = f_start + commit_rows_pg;
-            let inner_rows_pg = self.tier_split * self.n_b;
-            let mut acc = E::zero();
-            for slice_row in 0..inner_rows_pg {
-                let row = b_inner_start + slice_row;
-                let row_w = self.eq_tau1[row];
-                if row_w.is_zero() {
-                    continue;
-                }
-                let base_col = offset_u + slice_row * self.depth_open;
-                let mut recomp = E::zero();
-                for (digit, &gd) in g1_open.iter().enumerate().take(self.depth_open) {
-                    let eq_col =
-                        akita_algebra::offset_eq::eq_eval_at_index(x_challenges, base_col + digit);
-                    recomp += eq_col.mul_base(gd);
-                }
-                acc -= row_w * recomp;
-            }
-            acc
-        } else {
-            E::zero()
-        };
-
         let total = e_structured_contribution
             + t_structured_contribution
             + z_structured_contribution
             + setup_contribution
-            + r_contribution
-            + u_recompose_contribution;
+            + r_contribution;
 
         Ok(total)
     }
