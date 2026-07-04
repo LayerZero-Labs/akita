@@ -16,6 +16,7 @@
 #![allow(missing_docs)]
 
 mod common;
+#[path = "mixed_d_per_level/fixture.rs"]
 mod mixed_d_per_level_fixture;
 
 use akita_config::proof_optimized::fp128;

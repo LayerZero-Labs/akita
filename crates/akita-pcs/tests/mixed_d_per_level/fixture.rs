@@ -293,7 +293,7 @@ where
 
 /// Extra block-select variables when dropping ring dimension by a
 /// power-of-two factor.
-pub fn extra_block_vars_for_drop(prev_ring_d: usize, suffix_ring_d: usize) -> usize {
+fn extra_block_vars_for_drop(prev_ring_d: usize, suffix_ring_d: usize) -> usize {
     if prev_ring_d > suffix_ring_d && prev_ring_d.is_multiple_of(suffix_ring_d) {
         let downscale = prev_ring_d / suffix_ring_d;
         if downscale.is_power_of_two() {
@@ -320,7 +320,7 @@ pub fn extra_block_vars_for_drop(prev_ring_d: usize, suffix_ring_d: usize) -> us
 /// Returns an error when either preset schedule cannot be resolved, the
 /// suffix table has fewer fold levels than the envelope, or `switch_at_fold`
 /// is out of range.
-pub fn mixed_d_per_level_schedule<EnvelopeCfg, SuffixCfg>(
+pub(super) fn mixed_d_per_level_schedule<EnvelopeCfg, SuffixCfg>(
     num_vars: usize,
     num_polynomials: usize,
     switch_at_fold: usize,
