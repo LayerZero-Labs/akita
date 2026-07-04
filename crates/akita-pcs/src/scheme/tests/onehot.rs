@@ -258,7 +258,7 @@ fn commit_group_returns_frozen_conservative_layout() {
     assert_eq!(handle.schedule.layout.group, key);
     assert_eq!(handle.schedule.layout.m_vars, layout.m_vars);
     assert_eq!(handle.schedule.layout.r_vars, layout.r_vars);
-    assert_eq!(handle.schedule.layout.log_basis, OneHotCfg::basis_range().0);
+    assert_eq!(handle.schedule.layout.log_basis, layout.log_basis);
     assert_eq!(handle.schedule.layout.n_a, layout.a_key.row_len());
     assert_eq!(
         handle.schedule.layout.conservative_n_b,
