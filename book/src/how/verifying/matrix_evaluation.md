@@ -537,17 +537,19 @@ for dc  in 0..DC:
     for blk in 0..block_len:
       seg.push(g_commit[dc] * g_fold[df] * a[blk])
 
-# One offset-eq evaluation over the materialized vector — O(DF * DC * block_len):
-#   eval_offset_eq_tensor(r_col, z_start, seg) = sum_k seg[k] * eq(z_start + k, r_col)
-acc = -consistency_weight * eval_offset_eq_tensor(r_col, z_start, seg)
+# One sparse/pruned offset-eq interval evaluation over the materialized vector:
+#   eval_offset_eq_interval(r_col, z_start, 1, seg)
+#     = sum_k seg[k] * eq(z_start + k, r_col)
+acc = -consistency_weight * eval_offset_eq_interval(r_col, z_start, 1, seg)
 ```
 
 This costs $O(\text{DF} \cdot \text{DC} \cdot \text{block\_len})$ to build the
-segment plus the same for the evaluation — i.e. work proportional to the full
-segment size, the same order as the naive scan. That is acceptable because the
-non-power-of-two case only arises at recursive levels, where the witness (and
-hence `z_hat`) has already shrunk; the dominant root level always lands in Case
-1.
+segment plus sparse/pruned interval binding over the live global range (for
+single-chunk layouts `z_start = 0` this matches ordinary MLE binding; with
+nonzero chunk offsets the pruned fold avoids the old carry-DP overhead). That is
+acceptable because the non-power-of-two case only arises at recursive levels,
+where the witness (and hence `z_hat`) has already shrunk; the dominant root
+level always lands in Case 1.
 
 #### Cost
 
@@ -558,7 +560,8 @@ hence `z_hat`) has already shrunk; the dominant root level always lands in Case
 
 The verifier dispatches on `block_len.is_power_of_two()`: the power-of-two path
 uses the peeled in-block summary, and the fallback materializes the segment and
-runs one offset-equality evaluation over it.
+runs one [`eval_offset_eq_interval`](../../../../crates/akita-algebra/src/offset_eq.rs)
+sparse/pruned offset-equality evaluation over it.
 
 ## Setup components
 
@@ -726,9 +729,11 @@ once per shared-matrix entry and amortized across `D·e_hat`, `B·t_hat`, and
 The power-of-two fast path (Case 1) requires `block_len.is_power_of_two()`. When
 it is not (some recursive levels — `block_len = ceil(num_ring / num_blocks)` need
 not be a power of two), the dense fallback (Case 2) materializes the structured
-`z` segment and runs a single `eval_offset_eq_tensor` over it, at cost
-`O(DF · DC · block_len)`. The question is whether a *partial* peel — peeling the
-largest power of two that divides `block_len` — can beat that, and by how much.
+`z` segment and runs a single [`eval_offset_eq_interval`](../../../../crates/akita-algebra/src/offset_eq.rs)
+over it, at cost `O(DF · DC · block_len)` to materialize plus pruned binding
+over the live interval (cheaper than the old carry-DP when `z_start ≠ 0`). The
+question is whether a *partial* peel — peeling the largest power of two that
+divides `block_len` — can beat that, and by how much.
 
 ### Why only the 2-adic factor can be peeled
 
@@ -831,9 +836,11 @@ current planner splits do not produce that, so the implementation keeps the plai
 - Build per-`blk_hi` summaries
   `A[blk_hi][carry] = Σ_{blk_lo} a[blk_lo + w · blk_hi] · eq_low_z(...)`, cost
   `O(block_len)`.
+- Reuse [`summarize_pow2_block_carries`](../../../../crates/akita-algebra/src/offset_eq.rs)
+  for the low window at `2^v`.
 - Outer combine over `(dc, df, blk_hi, carry)` with
-  `q = z_hi + blk_hi + odd · df + odd · DF · dc` and `eq_high(q + carry)`, cost
-  `O(odd · DF · DC)`.
-- Reuse the `crates/akita-algebra/src/offset_eq.rs` peeled primitives
-  (`summarize_pow2_block_carries`, `eval_offset_eq_peeled_carry_terms`) at window
-  `2^v` instead of `block_len`.
+  `q = z_hi + blk_hi + odd · df + odd · DF · dc` and high-challenge equality
+  weights — either two shifted [`eval_offset_eq_interval`](../../../../crates/akita-algebra/src/offset_eq.rs)
+  calls over the outer axis (same pattern as the pow2 `r`-tail) or per-entry
+  [`eq_eval_at_index`](../../../../crates/akita-algebra/src/offset_eq.rs) at
+  `offset_high + q + carry`, cost `O(odd · DF · DC)`.

@@ -298,9 +298,8 @@ where
 ///
 /// Power-of-two `levels` peels the pow2 low factor into carry buckets
 /// `[A0, A1]` and evaluates the small high factor at offsets `offset_hi` and
-/// `offset_hi + 1` (two-factor sparse path, see
-/// `specs/two-factor-sparse-eq-binding.md`). Otherwise it materialises the
-/// `r`-tail vector and evaluates it as a single contiguous interval.
+/// `offset_hi + 1` via two sparse interval bindings. Otherwise it materialises
+/// the `r`-tail vector and evaluates it as a single contiguous interval.
 pub(crate) fn compute_r_contribution<F, E>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],

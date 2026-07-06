@@ -36,7 +36,7 @@ use crate::{AkitaError, FieldCore};
 /// whose whole subtree is outside the live interval. Each live parent costs
 /// exactly one field multiplication, so the
 /// total is `Σ_k (⌊hi/2^{k+1}⌋ − ⌊lo/2^{k+1}⌋ + 1)` multiplications plus one
-/// final `scale` product — see `specs/sparse-pruned-eq-binding.md`.
+/// final `scale` product.
 ///
 /// # Errors
 ///
