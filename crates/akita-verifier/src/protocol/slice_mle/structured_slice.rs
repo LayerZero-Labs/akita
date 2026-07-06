@@ -1,7 +1,10 @@
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
+use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::{
+    eq_eval_at_index, eval_offset_eq_interval, summarize_pow2_block_carries,
+};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
@@ -286,18 +289,22 @@ where
                         .mul_base(self.fold_gadget[df])
             })
             .collect();
-        eval_offset_eq_tensor(
+        eval_offset_eq_interval(
             self.full_vec_randomness,
             self.offset_z,
             E::one(),
-            &[z_segment_struct.as_slice()],
+            &z_segment_struct,
         )
     }
 }
 
-/// Compute the `r`-tail contribution. Power-of-two `levels` uses a
-/// multi-factor `eval_offset_eq_tensor`; otherwise materialises the
-/// `r`-tail vector and falls back to the single-factor path.
+/// Compute the `r`-tail contribution.
+///
+/// Power-of-two `levels` peels the pow2 low factor into carry buckets
+/// `[A0, A1]` and evaluates the small high factor at offsets `offset_hi` and
+/// `offset_hi + 1` (two-factor sparse path, see
+/// `specs/two-factor-sparse-eq-binding.md`). Otherwise it materialises the
+/// `r`-tail vector and evaluates it as a single contiguous interval.
 pub(crate) fn compute_r_contribution<F, E>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
@@ -313,15 +320,18 @@ where
     if levels.is_power_of_two() {
         let _span = tracing::info_span!("r_structured").entered();
         let r_gadget_ext: Vec<E> = r_gadget.iter().copied().map(E::lift_base).collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            offset_r,
-            -denom,
-            &[
-                &r_gadget_ext,
-                &prepared.eq_tau1[..prepared.setup_contribution_inputs.rows],
-            ],
-        )
+        let rows = prepared.setup_contribution_inputs.rows;
+        // Peel the pow2 low factor into carry buckets [A0, A1], then evaluate
+        // the small high factor at offsets `offset_hi` and `offset_hi + 1`.
+        let m0 = levels.trailing_zeros() as usize;
+        let eq_low = EqPolynomial::evals(&full_vec_randomness[..m0])?;
+        let offset_lo = offset_r & (levels - 1);
+        let [a0, a1] = summarize_pow2_block_carries(&eq_low, offset_lo, &r_gadget_ext)?;
+        let offset_hi = offset_r >> m0;
+        let high = &full_vec_randomness[m0..];
+        let b0 = eval_offset_eq_interval(high, offset_hi, E::one(), &prepared.eq_tau1[..rows])?;
+        let b1 = eval_offset_eq_interval(high, offset_hi + 1, E::one(), &prepared.eq_tau1[..rows])?;
+        Ok(-denom * (a0 * b0 + a1 * b1))
     } else {
         let _span = tracing::info_span!("r_dense").entered();
         let r_tail: Vec<E> = cfg_into_iter!(0..prepared.setup_contribution_inputs.rows * levels)
@@ -331,12 +341,7 @@ where
                 -(prepared.eq_tau1[row_idx] * denom).mul_base(r_gadget[level_idx])
             })
             .collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            offset_r,
-            E::one(),
-            &[r_tail.as_slice()],
-        )
+        eval_offset_eq_interval(full_vec_randomness, offset_r, E::one(), &r_tail)
     }
 }
 

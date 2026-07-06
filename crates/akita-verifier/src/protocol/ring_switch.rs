@@ -546,13 +546,16 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     e_offset_high,
                     self.num_claims * self.depth_open,
                 );
-                e_structured_contribution += EStructuredSlicesEvaluator {
-                    gadget_vector: &g1_open,
-                    challenge_block_summaries: &summaries,
-                    challenge_weight: self.eq_tau1[0],
-                    high_eq_table: &eq_hi_e_table,
-                }
-                .evaluate();
+                e_structured_contribution += {
+                    let _span = tracing::info_span!("e_structured").entered();
+                    EStructuredSlicesEvaluator {
+                        gadget_vector: &g1_open,
+                        challenge_block_summaries: &summaries,
+                        challenge_weight: self.eq_tau1[0],
+                        high_eq_table: &eq_hi_e_table,
+                    }
+                    .evaluate()
+                };
 
                 let t_offset_high = chunk.offset_t >> block_bits;
                 let eq_hi_t_table = high_eq_window(
@@ -560,13 +563,16 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     t_offset_high,
                     self.num_claims * self.depth_open * a_row_count,
                 );
-                t_structured_contribution += TStructuredSlicesEvaluator {
-                    gadget_vector: &g1_open,
-                    challenge_block_summaries: &summaries,
-                    a_row_weights: &self.eq_tau1[a_start..(a_start + a_row_count)],
-                    high_eq_table: &eq_hi_t_table,
-                }
-                .evaluate();
+                t_structured_contribution += {
+                    let _span = tracing::info_span!("t_structured").entered();
+                    TStructuredSlicesEvaluator {
+                        gadget_vector: &g1_open,
+                        challenge_block_summaries: &summaries,
+                        a_row_weights: &self.eq_tau1[a_start..(a_start + a_row_count)],
+                        high_eq_table: &eq_hi_t_table,
+                    }
+                    .evaluate()
+                };
             }
 
             // z dispatches once on `block_len` (chunk-independent); the chunk
@@ -585,14 +591,17 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
                     let eq_hi_z_table =
                         high_eq_window(&x_challenges[z_offset_low_bits..], z_offset_high, z_hi_len);
-                    z_structured_contribution += ZStructuredPow2SlicesEvaluator {
-                        g1_commit: &g1_commit,
-                        fold_gadget: &fold_gadget,
-                        a_block_summary: &a_block_summary,
-                        consistency_weight: self.eq_tau1[0],
-                        high_eq_table: &eq_hi_z_table,
-                    }
-                    .evaluate();
+                    z_structured_contribution += {
+                        let _span = tracing::info_span!("z_structured").entered();
+                        ZStructuredPow2SlicesEvaluator {
+                            g1_commit: &g1_commit,
+                            fold_gadget: &fold_gadget,
+                            a_block_summary: &a_block_summary,
+                            consistency_weight: self.eq_tau1[0],
+                            high_eq_table: &eq_hi_z_table,
+                        }
+                        .evaluate()
+                    };
                 }
             } else {
                 // `a_evals_by_point` is chunk-independent (a[blk] is global), so
@@ -602,16 +611,19 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     .map(|idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows))
                     .collect::<Result<Vec<_>, _>>()?];
                 for chunk in &layout.chunks {
-                    z_structured_contribution += ZDenseSlicesEvaluator {
-                        g1_commit: &g1_commit,
-                        fold_gadget: &fold_gadget,
-                        consistency_weight: self.eq_tau1[0],
-                        a_evals_by_point: &a_evals_by_point,
-                        full_vec_randomness: x_challenges,
-                        offset_z: chunk.offset_z,
-                        block_len: self.block_len,
-                    }
-                    .evaluate()?;
+                    z_structured_contribution += {
+                        let _span = tracing::info_span!("z_structured").entered();
+                        ZDenseSlicesEvaluator {
+                            g1_commit: &g1_commit,
+                            fold_gadget: &fold_gadget,
+                            consistency_weight: self.eq_tau1[0],
+                            a_evals_by_point: &a_evals_by_point,
+                            full_vec_randomness: x_challenges,
+                            offset_z: chunk.offset_z,
+                            block_len: self.block_len,
+                        }
+                        .evaluate()?
+                    };
                 }
             }
         }
