@@ -6,7 +6,7 @@
 | Created     | 2026-07-06                     |
 | Status      | proposed                       |
 | Branch      | `quang/relation-weight-polynomial-spec` |
-| Related     | [`specs/y-ring-trace-internalization.md`](y-ring-trace-internalization.md) (superseded trace mechanism; see below), [`specs/runtime-ring-cutover.md`](runtime-ring-cutover.md), [`specs/setup-product-sumcheck.md`](setup-product-sumcheck.md) |
+| Related     | [`specs/y-ring-trace-internalization.md`](y-ring-trace-internalization.md) (superseded trace mechanism; see below), [`specs/runtime-ring-cutover.md`](runtime-ring-cutover.md), [`specs/setup-product-sumcheck.md`](setup-product-sumcheck.md), [`specs/sumcheck-kernel-cutover.md`](sumcheck-kernel-cutover.md) (prover pair-scan architecture) |
 
 ## Summary
 

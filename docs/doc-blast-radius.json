@@ -53,7 +53,7 @@
         "book/src/how/architecture.md",
         "book/src/how/proving/sumcheck-stages.md",
         "specs/akita-polyops-cutover.md",
-        "specs/akita-sumcheck-unification.md"
+        "specs/sumcheck-kernel-cutover.md"
       ]
     },
     {
@@ -79,6 +79,7 @@
         "book/src/how/recursion.md",
         "specs/packed-sumcheck.md",
         "specs/setup-product-sumcheck.md",
+        "specs/sumcheck-kernel-cutover.md",
         "specs/terminal-fold-cutover.md"
       ]
     },

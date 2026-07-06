@@ -36,6 +36,9 @@ w(r) * RelationWeightPolynomial(r)
 
 Canonical spec: [`specs/relation-weight-polynomial.md`](../../../specs/relation-weight-polynomial.md).
 
+Prover kernel architecture (pair scan, fold schedule, `round_batching`):
+[`specs/sumcheck-kernel-cutover.md`](../../../specs/sumcheck-kernel-cutover.md).
+
 ## Stage 3
 
 Optional setup product sumcheck for verifier offloading. See
