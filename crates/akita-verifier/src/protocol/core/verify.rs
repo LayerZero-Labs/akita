@@ -89,50 +89,23 @@ fn reject_unsupported_grouped_root(
     Ok(())
 }
 
-struct DirectRecommitGeometry {
-    log_basis: u32,
-    num_blocks: usize,
-    block_len: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
-    a_row_len: usize,
-    a_col_len: usize,
-    b_row_len: usize,
-    max_setup_len: usize,
-}
-
-impl DirectRecommitGeometry {
-    fn from_level(params: &impl LevelParamsLike, setup_seed: &AkitaSetupSeed) -> Self {
-        Self {
-            log_basis: params.log_basis(),
-            num_blocks: params.num_blocks(),
-            block_len: params.block_len(),
-            num_digits_commit: params.num_digits_commit(),
-            num_digits_open: params.num_digits_open(),
-            a_row_len: params.a_rows_len(),
-            a_col_len: params.a_col_len(),
-            b_row_len: params.b_rows_len(),
-            max_setup_len: setup_seed.max_setup_len,
-        }
-    }
-}
-
 fn validate_direct_group_shape<F>(
     witnesses: &[CleartextWitnessProof<F>],
-    geom: &DirectRecommitGeometry,
+    params: &impl LevelParamsLike,
+    setup_seed: &AkitaSetupSeed,
     num_vars: usize,
     ring_d: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    validate_log_basis(geom.log_basis)?;
-    if geom.num_blocks == 0 || geom.block_len == 0 {
+    validate_log_basis(params.log_basis())?;
+    if params.num_blocks() == 0 || params.block_len() == 0 {
         return Err(AkitaError::InvalidSetup(
             "direct witness layout requires non-zero block geometry".to_string(),
         ));
     }
-    if geom.num_digits_commit == 0 || geom.num_digits_open == 0 {
+    if params.num_digits_commit() == 0 || params.num_digits_open() == 0 {
         return Err(AkitaError::InvalidSetup(
             "direct witness layout requires non-zero digit depths".to_string(),
         ));
@@ -140,37 +113,37 @@ where
     let expected_witness_len = 1usize
         .checked_shl(u32::try_from(num_vars).map_err(|_| AkitaError::InvalidProof)?)
         .ok_or(AkitaError::InvalidProof)?;
-    let direct_capacity = geom
-        .num_blocks
-        .checked_mul(geom.block_len)
+    let direct_capacity = params
+        .num_blocks()
+        .checked_mul(params.block_len())
         .ok_or_else(|| AkitaError::InvalidSetup("direct witness capacity overflow".to_string()))?;
     if expected_witness_len.div_ceil(ring_d) > direct_capacity {
         return Err(AkitaError::InvalidSetup(
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    let a_required_cols = geom
-        .block_len
-        .checked_mul(geom.num_digits_commit)
+    let a_row_len = params.a_rows_len();
+    let b_row_len = params.b_rows_len();
+    let a_required_cols = params
+        .block_len()
+        .checked_mul(params.num_digits_commit())
         .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
-    let a_required = geom
-        .a_row_len
+    let a_required = a_row_len
         .checked_mul(a_required_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct A footprint overflow".to_string()))?;
-    let per_witness_outer_cols = geom
-        .num_blocks
-        .checked_mul(geom.a_row_len)
-        .and_then(|cols| cols.checked_mul(geom.num_digits_open))
+    let per_witness_outer_cols = params
+        .num_blocks()
+        .checked_mul(a_row_len)
+        .and_then(|cols| cols.checked_mul(params.num_digits_open()))
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
     let b_required_cols = witnesses
         .len()
         .checked_mul(per_witness_outer_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
-    let b_required = geom
-        .b_row_len
+    let b_required = b_row_len
         .checked_mul(b_required_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct B footprint overflow".to_string()))?;
-    if a_required.max(b_required) > geom.max_setup_len {
+    if a_required.max(b_required) > setup_seed.max_setup_len {
         return Err(AkitaError::InvalidSetup(
             "shared matrix is too small for direct witness layout".to_string(),
         ));
@@ -190,7 +163,8 @@ where
 #[cfg(test)]
 fn validate_root_direct_recommitment_shape<F>(
     witnesses: &[CleartextWitnessProof<F>],
-    geom: &DirectRecommitGeometry,
+    params: &LevelParams,
+    setup_seed: &AkitaSetupSeed,
     opening_batch: &OpeningClaimsLayout,
     ring_d: usize,
 ) -> Result<(), AkitaError>
@@ -200,7 +174,13 @@ where
     if opening_batch.num_total_polynomials() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
-    validate_direct_group_shape::<F>(witnesses, geom, opening_batch.max_num_vars(), ring_d)
+    validate_direct_group_shape::<F>(
+        witnesses,
+        params,
+        setup_seed,
+        opening_batch.max_num_vars(),
+        ring_d,
+    )
 }
 
 pub(crate) fn mat_vec_mul_i8_plain<F, const D: usize>(
@@ -244,32 +224,33 @@ where
 fn direct_decomposed_inner_rows<F, const D: usize>(
     witness_rings: &[CyclotomicRing<F, D>],
     setup: &AkitaVerifierSetup<F>,
-    geom: &DirectRecommitGeometry,
+    params: &impl LevelParamsLike,
 ) -> Result<Vec<[i8; D]>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
+    let a_row_len = params.a_rows_len();
     let a_matrix = setup
         .expanded
         .shared_matrix()
-        .ring_view::<D>(geom.a_row_len, geom.a_col_len)?;
+        .ring_view::<D>(a_row_len, params.a_col_len())?;
     let a_rows: Vec<_> = a_matrix.rows().collect();
-    let out_capacity = geom
-        .num_blocks
-        .checked_mul(geom.a_row_len)
-        .and_then(|len| len.checked_mul(geom.num_digits_open))
+    let out_capacity = params
+        .num_blocks()
+        .checked_mul(a_row_len)
+        .and_then(|len| len.checked_mul(params.num_digits_open()))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("direct witness row capacity overflow".to_string())
         })?;
     let mut out = Vec::with_capacity(out_capacity);
 
-    for block_idx in 0..geom.num_blocks {
-        let start = block_idx.checked_mul(geom.block_len).ok_or_else(|| {
+    for block_idx in 0..params.num_blocks() {
+        let start = block_idx.checked_mul(params.block_len()).ok_or_else(|| {
             AkitaError::InvalidSetup("direct witness block offset overflow".to_string())
         })?;
         let block = if start < witness_rings.len() {
             let end = start
-                .checked_add(geom.block_len)
+                .checked_add(params.block_len())
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("direct witness block end overflow".to_string())
                 })?
@@ -278,12 +259,12 @@ where
         } else {
             &[]
         };
-        let block_digits = decompose_rows_i8(block, geom.num_digits_commit, geom.log_basis);
+        let block_digits = decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
         let t_rows = mat_vec_mul_i8_plain::<F, D>(&a_rows, &block_digits);
         out.extend(decompose_rows_i8(
             &t_rows,
-            geom.num_digits_open,
-            geom.log_basis,
+            params.num_digits_open(),
+            params.log_basis(),
         ));
     }
 
@@ -293,7 +274,7 @@ where
 fn recommit_direct_witness_group<F, const D: usize>(
     group_witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    geom: &DirectRecommitGeometry,
+    params: &impl LevelParamsLike,
 ) -> Result<RingCommitment<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -305,13 +286,13 @@ where
             .ok_or(AkitaError::InvalidProof)?
             .coeffs();
         let witness_rings = field_evals_to_rings::<F, D>(field_witness)?;
-        outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, geom)?);
+        outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, params)?);
     }
 
     let b_matrix = setup
         .expanded
         .shared_matrix()
-        .ring_view::<D>(geom.b_row_len, outer_input.len())?;
+        .ring_view::<D>(params.b_rows_len(), outer_input.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     let u = mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input);
     Ok(RingCommitment { u })
@@ -344,6 +325,7 @@ where
     }
 
     let final_group = opening_batch.root_final_group_index()?;
+    let setup_seed = setup.expanded.seed();
     for group_index in 0..opening_batch.num_groups() {
         let range = opening_batch.root_group_claim_range(group_index)?;
         if range.end > witnesses.len() {
@@ -358,29 +340,35 @@ where
         }
 
         let group_layout = opening_batch.group_layout(group_index)?;
+        let group_witnesses = &witnesses[range.clone()];
         let recomputed_matches = dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
             F,
             ring_dim,
             |D| {
-                let geom = if group_index == final_group {
-                    DirectRecommitGeometry::from_level(params, setup.expanded.seed())
+                let recomputed = if group_index == final_group {
+                    validate_direct_group_shape::<F>(
+                        group_witnesses,
+                        params,
+                        setup_seed,
+                        group_layout.num_vars(),
+                        ring_dim,
+                    )?;
+                    recommit_direct_witness_group::<F, D>(group_witnesses, setup, params)?
                 } else {
                     let group_params = params
                         .precommitted_groups
                         .get(group_index)
                         .ok_or(AkitaError::InvalidProof)?;
-                    DirectRecommitGeometry::from_level(group_params, setup.expanded.seed())
+                    validate_direct_group_shape::<F>(
+                        group_witnesses,
+                        group_params,
+                        setup_seed,
+                        group_layout.num_vars(),
+                        ring_dim,
+                    )?;
+                    recommit_direct_witness_group::<F, D>(group_witnesses, setup, group_params)?
                 };
-                let group_witnesses = &witnesses[range.clone()];
-                validate_direct_group_shape::<F>(
-                    group_witnesses,
-                    &geom,
-                    group_layout.num_vars(),
-                    ring_dim,
-                )?;
-                let recomputed =
-                    recommit_direct_witness_group::<F, D>(group_witnesses, setup, &geom)?;
                 let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
                 Ok(recomputed_vec.coeffs() == commitment_view.coeffs())
             }
@@ -749,7 +737,8 @@ mod tests {
         ))];
         let err = validate_root_direct_recommitment_shape::<F>(
             &witnesses,
-            &DirectRecommitGeometry::from_level(&params, &setup_seed),
+            &params,
+            &setup_seed,
             &opening_batch(6),
             D,
         )
@@ -784,7 +773,8 @@ mod tests {
         ))];
         let err = validate_root_direct_recommitment_shape::<F>(
             &witnesses,
-            &DirectRecommitGeometry::from_level(&params, &setup_seed),
+            &params,
+            &setup_seed,
             &opening_batch(6),
             D,
         )
