@@ -435,7 +435,7 @@ mod tests {
         let num_claims = 3usize;
         let num_points = 1usize;
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + n_a + n_b * num_points + n_d;
+        let rows = akita_types::outer_consistency_row_start(n_a) + n_b * num_points + n_d;
         let inner_width = block_len * depth_commit;
 
         let lp = fixture_lp();

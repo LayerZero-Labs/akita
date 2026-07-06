@@ -7,8 +7,9 @@ use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout,
-    SetupContributionPlanInputs, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
+    gadget_row_scalars, outer_consistency_row_start, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix,
+    MRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessChunkLengths,
+    WitnessLayout,
 };
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
@@ -125,8 +126,9 @@ impl SetupContributionFixture {
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
-        // Canonical M-row layout: consistency | A | B | D.
-        let rows = 1 + shape.n_a + shape.n_b * num_points + shape.n_d;
+        // Canonical M-row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
+        let rows =
+            outer_consistency_row_start(shape.n_a) + shape.n_b * num_points + shape.n_d;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
