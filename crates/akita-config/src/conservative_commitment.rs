@@ -4,6 +4,7 @@
 //! use a B rank conservative for a later grouped root whose final basis is not
 //! known at precommit time.
 
+use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
 use crate::proof_optimized::setup_envelope_poly_counts;
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
@@ -173,29 +174,6 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         conservative_norm,
         Cfg::D,
     )?;
-    Ok(())
-}
-
-fn accumulate_matrix_envelope_for_level(
-    lp: &LevelParams,
-    max_setup_len: &mut usize,
-) -> Result<(), AkitaError> {
-    let a_len = lp
-        .a_key
-        .row_len()
-        .checked_mul(lp.inner_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup envelope overflow".to_string()))?;
-    let b_len = lp
-        .b_key
-        .row_len()
-        .checked_mul(lp.outer_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup envelope overflow".to_string()))?;
-    let d_len = lp
-        .d_key
-        .row_len()
-        .checked_mul(lp.d_matrix_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
-    *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len);
     Ok(())
 }
 

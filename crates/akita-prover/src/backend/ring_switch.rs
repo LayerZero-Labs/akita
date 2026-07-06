@@ -41,7 +41,7 @@ where
 {
     fn relation_rows(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: RingSwitchRelationView<'_, D>,
         plan: RingSwitchRelationPlan,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
@@ -70,7 +70,7 @@ where
 {
     fn quotient_rows(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: RingSwitchQuotientView<'_, D>,
         plan: RingSwitchQuotientPlan,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>

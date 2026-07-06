@@ -53,7 +53,7 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 /// Both fixtures share the same `(family, D, log_basis, log_commit_bound,
 /// stage1, ring_subfield)` setup and only differ in their
 /// `with_decomp` arguments. Constructs the placeholder via
-/// `params_only` and stamps the A and B/D coefficient-L∞ buckets via
+/// `params_only` and stamps the A and B/D collision buckets via
 /// `new_unchecked` so the layout carries real buckets instead of the
 /// `0` `params_only` default. The fixture scales batched B/D widths
 /// via [`scale_batched_root_layout_unchecked`] because it is synthetic.
@@ -61,10 +61,10 @@ fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
     use akita_types::{AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
     let sis_family = akita_types::SisModulusFamily::Q32;
     // Commit ring dimension must equal the static `D` the scheme dispatches
-    // (`DensePoly::<SmallF, D>` / `validate_commit_level_params::<F, D>`); both
+    // (`DensePoly::<SmallF>` / `validate_commit_level_params::<F, D>`); both
     // fixtures pin `D = 32`. `ring_subfield = 2` below is `FpExt4`'s
     // embedding norm bound (a claim-field property), not `D / d`, so the
-    // coefficient buckets are independent of this dimension.
+    // collision buckets are independent of this dimension.
     let d: usize = 32;
     let stage1 = akita_challenges::SparseChallengeConfig::Uniform {
         weight: 1,
@@ -333,13 +333,13 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 1;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
     let evals = (0..len)
         .map(|idx| SmallF::from_u64((3 * idx as u64) + 9))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals).unwrap();
+    let poly = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals).unwrap();
     let point = (0..NUM_VARS)
         .map(|idx| {
             SmallE::new([
@@ -358,25 +358,20 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             acc + weight * SmallE::lift_base(coeff)
         });
 
-    let setup =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 1).unwrap();
+    let setup = SmallScheme::setup_prover(NUM_VARS, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .unwrap();
+    let verifier_setup = SmallScheme::setup_verifier(&setup);
+    let (commitment, hint) =
+        SmallScheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let poly_refs = [&poly];
     let commitments = [commitment];
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
-    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+    let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -407,7 +402,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     let openings = [opening];
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
-    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+    SmallScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -431,13 +426,13 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     terminal.stage2 =
         akita_types::AkitaStage2Proof::Intermediate(akita_types::AkitaIntermediateStage2Proof {
             sumcheck_proof,
-            next_w_commitment: akita_types::FlatRingVec::from_coeffs(Vec::<SmallF>::new()),
+            next_w_commitment: akita_types::RingVec::from_coeffs(Vec::<SmallF>::new()),
             next_w_eval: SmallE::zero(),
         });
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut verifier_transcript =
             AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
-        <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        SmallScheme::batched_verify(
             &malformed_stage2,
             &verifier_setup,
             &mut verifier_transcript,
@@ -451,7 +446,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     let wrong_openings = [opening + SmallE::one()];
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+    let result = SmallScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -464,7 +459,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     let wrong_point = [point[0] + SmallE::one()];
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+    let result = SmallScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -482,7 +477,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
     let evals_a = (0..len)
@@ -491,8 +486,8 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     let evals_b = (0..len)
         .map(|idx| SmallF::from_u64((2 * idx as u64) + 7))
         .collect::<Vec<_>>();
-    let poly_a = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_a).unwrap();
-    let poly_b = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_b).unwrap();
+    let poly_a = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_a).unwrap();
+    let poly_b = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_b).unwrap();
     let point = (0..NUM_VARS)
         .map(|idx| {
             SmallE::new([
@@ -517,26 +512,21 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
             acc + weight * SmallE::lift_base(coeff)
         });
 
-    let setup =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2).unwrap();
+    let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
+    let verifier_setup = SmallScheme::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
-        &setup,
-        &[poly_a.clone(), poly_b.clone()],
-        &stack,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        SmallScheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_b];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
-    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+    let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -564,7 +554,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
 
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
-    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+    SmallScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -577,7 +567,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     let wrong_openings = [opening_a, opening_b + SmallE::one()];
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+    let result = SmallScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -593,10 +583,9 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
-    type SmallL = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
     let evals_a = (0..len)
@@ -605,8 +594,8 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     let evals_b = (0..len)
         .map(|idx| SmallF::from_u64((2 * idx as u64) + 7))
         .collect::<Vec<_>>();
-    let poly_a = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_a).unwrap();
-    let poly_b = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_b).unwrap();
+    let poly_a = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_a).unwrap();
+    let poly_b = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_b).unwrap();
     let point = (0..NUM_VARS)
         .map(|idx| {
             SmallE::new([
@@ -631,26 +620,21 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
             acc + weight * SmallE::lift_base(coeff)
         });
 
-    let setup =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2).unwrap();
+    let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
+    let verifier_setup = SmallScheme::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(
-        &setup,
-        &[poly_a.clone(), poly_b.clone()],
-        &stack,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        SmallScheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_b];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
-    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+    let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -674,11 +658,11 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     *reduction
         .partials
         .first_mut()
-        .expect("reduction partials must be nonempty") += SmallL::one();
+        .expect("reduction partials must be nonempty") += SmallE::one();
 
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+    let result = SmallScheme::batched_verify(
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
@@ -699,13 +683,13 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
     const NUM_VARS: usize = 5;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
     let evals = (0..len)
         .map(|idx| SmallF::from_u64((3 * idx as u64) + 5))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals).unwrap();
+    let poly = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals).unwrap();
     let point_a = (0..NUM_VARS)
         .map(|idx| {
             SmallE::new([
@@ -727,24 +711,21 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     };
     let opening_a = opening_at(&point_a);
 
-    let setup =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2).unwrap();
+    let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
+    let verifier_setup = SmallScheme::setup_verifier(&setup);
     let polys = [poly.clone(), poly];
     let poly_refs = [&polys[0], &polys[1]];
-    let (commitment, hint) =
-        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_commit(&setup, &polys, &stack)
-            .unwrap();
+    let (commitment, hint) = SmallScheme::commit::<_, _>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let openings = [opening_a, opening_a];
 
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
-    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+    let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&point_a[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -772,7 +753,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
 
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
-    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+    SmallScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -785,7 +766,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let wrong_openings = [opening_a, opening_a + SmallE::one()];
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+    let result = SmallScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,

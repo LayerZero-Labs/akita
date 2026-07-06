@@ -34,10 +34,10 @@ where
 {
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<CommitInnerWitness<F>, AkitaError> {
         source.dispatch(
             |poly| {
                 RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
@@ -67,7 +67,7 @@ where
 {
     fn evaluate_and_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -93,10 +93,10 @@ where
 
     fn decompose_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         source.dispatch(
             |poly| {
                 OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::decompose_fold(
@@ -126,7 +126,7 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -148,7 +148,8 @@ where
                         }
                     });
                 };
-                let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
+                let dense_view =
+                    <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_polys)?;
                 OpeningBatchKernel::<DenseBatchView<'_, F, D>, F, D>::decompose_fold_batch(
                     self, prepared, dense_view, plan,
                 )
@@ -164,7 +165,8 @@ where
                         }
                     });
                 };
-                let onehot_view = OneHotPoly::<F, D, I>::opening_batch(&onehot_polys)?;
+                let onehot_view =
+                    <OneHotPoly<F, I> as RootOpeningSource<F, D>>::opening_batch(&onehot_polys)?;
                 OpeningBatchKernel::<OneHotBatchView<'_, F, D, I>, F, D>::decompose_fold_batch(
                     self,
                     prepared,
@@ -185,7 +187,7 @@ where
 {
     fn column_partials(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
@@ -214,7 +216,7 @@ where
 
     fn packed_witness(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         source.dispatch(
@@ -237,9 +239,9 @@ where
 
     fn root_projection(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {
@@ -271,7 +273,7 @@ where
 {
     fn column_partials_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialBatchView<'_, F, D, I>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -286,7 +288,8 @@ where
                 let Some(dense_polys) = source.homogeneous_dense_polys() else {
                     return source.column_partials_per_poly(self, prepared, logical_point);
                 };
-                let dense_view = DensePoly::<F, D>::tensor_batch(&dense_polys)?;
+                let dense_view =
+                    <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_polys)?;
                 TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::column_partials_batch(
                     self,
                     prepared,
@@ -298,7 +301,8 @@ where
                 let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
                     return source.column_partials_per_poly(self, prepared, logical_point);
                 };
-                let onehot_view = OneHotPoly::<F, D, I>::tensor_batch(&onehot_polys)?;
+                let onehot_view =
+                    <OneHotPoly<F, I> as RootTensorSource<F, D>>::tensor_batch(&onehot_polys)?;
                 TensorProjectionBatchKernel::<OneHotBatchView<'_, F, D, I>, F, E, D>::column_partials_batch(
                     self,
                     prepared,
@@ -311,7 +315,7 @@ where
 
     fn sparse_linear_combination(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialBatchView<'_, F, D, I>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
@@ -323,7 +327,8 @@ where
                 let Some(dense_polys) = source.homogeneous_dense_polys() else {
                     return Ok(None);
                 };
-                let dense_view = DensePoly::<F, D>::tensor_batch(&dense_polys)?;
+                let dense_view =
+                    <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_polys)?;
                 TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::sparse_linear_combination(
                     self,
                     prepared,
@@ -335,7 +340,8 @@ where
                 let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
                     return Ok(None);
                 };
-                let onehot_view = OneHotPoly::<F, D, I>::tensor_batch(&onehot_polys)?;
+                let onehot_view =
+                    <OneHotPoly<F, I> as RootTensorSource<F, D>>::tensor_batch(&onehot_polys)?;
                 TensorProjectionBatchKernel::<OneHotBatchView<'_, F, D, I>, F, E, D>::sparse_linear_combination(
                     self,
                     prepared,

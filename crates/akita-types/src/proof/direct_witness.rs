@@ -10,7 +10,7 @@ use crate::LevelParams;
 pub enum CleartextWitnessProof<F: FieldCore> {
     /// Raw field elements, for direct witnesses that are not naturally digit
     /// bounded.
-    FieldElements(FlatRingVec<F>),
+    FieldElements(RingVec<F>),
     /// Segment-typed terminal witness (`e`/`t`/`r` raw field, `z` Golomb-Rice).
     SegmentTyped(SegmentTypedWitness<F>),
 }
@@ -25,7 +25,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
     }
 
     /// Borrow the raw field-element payload, if present.
-    pub fn as_field_elements(&self) -> Option<&FlatRingVec<F>> {
+    pub fn as_field_elements(&self) -> Option<&RingVec<F>> {
         match self {
             Self::SegmentTyped(_) => None,
             Self::FieldElements(field_elems) => Some(field_elems),
@@ -202,7 +202,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     ) -> Result<Self, SerializationError> {
         let out = match ctx {
             CleartextWitnessShape::FieldElements(num_coeffs) => Self::FieldElements(
-                FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, num_coeffs)?,
+                RingVec::deserialize_with_mode(&mut reader, compress, validate, num_coeffs)?,
             ),
             CleartextWitnessShape::SegmentTyped(shape) => Self::SegmentTyped(
                 SegmentTypedWitness::deserialize_with_mode(&mut reader, compress, validate, shape)?,

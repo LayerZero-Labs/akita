@@ -12,8 +12,8 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
     OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -26,29 +26,27 @@ use crate::{
 /// Dense roots use the ordinary dense backend. Sparse one-hot roots use signed
 /// ring coefficients so the transformed commitment path preserves sparsity.
 #[derive(Debug, Clone)]
-pub enum RootTensorProjectionPoly<F: FieldCore, const D: usize> {
-    /// Dense transformed root polynomial.
-    Dense(DensePoly<F, D>),
+pub enum RootTensorProjectionPoly<F: FieldCore> {
+    /// Dense transformed root polynomial (D-free flat storage).
+    Dense(DensePoly<F>),
     /// Sparse signed-ring transformed root polynomial.
-    Sparse(Arc<SparseRingPoly<F, D>>),
+    Sparse(Arc<SparseRingPoly<F>>),
 }
 
-impl<F: FieldCore, const D: usize> From<DensePoly<F, D>> for RootTensorProjectionPoly<F, D> {
-    fn from(poly: DensePoly<F, D>) -> Self {
+impl<F: FieldCore> From<DensePoly<F>> for RootTensorProjectionPoly<F> {
+    fn from(poly: DensePoly<F>) -> Self {
         Self::Dense(poly)
     }
 }
 
-impl<F: FieldCore, const D: usize> From<SparseRingPoly<F, D>> for RootTensorProjectionPoly<F, D> {
-    fn from(poly: SparseRingPoly<F, D>) -> Self {
+impl<F: FieldCore> From<SparseRingPoly<F>> for RootTensorProjectionPoly<F> {
+    fn from(poly: SparseRingPoly<F>) -> Self {
         Self::Sparse(Arc::new(poly))
     }
 }
 
-impl<F: FieldCore, const D: usize> From<Arc<SparseRingPoly<F, D>>>
-    for RootTensorProjectionPoly<F, D>
-{
-    fn from(poly: Arc<SparseRingPoly<F, D>>) -> Self {
+impl<F: FieldCore> From<Arc<SparseRingPoly<F>>> for RootTensorProjectionPoly<F> {
+    fn from(poly: Arc<SparseRingPoly<F>>) -> Self {
         Self::Sparse(poly)
     }
 }
@@ -56,35 +54,54 @@ impl<F: FieldCore, const D: usize> From<Arc<SparseRingPoly<F, D>>>
 /// Borrowed view over a committed tensor-projected root polynomial.
 #[derive(Debug, Clone, Copy)]
 pub struct RootTensorProjectionView<'a, F: FieldCore, const D: usize> {
-    poly: &'a RootTensorProjectionPoly<F, D>,
+    poly: &'a RootTensorProjectionPoly<F>,
 }
 
 /// Same-point batch view over several tensor-projected root polynomials.
 #[derive(Debug, Clone, Copy)]
 pub struct RootTensorProjectionBatchView<'a, F: FieldCore, const D: usize> {
-    polys: &'a [&'a RootTensorProjectionPoly<F, D>],
+    polys: &'a [&'a RootTensorProjectionPoly<F>],
 }
 
-impl<F, const D: usize> RootPolyShape<F, D> for RootTensorProjectionPoly<F, D>
+impl<F> RootPolyMeta<F> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::num_ring_elems(poly),
-            Self::Sparse(poly) => RootPolyShape::num_ring_elems(poly.as_ref()),
+            Self::Dense(poly) => RootPolyMeta::num_ring_elems(poly),
+            Self::Sparse(poly) => RootPolyMeta::num_ring_elems(poly.as_ref()),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::num_vars(poly),
-            Self::Sparse(poly) => RootPolyShape::num_vars(poly.as_ref()),
+            Self::Dense(poly) => RootPolyMeta::num_vars(poly),
+            Self::Sparse(poly) => RootPolyMeta::num_vars(poly.as_ref()),
         }
     }
 }
 
-impl<F, const D: usize> RootCommitSource<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> RootPolyShape<F, D> for RootTensorProjectionPoly<F>
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        match self {
+            Self::Dense(poly) => RootPolyShape::<F, D>::num_ring_elems(poly),
+            Self::Sparse(poly) => RootPolyShape::<F, D>::num_ring_elems(poly.as_ref()),
+        }
+    }
+
+    fn num_vars(&self) -> usize {
+        match self {
+            Self::Dense(poly) => RootPolyShape::<F, D>::num_vars(poly),
+            Self::Sparse(poly) => RootPolyShape::<F, D>::num_vars(poly.as_ref()),
+        }
+    }
+}
+
+impl<F, const D: usize> RootCommitSource<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
@@ -98,7 +115,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootOpeningSource<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> RootOpeningSource<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
@@ -121,7 +138,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootTensorSource<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> RootTensorSource<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore,
 {
@@ -144,21 +161,23 @@ where
     }
 }
 
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for RootTensorProjectionPoly<F, D>
+impl<F, const D: usize> DirectRootWitnessSource<F, D> for RootTensorProjectionPoly<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => DirectRootWitnessSource::direct_root_witness(poly),
-            Self::Sparse(poly) => DirectRootWitnessSource::direct_root_witness(poly.as_ref()),
+            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
+            Self::Sparse(poly) => {
+                DirectRootWitnessSource::<F, D>::direct_root_witness(poly.as_ref())
+            }
         }
     }
 
     fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
         match self {
-            Self::Dense(poly) => DirectRootWitnessSource::base_evals(poly),
-            Self::Sparse(poly) => DirectRootWitnessSource::base_evals(poly.as_ref()),
+            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::base_evals(poly),
+            Self::Sparse(poly) => DirectRootWitnessSource::<F, D>::base_evals(poly.as_ref()),
         }
     }
 }
@@ -170,10 +189,10 @@ where
 {
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: RootTensorProjectionView<'_, F, D>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<CommitInnerWitness<F>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
                 RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
@@ -202,7 +221,7 @@ where
 {
     fn evaluate_and_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -228,10 +247,10 @@ where
 
     fn decompose_fold(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
                 OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::decompose_fold(
@@ -261,7 +280,7 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -289,7 +308,8 @@ where
                         }
                     }
                 }
-                let dense_view = DensePoly::<F, D>::opening_batch(&dense_polys)?;
+                let dense_view =
+                    <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_polys)?;
                 OpeningBatchKernel::<DenseBatchView<'_, F, D>, F, D>::decompose_fold_batch(
                     self, prepared, dense_view, plan,
                 )
@@ -313,7 +333,7 @@ where
                         }
                     }
                 }
-                let sparse_view = SparseRingPoly::<F, D>::opening_batch(&sparse_polys)?;
+                let sparse_view = RootOpeningSource::<F, D>::opening_batch(&sparse_polys)?;
                 OpeningBatchKernel::<SparseRingBatchView<'_, F, D>, F, D>::decompose_fold_batch(
                     self,
                     prepared,
@@ -334,7 +354,7 @@ where
 {
     fn column_partials(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
@@ -363,7 +383,7 @@ where
 
     fn packed_witness(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         match source.poly {
@@ -386,9 +406,9 @@ where
 
     fn root_projection(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {
@@ -420,7 +440,7 @@ where
 {
     fn column_partials_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -443,7 +463,7 @@ where
 
     fn sparse_linear_combination(
         &self,
-        prepared: Option<&Self::PreparedSetup<D>>,
+        prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {

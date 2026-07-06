@@ -13,11 +13,43 @@ use akita_field::RandomSampling;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_types::CleartextWitnessProof;
 
-/// Shape metadata every root polynomial exposes.
+/// D-free shape metadata every root polynomial exposes.
 ///
-/// This is the base capability: it carries no view and no backend work, so
-/// shape-only APIs can require just `RootPolyShape` without pulling in commit,
-/// opening, tensor, or direct-witness capabilities.
+/// This is the **PCS/batch-facing** capability bound: it names a polynomial's
+/// variable count and ring-element count *without* a const ring dimension `D`,
+/// so D-free entry points (e.g. [`crate::ProverOpeningData`]) can require just
+/// `RootPolyMeta` while the const-D kernel-entry traits ([`RootPolyShape`] and
+/// the commit/opening/tensor/direct-witness family) carry `D`.
+///
+/// `num_vars` is the polynomial's own (schedule/representation-derived) variable
+/// count — **not** `log2(num_ring_elems() * D)`. Every input root polynomial
+/// stores it directly, so the count is independent of the ring dimension chosen
+/// to commit it.
+pub trait RootPolyMeta<F>: Clone + Send + Sync
+where
+    F: FieldCore,
+{
+    /// Total number of ring elements in the polynomial.
+    fn num_ring_elems(&self) -> usize;
+
+    /// Total number of variables (representation-derived, D-independent).
+    fn num_vars(&self) -> usize;
+
+    /// One-hot chunk size for sparse one-hot backends.
+    ///
+    /// `None` means this backend is not a one-hot root representation.
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        None
+    }
+}
+
+/// Shape metadata every root polynomial exposes, keyed on the const ring
+/// dimension `D`.
+///
+/// This is the base **kernel-entry** capability: it carries no view and no
+/// backend work, so shape-only kernel APIs can require just `RootPolyShape`
+/// without pulling in commit, opening, tensor, or direct-witness capabilities.
+/// PCS/batch-facing code should prefer the D-free [`RootPolyMeta`] instead.
 pub trait RootPolyShape<F, const D: usize>: Clone + Send + Sync
 where
     F: FieldCore,
@@ -247,8 +279,8 @@ where
 {
 }
 
-/// Ring-switch kernels at every suffix fold ring dimension.
-pub trait SuffixRingSwitchProveBackend<F>:
+/// Ring-switch kernels at every runtime-supported fold ring dimension.
+pub trait RuntimeRingSwitchProveBackend<F>:
     RingSwitchProveBackend<F, 32>
     + RingSwitchProveBackend<F, 64>
     + RingSwitchProveBackend<F, 128>
@@ -258,7 +290,7 @@ where
 {
 }
 
-impl<F, B> SuffixRingSwitchProveBackend<F> for B
+impl<F, B> RuntimeRingSwitchProveBackend<F> for B
 where
     F: FieldCore + CanonicalField,
     B: RingSwitchProveBackend<F, 32>
@@ -268,90 +300,49 @@ where
 {
 }
 
-/// Opening kernels for [`RootTensorProjectionPoly`] at each ring dimension it models.
-pub trait SuffixRootTensorOpeningProveBackendFor<F, const D: usize>:
-    OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
-    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-{
-}
-
-impl<F, const D: usize, B> SuffixRootTensorOpeningProveBackendFor<F, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    B: OpeningProveBackendFor<F, RootTensorProjectionPoly<F, D>, D>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 32>, 32>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 64>, 64>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 128>, 128>
-        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F, 256>, 256>,
-{
-}
-
-/// Tensor kernels for [`RootTensorProjectionPoly`] at each ring dimension it models.
-pub trait SuffixRootTensorTensorProveBackendFor<F, E, const D: usize>:
-    TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
-    + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-{
-}
-
-impl<F, E, const D: usize, B> SuffixRootTensorTensorProveBackendFor<F, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    B: TensorBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 32>, E, 32>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 64>, E, 64>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 128>, E, 128>
-        + TensorBackendFor<F, RootTensorProjectionPoly<F, 256>, E, 256>,
-{
-}
-
-/// Opening kernels for [`RecursiveWitnessFlat`] at config ring `D` and every suffix fold dimension.
-pub trait SuffixWitnessOpeningProveBackendFor<F, const D: usize>:
-    OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
-    + OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
+/// Opening kernels for suffix witness and internal root-tensor projection at every
+/// supported fold ring dimension.
+pub trait SuffixOpeningProveBackend<F>:
+    OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
     + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 32>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 64>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
+    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
 {
 }
 
-impl<F, const D: usize, B> SuffixWitnessOpeningProveBackendFor<F, D> for B
+impl<F, B> SuffixOpeningProveBackend<F> for B
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    B: OpeningProveBackendFor<F, RecursiveWitnessFlat, D>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
+    B: OpeningProveBackendFor<F, RecursiveWitnessFlat, 32>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 64>
         + OpeningProveBackendFor<F, RecursiveWitnessFlat, 128>
-        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>,
+        + OpeningProveBackendFor<F, RecursiveWitnessFlat, 256>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 32>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 64>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 128>
+        + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, 256>,
 {
 }
 
-/// Tensor kernels for [`RecursiveWitnessFlat`] at config ring `D` and every suffix fold dimension.
-pub trait SuffixWitnessTensorProveBackendFor<F, E, const D: usize>:
-    TensorBackendFor<F, RecursiveWitnessFlat, E, D>
-    + TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
+/// Tensor kernels for suffix witness and internal root-tensor projection at every
+/// supported fold ring dimension.
+pub trait SuffixTensorProveBackend<F, E>:
+    TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
     + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 32>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 64>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
+    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -359,52 +350,19 @@ where
 {
 }
 
-impl<F, E, const D: usize, B> SuffixWitnessTensorProveBackendFor<F, E, D> for B
+impl<F, E, B> SuffixTensorProveBackend<F, E> for B
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
-    B: TensorBackendFor<F, RecursiveWitnessFlat, E, D>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
+    B: TensorBackendFor<F, RecursiveWitnessFlat, E, 32>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 64>
         + TensorBackendFor<F, RecursiveWitnessFlat, E, 128>
-        + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>,
-{
-}
-
-/// Opening-cluster suffix dispatch: witness plus internal [`RootTensorProjectionPoly`].
-pub trait SuffixDispatchOpeningProveBackendFor<F, const D: usize>:
-    SuffixWitnessOpeningProveBackendFor<F, D> + SuffixRootTensorOpeningProveBackendFor<F, D>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-{
-}
-
-impl<F, const D: usize, B> SuffixDispatchOpeningProveBackendFor<F, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    B: SuffixWitnessOpeningProveBackendFor<F, D> + SuffixRootTensorOpeningProveBackendFor<F, D>,
-{
-}
-
-/// Tensor-cluster suffix dispatch: witness plus internal [`RootTensorProjectionPoly`].
-pub trait SuffixDispatchTensorProveBackendFor<F, E, const D: usize>:
-    SuffixWitnessTensorProveBackendFor<F, E, D> + SuffixRootTensorTensorProveBackendFor<F, E, D>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-{
-}
-
-impl<F, E, const D: usize, B> SuffixDispatchTensorProveBackendFor<F, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    B: SuffixWitnessTensorProveBackendFor<F, E, D> + SuffixRootTensorTensorProveBackendFor<F, E, D>,
+        + TensorBackendFor<F, RecursiveWitnessFlat, E, 256>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 32>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 64>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 128>
+        + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, 256>,
 {
 }
 
@@ -539,7 +497,7 @@ where
     P: RootCommitPoly<F, D>,
     Self: CommitBackendFor<F, P, D>
         + ProjectBackendFor<F, P, E, D>
-        + CommitBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+        + CommitBackendFor<F, RootTensorProjectionPoly<F>, D>,
 {
 }
 
@@ -551,7 +509,7 @@ where
     P: RootCommitPoly<F, D>,
     B: CommitBackendFor<F, P, D>
         + ProjectBackendFor<F, P, E, D>
-        + CommitBackendFor<F, RootTensorProjectionPoly<F, D>, D>,
+        + CommitBackendFor<F, RootTensorProjectionPoly<F>, D>,
 {
 }
 
@@ -572,6 +530,219 @@ where
 {
 }
 
+/// Root polynomial usable at every runtime-supported ring dimension.
+///
+/// D-free orchestration bounds on this; operation adapters select a concrete
+/// dimension with `dispatch_ring_dim_result!` and use the per-D capability
+/// inside the arm. Blanket-implemented: the D-free storage types
+/// (`DensePoly<F>`, `OneHotPoly<F, I>`, `SparseRingPoly<F>`,
+/// `RootTensorProjectionPoly<F>`, `RecursiveWitnessFlat`) satisfy it through
+/// their all-D source impls.
+pub trait RuntimeRootProvePoly<F>:
+    RootPolyMeta<F>
+    + RootProvePoly<F, 32>
+    + RootProvePoly<F, 64>
+    + RootProvePoly<F, 128>
+    + RootProvePoly<F, 256>
+where
+    F: FieldCore,
+{
+}
+
+impl<F, P> RuntimeRootProvePoly<F> for P
+where
+    F: FieldCore,
+    P: RootPolyMeta<F>
+        + RootProvePoly<F, 32>
+        + RootProvePoly<F, 64>
+        + RootProvePoly<F, 128>
+        + RootProvePoly<F, 256>,
+{
+}
+
+/// Root polynomial committable at every runtime-supported ring dimension.
+pub trait RuntimeRootCommitPoly<F>:
+    RootPolyMeta<F>
+    + RootCommitPoly<F, 32>
+    + RootCommitPoly<F, 64>
+    + RootCommitPoly<F, 128>
+    + RootCommitPoly<F, 256>
+where
+    F: FieldCore,
+{
+}
+
+impl<F, P> RuntimeRootCommitPoly<F> for P
+where
+    F: FieldCore,
+    P: RootPolyMeta<F>
+        + RootCommitPoly<F, 32>
+        + RootCommitPoly<F, 64>
+        + RootCommitPoly<F, 128>
+        + RootCommitPoly<F, 256>,
+{
+}
+
+/// Opening-fold backend capability for `P` at every runtime-supported ring
+/// dimension (P-generic counterpart of `SuffixOpeningProveBackend`).
+pub trait RuntimeOpeningProveBackendFor<F, P>:
+    OpeningProveBackendFor<F, P, 32>
+    + OpeningProveBackendFor<F, P, 64>
+    + OpeningProveBackendFor<F, P, 128>
+    + OpeningProveBackendFor<F, P, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, 32>
+        + RootOpeningSource<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootOpeningSource<F, 256>,
+{
+}
+
+impl<F, P, B> RuntimeOpeningProveBackendFor<F, P> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, 32>
+        + RootOpeningSource<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootOpeningSource<F, 256>,
+    B: OpeningProveBackendFor<F, P, 32>
+        + OpeningProveBackendFor<F, P, 64>
+        + OpeningProveBackendFor<F, P, 128>
+        + OpeningProveBackendFor<F, P, 256>,
+{
+}
+
+/// Tensor-projection capability for `P` at every runtime-supported ring
+/// dimension (P-generic counterpart of `SuffixTensorProveBackend`).
+pub trait RuntimeTensorBackendFor<F, P, E>:
+    TensorBackendFor<F, P, E, 32>
+    + TensorBackendFor<F, P, E, 64>
+    + TensorBackendFor<F, P, E, 128>
+    + TensorBackendFor<F, P, E, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootTensorSource<F, 32>
+        + RootTensorSource<F, 64>
+        + RootTensorSource<F, 128>
+        + RootTensorSource<F, 256>,
+{
+}
+
+impl<F, P, E, B> RuntimeTensorBackendFor<F, P, E> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RootTensorSource<F, 32>
+        + RootTensorSource<F, 64>
+        + RootTensorSource<F, 128>
+        + RootTensorSource<F, 256>,
+    B: TensorBackendFor<F, P, E, 32>
+        + TensorBackendFor<F, P, E, 64>
+        + TensorBackendFor<F, P, E, 128>
+        + TensorBackendFor<F, P, E, 256>,
+{
+}
+
+/// Commit capability for `P` at every runtime-supported ring dimension.
+///
+/// Deliberately narrower than [`CommitBackendFor`]: the with-params commit
+/// entry points require only digit-row mat-vecs plus the inner-commit kernel
+/// over `P`'s borrowed view (the documented downstream contract), not the full
+/// [`CommitmentComputeBackend`] surface.
+pub trait RuntimeCommitBackendFor<F, P>:
+    DigitRowsComputeBackend<F>
+    + for<'a> RootCommitKernel<<P as RootCommitSource<F, 32>>::CommitView<'a>, F, 32>
+    + for<'a> RootCommitKernel<<P as RootCommitSource<F, 64>>::CommitView<'a>, F, 64>
+    + for<'a> RootCommitKernel<<P as RootCommitSource<F, 128>>::CommitView<'a>, F, 128>
+    + for<'a> RootCommitKernel<<P as RootCommitSource<F, 256>>::CommitView<'a>, F, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootCommitSource<F, 32>
+        + RootCommitSource<F, 64>
+        + RootCommitSource<F, 128>
+        + RootCommitSource<F, 256>,
+{
+}
+
+impl<F, P, B> RuntimeCommitBackendFor<F, P> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootCommitSource<F, 32>
+        + RootCommitSource<F, 64>
+        + RootCommitSource<F, 128>
+        + RootCommitSource<F, 256>,
+    B: DigitRowsComputeBackend<F>
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, 32>>::CommitView<'a>, F, 32>
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, 64>>::CommitView<'a>, F, 64>
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, 128>>::CommitView<'a>, F, 128>
+        + for<'a> RootCommitKernel<<P as RootCommitSource<F, 256>>::CommitView<'a>, F, 256>,
+{
+}
+
+/// Scheme-level commit bundle at every runtime-supported ring dimension
+/// (D-free counterpart of the per-D [`RootCommitBackend`]).
+pub trait RuntimeRootCommitBackend<F, P, E>:
+    RootCommitBackend<F, P, E, 32>
+    + RootCommitBackend<F, P, E, 64>
+    + RootCommitBackend<F, P, E, 128>
+    + RootCommitBackend<F, P, E, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootCommitPoly<F>,
+{
+}
+
+impl<F, P, E, B> RuntimeRootCommitBackend<F, P, E> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootCommitPoly<F>,
+    B: RootCommitBackend<F, P, E, 32>
+        + RootCommitBackend<F, P, E, 64>
+        + RootCommitBackend<F, P, E, 128>
+        + RootCommitBackend<F, P, E, 256>,
+{
+}
+
+/// Combined opening + tensor prove capability for `P` at every
+/// runtime-supported ring dimension.
+pub trait RuntimeProveBackendFor<F, P, E>:
+    ProveBackendFor<F, P, E, 32>
+    + ProveBackendFor<F, P, E, 64>
+    + ProveBackendFor<F, P, E, 128>
+    + ProveBackendFor<F, P, E, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootProvePoly<F>,
+{
+}
+
+impl<F, P, E, B> RuntimeProveBackendFor<F, P, E> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootProvePoly<F>,
+    B: ProveBackendFor<F, P, E, 32>
+        + ProveBackendFor<F, P, E, 64>
+        + ProveBackendFor<F, P, E, 128>
+        + ProveBackendFor<F, P, E, 256>,
+{
+}
+
 /// Backend capability bundle for scheme-level prove.
 ///
 /// Use as **`B: RootProveBackend<F, P, E, D>`** on generic prove entry points.
@@ -580,9 +751,9 @@ where
 /// ## Why `F: 'static`?
 ///
 /// The bundle closes over higher-ranked bounds on borrowed polynomial views, e.g.
-/// `for<'a> OpeningFoldKernel<<RootTensorProjectionPoly<F, D> as RootOpeningSource<F, D>>::OpeningView<'a>, …>`.
+/// `for<'a> OpeningFoldKernel<<RootTensorProjectionPoly<F> as RootOpeningSource<F, D>>::OpeningView<'a>, …>`.
 /// Those GATs carry `where Self: 'a` (see [`RootOpeningSource::OpeningView`]). For the
-/// bound to hold for **every** lifetime `'a`, `RootTensorProjectionPoly<F, D>` must be
+/// bound to hold for **every** lifetime `'a`, `RootTensorProjectionPoly<F>` must be
 /// `'static`, which requires `F: 'static`. This is a rustc lifetime solver artifact, not
 /// a protocol requirement that base-field types outlive the process.
 ///
@@ -598,7 +769,7 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
-    Self: ProveBackendFor<F, P, E, D> + ProveBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>,
+    Self: ProveBackendFor<F, P, E, D> + ProveBackendFor<F, RootTensorProjectionPoly<F>, E, D>,
 {
 }
 
@@ -610,17 +781,17 @@ where
     P: RootProvePoly<F, D>,
     B: ComputeBackendSetup<F>
         + ProveBackendFor<F, P, E, D>
-        + ProveBackendFor<F, RootTensorProjectionPoly<F, D>, E, D>,
+        + ProveBackendFor<F, RootTensorProjectionPoly<F>, E, D>,
 {
 }
 
 /// Ring dimensions the recursive suffix may dispatch besides the config ring `D`.
 pub const RECURSIVE_SUFFIX_RING_DIMENSIONS: &[usize] = &[32, 64, 128, 256];
 
-/// Full prove-flow capability at a single ring dimension `RING_D`: opening/tensor
-/// prove kernels plus ring-switch and commitment rows.
+/// Full prove-flow capability at a single root ring dimension `RING_D`:
+/// opening/tensor prove kernels plus commitment rows.
 pub trait ProveFlowBackendFor<F, P, E, const RING_D: usize>:
-    RootProveBackend<F, P, E, RING_D> + RingSwitchProveBackend<F, RING_D> + CommitmentComputeBackend<F>
+    RootProveBackend<F, P, E, RING_D> + CommitmentComputeBackend<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -635,41 +806,45 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootProvePoly<F, RING_D>,
-    B: RootProveBackend<F, P, E, RING_D>
-        + RingSwitchProveBackend<F, RING_D>
-        + CommitmentComputeBackend<F>,
+    B: RootProveBackend<F, P, E, RING_D> + CommitmentComputeBackend<F>,
 {
 }
 
-/// [`ProveFlowBackendFor`] at the config ring degree `D`.
-pub trait RootProveFlowBackend<F, P, E, const D: usize>: ProveFlowBackendFor<F, P, E, D>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootProvePoly<F, D>,
-{
-}
-
-impl<F, P, E, const D: usize, B> RootProveFlowBackend<F, P, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootProvePoly<F, D>,
-    B: ProveFlowBackendFor<F, P, E, D>,
-{
-}
-
-/// Backend bundle for a full recursive prove run.
+/// [`ProveFlowBackendFor`] for `P` at every runtime-supported ring dimension.
 ///
-/// Recursive proving dispatches the suffix witness over [`RECURSIVE_SUFFIX_RING_DIMENSIONS`]
-/// plus the config ring `D`, so prove entry points need [`ProveFlowBackendFor`] for
-/// the root polynomial `P` and [`RecursiveWitnessFlat`] at every supported dimension.
-pub trait RecursiveProveBackend<F, P, E, const D: usize>:
-    ProveFlowBackendFor<F, P, E, D>
-    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, D>
-    + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
+/// Root fold levels take their ring dimension from the schedule
+/// (`LevelParams::role_dims`), so the prove flow must be available at every dimension the
+/// dispatcher can select.
+pub trait RootProveFlowBackend<F, P, E>:
+    ProveFlowBackendFor<F, P, E, 32>
+    + ProveFlowBackendFor<F, P, E, 64>
+    + ProveFlowBackendFor<F, P, E, 128>
+    + ProveFlowBackendFor<F, P, E, 256>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootProvePoly<F>,
+{
+}
+
+impl<F, P, E, B> RootProveFlowBackend<F, P, E> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootProvePoly<F>,
+    B: ProveFlowBackendFor<F, P, E, 32>
+        + ProveFlowBackendFor<F, P, E, 64>
+        + ProveFlowBackendFor<F, P, E, 128>
+        + ProveFlowBackendFor<F, P, E, 256>,
+{
+}
+
+/// Recursive witness prove-flow capability over every runtime-supported fold
+/// ring dimension.
+pub trait RuntimeRecursiveWitnessProveBackend<F, E>:
+    ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>
@@ -677,22 +852,49 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
-    P: RootProvePoly<F, D>,
 {
 }
 
-impl<F, P, E, const D: usize, B> RecursiveProveBackend<F, P, E, D> for B
+impl<F, E, B> RuntimeRecursiveWitnessProveBackend<F, E> for B
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
-    P: RootProvePoly<F, D>,
-    B: ProveFlowBackendFor<F, P, E, D>
-        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, D>
-        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
+    B: ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>,
+{
+}
+
+/// Backend bundle for a full recursive prove run.
+///
+/// Fold levels take their ring dimension from the schedule (`LevelParams::role_dims`), so
+/// prove entry points need [`RootProveFlowBackend`] for the root polynomial
+/// `P`, [`RuntimeRecursiveWitnessProveBackend`] for suffix witness
+/// opening/tensor and commitment rows, and [`RuntimeRingSwitchProveBackend`]
+/// for ring-switch — each at every runtime-supported ring dimension.
+pub trait RecursiveProveBackend<F, P, E>:
+    RootProveFlowBackend<F, P, E>
+    + RuntimeRecursiveWitnessProveBackend<F, E>
+    + RuntimeRingSwitchProveBackend<F>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootProvePoly<F>,
+{
+}
+
+impl<F, P, E, B> RecursiveProveBackend<F, P, E> for B
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    E: ExtField<F>,
+    P: RuntimeRootProvePoly<F>,
+    B: RootProveFlowBackend<F, P, E>
+        + RuntimeRecursiveWitnessProveBackend<F, E>
+        + RuntimeRingSwitchProveBackend<F>,
 {
 }
 
@@ -700,13 +902,13 @@ where
 /// [`crate::ProverComputeStack`].
 ///
 /// The uniform case `C = O = TS = R = B` is satisfied automatically when
-/// `B: RecursiveProveBackend<F, P, E, D>`.
-pub trait ProveStackFor<F, P, E, const D: usize, C, O, TS, R>
+/// `B: RecursiveProveBackend<F, P, E>`.
+pub trait ProveStackFor<F, P, E, C, O, TS, R>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
-    P: RootProvePoly<F, D>,
+    P: RuntimeRootProvePoly<F>,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
@@ -714,24 +916,19 @@ where
 {
 }
 
-impl<F, P, E, const D: usize, C, O, TS, R> ProveStackFor<F, P, E, D, C, O, TS, R> for ()
+impl<F, P, E, C, O, TS, R> ProveStackFor<F, P, E, C, O, TS, R> for ()
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
-    P: RootProvePoly<F, D>,
+    P: RuntimeRootProvePoly<F>,
     C: ComputeBackendSetup<F> + CommitmentComputeBackend<F>,
     O: ComputeBackendSetup<F>
-        + OpeningProveBackendFor<F, P, D>
-        + SuffixDispatchOpeningProveBackendFor<F, D>
+        + RuntimeOpeningProveBackendFor<F, P>
+        + SuffixOpeningProveBackend<F>
         + DigitRowsComputeBackend<F>,
-    TS: ComputeBackendSetup<F>
-        + TensorBackendFor<F, P, E, D>
-        + SuffixDispatchTensorProveBackendFor<F, E, D>,
-    R: ComputeBackendSetup<F>
-        + SuffixRingSwitchProveBackend<F>
-        + RingSwitchProveBackend<F, D>
-        + DigitRowsComputeBackend<F>,
+    TS: ComputeBackendSetup<F> + RuntimeTensorBackendFor<F, P, E> + SuffixTensorProveBackend<F, E>,
+    R: ComputeBackendSetup<F> + RuntimeRingSwitchProveBackend<F> + DigitRowsComputeBackend<F>,
 {
 }
 
@@ -750,5 +947,23 @@ where
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         RootPolyShape::onehot_chunk_size(*self)
+    }
+}
+
+impl<F, P> RootPolyMeta<F> for &P
+where
+    F: FieldCore,
+    P: RootPolyMeta<F>,
+{
+    fn num_ring_elems(&self) -> usize {
+        RootPolyMeta::num_ring_elems(*self)
+    }
+
+    fn num_vars(&self) -> usize {
+        RootPolyMeta::num_vars(*self)
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        RootPolyMeta::onehot_chunk_size(*self)
     }
 }

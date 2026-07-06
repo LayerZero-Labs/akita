@@ -26,7 +26,9 @@
 //!   - [`OneHotBlocks`]: a two-variant enum that wraps the built
 //!     `FlatBlocks<E>` so [`OneHotPoly`]'s ops can dispatch to the right
 //!     kernel based on the actual layout in use.
-//!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
+//!   - [`OneHotPoly<F, I>`]: the caller-facing polynomial. Storage is
+//!     D-free; ring-shaped ops take the kernel dispatch dimension as a
+//!     method-level const generic.
 
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
@@ -37,9 +39,10 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
-use akita_types::{CleartextWitnessProof, FlatRingVec, FpExtEncoding, RingMatrixView};
+use akita_types::{CleartextWitnessProof, FpExtEncoding, RingMatrixView, RingVec};
+use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};

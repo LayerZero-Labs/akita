@@ -22,7 +22,7 @@ fn expand_onehot_accum<const D: usize>(
 fn finish_decompose_fold<F: CanonicalField, const D: usize>(
     compressed_accum: Vec<[i32; D]>,
     num_digits: usize,
-) -> DecomposeFoldWitness<F, D> {
+) -> DecomposeFoldWitness<F> {
     let modulus = (-F::one()).to_canonical_u128() + 1;
     let coeff_accum = {
         let _span = tracing::info_span!("onehot_expand_accum").entered();
@@ -38,7 +38,7 @@ fn decompose_fold_from_views<E, F, const D: usize>(
     num_blocks: usize,
     block_len: usize,
     num_digits: usize,
-) -> DecomposeFoldWitness<F, D>
+) -> DecomposeFoldWitness<F>
 where
     E: OneHotEntry,
     F: CanonicalField,
@@ -50,37 +50,46 @@ where
     finish_decompose_fold(compressed_accum, num_digits)
 }
 
-impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
-    pub(super) fn decompose_fold_onehot<E>(
+impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+    pub(super) fn decompose_fold_onehot<E, const D: usize>(
         &self,
         blocks: &FlatBlocks<E>,
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-    ) -> DecomposeFoldWitness<F, D>
+    ) -> DecomposeFoldWitness<F>
     where
         E: OneHotEntry,
         F: CanonicalField,
     {
         let num_blocks = challenges.len().min(blocks.num_blocks());
         let block_views: Vec<&[E]> = (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-        decompose_fold_from_views(&block_views, challenges, num_blocks, block_len, num_digits)
+        decompose_fold_from_views::<E, F, D>(
+            &block_views,
+            challenges,
+            num_blocks,
+            block_len,
+            num_digits,
+        )
     }
 
-    pub(super) fn decompose_fold_batched_single_chunk_onehot(
+    pub(super) fn decompose_fold_batched_single_chunk_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-    ) -> Option<DecomposeFoldWitness<F, D>>
+    ) -> Option<DecomposeFoldWitness<F>>
     where
         F: CanonicalField,
     {
         let total_blocks = challenges.len();
+        let cached_blocks = polys
+            .iter()
+            .map(|poly| poly.blocks_for(D, block_len).ok())
+            .collect::<Option<Vec<_>>>()?;
         let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(total_blocks);
-        for poly in polys {
-            let (_, cached) = poly.block_cache.get()?;
-            let OneHotBlocks::SingleChunk(blocks) = cached else {
+        for cached in &cached_blocks {
+            let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
                 return None;
             };
             for i in 0..blocks.num_blocks() {
@@ -91,7 +100,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             return None;
         }
         let active_blocks = flat_blocks.len().min(total_blocks);
-        Some(decompose_fold_from_views(
+        Some(decompose_fold_from_views::<SingleChunkEntry, F, D>(
             &flat_blocks,
             challenges,
             active_blocks,
@@ -100,20 +109,23 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         ))
     }
 
-    pub(super) fn decompose_fold_batched_multi_chunk_onehot(
+    pub(super) fn decompose_fold_batched_multi_chunk_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
-    ) -> Option<DecomposeFoldWitness<F, D>>
+    ) -> Option<DecomposeFoldWitness<F>>
     where
         F: CanonicalField,
     {
         let total_blocks = challenges.len();
+        let cached_blocks = polys
+            .iter()
+            .map(|poly| poly.blocks_for(D, block_len).ok())
+            .collect::<Option<Vec<_>>>()?;
         let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(total_blocks);
-        for poly in polys {
-            let (_, cached) = poly.block_cache.get()?;
-            let OneHotBlocks::MultiChunk(blocks) = cached else {
+        for cached in &cached_blocks {
+            let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
                 return None;
             };
             for i in 0..blocks.num_blocks() {
@@ -124,7 +136,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             return None;
         }
         let active_blocks = flat_blocks.len().min(total_blocks);
-        Some(decompose_fold_from_views(
+        Some(decompose_fold_from_views::<MultiChunkEntry, F, D>(
             &flat_blocks,
             challenges,
             active_blocks,
@@ -134,27 +146,21 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     }
 
     /// Tensor-shaped batched decompose-fold for one-hot polynomials.
-    pub(super) fn decompose_fold_batched_tensor_onehot(
+    pub(super) fn decompose_fold_batched_tensor_onehot<const D: usize>(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
         block_len: usize,
         num_digits: usize,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>
+    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
     where
         F: CanonicalField,
     {
-        for poly in polys {
-            poly.blocks_for(block_len).expect(
-                "OneHotPoly::decompose_fold_batched_tensor_onehot: invalid block_len for one polynomial",
-            );
-        }
         let Some(first) = polys.first() else {
             return Ok(None);
         };
-        let (_, first_blocks) = first
-            .block_cache
-            .get()
-            .expect("block cache was just built above");
+        let first_blocks = first
+            .blocks_for(D, block_len)
+            .expect("OneHotPoly::decompose_fold_batched_tensor_onehot: invalid block_len for first polynomial");
         let expected_blocks = tensor
             .left_len
             .checked_mul(tensor.right_len)
@@ -163,12 +169,15 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         validate_tensor_blocks::<D>(tensor, expected_blocks)?;
         let modulus = (-F::one()).to_canonical_u128() + 1;
 
-        let witness = match first_blocks {
+        let cached_blocks = polys
+            .iter()
+            .map(|poly| poly.blocks_for(D, block_len))
+            .collect::<Result<Vec<_>, _>>()?;
+        let witness = match first_blocks.as_ref() {
             OneHotBlocks::SingleChunk(_) => {
                 let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for poly in polys {
-                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
-                    let OneHotBlocks::SingleChunk(blocks) = cached else {
+                for cached in &cached_blocks {
+                    let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
                         return Ok(None);
                     };
                     for i in 0..blocks.num_blocks() {
@@ -196,9 +205,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             }
             OneHotBlocks::MultiChunk(_) => {
                 let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for poly in polys {
-                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
-                    let OneHotBlocks::MultiChunk(blocks) = cached else {
+                for cached in &cached_blocks {
+                    let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
                         return Ok(None);
                     };
                     for i in 0..blocks.num_blocks() {
