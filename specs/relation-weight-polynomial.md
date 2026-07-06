@@ -56,6 +56,31 @@ rename misleading internal concepts while touching the area. Diff size is not a
 reason to leave compatibility wrappers, aliases, duplicate helpers, or stale
 terminology behind.
 
+### Proof-language cutover (intentional)
+
+This refactor **changes the accepted proof language**. It does not preserve
+byte-for-byte compatibility with proofs produced under today's
+`gamma^2`-batched trace summand or separate `trace_opening_claim`.
+
+What changes:
+
+- Stage-2 `input_claim` and `expected_output_claim` shape (two summands only).
+- Fiat-Shamir transcript: no separate trace-batching scalar; no terminal
+  `trace_gamma` squeeze; `EvaluationTrace` covered by the same `tau1` row batch
+  as every other relation row.
+- Stage-2 sumcheck round polynomials and on-wire proof bytes.
+
+What is preserved for uniform schedules (`d_a = d_b = d_d`):
+
+- Opening binding semantics via the `EvaluationTrace` relation row (same
+  soundness obligation, different encoding).
+- Quotient **witness tail** bytes (`r_hat` segment layout and order).
+- Stage-1 range-check protocol and unrelated transcript labels/sampling order.
+
+Old proofs do not verify under the new code; new proofs do not verify under the
+old code. Update `transcript_hardening` fixtures and any pinned proof vectors as
+part of the cutover.
+
 ## Motivation
 
 The current Stage-2 code is hard to audit because the relation is split across
@@ -960,8 +985,9 @@ via `SetupContributionPlanInputs`, not the relation-weight summand shape.
   ```
 
   with `EvaluationTrace` inside `RelationWeightPolynomial`, not a third summand.
-- Uniform schedules produce byte-identical quotient tails and equivalent opening
-  binding semantics under the `EvaluationTrace` row model.
+- Uniform schedules keep byte-identical **quotient witness tail** layout; opening
+  binding is equivalent under the `EvaluationTrace` row model (see Proof-language
+  cutover above). Proof/transcript bytes are **not** preserved.
 - Mixed role dimensions remain rejected at the schedule validation boundary
   until all quotient-family computation is implemented. The row and quotient
   layout APIs already encode the per-family dimensions that removal will use.
@@ -982,7 +1008,9 @@ via `SetupContributionPlanInputs`, not the relation-weight summand shape.
 - [ ] Quotient tail sizing and weighting are derived from
       `RelationQuotientLayout`.
 - [ ] Ring-switch quotient/product kernels no longer expose `split_eq` names.
-- [ ] Uniform `d_a = d_b = d_d` quotient bytes are unchanged.
+- [ ] Uniform `d_a = d_b = d_d` quotient **witness tail** bytes are unchanged.
+- [ ] `transcript_hardening` fixtures updated for the new transcript shape (no
+      trace-batching scalar).
 - [ ] Existing direct setup scan and recursive setup-product modes both verify.
 - [ ] `cargo fmt -q` passes.
 - [ ] `cargo clippy --all --message-format=short -q -- -D warnings` passes.
@@ -1057,13 +1085,15 @@ That segment builder is the landing point for mixed role dimensions.
 
 ## Rollout Risks
 
-- **Transcript accidental change.** Transcript changes are limited to the
-  intended row-batching cutover: no separate trace-batching scalar, and no
-  terminal trace scalar. Preserve unrelated labels and sampling order.
+- **Transcript accidental change.** Intentional transcript deltas are limited to
+  the trace-row cutover: no separate trace-batching scalar, no terminal
+  `trace_gamma` squeeze. Preserve unrelated labels and sampling order outside
+  that delta.
 - **Trace scaling confusion.** The old `gamma^2` language is removed from
   Stage-2 interfaces. There is no trace-side scalar in terminal scheduling.
-- **Quotient ordering drift.** The uniform-mode byte stream must stay unchanged
-  until mixed dimensions deliberately change it.
+- **Quotient ordering drift.** Uniform-mode **quotient witness tail** bytes must
+  stay unchanged until mixed dimensions deliberately change them. This does not
+  apply to proof or transcript bytes.
 - **Verifier offloading coupling.** Setup-product sumcheck code depends on the
   row-evaluation plan. The new prepared relation-weight evaluator must keep the
   setup contribution plan available for Stage 3.
