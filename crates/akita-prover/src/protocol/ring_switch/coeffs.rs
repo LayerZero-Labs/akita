@@ -218,7 +218,10 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let r = compute_relation_quotient::<F, B, D>(
             ring_switch_ctx,
-            lp,
+            crate::protocol::ring_relation::RelationQuotientShape::from_level(
+                lp,
+                instance.m_row_layout(),
+            )?,
             &instance.challenges,
             e_hat.typed_planes::<D>()?,
             &decomposed_inner_rows,

@@ -296,9 +296,17 @@ where
         // dimension via `RingView::new` (no-panic gate, mirrors the verifier's
         // commitment-length check) before interpreting it as ring rows.
         let root_ring_dim = root_scheduled.params.role_dims().d_b();
-        let expected_rows = root_scheduled.params.b_key.row_len();
+        let opening_batch = claims.opening_claims().layout()?;
         let commitments = claims.commitments();
-        for commitment in commitments {
+        if commitments.len() != opening_batch.num_groups() {
+            return Err(AkitaError::InvalidInput(
+                "root commitment group count does not match opening batch".to_string(),
+            ));
+        }
+        for (group_index, commitment) in commitments.iter().enumerate() {
+            let expected_rows = root_scheduled
+                .params
+                .root_group_commitment_rows(&opening_batch, group_index)?;
             let view = RingView::new(commitment.rows().coeffs(), root_ring_dim)?;
             if view.num_rings() != expected_rows {
                 return Err(AkitaError::InvalidInput(

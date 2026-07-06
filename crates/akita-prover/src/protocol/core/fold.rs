@@ -334,7 +334,7 @@ where
                 RingVec::from_ring_elems(&row_coefficient_rings),
             ))
         })?;
-    let commitment = fold_claims.single_fold_commitment()?;
+    let commitment = fold_claims.fold_commitment(level_params)?;
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),

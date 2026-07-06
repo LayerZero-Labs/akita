@@ -25,12 +25,50 @@ use akita_types::{
 ///
 /// Returns an error if shapes overflow, the prefix does not fit the setup matrix,
 /// or backend commitment fails.
+/// Extracted commit geometry for one setup-prefix slot.
+///
+/// Callers derive this (and the level-params digest) from the offload
+/// `LevelParams`; the commit kernel itself must not read schedule types.
+#[derive(Clone, Copy, Debug)]
+pub struct SetupPrefixCommitShape {
+    /// Witness block count (`num_blocks`).
+    pub num_blocks: usize,
+    /// Ring elements per block (`block_len`).
+    pub block_len: usize,
+    /// Inner A-matrix row count (`a_key.row_len()`).
+    pub n_a: usize,
+    /// Outer B-matrix row count (`b_key.row_len()`).
+    pub n_b: usize,
+    /// Inner commit digit depth (`num_digits_commit`).
+    pub num_digits_commit: usize,
+    /// Opening digit depth (`num_digits_open`).
+    pub num_digits_open: usize,
+    /// Digit basis (`log_basis`).
+    pub log_basis: u32,
+}
+
+impl SetupPrefixCommitShape {
+    /// Extract the commit geometry from the offload level params.
+    #[must_use]
+    pub fn from_level(level_params: &LevelParams) -> Self {
+        Self {
+            num_blocks: level_params.num_blocks,
+            block_len: level_params.block_len,
+            n_a: level_params.a_key.row_len(),
+            n_b: level_params.b_key.row_len(),
+            num_digits_commit: level_params.num_digits_commit,
+            num_digits_open: level_params.num_digits_open,
+            log_basis: level_params.log_basis,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn commit_setup_prefix<F, const D: usize, B>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup,
-    level_params: &LevelParams,
+    shape: SetupPrefixCommitShape,
     level_params_digest: [u8; 32],
     setup_seed_digest: [u8; 32],
     n_prefix: usize,
@@ -51,9 +89,9 @@ where
         ));
     }
     let padded_ring_slots = n_prefix / D;
-    let witness_ring_slots = level_params
+    let witness_ring_slots = shape
         .num_blocks
-        .checked_mul(level_params.block_len)
+        .checked_mul(shape.block_len)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
@@ -78,29 +116,23 @@ where
 
     let ring_elems =
         extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots, natural_len)?;
-    let block_slices =
-        setup_prefix_block_slices(&ring_elems, level_params.num_blocks, level_params.block_len)?;
+    let block_slices = setup_prefix_block_slices(&ring_elems, shape.num_blocks, shape.block_len)?;
 
     let recomposed_inner_rows = backend.dense_commit_rows(
         prepared,
         DenseCommitRowsPlan {
-            n_a: level_params.a_key.row_len(),
+            n_a: shape.n_a,
             input: DenseCommitInput::CoeffBlocks {
                 block_slices,
-                num_digits_commit: level_params.num_digits_commit,
-                log_basis: level_params.log_basis,
+                num_digits_commit: shape.num_digits_commit,
+                log_basis: shape.log_basis,
             },
         },
     )?;
 
     let block_sizes = recomposed_inner_rows
         .iter()
-        .map(|_| {
-            commit_inner_block_digit_count(
-                level_params.a_key.row_len(),
-                level_params.num_digits_open,
-            )
-        })
+        .map(|_| commit_inner_block_digit_count(shape.n_a, shape.num_digits_open))
         .collect::<Result<Vec<_>, _>>()?;
     let mut decomposed_inner_rows = DigitBlocks::zeroed(block_sizes, D)?;
     let dst_blocks = decomposed_inner_rows.split_typed_blocks_mut::<D>()?;
@@ -108,12 +140,7 @@ where
     cfg_into_iter!(dst_blocks)
         .zip(cfg_iter!(recomposed_inner_rows))
         .try_for_each(|(dst, rows)| -> Result<(), AkitaError> {
-            decompose_rows_i8_into(
-                rows,
-                dst,
-                level_params.num_digits_open,
-                level_params.log_basis,
-            );
+            decompose_rows_i8_into(rows, dst, shape.num_digits_open, shape.log_basis);
             Ok(())
         })?;
     #[cfg(not(feature = "parallel"))]
@@ -121,35 +148,22 @@ where
         .into_iter()
         .zip(recomposed_inner_rows.iter())
         .try_for_each(|(dst, rows)| -> Result<(), AkitaError> {
-            decompose_rows_i8_into(
-                rows,
-                dst,
-                level_params.num_digits_open,
-                level_params.log_basis,
-            );
+            decompose_rows_i8_into(rows, dst, shape.num_digits_open, shape.log_basis);
             Ok(())
         })?;
 
-    let b_input_len = commit_inner_flat_digit_count(
-        level_params.num_blocks,
-        level_params.a_key.row_len(),
-        level_params.num_digits_open,
-    )?;
+    let b_input_len =
+        commit_inner_flat_digit_count(shape.num_blocks, shape.n_a, shape.num_digits_open)?;
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
     let planes = decomposed_inner_rows.typed_planes::<D>()?;
     b_input_digits.copy_from_slice(planes);
-    let u = backend.digit_rows::<D>(
-        prepared,
-        level_params.b_key.row_len(),
-        &b_input_digits,
-        level_params.log_basis,
-    )?;
-    if u.len() != level_params.b_key.row_len() {
+    let u = backend.digit_rows::<D>(prepared, shape.n_b, &b_input_digits, shape.log_basis)?;
+    if u.len() != shape.n_b {
         return Err(AkitaError::InvalidSetup(format!(
             "setup prefix commit returned {} B rows, expected {}",
             u.len(),
-            level_params.b_key.row_len()
+            shape.n_b
         )));
     }
 
@@ -333,7 +347,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &level_params,
+            SetupPrefixCommitShape::from_level(&level_params),
             digest_level_params(std::slice::from_ref(&level_params)),
             seed_digest,
             n_prefix,

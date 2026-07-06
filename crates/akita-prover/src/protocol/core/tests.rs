@@ -1,10 +1,11 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_field::{AkitaError, Fp32, FpExt2, NegOneNr};
+use akita_config::{opening_schedule_key, proof_optimized::fp128::D64OneHot};
+use akita_field::{Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaScheduleLookupKey, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims,
+    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    PolynomialGroupLayout,
 };
 
 type F = Fp32<251>;
@@ -51,11 +52,16 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 }
 
 #[test]
-fn batched_prove_opening_batch_rejects_multi_group_shape() {
-    let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped shape");
+fn schedule_key_from_layout_includes_entire_batch() {
+    let batch = OpeningClaimsLayout::from_groups(vec![
+        PolynomialGroupLayout::new(2, 1),
+        PolynomialGroupLayout::new(4, 2),
+    ])
+    .expect("grouped shape");
     assert_eq!(batch.num_groups(), 2);
-    assert!(matches!(
-        AkitaScheduleLookupKey::from_layout(&batch),
-        Err(AkitaError::InvalidSetup(_))
-    ));
+    let key = opening_schedule_key::<D64OneHot>(&batch).expect("grouped schedule key");
+    assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
+    assert_eq!(key.num_commitment_groups(), 2);
+    assert_eq!(key.precommitteds.len(), 1);
+    assert_eq!(key.precommitteds[0].group, PolynomialGroupLayout::new(2, 1));
 }

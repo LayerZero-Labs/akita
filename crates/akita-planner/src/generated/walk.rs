@@ -13,16 +13,14 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout,
-    PolynomialGroupLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, PolynomialGroupLayout,
+    PrecommittedLevelParams, Schedule, Step,
 };
 
 use crate::generated::{
     validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
-use crate::group_batch::{
-    grouped_root_direct_witness_len, grouped_root_next_w_len, grouped_root_precommitted_groups,
-};
+use crate::group_batch::{grouped_root_next_w_len, grouped_root_precommitted_groups};
 use crate::PlannerPolicy;
 
 pub(crate) struct GeneratedEntryWalkOutput {
@@ -452,7 +450,7 @@ fn walk_grouped_generated_schedule_entry(
             }
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
-                    let direct_current_w_len = grouped_root_direct_witness_len(key)?;
+                    let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
                     let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
                         num_vars: key.final_group.num_vars(),
                         level: 0,
@@ -536,7 +534,7 @@ fn walk_grouped_generated_schedule_entry(
 
 fn validate_expanded_precommitted_groups(
     key: &AkitaScheduleLookupKey,
-    groups: &[GroupRootParams],
+    groups: &[PrecommittedLevelParams],
 ) -> Result<(), AkitaError> {
     if groups.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(format!(
