@@ -25,8 +25,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             self.prev_norm_poly = Some(virt_poly);
             combined
         } else {
-            match &self.w_table {
-                WTable::Compact(w_compact) => {
+            match &self.witness_table {
+                WitnessTable::Compact(w_compact) => {
                     if use_prefix_y_round {
                         let (virt_q_coeffs, rel_coeffs) =
                             self.compute_round_compact_prefix_y_terms(w_compact);
@@ -43,7 +43,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     }
                 }
-                WTable::Full(w_full) => {
+                WitnessTable::Full(w_full) => {
                     if use_prefix_y_round {
                         let (virt_q_coeffs, rel_coeffs) =
                             self.compute_round_full_prefix_y_terms(w_full);
@@ -143,32 +143,33 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                     r,
                 );
                 let mut round2_terms = None;
-                self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
-                    WTable::Compact(w_compact) => {
-                        if self.ring_bits() > 2 {
-                            let (w_full, virt_terms, rel_coeffs) = self
-                                .fuse_compact_to_round2_and_compute_round(
+                self.witness_table =
+                    match mem::replace(&mut self.witness_table, WitnessTable::Full(Vec::new())) {
+                        WitnessTable::Compact(w_compact) => {
+                            if self.ring_bits() > 2 {
+                                let (w_full, virt_terms, rel_coeffs) = self
+                                    .fuse_compact_to_round2_and_compute_round(
+                                        &w_compact,
+                                        &relation_round2,
+                                        r0,
+                                        r,
+                                    );
+                                round2_terms = Some((virt_terms, rel_coeffs));
+                                WitnessTable::Full(w_full)
+                            } else {
+                                WitnessTable::Full(Self::fold_compact_through_initial_batch(
                                     &w_compact,
-                                    &relation_round2,
+                                    self.live_x_cols,
+                                    y_len,
                                     r0,
                                     r,
-                                );
-                            round2_terms = Some((virt_terms, rel_coeffs));
-                            WTable::Full(w_full)
-                        } else {
-                            WTable::Full(Self::fold_compact_through_initial_batch(
-                                &w_compact,
-                                self.live_x_cols,
-                                y_len,
-                                r0,
-                                r,
-                            ))
+                                ))
+                            }
                         }
-                    }
-                    WTable::Full(_) => {
-                        unreachable!("initial round batch should hold compact witness")
-                    }
-                };
+                        WitnessTable::Full(_) => {
+                            unreachable!("initial round batch should hold compact witness")
+                        }
+                    };
                 let next_y_len = y_len >> 2;
                 self.relation_weight = RelationWeightPolynomial::from_live_evals(
                     relation_round2,
@@ -213,39 +214,52 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         let y_len = self.relation_weight_y_len();
         let live_x_cols = self.live_x_cols;
 
-        self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
-            WTable::Compact(w_compact) => {
-                let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
-                let w_full = if folding_x_round && use_prefix_x_round {
-                    Self::fold_compact_prefix_x(&w_compact, live_x_cols, y_len, &fold_lut)
-                } else {
-                    Self::fold_compact_to_full(&w_compact, &fold_lut)
-                };
-                self.fold_relation_weight_for_round(
-                    r,
-                    folding_x_round,
-                    use_prefix_x_round,
-                    use_prefix_y_round,
-                    in_y_round,
-                );
-                WTable::Full(w_full)
-            }
-            WTable::Full(w_full) => {
-                if folding_x_round && use_prefix_x_round {
-                    if fuse_next_full_prefix_x {
-                        self.fold_relation_weight_for_round(
-                            r,
-                            folding_x_round,
-                            use_prefix_x_round,
-                            use_prefix_y_round,
-                            in_y_round,
-                        );
-                        let (next_w_full, virt_terms, rel_coeffs) =
-                            self.fuse_full_prefix_x_and_compute_round(&w_full, r);
-                        self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
-                        WTable::Full(next_w_full)
+        self.witness_table =
+            match mem::replace(&mut self.witness_table, WitnessTable::Full(Vec::new())) {
+                WitnessTable::Compact(w_compact) => {
+                    let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
+                    let w_full = if folding_x_round && use_prefix_x_round {
+                        Self::fold_compact_prefix_x(&w_compact, live_x_cols, y_len, &fold_lut)
                     } else {
-                        let next_w_full = Self::fold_full_prefix_x(&w_full, live_x_cols, y_len, r);
+                        Self::fold_compact_to_full(&w_compact, &fold_lut)
+                    };
+                    self.fold_relation_weight_for_round(
+                        r,
+                        folding_x_round,
+                        use_prefix_x_round,
+                        use_prefix_y_round,
+                        in_y_round,
+                    );
+                    WitnessTable::Full(w_full)
+                }
+                WitnessTable::Full(w_full) => {
+                    if folding_x_round && use_prefix_x_round {
+                        if fuse_next_full_prefix_x {
+                            self.fold_relation_weight_for_round(
+                                r,
+                                folding_x_round,
+                                use_prefix_x_round,
+                                use_prefix_y_round,
+                                in_y_round,
+                            );
+                            let (next_w_full, virt_terms, rel_coeffs) =
+                                self.fuse_full_prefix_x_and_compute_round(&w_full, r);
+                            self.cached_round_poly =
+                                Some(self.combine_terms(virt_terms, rel_coeffs));
+                            WitnessTable::Full(next_w_full)
+                        } else {
+                            let next_w_full =
+                                Self::fold_full_prefix_x(&w_full, live_x_cols, y_len, r);
+                            self.fold_relation_weight_for_round(
+                                r,
+                                folding_x_round,
+                                use_prefix_x_round,
+                                use_prefix_y_round,
+                                in_y_round,
+                            );
+                            WitnessTable::Full(next_w_full)
+                        }
+                    } else if in_y_round && use_prefix_y_round {
                         self.fold_relation_weight_for_round(
                             r,
                             folding_x_round,
@@ -253,31 +267,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                             use_prefix_y_round,
                             in_y_round,
                         );
-                        WTable::Full(next_w_full)
+                        WitnessTable::Full(Self::fold_full_prefix_y(&w_full, live_x_cols, y_len, r))
+                    } else {
+                        let mut w_full = w_full;
+                        fold_evals_in_place(&mut w_full, r);
+                        self.fold_relation_weight_for_round(
+                            r,
+                            folding_x_round,
+                            use_prefix_x_round,
+                            use_prefix_y_round,
+                            in_y_round,
+                        );
+                        WitnessTable::Full(w_full)
                     }
-                } else if in_y_round && use_prefix_y_round {
-                    self.fold_relation_weight_for_round(
-                        r,
-                        folding_x_round,
-                        use_prefix_x_round,
-                        use_prefix_y_round,
-                        in_y_round,
-                    );
-                    WTable::Full(Self::fold_full_prefix_y(&w_full, live_x_cols, y_len, r))
-                } else {
-                    let mut w_full = w_full;
-                    fold_evals_in_place(&mut w_full, r);
-                    self.fold_relation_weight_for_round(
-                        r,
-                        folding_x_round,
-                        use_prefix_x_round,
-                        use_prefix_y_round,
-                        in_y_round,
-                    );
-                    WTable::Full(w_full)
                 }
-            }
-        };
+            };
 
         if folding_x_round {
             self.live_x_cols = self.live_x_cols.div_ceil(2);

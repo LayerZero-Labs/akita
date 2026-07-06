@@ -61,7 +61,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let input_claim = batching_coeff * s_claim + relation_weight_claim;
 
         Ok(Self {
-            w_table: WTable::Compact(w_evals_compact),
+            witness_table: WitnessTable::Compact(w_evals_compact),
             b,
             batching_coeff,
             s_claim,
@@ -91,12 +91,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     /// Panics if called before the witness table has been fully folded to a
     /// single field element.
     pub fn final_w_eval(&self) -> E {
-        match &self.w_table {
-            WTable::Full(w_full) => {
-                assert_eq!(w_full.len(), 1, "w_table not fully folded");
+        match &self.witness_table {
+            WitnessTable::Full(w_full) => {
+                assert_eq!(w_full.len(), 1, "witness_table not fully folded");
                 w_full[0]
             }
-            WTable::Compact(_) => panic!("w_table remained compact after final fold"),
+            WitnessTable::Compact(_) => panic!("witness_table remained compact after final fold"),
         }
     }
 
@@ -229,9 +229,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .clone()
                 .expect("initial round batch requested without cached stage-1 challenges");
             let ring_bits = self.num_vars - self.col_bits;
-            let w_compact = match &self.w_table {
-                WTable::Compact(w_compact) => w_compact,
-                WTable::Full(_) => {
+            let w_compact = match &self.witness_table {
+                WitnessTable::Compact(w_compact) => w_compact,
+                WitnessTable::Full(_) => {
                     panic!("initial round batch can only build from compact witness")
                 }
             };

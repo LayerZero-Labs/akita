@@ -318,7 +318,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         .expect("round1 norm poly should be cached")
         .evaluate(&r1);
     expected.split_eq.bind(r1);
-    expected.w_table = WTable::Full(expected_w_full.clone());
+    expected.witness_table = WitnessTable::Full(expected_w_full.clone());
     expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
         relation_x_cols * (y_len >> 2),
@@ -330,9 +330,9 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
 
     prover.ingest_challenge(1, r1);
 
-    match &prover.w_table {
-        WTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
-        WTable::Compact(_) => {
+    match &prover.witness_table {
+        WitnessTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
+        WitnessTable::Compact(_) => {
             panic!("expected fused trace stage2 transition to materialize full table")
         }
     }

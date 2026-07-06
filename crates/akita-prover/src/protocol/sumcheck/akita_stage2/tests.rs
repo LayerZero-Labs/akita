@@ -564,7 +564,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         .expect("round1 norm poly should be cached")
         .evaluate(&r1);
     expected.split_eq.bind(r1);
-    expected.w_table = WTable::Full(expected_w_full.clone());
+    expected.witness_table = WitnessTable::Full(expected_w_full.clone());
     expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
         relation_x_cols * (y_len >> 2),
@@ -576,9 +576,9 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
 
     prover.ingest_challenge(1, r1);
 
-    match &prover.w_table {
-        WTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
-        WTable::Compact(_) => {
+    match &prover.witness_table {
+        WitnessTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
+        WitnessTable::Compact(_) => {
             panic!("expected fused stage2 transition to materialize full table")
         }
     }
@@ -664,7 +664,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         .expect("round1 norm poly should be cached")
         .evaluate(&r1);
     expected.split_eq.bind(r1);
-    expected.w_table = WTable::Full(expected_w_full.clone());
+    expected.witness_table = WitnessTable::Full(expected_w_full.clone());
     expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
         relation_x_cols * (y_len >> 2),
@@ -676,9 +676,9 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
 
     prover.ingest_challenge(1, r1);
 
-    match &prover.w_table {
-        WTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
-        WTable::Compact(_) => {
+    match &prover.witness_table {
+        WitnessTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
+        WitnessTable::Compact(_) => {
             panic!("expected fused stage2 transition to materialize full table")
         }
     }
@@ -744,9 +744,9 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     let expected_round2 = expected.compute_round_univariate(2, expected_round1.evaluate(&r0));
     assert_eq!(expected_round2, round2);
 
-    let current_w_full = match &expected.w_table {
-        WTable::Full(w_full) => w_full.clone(),
-        WTable::Compact(_) => panic!("expected later prefix state to be full"),
+    let current_w_full = match &expected.witness_table {
+        WitnessTable::Full(w_full) => w_full.clone(),
+        WitnessTable::Compact(_) => panic!("expected later prefix state to be full"),
     };
     let current_y_len = expected.relation_weight_y_len();
     let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_prefix_x(
@@ -782,9 +782,9 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
 
     prover.ingest_challenge(2, r2);
 
-    match &prover.w_table {
-        WTable::Full(w_full) => assert_eq!(w_full, &expected_next_w_full),
-        WTable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+    match &prover.witness_table {
+        WitnessTable::Full(w_full) => assert_eq!(w_full, &expected_next_w_full),
+        WitnessTable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
     }
     assert_eq!(
         prover.relation_weight.evals(),

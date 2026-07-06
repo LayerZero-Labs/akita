@@ -1,9 +1,7 @@
 //! Stage-2 fused sumcheck prover/verifier for the Akita PCS.
 //!
-//! This stage views the committed witness as a Boolean table
-//! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> F`, where `x` indexes the padded
-//! witness columns and `y` indexes the coefficient inside a
-//! `D = 2^{ring_bits}`-dimensional ring element.
+//! This stage views the committed witness as a live flat Boolean table
+//! `w : {0,1}^{num_vars} -> F`, zero-extended outside the public live range.
 //!
 //! The relation side is a single multilinear
 //! [`RelationWeightPolynomial`] over the
@@ -22,8 +20,8 @@
 //! sumcheck is
 //!
 //! `relation_weight_claim + gamma * s_claim =`
-//! `sum_{x,y} [ w(x, y) * RelationWeightPolynomial(x, y)`
-//! `           + gamma * eq(stage1_point, (x, y)) * w(x, y) * (w(x, y) + 1) ]`.
+//! `sum_z [ w(z) * RelationWeightPolynomial(z)`
+//! `      + gamma * eq(stage1_point, z) * w(z) * (w(z) + 1) ]`.
 //!
 //! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
 //!
@@ -31,8 +29,8 @@
 //! `  + gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses
-//! the relation-weight and virtual terms around the same local `w0` / `dw` scan
-//! so the witness-side work is shared.
+//! the relation-weight and virtual terms around the same flat pair scan so the
+//! witness-side work is shared.
 
 use super::fold_full_prefix_pair;
 use super::round_batching::{
@@ -52,7 +50,7 @@ use akita_types::RelationWeightPolynomial;
 use std::mem;
 use std::time::Instant;
 
-enum WTable<E: FieldCore> {
+enum WitnessTable<E: FieldCore> {
     Compact(Vec<i8>),
     Full(Vec<E>),
 }
@@ -173,12 +171,12 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 
 /// Stage-2 fused virtual-claim + relation sumcheck prover.
 ///
-/// Holds a single `w_table` shared by both halves of stage 2. The virtual half
+/// Holds a single `witness_table` shared by both halves of stage 2. The virtual half
 /// is pre-weighted by `batching_coeff` through `split_eq`, so the round
 /// polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
 pub struct AkitaStage2Prover<E: FieldCore> {
-    w_table: WTable<E>,
+    witness_table: WitnessTable<E>,
     b: usize,
     batching_coeff: E,
     s_claim: E,

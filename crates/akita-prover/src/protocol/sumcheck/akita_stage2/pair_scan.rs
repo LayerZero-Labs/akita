@@ -18,6 +18,50 @@ pub(crate) trait FlatPairStream {
     fn next_pair(&mut self) -> Option<PairStep>;
 }
 
+/// Borrowed storage view for the Stage-2 witness polynomial.
+///
+/// Both arms are live flat evaluations. Reads outside the live range return
+/// implicit zero, matching the relation-weight zero-extension convention.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum WitnessPolynomial<'a, E: FieldCore> {
+    CompactDigits(&'a [i8]),
+    FieldEvals(&'a [E]),
+}
+
+impl<'a, E: FieldCore> WitnessPolynomial<'a, E> {
+    #[inline]
+    pub(crate) fn live_len(&self) -> usize {
+        match self {
+            Self::CompactDigits(evals) => evals.len(),
+            Self::FieldEvals(evals) => evals.len(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn compact_pair(&self, idx0: usize, idx1: usize) -> Option<(i64, i64)> {
+        match self {
+            Self::CompactDigits(evals) => {
+                let w0 = evals.get(idx0).copied().unwrap_or(0) as i64;
+                let w1 = evals.get(idx1).copied().unwrap_or(0) as i64;
+                Some((w0, w1))
+            }
+            Self::FieldEvals(_) => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn field_pair(&self, idx0: usize, idx1: usize) -> Option<(E, E)> {
+        match self {
+            Self::CompactDigits(_) => None,
+            Self::FieldEvals(evals) => {
+                let w0 = evals.get(idx0).copied().unwrap_or_else(E::zero);
+                let w1 = evals.get(idx1).copied().unwrap_or_else(E::zero);
+                Some((w0, w1))
+            }
+        }
+    }
+}
+
 /// Gruen split-eq blocked pair order used by the dense scan path.
 pub(crate) struct BlockedFlatPairs {
     num_first: usize,
@@ -111,10 +155,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         &self,
         w_compact: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
+        let witness = WitnessPolynomial::<E>::CompactDigits(w_compact);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
-        debug_assert_eq!(w_compact.len() / 2, num_first * num_second);
+        debug_assert_eq!(witness.live_len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
@@ -124,8 +169,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                     let mut inner_virt = [E::MulU64Accum::zero(); 2];
                     let mut pairs = BlockedFlatPairs::for_block(num_first, num_second, j_high);
                     while let Some(step) = pairs.next_pair() {
-                        let w0 = w_compact.get(step.idx0).copied().unwrap_or(0) as i64;
-                        let w1 = w_compact.get(step.idx1).copied().unwrap_or(0) as i64;
+                        let (w0, w1) = witness
+                            .compact_pair(step.idx0, step.idx1)
+                            .expect("compact scan uses compact witness storage");
                         let dw = w1 - w0;
                         let j_low = (step.idx0 / 2) - j_high * num_first;
                         let eq_in = e_first[j_low];
@@ -166,8 +212,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                     let mut inner_virt = [E::MulU64Accum::zero(); 4];
                     let mut pairs = BlockedFlatPairs::for_block(num_first, num_second, j_high);
                     while let Some(step) = pairs.next_pair() {
-                        let w0 = w_compact.get(step.idx0).copied().unwrap_or(0) as i64;
-                        let w1 = w_compact.get(step.idx1).copied().unwrap_or(0) as i64;
+                        let (w0, w1) = witness
+                            .compact_pair(step.idx0, step.idx1)
+                            .expect("compact scan uses compact witness storage");
                         let dw = w1 - w0;
                         let j_low = (step.idx0 / 2) - j_high * num_first;
                         let eq_in = e_first[j_low];
@@ -201,10 +248,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(skip_all, name = "AkitaStage2Prover::scan_round_full_blocked")]
     pub(super) fn scan_round_full_blocked(&self, w_full: &[E]) -> (NormRoundTerms<E>, [E; 3]) {
+        let witness = WitnessPolynomial::FieldEvals(w_full);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
-        debug_assert_eq!(w_full.len() / 2, num_first * num_second);
+        debug_assert_eq!(witness.live_len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
@@ -214,8 +262,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                     let mut inner_virt = [E::zero(); 2];
                     let mut pairs = BlockedFlatPairs::for_block(num_first, num_second, j_high);
                     while let Some(step) = pairs.next_pair() {
-                        let w0 = w_full.get(step.idx0).copied().unwrap_or_else(E::zero);
-                        let w1 = w_full.get(step.idx1).copied().unwrap_or_else(E::zero);
+                        let (w0, w1) = witness
+                            .field_pair(step.idx0, step.idx1)
+                            .expect("full scan uses field witness storage");
                         let dw = w1 - w0;
                         let j_low = (step.idx0 / 2) - j_high * num_first;
                         let eq_in = e_first[j_low];
@@ -247,8 +296,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                     let mut inner_virt = [E::zero(); 3];
                     let mut pairs = BlockedFlatPairs::for_block(num_first, num_second, j_high);
                     while let Some(step) = pairs.next_pair() {
-                        let w0 = w_full.get(step.idx0).copied().unwrap_or_else(E::zero);
-                        let w1 = w_full.get(step.idx1).copied().unwrap_or_else(E::zero);
+                        let (w0, w1) = witness
+                            .field_pair(step.idx0, step.idx1)
+                            .expect("full scan uses field witness storage");
                         let dw = w1 - w0;
                         let j_low = (step.idx0 / 2) - j_high * num_first;
                         let eq_in = e_first[j_low];
@@ -283,5 +333,39 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     ) -> (UniPoly<E>, UniPoly<E>) {
         let (virt_q_coeffs, rel_coeffs) = self.scan_round_compact_blocked(w_compact);
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime128Offset275;
+
+    type F = Prime128Offset275;
+
+    #[test]
+    fn witness_polynomial_compact_reads_use_flat_zero_extension() {
+        let witness = WitnessPolynomial::<F>::CompactDigits(&[-2, 3, 5]);
+
+        assert_eq!(witness.live_len(), 3);
+        assert_eq!(witness.compact_pair(0, 2), Some((-2, 5)));
+        assert_eq!(witness.compact_pair(2, 3), Some((5, 0)));
+        assert_eq!(witness.compact_pair(4, 5), Some((0, 0)));
+        assert_eq!(witness.field_pair(0, 1), None);
+    }
+
+    #[test]
+    fn witness_polynomial_field_reads_use_flat_zero_extension() {
+        let evals = [F::from_u64(7), F::from_u64(11), F::from_u64(13)];
+        let witness = WitnessPolynomial::FieldEvals(&evals);
+
+        assert_eq!(witness.live_len(), 3);
+        assert_eq!(
+            witness.field_pair(1, 2),
+            Some((F::from_u64(11), F::from_u64(13)))
+        );
+        assert_eq!(witness.field_pair(2, 3), Some((F::from_u64(13), F::zero())));
+        assert_eq!(witness.field_pair(4, 5), Some((F::zero(), F::zero())));
+        assert_eq!(witness.compact_pair(0, 1), None);
     }
 }
