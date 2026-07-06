@@ -12,36 +12,36 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         b: usize,
         relation_weight_evals: Vec<E>,
         relation_weight_claim: E,
-        live_x_cols: usize,
-        col_bits: usize,
-        ring_bits: usize,
+        live_segments: usize,
+        segment_bits: usize,
+        coeff_bits: usize,
     ) -> Result<Self, AkitaError> {
-        let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
+        let num_vars = segment_bits.checked_add(coeff_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
         })?;
-        if live_x_cols == 0 {
+        if live_segments == 0 {
             return Err(AkitaError::InvalidInput(
-                "live_x_cols must be at least 1".to_string(),
+                "live_segments must be at least 1".to_string(),
             ));
         }
-        let col_bits_u32 = u32::try_from(col_bits)
+        let col_bits_u32 = u32::try_from(segment_bits)
             .map_err(|_| AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
-        let ring_bits_u32 = u32::try_from(ring_bits)
+        let ring_bits_u32 = u32::try_from(coeff_bits)
             .map_err(|_| AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
-        let x_len = 1usize
+        let segment_capacity = 1usize
             .checked_shl(col_bits_u32)
             .ok_or_else(|| AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
-        if live_x_cols > x_len {
+        if live_segments > segment_capacity {
             return Err(AkitaError::InvalidSize {
-                expected: x_len,
-                actual: live_x_cols,
+                expected: segment_capacity,
+                actual: live_segments,
             });
         }
-        let y_len = 1usize
+        let coeff_len = 1usize
             .checked_shl(ring_bits_u32)
             .ok_or_else(|| AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
-        let witness_len = live_x_cols
-            .checked_mul(y_len)
+        let witness_len = live_segments
+            .checked_mul(coeff_len)
             .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
         if w_evals_compact.len() != witness_len {
             return Err(AkitaError::InvalidSize {
@@ -68,13 +68,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             relation_weight,
-            live_x_cols,
-            relation_y_len: y_len,
-            col_bits,
+            live_segments,
+            relation_coeff_len: coeff_len,
+            segment_bits,
             num_vars,
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: can_use_stage2_initial_round_batch(ring_bits, b)
+            prefix_r_stage1: can_use_stage2_initial_round_batch(coeff_bits, b)
                 .then(|| stage1_point.to_vec()),
             initial_round_batch: None,
             cached_round_poly: None,
@@ -101,57 +101,59 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    pub(super) fn ring_bits(&self) -> usize {
-        self.num_vars - self.col_bits
+    pub(super) fn coeff_bits(&self) -> usize {
+        self.num_vars - self.segment_bits
     }
 
     #[inline]
-    pub(super) fn y_rounds_completed(&self) -> usize {
-        self.rounds_completed.min(self.ring_bits())
+    pub(super) fn coefficient_rounds_completed(&self) -> usize {
+        self.rounds_completed.min(self.coeff_bits())
     }
 
     #[inline]
-    pub(super) fn x_rounds_completed(&self) -> usize {
-        self.rounds_completed.saturating_sub(self.ring_bits())
+    pub(super) fn segment_rounds_completed(&self) -> usize {
+        self.rounds_completed.saturating_sub(self.coeff_bits())
     }
 
     #[inline]
-    pub(super) fn in_y_round(&self) -> bool {
-        self.rounds_completed < self.ring_bits()
+    pub(super) fn in_coefficient_round(&self) -> bool {
+        self.rounds_completed < self.coeff_bits()
     }
 
     #[inline]
-    pub(super) fn current_y_width(&self) -> usize {
-        self.ring_bits().saturating_sub(self.y_rounds_completed())
+    pub(super) fn current_coefficient_width(&self) -> usize {
+        self.coeff_bits()
+            .saturating_sub(self.coefficient_rounds_completed())
     }
 
     #[inline]
-    pub(super) fn current_x_width(&self) -> usize {
-        self.col_bits.saturating_sub(self.x_rounds_completed())
+    pub(super) fn current_segment_width(&self) -> usize {
+        self.segment_bits
+            .saturating_sub(self.segment_rounds_completed())
     }
 
     #[inline]
-    pub(super) fn current_x_len(&self) -> usize {
-        1usize << self.current_x_width()
+    pub(super) fn current_segment_capacity(&self) -> usize {
+        1usize << self.current_segment_width()
     }
 
     #[inline]
-    pub(super) fn use_prefix_y_round(&self) -> bool {
-        self.in_y_round() && self.live_x_cols < self.current_x_len()
+    pub(super) fn use_coefficient_prefix_round(&self) -> bool {
+        self.in_coefficient_round() && self.live_segments < self.current_segment_capacity()
     }
 
     #[inline]
-    pub(super) fn use_prefix_x_round(&self) -> bool {
-        self.rounds_completed >= self.ring_bits()
-            && self.x_rounds_completed() < self.col_bits
-            && self.live_x_cols < self.current_x_len()
+    pub(super) fn use_segment_prefix_round(&self) -> bool {
+        self.rounds_completed >= self.coeff_bits()
+            && self.segment_rounds_completed() < self.segment_bits
+            && self.live_segments < self.current_segment_capacity()
     }
 
     #[inline]
-    pub(super) fn next_use_prefix_x_round_after_current(&self) -> bool {
-        self.rounds_completed >= self.ring_bits()
-            && self.x_rounds_completed() + 1 < self.col_bits
-            && self.live_x_cols.div_ceil(2) < (self.current_x_len() / 2)
+    pub(super) fn next_use_segment_prefix_round_after_current(&self) -> bool {
+        self.rounds_completed >= self.coeff_bits()
+            && self.segment_rounds_completed() + 1 < self.segment_bits
+            && self.live_segments.div_ceil(2) < (self.current_segment_capacity() / 2)
     }
 
     #[inline]
@@ -228,7 +230,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .prefix_r_stage1
                 .clone()
                 .expect("initial round batch requested without cached stage-1 challenges");
-            let ring_bits = self.num_vars - self.col_bits;
+            let coeff_bits = self.num_vars - self.segment_bits;
             let w_compact = match &self.witness_table {
                 WitnessTable::Compact(w_compact) => w_compact,
                 WitnessTable::Full(_) => {
@@ -240,9 +242,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 self.relation_weight.evals(),
                 &stage1_point,
                 self.b,
-                self.live_x_cols,
-                self.col_bits,
-                ring_bits,
+                self.live_segments,
+                self.segment_bits,
+                coeff_bits,
             )
             .expect("initial round batch should be available");
             let relation_weight_claim = self.input_claim - self.batching_coeff * self.s_claim;

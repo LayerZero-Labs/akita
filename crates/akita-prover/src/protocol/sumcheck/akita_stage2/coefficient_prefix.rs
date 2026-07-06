@@ -3,31 +3,31 @@ use super::*;
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_compact_prefix_y_terms"
+        name = "AkitaStage2Prover::compute_round_compact_coefficient_prefix_terms"
     )]
-    pub(super) fn compute_round_compact_prefix_y_terms(
+    pub(super) fn compute_round_compact_coefficient_prefix_terms(
         &self,
         w_compact: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.in_y_round());
+        debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             w_compact.len(),
-            self.live_x_cols * self.relation_weight_y_len()
+            self.live_segments * self.relation_weight_coeff_len()
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
-        let current_y_half = 1usize << (self.current_y_width() - 1);
+        let current_y_half = 1usize << (self.current_coefficient_width() - 1);
         let block_size = num_first.min(current_y_half);
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-                0..self.live_x_cols,
+                0..self.live_segments,
                 || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), x| {
-                    let y_len = self.relation_weight_y_len();
-                    let column_start = x * y_len;
-                    let column = &w_compact[column_start..column_start + y_len];
+                    let coeff_len = self.relation_weight_coeff_len();
+                    let column_start = x * coeff_len;
+                    let column = &w_compact[column_start..column_start + coeff_len];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -42,10 +42,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::MulU64Accum::zero(); 2];
 
-                        for pair_y in blk..blk_end {
-                            let j_low = (j_base + pair_y) & (num_first - 1);
+                        for pair_coeff in blk..blk_end {
+                            let j_low = (j_base + pair_coeff) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_y;
+                            let left = 2 * pair_coeff;
                             let w0 = column[left] as i32;
                             let w1 = column[left + 1] as i32;
                             let dw = w1 - w0;
@@ -93,12 +93,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             )
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-                0..self.live_x_cols,
+                0..self.live_segments,
                 || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), x| {
-                    let y_len = self.relation_weight_y_len();
-                    let column_start = x * y_len;
-                    let column = &w_compact[column_start..column_start + y_len];
+                    let coeff_len = self.relation_weight_coeff_len();
+                    let column_start = x * coeff_len;
+                    let column = &w_compact[column_start..column_start + coeff_len];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -113,10 +113,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::MulU64Accum::zero(); 4];
 
-                        for pair_y in blk..blk_end {
-                            let j_low = (j_base + pair_y) & (num_first - 1);
+                        for pair_coeff in blk..blk_end {
+                            let j_low = (j_base + pair_coeff) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_y;
+                            let left = 2 * pair_coeff;
                             let w0 = column[left] as i32;
                             let w1 = column[left + 1] as i32;
                             let dw = w1 - w0;
@@ -170,31 +170,31 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_full_prefix_y_terms"
+        name = "AkitaStage2Prover::compute_round_full_coefficient_prefix_terms"
     )]
-    pub(super) fn compute_round_full_prefix_y_terms(
+    pub(super) fn compute_round_full_coefficient_prefix_terms(
         &self,
         w_full: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.in_y_round());
+        debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
             w_full.len(),
-            self.live_x_cols * self.relation_weight_y_len()
+            self.live_segments * self.relation_weight_coeff_len()
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
-        let current_y_half = 1usize << (self.current_y_width() - 1);
+        let current_y_half = 1usize << (self.current_coefficient_width() - 1);
         let block_size = num_first.min(current_y_half);
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..self.live_x_cols,
+                0..self.live_segments,
                 || ([E::zero(); 2], [E::zero(); 3]),
                 |(mut virt, mut rel), x| {
-                    let y_len = self.relation_weight_y_len();
-                    let column_start = x * y_len;
-                    let column = &w_full[column_start..column_start + y_len];
+                    let coeff_len = self.relation_weight_coeff_len();
+                    let column_start = x * coeff_len;
+                    let column = &w_full[column_start..column_start + coeff_len];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -209,10 +209,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 2];
 
-                        for pair_y in blk..blk_end {
-                            let j_low = (j_base + pair_y) & (num_first - 1);
+                        for pair_coeff in blk..blk_end {
+                            let j_low = (j_base + pair_coeff) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_y;
+                            let left = 2 * pair_coeff;
                             let w0 = column[left];
                             let w1 = column[left + 1];
                             let dw = w1 - w0;
@@ -247,12 +247,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
         } else {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..self.live_x_cols,
+                0..self.live_segments,
                 || ([E::zero(); 3], [E::zero(); 3]),
                 |(mut virt, mut rel), x| {
-                    let y_len = self.relation_weight_y_len();
-                    let column_start = x * y_len;
-                    let column = &w_full[column_start..column_start + y_len];
+                    let coeff_len = self.relation_weight_coeff_len();
+                    let column_start = x * coeff_len;
+                    let column = &w_full[column_start..column_start + coeff_len];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -267,10 +267,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 3];
 
-                        for pair_y in blk..blk_end {
-                            let j_low = (j_base + pair_y) & (num_first - 1);
+                        for pair_coeff in blk..blk_end {
+                            let j_low = (j_base + pair_coeff) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_y;
+                            let left = 2 * pair_coeff;
                             let w0 = column[left];
                             let w1 = column[left + 1];
                             let dw = w1 - w0;
@@ -309,25 +309,25 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
-    pub(super) fn fold_full_prefix_y(
+    pub(super) fn fold_full_coefficient_prefix(
         w_full: &[E],
-        live_x_cols: usize,
-        y_len: usize,
+        live_segments: usize,
+        coeff_len: usize,
         r: E,
     ) -> Vec<E> {
-        debug_assert!(y_len.is_power_of_two());
-        debug_assert!(y_len >= 2);
-        let next_y_len = y_len >> 1;
-        let mut out = vec![E::zero(); live_x_cols * next_y_len];
+        debug_assert!(coeff_len.is_power_of_two());
+        debug_assert!(coeff_len >= 2);
+        let next_coeff_len = coeff_len >> 1;
+        let mut out = vec![E::zero(); live_segments * next_coeff_len];
 
         #[cfg(feature = "parallel")]
-        out.par_chunks_mut(next_y_len)
+        out.par_chunks_mut(next_coeff_len)
             .enumerate()
             .for_each(|(x, column_out)| {
-                let column_start = x * y_len;
-                let column = &w_full[column_start..column_start + y_len];
-                for (pair_y, dst) in column_out.iter_mut().enumerate() {
-                    let left = 2 * pair_y;
+                let column_start = x * coeff_len;
+                let column = &w_full[column_start..column_start + coeff_len];
+                for (pair_coeff, dst) in column_out.iter_mut().enumerate() {
+                    let left = 2 * pair_coeff;
                     let w0 = column[left];
                     let w1 = column[left + 1];
                     *dst = w0 + r * (w1 - w0);
@@ -335,11 +335,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             });
 
         #[cfg(not(feature = "parallel"))]
-        for (x, column_out) in out.chunks_mut(next_y_len).enumerate() {
-            let column_start = x * y_len;
-            let column = &w_full[column_start..column_start + y_len];
-            for (pair_y, dst) in column_out.iter_mut().enumerate() {
-                let left = 2 * pair_y;
+        for (x, column_out) in out.chunks_mut(next_coeff_len).enumerate() {
+            let column_start = x * coeff_len;
+            let column = &w_full[column_start..column_start + coeff_len];
+            for (pair_coeff, dst) in column_out.iter_mut().enumerate() {
+                let left = 2 * pair_coeff;
                 let w0 = column[left];
                 let w1 = column[left + 1];
                 *dst = w0 + r * (w1 - w0);

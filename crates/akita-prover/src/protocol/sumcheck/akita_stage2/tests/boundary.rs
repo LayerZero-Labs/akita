@@ -6,28 +6,33 @@ use akita_sumcheck::multilinear_eval;
 fn try_new_stage2_prover(
     w_compact: Vec<i8>,
     relation_weight_evals: Vec<F>,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
+    live_segments: usize,
+    segment_bits: usize,
+    coeff_bits: usize,
     gamma: F,
 ) -> Result<AkitaStage2Prover<F>, AkitaError> {
-    let y_len = 1usize << ring_bits;
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let coeff_len = 1usize << coeff_bits;
+    let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
         .map(|i| F::from_u64((i as u64) + 2))
         .collect();
     let params = Stage2Params {
         stage1_point: &stage1_point,
         b: 8,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_segments,
+        segment_bits,
+        coeff_bits,
     };
-    let alpha_evals_y: Vec<F> = (0..y_len).map(|i| F::from_u64(i as u64 + 1)).collect();
-    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+    let alpha_evals_coeff: Vec<F> = (0..coeff_len).map(|i| F::from_u64(i as u64 + 1)).collect();
+    let m_evals_segment: Vec<F> = (0..(1usize << segment_bits))
         .map(|i| F::from_u64(i as u64 + 3))
         .collect();
-    let relation_weight_claim =
-        relation_weight_claim_from_split(&w_compact, &alpha_evals_y, &m_evals_x, None, &params);
+    let relation_weight_claim = relation_weight_claim_from_split(
+        &w_compact,
+        &alpha_evals_coeff,
+        &m_evals_segment,
+        None,
+        &params,
+    );
     let s_claim = s_claim_from_compact_rows(&w_compact, &params);
     AkitaStage2Prover::new(
         gamma,
@@ -37,19 +42,19 @@ fn try_new_stage2_prover(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_segments,
+        segment_bits,
+        coeff_bits,
     )
 }
 
 #[test]
 fn stage2_constructor_rejects_oversized_witness() {
-    let live_x_cols = 5usize;
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let y_len = 1usize << ring_bits;
-    let witness_len = live_x_cols * y_len;
+    let live_segments = 5usize;
+    let segment_bits = 3usize;
+    let coeff_bits = 2usize;
+    let coeff_len = 1usize << coeff_bits;
+    let witness_len = live_segments * coeff_len;
     let mut w_compact: Vec<i8> = (0..witness_len).map(|i| (i % 5) as i8).collect();
     let relation_weight_evals = vec![F::zero(); witness_len];
     w_compact.push(1);
@@ -57,9 +62,9 @@ fn stage2_constructor_rejects_oversized_witness() {
     let err = match try_new_stage2_prover(
         w_compact,
         relation_weight_evals,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_segments,
+        segment_bits,
+        coeff_bits,
         F::from_u64(13),
     ) {
         Err(err) => err,
@@ -76,14 +81,14 @@ fn stage2_constructor_rejects_oversized_witness() {
 
 #[test]
 fn stage2_constructor_rejects_undersized_witness() {
-    let live_x_cols = 5usize;
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let y_len = 1usize << ring_bits;
-    let witness_len = live_x_cols * y_len;
+    let live_segments = 5usize;
+    let segment_bits = 3usize;
+    let coeff_bits = 2usize;
+    let coeff_len = 1usize << coeff_bits;
+    let witness_len = live_segments * coeff_len;
     let w_compact: Vec<i8> = (0..witness_len).map(|i| (i % 5) as i8).collect();
     let relation_weight_evals = vec![F::zero(); witness_len];
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
         .map(|i| F::from_u64((i as u64) + 2))
         .collect();
 
@@ -95,9 +100,9 @@ fn stage2_constructor_rejects_undersized_witness() {
         8,
         relation_weight_evals,
         F::zero(),
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_segments,
+        segment_bits,
+        coeff_bits,
     ) {
         Err(err) => err,
         Ok(_) => panic!("undersized witness must be rejected"),
@@ -113,20 +118,20 @@ fn stage2_constructor_rejects_undersized_witness() {
 
 #[test]
 fn stage2_constructor_rejects_relation_weight_length_mismatch() {
-    let live_x_cols = 5usize;
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let y_len = 1usize << ring_bits;
-    let witness_len = live_x_cols * y_len;
+    let live_segments = 5usize;
+    let segment_bits = 3usize;
+    let coeff_bits = 2usize;
+    let coeff_len = 1usize << coeff_bits;
+    let witness_len = live_segments * coeff_len;
     let w_compact: Vec<i8> = (0..witness_len).map(|i| (i % 5) as i8).collect();
     let relation_weight_evals = vec![F::zero(); witness_len - 1];
 
     let err = match try_new_stage2_prover(
         w_compact,
         relation_weight_evals,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_segments,
+        segment_bits,
+        coeff_bits,
         F::from_u64(13),
     ) {
         Err(err) => err,
@@ -143,33 +148,33 @@ fn stage2_constructor_rejects_relation_weight_length_mismatch() {
 
 #[test]
 fn gamma_nonzero_range_term_changes_with_arbitrary_padded_witness_advice() {
-    let live_x_cols = 5usize;
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let y_len = 1usize << ring_bits;
-    let x_len = 1usize << col_bits;
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let live_segments = 5usize;
+    let segment_bits = 3usize;
+    let coeff_bits = 2usize;
+    let coeff_len = 1usize << coeff_bits;
+    let segment_capacity = 1usize << segment_bits;
+    let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
         .map(|i| F::from_u64((i as u64) + 17))
         .collect();
     let params = Stage2Params {
         stage1_point: &stage1_point,
         b: 8,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_segments,
+        segment_bits,
+        coeff_bits,
     };
 
     let half = 4i8;
-    let w_live: Vec<i8> = (0..(live_x_cols * y_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 3 + 1) % 8) as i8 - half)
         .collect();
 
     let s_claim_live = s_claim_from_compact_rows(&w_live, &params);
 
-    let mut w_advice = pad_compact_witness(&w_live, live_x_cols, col_bits, ring_bits);
-    for x in live_x_cols..x_len {
-        for y in 0..y_len {
-            w_advice[x * y_len + y] = 7i8;
+    let mut w_advice = pad_compact_witness(&w_live, live_segments, segment_bits, coeff_bits);
+    for x in live_segments..segment_capacity {
+        for y in 0..coeff_len {
+            w_advice[x * coeff_len + y] = 7i8;
         }
     }
     let s_evals_advice: Vec<F> = w_advice
@@ -197,10 +202,10 @@ fn gamma_nonzero_range_term_changes_with_arbitrary_padded_witness_advice() {
 
     let err = match try_new_stage2_prover(
         w_advice,
-        vec![F::zero(); live_x_cols * y_len],
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        vec![F::zero(); live_segments * coeff_len],
+        live_segments,
+        segment_bits,
+        coeff_bits,
         gamma,
     ) {
         Err(err) => err,

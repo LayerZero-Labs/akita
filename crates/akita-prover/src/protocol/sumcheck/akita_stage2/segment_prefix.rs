@@ -1,44 +1,45 @@
 use super::*;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
-    pub(super) fn compute_round_compact_prefix_x_polys(
+    pub(super) fn compute_round_compact_segment_prefix_polys(
         &self,
         w_compact: &[i8],
     ) -> (UniPoly<E>, UniPoly<E>) {
-        let (virt_q_coeffs, rel_coeffs) = self.compute_round_compact_prefix_x_terms(w_compact);
+        let (virt_q_coeffs, rel_coeffs) =
+            self.compute_round_compact_segment_prefix_terms(w_compact);
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
     }
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::fuse_full_prefix_x_and_compute_round"
+        name = "AkitaStage2Prover::fuse_full_segment_prefix_and_compute_round"
     )]
-    pub(super) fn fuse_full_prefix_x_and_compute_round(
+    pub(super) fn fuse_full_segment_prefix_and_compute_round(
         &self,
         w_full: &[E],
         r: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.next_use_prefix_x_round_after_current());
-        debug_assert!(self.current_x_width() >= 2);
+        debug_assert!(self.next_use_segment_prefix_round_after_current());
+        debug_assert!(self.current_segment_width() >= 2);
 
-        let old_live_x_cols = self.live_x_cols;
-        let next_live_x_cols = old_live_x_cols.div_ceil(2);
-        let y_len = self.relation_weight_y_len();
+        let old_live_segments = self.live_segments;
+        let next_live_segments = old_live_segments.div_ceil(2);
+        let coeff_len = self.relation_weight_coeff_len();
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
-        let next_current_x_half = 1usize << (self.current_x_width() - 2);
-        let live_pairs = next_live_x_cols.div_ceil(2);
+        let next_current_x_half = 1usize << (self.current_segment_width() - 2);
+        let live_pairs = next_live_segments.div_ceil(2);
         let block_size = num_first.min(live_pairs);
-        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+        let mut out = vec![E::zero(); coeff_len * next_live_segments];
 
         if self.can_skip_norm_linear_coeff() {
             #[cfg(feature = "parallel")]
             let (virt_coeffs, rel_coeffs) = out
-                .par_chunks_mut(next_live_x_cols)
+                .par_chunks_mut(next_live_segments)
                 .enumerate()
                 .map(|(y, row_out)| {
-                    let row = &w_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                    let row = &w_full[y * old_live_segments..(y + 1) * old_live_segments];
                     let j_base = y * next_current_x_half;
                     let mut virt = [E::zero(); 2];
                     let mut rel = [E::zero(); 3];
@@ -50,12 +51,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 2];
 
-                        for pair_x in blk..blk_end {
-                            let left_next = 2 * pair_x;
-                            let left_old = 4 * pair_x;
+                        for pair_segment in blk..blk_end {
+                            let left_next = 2 * pair_segment;
+                            let left_old = 4 * pair_segment;
                             let w0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = w0;
-                            let w1 = if left_next + 1 < next_live_x_cols {
+                            let w1 = if left_next + 1 < next_live_segments {
                                 let w1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = w1;
                                 w1
@@ -64,13 +65,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             };
                             let dw = w1 - w0;
 
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let j_low = (j_base + pair_segment) & (num_first - 1);
                             let e_in = e_first[j_low];
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
                             let (p0, p1) =
-                                self.relation_weight_pair_columns(left_next, left_next + 1, y);
+                                self.relation_weight_pair_segments(left_next, left_next + 1, y);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -99,8 +100,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 2];
                 let mut rel = [E::zero(); 3];
-                for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
-                    let row = &w_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                for (y, row_out) in out.chunks_mut(next_live_segments).enumerate() {
+                    let row = &w_full[y * old_live_segments..(y + 1) * old_live_segments];
                     let j_base = y * next_current_x_half;
                     let mut blk = 0usize;
                     while blk < live_pairs {
@@ -109,12 +110,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 2];
 
-                        for pair_x in blk..blk_end {
-                            let left_next = 2 * pair_x;
-                            let left_old = 4 * pair_x;
+                        for pair_segment in blk..blk_end {
+                            let left_next = 2 * pair_segment;
+                            let left_old = 4 * pair_segment;
                             let w0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = w0;
-                            let w1 = if left_next + 1 < next_live_x_cols {
+                            let w1 = if left_next + 1 < next_live_segments {
                                 let w1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = w1;
                                 w1
@@ -123,13 +124,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             };
                             let dw = w1 - w0;
 
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let j_low = (j_base + pair_segment) & (num_first - 1);
                             let e_in = e_first[j_low];
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
                             let (p0, p1) =
-                                self.relation_weight_pair_columns(left_next, left_next + 1, y);
+                                self.relation_weight_pair_segments(left_next, left_next + 1, y);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -146,10 +147,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         } else {
             #[cfg(feature = "parallel")]
             let (virt_coeffs, rel_coeffs) = out
-                .par_chunks_mut(next_live_x_cols)
+                .par_chunks_mut(next_live_segments)
                 .enumerate()
                 .map(|(y, row_out)| {
-                    let row = &w_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                    let row = &w_full[y * old_live_segments..(y + 1) * old_live_segments];
                     let j_base = y * next_current_x_half;
                     let mut virt = [E::zero(); 3];
                     let mut rel = [E::zero(); 3];
@@ -161,12 +162,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 3];
 
-                        for pair_x in blk..blk_end {
-                            let left_next = 2 * pair_x;
-                            let left_old = 4 * pair_x;
+                        for pair_segment in blk..blk_end {
+                            let left_next = 2 * pair_segment;
+                            let left_old = 4 * pair_segment;
                             let w0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = w0;
-                            let w1 = if left_next + 1 < next_live_x_cols {
+                            let w1 = if left_next + 1 < next_live_segments {
                                 let w1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = w1;
                                 w1
@@ -176,14 +177,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let dw = w1 - w0;
                             let two_w0_plus_one = w0 + w0 + E::one();
 
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let j_low = (j_base + pair_segment) & (num_first - 1);
                             let e_in = e_first[j_low];
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
                             let (p0, p1) =
-                                self.relation_weight_pair_columns(left_next, left_next + 1, y);
+                                self.relation_weight_pair_segments(left_next, left_next + 1, y);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -213,8 +214,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 3];
                 let mut rel = [E::zero(); 3];
-                for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
-                    let row = &w_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                for (y, row_out) in out.chunks_mut(next_live_segments).enumerate() {
+                    let row = &w_full[y * old_live_segments..(y + 1) * old_live_segments];
                     let j_base = y * next_current_x_half;
                     let mut blk = 0usize;
                     while blk < live_pairs {
@@ -223,12 +224,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 3];
 
-                        for pair_x in blk..blk_end {
-                            let left_next = 2 * pair_x;
-                            let left_old = 4 * pair_x;
+                        for pair_segment in blk..blk_end {
+                            let left_next = 2 * pair_segment;
+                            let left_old = 4 * pair_segment;
                             let w0 = fold_full_prefix_pair(row, left_old, r);
                             row_out[left_next] = w0;
-                            let w1 = if left_next + 1 < next_live_x_cols {
+                            let w1 = if left_next + 1 < next_live_segments {
                                 let w1 = fold_full_prefix_pair(row, left_old + 2, r);
                                 row_out[left_next + 1] = w1;
                                 w1
@@ -238,14 +239,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             let dw = w1 - w0;
                             let two_w0_plus_one = w0 + w0 + E::one();
 
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                            let j_low = (j_base + pair_segment) & (num_first - 1);
                             let e_in = e_first[j_low];
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
                             let (p0, p1) =
-                                self.relation_weight_pair_columns(left_next, left_next + 1, y);
+                                self.relation_weight_pair_segments(left_next, left_next + 1, y);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -265,33 +266,33 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_compact_prefix_x_terms"
+        name = "AkitaStage2Prover::compute_round_compact_segment_prefix_terms"
     )]
-    pub(super) fn compute_round_compact_prefix_x_terms(
+    pub(super) fn compute_round_compact_segment_prefix_terms(
         &self,
         w_compact: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.rounds_completed >= self.ring_bits());
-        debug_assert!(self.x_rounds_completed() < self.col_bits);
+        debug_assert!(self.rounds_completed >= self.coeff_bits());
+        debug_assert!(self.segment_rounds_completed() < self.segment_bits);
         debug_assert_eq!(
             w_compact.len(),
-            self.live_x_cols * self.relation_weight_y_len()
+            self.live_segments * self.relation_weight_coeff_len()
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
-        let current_x_half = 1usize << (self.current_x_width() - 1);
-        let live_pairs = self.live_x_cols.div_ceil(2);
+        let current_x_half = 1usize << (self.current_segment_width() - 1);
+        let live_pairs = self.live_segments.div_ceil(2);
         let block_size = num_first.min(live_pairs);
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-                0..self.relation_weight_y_len(),
+                0..self.relation_weight_coeff_len(),
                 || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), y| {
-                    let row_start = y * self.live_x_cols;
-                    let row = &w_compact[row_start..row_start + self.live_x_cols];
+                    let row_start = y * self.live_segments;
+                    let row = &w_compact[row_start..row_start + self.live_segments];
                     let j_base = y * current_x_half;
 
                     let mut blk = 0usize;
@@ -301,12 +302,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::MulU64Accum::zero(); 2];
 
-                        for pair_x in blk..blk_end {
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                        for pair_segment in blk..blk_end {
+                            let j_low = (j_base + pair_segment) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_x;
+                            let left = 2 * pair_segment;
                             let w0 = row[left] as i32;
-                            let w1 = if left + 1 < self.live_x_cols {
+                            let w1 = if left + 1 < self.live_segments {
                                 row[left + 1] as i32
                             } else {
                                 0
@@ -324,7 +325,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let (p0, p1) = self.relation_weight_pair_columns(left, left + 1, y);
+                            let (p0, p1) = self.relation_weight_pair_segments(left, left + 1, y);
 
                             accumulate_relation_coeffs_signed(&mut rel, w0_i64, dw_i64, p0, p1);
                         }
@@ -355,11 +356,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             )
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
-                0..self.relation_weight_y_len(),
+                0..self.relation_weight_coeff_len(),
                 || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), y| {
-                    let row_start = y * self.live_x_cols;
-                    let row = &w_compact[row_start..row_start + self.live_x_cols];
+                    let row_start = y * self.live_segments;
+                    let row = &w_compact[row_start..row_start + self.live_segments];
                     let j_base = y * current_x_half;
 
                     let mut blk = 0usize;
@@ -369,12 +370,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::MulU64Accum::zero(); 4];
 
-                        for pair_x in blk..blk_end {
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                        for pair_segment in blk..blk_end {
+                            let j_low = (j_base + pair_segment) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_x;
+                            let left = 2 * pair_segment;
                             let w0 = row[left] as i32;
-                            let w1 = if left + 1 < self.live_x_cols {
+                            let w1 = if left + 1 < self.live_segments {
                                 row[left + 1] as i32
                             } else {
                                 0
@@ -394,7 +395,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let (p0, p1) = self.relation_weight_pair_columns(left, left + 1, y);
+                            let (p0, p1) = self.relation_weight_pair_segments(left, left + 1, y);
 
                             accumulate_relation_coeffs_signed(&mut rel, w0_i64, dw_i64, p0, p1);
                         }
@@ -429,33 +430,33 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_full_prefix_x_terms"
+        name = "AkitaStage2Prover::compute_round_full_segment_prefix_terms"
     )]
-    pub(super) fn compute_round_full_prefix_x_terms(
+    pub(super) fn compute_round_full_segment_prefix_terms(
         &self,
         w_full: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        debug_assert!(self.rounds_completed >= self.ring_bits());
-        debug_assert!(self.x_rounds_completed() < self.col_bits);
+        debug_assert!(self.rounds_completed >= self.coeff_bits());
+        debug_assert!(self.segment_rounds_completed() < self.segment_bits);
         debug_assert_eq!(
             w_full.len(),
-            self.live_x_cols * self.relation_weight_y_len()
+            self.live_segments * self.relation_weight_coeff_len()
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
-        let current_x_half = 1usize << (self.current_x_width() - 1);
-        let live_pairs = self.live_x_cols.div_ceil(2);
+        let current_x_half = 1usize << (self.current_segment_width() - 1);
+        let live_pairs = self.live_segments.div_ceil(2);
         let block_size = num_first.min(live_pairs);
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..self.relation_weight_y_len(),
+                0..self.relation_weight_coeff_len(),
                 || ([E::zero(); 2], [E::zero(); 3]),
                 |(mut virt, mut rel), y| {
-                    let row_start = y * self.live_x_cols;
-                    let row = &w_full[row_start..row_start + self.live_x_cols];
+                    let row_start = y * self.live_segments;
+                    let row = &w_full[row_start..row_start + self.live_segments];
                     let j_base = y * current_x_half;
 
                     let mut blk = 0usize;
@@ -465,12 +466,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 2];
 
-                        for pair_x in blk..blk_end {
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                        for pair_segment in blk..blk_end {
+                            let j_low = (j_base + pair_segment) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_x;
+                            let left = 2 * pair_segment;
                             let w0 = row[left];
-                            let w1 = if left + 1 < self.live_x_cols {
+                            let w1 = if left + 1 < self.live_segments {
                                 row[left + 1]
                             } else {
                                 E::zero()
@@ -480,7 +481,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let (p0, p1) = self.relation_weight_pair_columns(left, left + 1, y);
+                            let (p0, p1) = self.relation_weight_pair_segments(left, left + 1, y);
 
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
@@ -506,11 +507,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
         } else {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..self.relation_weight_y_len(),
+                0..self.relation_weight_coeff_len(),
                 || ([E::zero(); 3], [E::zero(); 3]),
                 |(mut virt, mut rel), y| {
-                    let row_start = y * self.live_x_cols;
-                    let row = &w_full[row_start..row_start + self.live_x_cols];
+                    let row_start = y * self.live_segments;
+                    let row = &w_full[row_start..row_start + self.live_segments];
                     let j_base = y * current_x_half;
 
                     let mut blk = 0usize;
@@ -520,12 +521,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 3];
 
-                        for pair_x in blk..blk_end {
-                            let j_low = (j_base + pair_x) & (num_first - 1);
+                        for pair_segment in blk..blk_end {
+                            let j_low = (j_base + pair_segment) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_x;
+                            let left = 2 * pair_segment;
                             let w0 = row[left];
-                            let w1 = if left + 1 < self.live_x_cols {
+                            let w1 = if left + 1 < self.live_segments {
                                 row[left + 1]
                             } else {
                                 E::zero()
@@ -537,7 +538,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let (p0, p1) = self.relation_weight_pair_columns(left, left + 1, y);
+                            let (p0, p1) = self.relation_weight_pair_segments(left, left + 1, y);
 
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
@@ -565,24 +566,24 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
-    pub(super) fn fold_compact_prefix_x(
+    pub(super) fn fold_compact_segment_prefix(
         w_compact: &[i8],
-        live_x_cols: usize,
-        y_len: usize,
+        live_segments: usize,
+        coeff_len: usize,
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
-        let next_live_x_cols = live_x_cols.div_ceil(2);
-        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+        let next_live_segments = live_segments.div_ceil(2);
+        let mut out = vec![E::zero(); coeff_len * next_live_segments];
 
         #[cfg(feature = "parallel")]
-        out.par_chunks_mut(next_live_x_cols)
+        out.par_chunks_mut(next_live_segments)
             .enumerate()
             .for_each(|(y, row_out)| {
-                let row_start = y * live_x_cols;
-                let row = &w_compact[row_start..row_start + live_x_cols];
-                for (pair_x, dst) in row_out.iter_mut().enumerate() {
-                    let left = 2 * pair_x;
-                    let w_1 = if left + 1 < live_x_cols {
+                let row_start = y * live_segments;
+                let row = &w_compact[row_start..row_start + live_segments];
+                for (pair_segment, dst) in row_out.iter_mut().enumerate() {
+                    let left = 2 * pair_segment;
+                    let w_1 = if left + 1 < live_segments {
                         i16::from(row[left + 1])
                     } else {
                         0
@@ -592,12 +593,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             });
 
         #[cfg(not(feature = "parallel"))]
-        for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
-            let row_start = y * live_x_cols;
-            let row = &w_compact[row_start..row_start + live_x_cols];
-            for (pair_x, dst) in row_out.iter_mut().enumerate() {
-                let left = 2 * pair_x;
-                let w_1 = if left + 1 < live_x_cols {
+        for (y, row_out) in out.chunks_mut(next_live_segments).enumerate() {
+            let row_start = y * live_segments;
+            let row = &w_compact[row_start..row_start + live_segments];
+            for (pair_segment, dst) in row_out.iter_mut().enumerate() {
+                let left = 2 * pair_segment;
+                let w_1 = if left + 1 < live_segments {
                     i16::from(row[left + 1])
                 } else {
                     0
@@ -609,25 +610,25 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_full_prefix_x(
+    pub(super) fn fold_full_segment_prefix(
         w_full: &[E],
-        live_x_cols: usize,
-        y_len: usize,
+        live_segments: usize,
+        coeff_len: usize,
         r: E,
     ) -> Vec<E> {
-        let next_live_x_cols = live_x_cols.div_ceil(2);
-        let mut out = vec![E::zero(); y_len * next_live_x_cols];
+        let next_live_segments = live_segments.div_ceil(2);
+        let mut out = vec![E::zero(); coeff_len * next_live_segments];
 
         #[cfg(feature = "parallel")]
-        out.par_chunks_mut(next_live_x_cols)
+        out.par_chunks_mut(next_live_segments)
             .enumerate()
             .for_each(|(y, row_out)| {
-                let row_start = y * live_x_cols;
-                let row = &w_full[row_start..row_start + live_x_cols];
-                for (pair_x, dst) in row_out.iter_mut().enumerate() {
-                    let left = 2 * pair_x;
+                let row_start = y * live_segments;
+                let row = &w_full[row_start..row_start + live_segments];
+                for (pair_segment, dst) in row_out.iter_mut().enumerate() {
+                    let left = 2 * pair_segment;
                     let w_0 = row[left];
-                    let w_1 = if left + 1 < live_x_cols {
+                    let w_1 = if left + 1 < live_segments {
                         row[left + 1]
                     } else {
                         E::zero()
@@ -637,13 +638,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             });
 
         #[cfg(not(feature = "parallel"))]
-        for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
-            let row_start = y * live_x_cols;
-            let row = &w_full[row_start..row_start + live_x_cols];
-            for (pair_x, dst) in row_out.iter_mut().enumerate() {
-                let left = 2 * pair_x;
+        for (y, row_out) in out.chunks_mut(next_live_segments).enumerate() {
+            let row_start = y * live_segments;
+            let row = &w_full[row_start..row_start + live_segments];
+            for (pair_segment, dst) in row_out.iter_mut().enumerate() {
+                let left = 2 * pair_segment;
                 let w_0 = row[left];
-                let w_1 = if left + 1 < live_x_cols {
+                let w_1 = if left + 1 < live_segments {
                     row[left + 1]
                 } else {
                     E::zero()
@@ -655,22 +656,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_relation_weight_x_column_major(
+    pub(super) fn fold_relation_weight_segment_major(
         evals: &[E],
-        live_x_cols: usize,
-        y_len: usize,
+        live_segments: usize,
+        coeff_len: usize,
         r: E,
     ) -> Vec<E> {
-        let next_live_x_cols = live_x_cols.div_ceil(2);
-        let mut out = vec![E::zero(); next_live_x_cols * y_len];
-        for pair_x in 0..next_live_x_cols {
-            let left = 2 * pair_x;
-            let dst_start = pair_x * y_len;
-            let left_start = left * y_len;
-            let right_start = (left + 1) * y_len;
-            for y in 0..y_len {
+        let next_live_segments = live_segments.div_ceil(2);
+        let mut out = vec![E::zero(); next_live_segments * coeff_len];
+        for pair_segment in 0..next_live_segments {
+            let left = 2 * pair_segment;
+            let dst_start = pair_segment * coeff_len;
+            let left_start = left * coeff_len;
+            let right_start = (left + 1) * coeff_len;
+            for y in 0..coeff_len {
                 let a = evals[left_start + y];
-                let b = if left + 1 < live_x_cols {
+                let b = if left + 1 < live_segments {
                     evals[right_start + y]
                 } else {
                     E::zero()
@@ -681,18 +682,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_relation_weight_prefix_y(
+    pub(super) fn fold_relation_weight_coefficient_prefix(
         evals: &[E],
-        live_x_cols: usize,
-        y_len: usize,
+        live_segments: usize,
+        coeff_len: usize,
         r: E,
     ) -> Vec<E> {
-        let next_y_len = y_len / 2;
-        let mut out = vec![E::zero(); live_x_cols * next_y_len];
-        for x in 0..live_x_cols {
-            let col_start = x * y_len;
-            let col_out_start = x * next_y_len;
-            for j in 0..next_y_len {
+        let next_coeff_len = coeff_len / 2;
+        let mut out = vec![E::zero(); live_segments * next_coeff_len];
+        for x in 0..live_segments {
+            let col_start = x * coeff_len;
+            let col_out_start = x * next_coeff_len;
+            for j in 0..next_coeff_len {
                 let left = 2 * j;
                 let e0 = evals[col_start + left];
                 let e1 = evals[col_start + left + 1];
@@ -704,20 +705,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     pub(super) fn fold_relation_weight_through_initial_batch(
         evals: &[E],
-        live_x_cols: usize,
-        y_len: usize,
+        live_segments: usize,
+        coeff_len: usize,
         r0: E,
         r1: E,
     ) -> Vec<E> {
-        debug_assert!(y_len.is_power_of_two());
-        debug_assert!(y_len >= 4);
-        let next_y_len = y_len >> 2;
-        let mut out = vec![E::zero(); live_x_cols * next_y_len];
-        for x in 0..live_x_cols {
-            let src_start = x * y_len;
-            let dst_start = x * next_y_len;
-            let column = &evals[src_start..src_start + y_len];
-            for (quad_y, dst) in out[dst_start..dst_start + next_y_len]
+        debug_assert!(coeff_len.is_power_of_two());
+        debug_assert!(coeff_len >= 4);
+        let next_coeff_len = coeff_len >> 2;
+        let mut out = vec![E::zero(); live_segments * next_coeff_len];
+        for x in 0..live_segments {
+            let src_start = x * coeff_len;
+            let dst_start = x * next_coeff_len;
+            let column = &evals[src_start..src_start + coeff_len];
+            for (quad_y, dst) in out[dst_start..dst_start + next_coeff_len]
                 .iter_mut()
                 .enumerate()
             {

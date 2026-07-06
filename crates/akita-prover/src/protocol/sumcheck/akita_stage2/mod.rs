@@ -184,9 +184,9 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     split_eq: GruenSplitEq<E>,
 
     relation_weight: RelationWeightPolynomial<E>,
-    live_x_cols: usize,
-    relation_y_len: usize,
-    col_bits: usize,
+    live_segments: usize,
+    relation_coeff_len: usize,
+    segment_bits: usize,
     num_vars: usize,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
@@ -199,25 +199,31 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
+mod coefficient_prefix;
 mod lifecycle;
 mod pair_scan;
 mod round2_prefix;
 mod round_flow;
-mod x_prefix;
-mod y_prefix;
+mod segment_prefix;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[inline]
-    pub(super) fn relation_weight_y_len(&self) -> usize {
-        self.relation_y_len
+    pub(super) fn relation_weight_coeff_len(&self) -> usize {
+        self.relation_coeff_len
     }
 
     #[inline]
-    fn relation_weight_pair_columns(&self, x0: usize, x1: usize, y: usize) -> (E, E) {
-        let y_len = self.relation_weight_y_len();
+    fn relation_weight_pair_segments(&self, x0: usize, x1: usize, y: usize) -> (E, E) {
+        let coeff_len = self.relation_weight_coeff_len();
         let evals = self.relation_weight.evals();
-        let p0 = evals.get(x0 * y_len + y).copied().unwrap_or_else(E::zero);
-        let p1 = evals.get(x1 * y_len + y).copied().unwrap_or_else(E::zero);
+        let p0 = evals
+            .get(x0 * coeff_len + y)
+            .copied()
+            .unwrap_or_else(E::zero);
+        let p1 = evals
+            .get(x1 * coeff_len + y)
+            .copied()
+            .unwrap_or_else(E::zero);
         (p0, p1)
     }
 }
@@ -226,59 +232,59 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
     pub(super) fn set_relation_weight_evals(
         &mut self,
         evals: Vec<E>,
-        relation_x_cols: usize,
-        y_len: usize,
+        relation_segments: usize,
+        coeff_len: usize,
     ) {
-        let live_len = relation_x_cols * y_len;
+        let live_len = relation_segments * coeff_len;
         self.relation_weight = RelationWeightPolynomial::from_live_evals(evals, live_len)
             .expect("relation weight fold preserves shape");
-        self.relation_y_len = y_len;
+        self.relation_coeff_len = coeff_len;
     }
 
     pub(super) fn fold_relation_weight_for_round(
         &mut self,
         r: E,
-        folding_x_round: bool,
-        use_prefix_x_round: bool,
-        use_prefix_y_round: bool,
-        in_y_round: bool,
+        folding_segment_round: bool,
+        use_segment_prefix_round: bool,
+        use_coefficient_prefix_round: bool,
+        in_coefficient_round: bool,
     ) {
-        let y_len = self.relation_weight_y_len();
-        let relation_x_cols = self.live_x_cols;
-        let (evals, next_relation_x_cols, next_y_len) = if folding_x_round {
-            if use_prefix_x_round {
+        let coeff_len = self.relation_weight_coeff_len();
+        let relation_segments = self.live_segments;
+        let (evals, next_relation_segments, next_coeff_len) = if folding_segment_round {
+            if use_segment_prefix_round {
                 (
-                    Self::fold_relation_weight_x_column_major(
+                    Self::fold_relation_weight_segment_major(
                         self.relation_weight.evals(),
-                        relation_x_cols,
-                        y_len,
+                        relation_segments,
+                        coeff_len,
                         r,
                     ),
-                    relation_x_cols.div_ceil(2),
-                    y_len,
+                    relation_segments.div_ceil(2),
+                    coeff_len,
                 )
             } else {
                 let mut evals = self.relation_weight.evals().to_vec();
                 fold_evals_in_place(&mut evals, r);
-                (evals, relation_x_cols.div_ceil(2), y_len)
+                (evals, relation_segments.div_ceil(2), coeff_len)
             }
-        } else if in_y_round && use_prefix_y_round {
+        } else if in_coefficient_round && use_coefficient_prefix_round {
             (
-                Self::fold_relation_weight_prefix_y(
+                Self::fold_relation_weight_coefficient_prefix(
                     self.relation_weight.evals(),
-                    relation_x_cols,
-                    y_len,
+                    relation_segments,
+                    coeff_len,
                     r,
                 ),
-                relation_x_cols,
-                y_len / 2,
+                relation_segments,
+                coeff_len / 2,
             )
         } else {
             let mut evals = self.relation_weight.evals().to_vec();
             fold_evals_in_place(&mut evals, r);
-            (evals, relation_x_cols, y_len / 2)
+            (evals, relation_segments, coeff_len / 2)
         };
-        self.set_relation_weight_evals(evals, next_relation_x_cols, next_y_len);
+        self.set_relation_weight_evals(evals, next_relation_segments, next_coeff_len);
     }
 }
 
