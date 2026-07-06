@@ -68,10 +68,10 @@ pub use layout::{
     gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, validate_role_dims, BasisMode, BlockOrder, CommitmentRingDims, FlatMatrix,
-    GroupRootParams, LevelParams, MRowLayout, RingDimPlan, RingMatrixView, RingOpeningPoint,
-    RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
-    SUPPORTED_RING_DIMS,
+    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
+    CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, MRowLayout, PrecommittedLevelParams,
+    RingDimPlan, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::NttCacheKey;
 pub use proof::{
@@ -116,8 +116,7 @@ pub use proof::{
     SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
     GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -126,7 +125,8 @@ pub use schedule::{
     schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, Step,
+    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
+    ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use setup_geometry::{

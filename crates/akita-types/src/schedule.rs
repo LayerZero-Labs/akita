@@ -169,6 +169,15 @@ impl PrecommittedGroupParams {
     }
 }
 
+/// Freezes conservative root-commit metadata for each precommitted group when
+/// building a schedule lookup key from an opening layout.
+pub trait ScheduleKeyPrecommitSource {
+    /// Resolve frozen standalone-commit params for one precommitted group.
+    fn precommitted_group_params(
+        group: PolynomialGroupLayout,
+    ) -> Result<PrecommittedGroupParams, AkitaError>;
+}
+
 /// Canonical runtime schedule lookup key.
 ///
 /// Scalar same-point openings use an empty `precommitteds` vector and store the
@@ -191,14 +200,42 @@ impl AkitaScheduleLookupKey {
         }
     }
 
-    /// Scalar schedule lookup from a single-group opening layout.
-    pub fn from_layout(layout: &OpeningClaimsLayout) -> Result<Self, AkitaError> {
-        if layout.num_groups() != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "scalar schedule lookup cannot collapse a multi-group layout; build an explicit grouped key".to_string(),
-            ));
-        }
-        Ok(Self::single(layout.groups()[0]))
+    /// Build the canonical schedule lookup key for `layout`.
+    ///
+    /// Scalar layouts leave `precommitteds` empty. Grouped layouts freeze each
+    /// earlier group through `S` (production uses the conservative commit
+    /// adapter wired by `akita-config`'s `opening_schedule_key`).
+    pub fn from_layout<S: ScheduleKeyPrecommitSource>(
+        layout: &OpeningClaimsLayout,
+    ) -> Result<Self, AkitaError> {
+        layout.check()?;
+        let precommitteds = if layout.num_groups() == 1 {
+            Vec::new()
+        } else {
+            layout
+                .root_precommitted_group_layouts()?
+                .iter()
+                .copied()
+                .map(S::precommitted_group_params)
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let key = Self {
+            final_group: layout.root_final_group_layout()?,
+            precommitteds,
+        };
+        key.validate()?;
+        Ok(key)
+    }
+
+    /// Build a grouped opening layout from this schedule lookup key.
+    pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        let mut groups: Vec<PolynomialGroupLayout> = self
+            .precommitteds
+            .iter()
+            .map(|layout| layout.group)
+            .collect();
+        groups.push(self.final_group);
+        OpeningClaimsLayout::from_groups(groups)
     }
 
     /// Number of commitment groups in this schedule key.
@@ -228,13 +265,14 @@ impl AkitaScheduleLookupKey {
             ));
         }
         for layout in &self.precommitteds {
-            layout.validate()?;
+            layout.group.validate()?;
             if layout.group.num_vars() > self.final_group.num_vars() / 2 {
                 return Err(AkitaError::InvalidInput(
                     "grouped root requires precommitted groups to have at most half the final num_vars"
                         .to_string(),
                 ));
             }
+            layout.validate()?;
         }
         Ok(())
     }
@@ -286,7 +324,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     num_z_segments: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
-    lp.reject_grouped_root("w_ring_element_count_with_counts_for_layout_bits")?;
+    lp.require_scalar_level("w_ring_element_count_with_counts_for_layout_bits")?;
     let e_hat_count = num_polynomials
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
@@ -608,19 +646,24 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
 
 /// Build the root-direct schedule for roots that do not admit a fold step.
 ///
-/// `commit_params` carries the root commit layout that
-/// `Cfg::get_params_for_batched_commitment` returns for this schedule shape.
+/// `current_w_len` is the flattened witness length in field elements (for a
+/// singleton group, `2^num_vars`; for grouped batches, the per-group hypercube
+/// sizes summed over polynomials). `commit_params` carries the root commit
+/// layout that `Cfg::get_params_for_batched_commitment` returns for this
+/// schedule shape.
 ///
 /// # Errors
 ///
-/// Returns an error if `num_vars` cannot be represented as a witness length.
+/// Returns an error if `current_w_len` is zero.
 pub fn root_direct_schedule(
-    num_vars: usize,
+    current_w_len: usize,
     commit_params: LevelParams,
 ) -> Result<Schedule, AkitaError> {
-    let current_w_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
-        AkitaError::InvalidSetup("root-direct witness length overflow".to_string())
-    })?;
+    if current_w_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "root-direct witness length is zero".to_string(),
+        ));
+    }
     Ok(Schedule {
         steps: vec![Step::Direct(DirectStep {
             current_w_len,
@@ -849,7 +892,7 @@ mod tests {
             akita_challenges::SparseChallengeConfig::pm1_only(1),
         );
         let schedule =
-            root_direct_schedule(3, dummy_commit_params.clone()).expect("root-direct schedule");
+            root_direct_schedule(8, dummy_commit_params.clone()).expect("root-direct schedule");
         assert_eq!(schedule.total_bytes, 0);
 
         let [Step::Direct(step)] = schedule.steps.as_slice() else {
@@ -859,6 +902,38 @@ mod tests {
         assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
         assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
+    }
+
+    #[test]
+    fn root_direct_schedule_uses_grouped_witness_len() {
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(3, 2),
+            PolynomialGroupLayout::new(4, 1),
+        ])
+        .expect("grouped layout");
+        let witness_len = layout.root_direct_witness_len().expect("witness len");
+        assert_eq!(witness_len, 4 + 16 + 16);
+
+        let dummy_commit_params = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            64,
+            3,
+            1,
+            1,
+            1,
+            akita_challenges::SparseChallengeConfig::pm1_only(3),
+        );
+        let schedule =
+            root_direct_schedule(witness_len, dummy_commit_params).expect("root-direct schedule");
+        let [Step::Direct(step)] = schedule.steps.as_slice() else {
+            panic!("root-direct schedule should contain one direct step");
+        };
+        assert_eq!(step.current_w_len, witness_len);
+        assert_eq!(
+            step.witness_shape,
+            CleartextWitnessShape::FieldElements(witness_len)
+        );
     }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
@@ -1117,11 +1192,25 @@ mod tests {
     }
 
     #[test]
-    fn from_layout_rejects_multi_group() {
-        let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped layout");
-        let err = AkitaScheduleLookupKey::from_layout(&layout)
-            .expect_err("scalar lookup must reject grouped batches");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    fn from_layout_accepts_scalar_layout() {
+        let layout = OpeningClaimsLayout::new(4, 2).expect("scalar layout");
+        let key = AkitaScheduleLookupKey::from_layout::<NoPrecommitSource>(&layout)
+            .expect("scalar layout lookup");
+        assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
+        assert!(key.precommitteds.is_empty());
+        assert_eq!(key.num_commitment_groups(), 1);
+    }
+
+    struct NoPrecommitSource;
+
+    impl ScheduleKeyPrecommitSource for NoPrecommitSource {
+        fn precommitted_group_params(
+            _group: PolynomialGroupLayout,
+        ) -> Result<PrecommittedGroupParams, AkitaError> {
+            Err(AkitaError::InvalidSetup(
+                "NoPrecommitSource is only valid for scalar layouts".to_string(),
+            ))
+        }
     }
 
     #[test]
@@ -1145,17 +1234,16 @@ mod tests {
 
     #[test]
     fn group_batch_key_rejects_precommitted_num_vars_above_main() {
-        let pre = PrecommittedGroupParams {
-            group: PolynomialGroupLayout::new(24, 1),
-            m_vars: 4,
-            r_vars: 2,
-            log_basis: 2,
-            n_a: 3,
-            conservative_n_b: 4,
-        };
         let grouped = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
-            precommitteds: vec![pre],
+            precommitteds: vec![PrecommittedGroupParams {
+                group: PolynomialGroupLayout::new(24, 1),
+                m_vars: 4,
+                r_vars: 2,
+                log_basis: 2,
+                n_a: 3,
+                conservative_n_b: 4,
+            }],
         };
 
         let err = grouped
@@ -1166,17 +1254,16 @@ mod tests {
 
     #[test]
     fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
-        let pre_small = PrecommittedGroupParams {
-            group: PolynomialGroupLayout::new(12, 1),
-            m_vars: 4,
-            r_vars: 2,
-            log_basis: 2,
-            n_a: 3,
-            conservative_n_b: 4,
-        };
         let grouped = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
-            precommitteds: vec![pre_small],
+            precommitteds: vec![PrecommittedGroupParams {
+                group: PolynomialGroupLayout::new(12, 1),
+                m_vars: 4,
+                r_vars: 2,
+                log_basis: 2,
+                n_a: 3,
+                conservative_n_b: 4,
+            }],
         };
 
         grouped
@@ -1186,17 +1273,16 @@ mod tests {
 
     #[test]
     fn group_batch_key_allows_mixed_polynomial_counts() {
-        let pre = PrecommittedGroupParams {
-            group: PolynomialGroupLayout::new(10, 1),
-            m_vars: 12,
-            r_vars: 2,
-            log_basis: 2,
-            n_a: 3,
-            conservative_n_b: 4,
-        };
         let grouped = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
-            precommitteds: vec![pre],
+            precommitteds: vec![PrecommittedGroupParams {
+                group: PolynomialGroupLayout::new(10, 1),
+                m_vars: 12,
+                r_vars: 2,
+                log_basis: 2,
+                n_a: 3,
+                conservative_n_b: 4,
+            }],
         };
 
         grouped

@@ -241,9 +241,13 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
         "test fixture: pick an opening batch where batched and singleton params differ"
     );
 
-    let real_schedule =
-        root_direct_schedule(real_opening_batch.max_num_vars(), real_params.clone())
-            .expect("fallback root-direct schedule");
+    let real_schedule = root_direct_schedule(
+        real_opening_batch
+            .root_direct_witness_len()
+            .expect("witness len"),
+        real_params.clone(),
+    )
+    .expect("fallback root-direct schedule");
     let bound_levels = setup_level_params_from_runtime_schedule(&real_schedule.steps);
     assert_eq!(
         bound_levels,
@@ -254,9 +258,13 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
     // The descriptor binds those params through the schedule digest: a
     // singleton-params fallback at the same `num_vars` must produce a
     // different preamble than the real batched-params fallback.
-    let singleton_schedule =
-        root_direct_schedule(real_opening_batch.max_num_vars(), singleton_params)
-            .expect("singleton fallback root-direct schedule");
+    let singleton_schedule = root_direct_schedule(
+        real_opening_batch
+            .root_direct_witness_len()
+            .expect("witness len"),
+        singleton_params,
+    )
+    .expect("singleton fallback root-direct schedule");
     assert_ne!(
         digest_effective_schedule(&real_schedule),
         digest_effective_schedule(&singleton_schedule),
@@ -310,8 +318,13 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
     let opening_batch = OpeningClaimsLayout::new(30, 4).expect("supported batched opening_batch");
     let root_params = Cfg::get_params_for_batched_commitment(&opening_batch)
         .expect("supported batched commit params");
-    let schedule = root_direct_schedule(opening_batch.max_num_vars(), root_params.clone())
-        .expect("synthetic direct schedule");
+    let schedule = root_direct_schedule(
+        opening_batch
+            .root_direct_witness_len()
+            .expect("witness len"),
+        root_params.clone(),
+    )
+    .expect("synthetic direct schedule");
     let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
     let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
@@ -338,30 +351,19 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> SetupMatrixEnvelope {
-        let mut max_setup_len = 1usize;
-        let poly_counts = super::setup_envelope_poly_counts(max_num_batched_polys);
-        for num_vars in 1..=max_num_vars {
-            for &num_polys in &poly_counts {
-                let opening_batch =
-                    worst_case_grouped_opening_batch_for_shape(num_vars, num_polys).unwrap();
-                if let Ok(Some(envelope)) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch) {
-                    max_setup_len = max_setup_len.max(envelope.max_setup_len);
-                }
-            }
-        }
-        let mut envelope = SetupMatrixEnvelope { max_setup_len };
-        if Cfg::decomposition().log_commit_bound == 1 {
-            crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<
-                Cfg,
-            >(max_num_vars, max_num_batched_polys, &mut envelope)
-            .expect("conservative setup envelope inflation");
-            super::inflate_setup_envelope_for_precommitted_grouped_roots::<Cfg>(
-                max_num_vars,
-                max_num_batched_polys,
-                &mut envelope,
-            )
-            .expect("precommitted grouped-root setup envelope inflation");
-        }
+        let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+        super::inflate_setup_envelope_from_schedule_catalog::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            &mut envelope,
+        )
+        .expect("catalog setup envelope inflation");
+        crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            &mut envelope,
+        )
+        .expect("conservative setup envelope inflation");
         envelope
     }
 
@@ -395,16 +397,17 @@ fn proof_optimized_setup_includes_precommitted_grouped_root_catalog_entries() {
         })
         .expect("generated two-precommit grouped-root entry");
     let key = super::runtime_key_from_generated_entry(entry);
-    let schedule = Cfg::runtime_schedule(key).expect("precommitted grouped-root schedule");
-    let grouped_d_len =
-        super::grouped_root_d_setup_len(&schedule).expect("precommitted grouped-root D footprint");
+    let schedule = Cfg::runtime_schedule(key.clone()).expect("precommitted grouped-root schedule");
+    let layout = key.opening_layout().expect("grouped layout");
+    let entry_envelope =
+        super::matrix_envelope_for_schedule::<Cfg>(&schedule, &layout).expect("entry envelope");
 
     let setup_envelope = super::proof_optimized_max_setup_matrix_size::<Cfg>(16, 1)
         .expect("setup envelope should include precommitted grouped-root catalog entries");
 
     assert!(
-        setup_envelope.max_setup_len >= grouped_d_len,
-        "setup envelope must cover generated precommitted grouped-root D footprints"
+        setup_envelope.max_setup_len >= entry_envelope.max_setup_len,
+        "setup envelope must cover generated precommitted grouped-root catalog footprints"
     );
 }
 
@@ -434,30 +437,19 @@ fn setup_envelope_endpoint_poly_scan_full_manual() {
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> SetupMatrixEnvelope {
-        let mut max_setup_len = 1usize;
-        let poly_counts = super::setup_envelope_poly_counts(max_num_batched_polys);
-        for num_vars in 1..=max_num_vars {
-            for &num_polys in &poly_counts {
-                let opening_batch =
-                    worst_case_grouped_opening_batch_for_shape(num_vars, num_polys).unwrap();
-                if let Ok(Some(envelope)) = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch) {
-                    max_setup_len = max_setup_len.max(envelope.max_setup_len);
-                }
-            }
-        }
-        let mut envelope = SetupMatrixEnvelope { max_setup_len };
-        if Cfg::decomposition().log_commit_bound == 1 {
-            crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<
-                Cfg,
-            >(max_num_vars, max_num_batched_polys, &mut envelope)
-            .expect("conservative setup envelope inflation");
-            super::inflate_setup_envelope_for_precommitted_grouped_roots::<Cfg>(
-                max_num_vars,
-                max_num_batched_polys,
-                &mut envelope,
-            )
-            .expect("precommitted grouped-root setup envelope inflation");
-        }
+        let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+        super::inflate_setup_envelope_from_schedule_catalog::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            &mut envelope,
+        )
+        .expect("catalog setup envelope inflation");
+        crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            &mut envelope,
+        )
+        .expect("conservative setup envelope inflation");
         envelope
     }
 

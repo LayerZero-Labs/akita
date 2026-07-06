@@ -26,7 +26,7 @@ use akita_types::sis::{
     rounded_up_collision_linf_t, rounded_up_collision_linf_w, SisTableKey,
 };
 use akita_types::{
-    AjtaiKeyParams, CommitmentRingDims, DecompositionParams, GroupRootParams, LevelParams,
+    AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams, PrecommittedLevelParams,
 };
 
 fn require_exact_rank(
@@ -292,7 +292,7 @@ impl GeneratedFoldStep {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_shape: TensorChallengeShape,
         main_num_polys: usize,
-        precommitted_groups: Vec<GroupRootParams>,
+        precommitted_groups: Vec<PrecommittedLevelParams>,
         precommitted_d_width: usize,
     ) -> Result<LevelParams, AkitaError> {
         let ring_d = self.ring_d as usize;

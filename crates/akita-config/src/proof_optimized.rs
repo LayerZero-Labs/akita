@@ -90,19 +90,13 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
-    let mut max_setup_len: usize = 1;
-    let mut saw_supported_shape = false;
-    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
-    for num_vars in 1..=max_num_vars {
-        for &num_polys in &poly_counts {
-            let layout = worst_case_grouped_opening_batch_for_shape(num_vars, num_polys)?;
-            let Some(envelope) = setup_matrix_envelope_for_shape::<Cfg>(&layout)? else {
-                continue;
-            };
-            saw_supported_shape = true;
-            max_setup_len = max_setup_len.max(envelope.max_setup_len);
-        }
-    }
+
+    let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+    let saw_supported_shape = inflate_setup_envelope_from_schedule_catalog::<Cfg>(
+        max_num_vars,
+        max_num_batched_polys,
+        &mut envelope,
+    )?;
 
     if !saw_supported_shape {
         return Err(AkitaError::InvalidSetup(format!(
@@ -110,44 +104,73 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         )));
     }
 
-    let mut envelope = SetupMatrixEnvelope { max_setup_len };
-    if Cfg::decomposition().log_commit_bound == 1 {
-        crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-            &mut envelope,
-        )?;
-        inflate_setup_envelope_for_precommitted_grouped_roots::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-            &mut envelope,
-        )?;
-    }
+    crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
+        max_num_vars,
+        max_num_batched_polys,
+        &mut envelope,
+    )?;
     Ok(envelope)
 }
 
-pub(crate) fn inflate_setup_envelope_for_precommitted_grouped_roots<Cfg: CommitmentConfig>(
+/// Walk every shipped schedule-catalog row within setup capacity and keep the
+/// largest packed setup length. Scalar rows (`precommitteds: []`) and grouped
+/// rows share this path.
+fn inflate_setup_envelope_from_schedule_catalog<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     envelope: &mut SetupMatrixEnvelope,
-) -> Result<(), AkitaError> {
+) -> Result<bool, AkitaError> {
     let Some(catalog) = Cfg::schedule_catalog() else {
-        return Ok(());
+        return inflate_setup_envelope_without_catalog::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            envelope,
+        );
     };
 
+    let mut saw_supported_shape = false;
     for entry in catalog.entries {
-        if entry.precommitteds.is_empty() {
-            continue;
-        }
         let key = runtime_key_from_generated_entry(entry);
-        if !grouped_key_within_setup_capacity(&key, max_num_vars, max_num_batched_polys) {
+        if !schedule_key_within_setup_capacity(&key, max_num_vars, max_num_batched_polys) {
             continue;
         }
-        let schedule = Cfg::runtime_schedule(key)?;
-        let d_len = grouped_root_d_setup_len(&schedule)?;
-        envelope.max_setup_len = envelope.max_setup_len.max(d_len);
+        let schedule = Cfg::runtime_schedule(key.clone())?;
+        let layout = key.opening_layout()?;
+        let entry_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &layout)?;
+        saw_supported_shape = true;
+        envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
-    Ok(())
+    for num_vars in 1..=max_num_vars {
+        for &num_polys in &setup_envelope_poly_counts(max_num_batched_polys) {
+            let layout = worst_case_grouped_opening_batch_for_shape(num_vars, num_polys)?;
+            let Some(entry_envelope) = setup_matrix_envelope_for_shape::<Cfg>(&layout)? else {
+                continue;
+            };
+            saw_supported_shape = true;
+            envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+        }
+    }
+    Ok(saw_supported_shape)
+}
+
+fn inflate_setup_envelope_without_catalog<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    envelope: &mut SetupMatrixEnvelope,
+) -> Result<bool, AkitaError> {
+    let mut saw_supported_shape = false;
+    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
+    for num_vars in 1..=max_num_vars {
+        for &num_polys in &poly_counts {
+            let layout = worst_case_grouped_opening_batch_for_shape(num_vars, num_polys)?;
+            let Some(entry_envelope) = setup_matrix_envelope_for_shape::<Cfg>(&layout)? else {
+                continue;
+            };
+            saw_supported_shape = true;
+            envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+        }
+    }
+    Ok(saw_supported_shape)
 }
 
 fn runtime_key_from_generated_entry(
@@ -159,7 +182,7 @@ fn runtime_key_from_generated_entry(
     }
 }
 
-fn grouped_key_within_setup_capacity(
+fn schedule_key_within_setup_capacity(
     key: &AkitaScheduleLookupKey,
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -199,7 +222,7 @@ pub fn worst_case_grouped_opening_batch_for_shape(
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     layout: &OpeningClaimsLayout,
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
-    let cached_key = AkitaScheduleLookupKey::from_layout(layout)?;
+    let cached_key = crate::opening_schedule_key::<Cfg>(layout)?;
 
     // Setup-matrix sizing scans many candidate sub-shapes. `runtime_schedule`
     // serves the shipped table on a hit and regenerates via the planner DP on
@@ -240,20 +263,6 @@ fn matrix_envelope_for_levels(
         accumulate_matrix_envelope_for_level(lp, &mut max_setup_len)?;
     }
     Ok(SetupMatrixEnvelope { max_setup_len })
-}
-
-fn grouped_root_d_setup_len(schedule: &Schedule) -> Result<usize, AkitaError> {
-    let Some(root_params) = root_commit_params_from_schedule(schedule)? else {
-        return Ok(1);
-    };
-    if root_params.precommitted_groups.is_empty() {
-        return Ok(1);
-    }
-    root_params
-        .d_key
-        .row_len()
-        .checked_mul(root_params.d_matrix_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped D setup envelope overflow".to_string()))
 }
 
 /// Packed setup envelope spanning every level in `schedule`, including root

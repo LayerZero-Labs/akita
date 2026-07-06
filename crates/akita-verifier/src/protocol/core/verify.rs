@@ -15,11 +15,11 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    dispatch_for_field, should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    Commitment, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingDimPlan,
-    RingVec, RingView, Schedule, SetupContributionMode, Step,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    dispatch_for_field, should_reject_grouped_root, validate_schedule_ring_dims, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
+    CleartextWitnessProof, Commitment, FpExtEncoding, LevelParams, LevelParamsLike, OpeningClaims,
+    OpeningClaimsLayout, ProtocolDispatchSlot, RingCommitment, RingDimPlan, RingRole, RingVec,
+    RingView, Schedule, SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -102,25 +102,25 @@ struct DirectRecommitGeometry {
 }
 
 impl DirectRecommitGeometry {
-    fn from_level(params: &LevelParams, setup_seed: &AkitaSetupSeed) -> Self {
+    fn from_level(params: &impl LevelParamsLike, setup_seed: &AkitaSetupSeed) -> Self {
         Self {
-            log_basis: params.log_basis,
-            num_blocks: params.num_blocks,
-            block_len: params.block_len,
-            num_digits_commit: params.num_digits_commit,
-            num_digits_open: params.num_digits_open,
-            a_row_len: params.a_key.row_len(),
-            a_col_len: params.a_key.col_len(),
-            b_row_len: params.b_key.row_len(),
+            log_basis: params.log_basis(),
+            num_blocks: params.num_blocks(),
+            block_len: params.block_len(),
+            num_digits_commit: params.num_digits_commit(),
+            num_digits_open: params.num_digits_open(),
+            a_row_len: params.a_rows_len(),
+            a_col_len: params.a_col_len(),
+            b_row_len: params.b_rows_len(),
             max_setup_len: setup_seed.max_setup_len,
         }
     }
 }
 
-fn validate_root_direct_recommitment_shape<F>(
+fn validate_direct_group_shape<F>(
     witnesses: &[CleartextWitnessProof<F>],
     geom: &DirectRecommitGeometry,
-    opening_batch: &OpeningClaimsLayout,
+    num_vars: usize,
     ring_d: usize,
 ) -> Result<(), AkitaError>
 where
@@ -138,9 +138,7 @@ where
         ));
     }
     let expected_witness_len = 1usize
-        .checked_shl(
-            u32::try_from(opening_batch.max_num_vars()).map_err(|_| AkitaError::InvalidProof)?,
-        )
+        .checked_shl(u32::try_from(num_vars).map_err(|_| AkitaError::InvalidProof)?)
         .ok_or(AkitaError::InvalidProof)?;
     let direct_capacity = geom
         .num_blocks
@@ -151,10 +149,6 @@ where
             "direct witness exceeds selected verifier layout".to_string(),
         ));
     }
-    if opening_batch.num_total_polynomials() != witnesses.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-
     let a_required_cols = geom
         .block_len
         .checked_mul(geom.num_digits_commit)
@@ -191,6 +185,22 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+fn validate_root_direct_recommitment_shape<F>(
+    witnesses: &[CleartextWitnessProof<F>],
+    geom: &DirectRecommitGeometry,
+    opening_batch: &OpeningClaimsLayout,
+    ring_d: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if opening_batch.num_total_polynomials() != witnesses.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    validate_direct_group_shape::<F>(witnesses, geom, opening_batch.max_num_vars(), ring_d)
 }
 
 pub(crate) fn mat_vec_mul_i8_plain<F, const D: usize>(
@@ -325,37 +335,58 @@ where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
     E: FieldCore,
 {
-    let commitment = claims
-        .single_group_commitment()
-        .copied()
-        .ok_or(AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    // Validate the flat commitment shape against the schedule-derived ring
-    // dimension before interpreting it. `RingView::new` enforces the
-    // multiple-of-`ring_dim` invariant; no panic on malformed lengths.
+    params.validate_root_opening_batch(&opening_batch)?;
     let ring_dim = params.role_dims().d_b();
-    let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
-    let geom = DirectRecommitGeometry::from_level(params, setup.expanded.seed());
-    let recomputed_matches = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Outer),
-        F,
-        ring_dim,
-        |D| {
-            validate_root_direct_recommitment_shape::<F>(
-                witnesses,
+
+    if opening_batch.num_total_polynomials() != witnesses.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    let final_group = opening_batch.root_final_group_index()?;
+    for group_index in 0..opening_batch.num_groups() {
+        let range = opening_batch.root_group_claim_range(group_index)?;
+        if range.end > witnesses.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        let commitment = claims.group_commitment(group_index).copied()?;
+        let expected_rows = params.root_group_commitment_rows(&opening_batch, group_index)?;
+        let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
+        if commitment_view.num_rings() != expected_rows {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let recomputed_matches = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Outer),
+            F,
+            ring_dim,
+            |D| {
+            let geom = if group_index == final_group {
+                DirectRecommitGeometry::from_level(params, setup.expanded.seed())
+            } else {
+                let group_params = params
+                    .precommitted_groups
+                    .get(group_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                DirectRecommitGeometry::from_level(group_params, setup.expanded.seed())
+            };
+            let group_witnesses = &witnesses[range.clone()];
+            validate_direct_group_shape::<F>(
+                group_witnesses,
                 &geom,
-                &opening_batch,
+                group_layout.num_vars(),
                 ring_dim,
             )?;
-            let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, &geom)?;
-            // Compare recomputed `u` to the proof commitment as flat coefficients
-            // under the same ring dimension (byte/coefficient parity with absorb).
+            let recomputed = recommit_direct_witness_group::<F, D>(group_witnesses, setup, &geom)?;
             let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
             Ok(recomputed_vec.coeffs() == commitment_view.coeffs())
+            }
+        )?;
+        if !recomputed_matches {
+            return Err(AkitaError::InvalidProof);
         }
-    )?;
-    if !recomputed_matches {
-        return Err(AkitaError::InvalidProof);
     }
 
     Ok(())
@@ -780,10 +811,9 @@ mod tests {
     }
 
     #[test]
-    fn reject_unsupported_grouped_root_rejects_generic_multi_group() {
+    fn reject_unsupported_grouped_root_allows_direct_multi_group() {
         let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("grouped batch");
-        let err = reject_unsupported_grouped_root(&batch, SetupContributionMode::Direct)
-            .expect_err("multi-group verify must reject before schedule lookup");
-        assert!(matches!(err, AkitaError::InvalidProof));
+        reject_unsupported_grouped_root(&batch, SetupContributionMode::Direct)
+            .expect("direct multi-group verification is schedule-validated");
     }
 }

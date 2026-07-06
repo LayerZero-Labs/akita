@@ -11,8 +11,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims,
-    DecompositionParams, DirectStep, FoldStep, GroupRootParams, LevelParams, MRowLayout,
-    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, Step,
+    DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout, PolynomialGroupLayout,
+    PrecommittedGroupParams, PrecommittedLevelParams, Schedule, Step,
 };
 
 use crate::schedule_params::{
@@ -35,7 +35,7 @@ pub(crate) fn group_root_params_from_layout(
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
     conservative_b_rank: bool,
-) -> Result<GroupRootParams, AkitaError> {
+) -> Result<PrecommittedLevelParams, AkitaError> {
     if conservative_b_rank {
         layout.validate_frozen_precommit(policy.ring_dimension, policy.basis_range.0)?;
     } else {
@@ -161,7 +161,7 @@ pub(crate) fn group_root_params_from_layout(
         fold_linf_cap_config,
     )?;
 
-    Ok(GroupRootParams {
+    Ok(PrecommittedLevelParams {
         layout: *layout,
         a_key,
         b_key,
@@ -178,7 +178,7 @@ struct GroupedRootCandidateCtx<'a> {
     ring_challenge_cfg: &'a SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
     precommitted_d_width: usize,
-    precommitted_groups: &'a [GroupRootParams],
+    precommitted_groups: &'a [PrecommittedLevelParams],
 }
 
 fn checked_score_add(lhs: u128, rhs: u128, context: &'static str) -> Result<u128, AkitaError> {
@@ -245,37 +245,12 @@ fn grouped_root_direct_cost_score(
     Ok(total)
 }
 
-pub(crate) fn grouped_root_direct_witness_len(
-    key: &AkitaScheduleLookupKey,
-) -> Result<usize, AkitaError> {
-    let group_len = |num_polys: usize, num_vars: usize| -> Result<usize, AkitaError> {
-        let per_poly_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidSetup("grouped root-direct witness length overflow".to_string())
-        })?;
-        per_poly_len.checked_mul(num_polys).ok_or_else(|| {
-            AkitaError::InvalidSetup("grouped root-direct witness length overflow".to_string())
-        })
-    };
-
-    let mut total = group_len(
-        key.final_group.num_polynomials(),
-        key.final_group.num_vars(),
-    )?;
-    for layout in &key.precommitteds {
-        let precommitted_len = group_len(layout.group.num_polynomials(), layout.group.num_vars())?;
-        total = total.checked_add(precommitted_len).ok_or_else(|| {
-            AkitaError::InvalidSetup("grouped root-direct witness length overflow".to_string())
-        })?;
-    }
-    Ok(total)
-}
-
 pub(crate) fn grouped_root_precommitted_groups(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
-) -> Result<(Vec<GroupRootParams>, usize), AkitaError> {
+) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
     if key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "grouped root params require at least one precommitted group".to_string(),
@@ -640,7 +615,7 @@ pub fn find_group_batch_schedule(
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let direct_current_w_len = grouped_root_direct_witness_len(key)?;
+    let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
     let direct_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.final_group.num_vars(),
         level: 0,
@@ -892,7 +867,10 @@ mod tests {
 
         let expected_len = 3 * (1usize << 20) + (1usize << 20) + 2 * (1usize << 20);
         assert_eq!(
-            grouped_root_direct_witness_len(&key).expect("witness length"),
+            key.opening_layout()
+                .expect("layout")
+                .root_direct_witness_len()
+                .expect("witness length"),
             expected_len
         );
     }

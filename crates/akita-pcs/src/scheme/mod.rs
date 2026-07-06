@@ -12,7 +12,7 @@ use akita_prover::compute::{
 };
 use akita_prover::ProverOpeningData;
 use akita_prover::ProverTranscriptGrind;
-use akita_prover::{AkitaProverSetup, CommittedGroupHandle};
+use akita_prover::{AkitaProverSetup, CommittedGroupWithHint};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::{
@@ -182,10 +182,7 @@ where
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
-    ) -> Result<
-        CommittedGroupHandle<Commitment<Cfg::Field>, AkitaCommitmentHint<Cfg::Field>>,
-        AkitaError,
-    >
+    ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,

@@ -27,6 +27,7 @@ use super::ring_relation::{
 };
 use crate::DecomposeFoldWitness;
 use akita_types::dispatch_for_field;
+use akita_types::{ProtocolDispatchSlot, RingRole};
 
 /// Preview-only transcript access for prover-side fold grinding.
 ///

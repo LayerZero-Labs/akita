@@ -349,7 +349,7 @@ where
                 ))
             }
         )?;
-    let commitment = fold_claims.single_fold_commitment()?;
+    let commitment = fold_claims.fold_commitment(level_params)?;
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),

@@ -283,6 +283,18 @@ pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
     Ok(())
 }
 
+/// Validate every fold level's role dimensions against the setup seed.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when any catalog check fails.
+pub fn validate_schedule_ring_dims(
+    schedule: &Schedule,
+    seed: &AkitaSetupSeed,
+) -> Result<(), AkitaError> {
+    RingDimPlan::from_schedule(schedule, seed).map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

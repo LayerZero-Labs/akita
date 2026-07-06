@@ -13,12 +13,12 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-#[cfg(test)]
-use akita_types::PolynomialGroupLayout;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
+    ScheduleKeyPrecommitSource, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
+use std::marker::PhantomData;
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -124,6 +124,29 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
+    }
+}
+
+/// Build the canonical schedule key for a root opening batch under `Cfg`.
+pub fn opening_schedule_key<Cfg: CommitmentConfig>(
+    layout: &OpeningClaimsLayout,
+) -> Result<AkitaScheduleLookupKey, AkitaError> {
+    AkitaScheduleLookupKey::from_layout::<ConservativeScheduleKeySource<Cfg>>(layout)
+}
+
+struct ConservativeScheduleKeySource<Cfg>(PhantomData<fn() -> Cfg>);
+
+impl<Cfg: CommitmentConfig> ScheduleKeyPrecommitSource for ConservativeScheduleKeySource<Cfg> {
+    fn precommitted_group_params(
+        group: PolynomialGroupLayout,
+    ) -> Result<PrecommittedGroupParams, AkitaError> {
+        group.validate()?;
+        let singleton = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+        let params =
+            <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+                &singleton,
+            )?;
+        Ok(PrecommittedGroupParams::from_params(group, &params))
     }
 }
 
@@ -273,6 +296,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         None
     }
 
+    /// Whether grouped `commit_final_group` may run under this config adapter.
+    ///
+    /// Conservative precommit adapters return `false`; grouped final commits
+    /// require the regular preset config.
+    fn supports_grouped_final_commit() -> bool {
+        true
+    }
+
     /// Build the runtime [`Schedule`] for `key`.
     ///
     /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
@@ -299,16 +330,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Root commit layout for a grouped final root plan.
-    ///
-    /// Reads the first schedule step from [`Self::runtime_schedule`], so config
-    /// overrides and DP fallback stay honored.
-    fn get_params_for_grouped_batched_commitment(
-        key: &AkitaScheduleLookupKey,
-    ) -> Result<LevelParams, AkitaError> {
-        Self::grouped_root_commit_params(&Self::runtime_schedule(key.clone())?)
-    }
-
     /// Root commit layout read from a grouped runtime schedule.
     fn grouped_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
         akita_types::grouped_root_commit_params(schedule)
@@ -321,7 +342,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// `InvalidSetup` if no schedule-table entry exists for `layout`.
     fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-        Self::runtime_schedule(AkitaScheduleLookupKey::from_layout(layout)?)
+        Self::runtime_schedule(opening_schedule_key::<Self>(layout)?)
     }
 
     /// Root commit layout the `batched_prove` flow uses for `layout`,
@@ -631,5 +652,28 @@ mod fp128_policy_tests {
 
         assert!(selection.preset.is_onehot());
         assert_eq!(selection.schedule.initial_w_len(), Some(1usize << 30));
+    }
+}
+
+#[cfg(test)]
+mod opening_schedule_key_tests {
+    use super::proof_optimized::fp128;
+    use super::*;
+
+    #[test]
+    fn opening_schedule_key_freezes_grouped_precommitteds() {
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(4, 2),
+        ])
+        .expect("grouped layout");
+        let key = opening_schedule_key::<fp128::D64OneHot>(&layout).expect("grouped key");
+        assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
+        assert_eq!(key.num_commitment_groups(), 2);
+        assert_eq!(key.precommitteds.len(), 1);
+        assert_eq!(key.precommitteds[0].group, PolynomialGroupLayout::new(2, 1));
+        assert_ne!(key.precommitteds[0].log_basis, 0);
+        assert_ne!(key.precommitteds[0].n_a, 0);
+        assert_ne!(key.precommitteds[0].conservative_n_b, 0);
     }
 }
