@@ -522,11 +522,16 @@ where
         m_row_layout,
     )?;
 
-    let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
+    let y_layout = relation_y_layout_for(
+        lp,
+        prepared_fold.instance.opening_batch(),
+        prepared_fold.instance.m_row_layout(),
+    )?;
+    let relation_claim = relation_claim_from_layout_extension::<F, E>(
         prepared_fold.instance.role_dims(),
+        &y_layout,
         &rs.tau1,
         rs.alpha,
-        lp.a_key.row_len(),
         prepared_fold.instance.v(),
         &prepared_fold.commitment,
     )?;

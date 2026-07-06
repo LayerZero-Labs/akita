@@ -1,6 +1,7 @@
 use super::*;
 use crate::compute::{OperationCtx, RuntimeRingSwitchProveBackend};
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
+use crate::protocol::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
@@ -173,14 +174,25 @@ where
         witness.ensure_role_dim::<D>(RingRole::Inner)?;
         let num_claims = instance.opening_batch().num_total_polynomials();
         let RingRelationWitness {
+            groups,
+            fold_grind_nonce: _,
+        } = witness;
+        if groups.len() != 1 {
+            return Err(AkitaError::InvalidInput(format!(
+                "scalar ring-switch build requires one witness group, got {}",
+                groups.len()
+            )));
+        }
+        let RingRelationGroupWitness {
             z_folded_rings,
             z_folded_centered_per_chunk,
-            fold_grind_nonce: _,
             e_hat,
             e_folded,
             hint,
             ..
-        } = witness;
+        } = groups.into_iter().next().ok_or_else(|| {
+            AkitaError::InvalidInput("scalar ring-switch build missing witness group".to_string())
+        })?;
         e_hat.ensure_stride::<D>()?;
         validate_chunked_witness_cfg(lp)?;
         if dims.d_d() != D {
@@ -219,12 +231,12 @@ where
         let r = compute_relation_quotient::<F, B, D>(
             ring_switch_ctx,
             lp,
-            &instance.challenges,
+            &instance.group_challenges()[0],
             e_hat.typed_planes::<D>()?,
             &decomposed_inner_rows,
             &recomposed_inner_rows,
             e_folded,
-            instance.ring_multiplier_point(),
+            instance.group_ring_multiplier_point(0)?,
             instance.row_coefficient_rings_trusted::<D>()?,
             z_folded_rings.centered_coeffs_trusted::<D>(),
             z_folded_rings.centered_inf_norm,

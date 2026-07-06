@@ -3,7 +3,6 @@ use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
 use crate::protocol::ring_relation::compute_relation_quotient;
-use crate::protocol::RingRelationWitness;
 use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,

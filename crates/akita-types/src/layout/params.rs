@@ -76,6 +76,7 @@ impl PrecommittedLevelParams {
     pub fn d_segment_width(&self) -> Result<usize, AkitaError> {
         self.num_digits_open
             .checked_mul(self.num_blocks)
+            .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
             .ok_or_else(|| AkitaError::InvalidSetup("group D segment width overflow".to_string()))
     }
 
@@ -404,6 +405,17 @@ impl LevelParams {
         if self.has_precommitted_groups() {
             return Err(AkitaError::InvalidSetup(format!(
                 "{context} requires scalar root level params"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Reject grouped-root params combined with multi-chunk witness layout.
+    pub fn reject_grouped_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
+        if self.has_precommitted_groups() && self.witness_chunk.num_chunks > 1 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{context}: {}",
+                crate::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED
             )));
         }
         Ok(())
@@ -1015,8 +1027,9 @@ impl LevelParams {
         num_digits_open: usize,
         num_digits_fold: usize,
     ) -> Result<usize, AkitaError> {
-        let e_hat = num_blocks
-            .checked_mul(num_digits_open)
+        let e_hat = num_polys
+            .checked_mul(num_blocks)
+            .and_then(|n| n.checked_mul(num_digits_open))
             .ok_or_else(|| AkitaError::InvalidSetup("root e-hat witness overflow".to_string()))?;
         let t_hat = num_polys
             .checked_mul(num_blocks)

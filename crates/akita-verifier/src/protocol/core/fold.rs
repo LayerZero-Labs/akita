@@ -586,26 +586,13 @@ where
             &prepared.row_coefficients,
         )
     })?;
-    let n_d_active = match prepared.m_row_layout {
-        MRowLayout::WithDBlock => prepared.lp.d_key.row_len(),
-        MRowLayout::WithoutDBlock => 0,
-    };
-    let relation_y = assemble_relation_y::<F>(
-        role_dims,
-        RelationYLayout {
-            n_d: n_d_active,
-            commit_rows_per_group: prepared.lp.b_key.row_len(),
-            b_inner_rows_per_group: 0,
-            n_a: prepared.lp.a_key.row_len(),
-        },
-        &prepared.v,
-        commitment,
-    )?;
+    let y_layout = relation_y_layout_for(prepared.lp, &opening_shape, prepared.m_row_layout)?;
+    let relation_y = assemble_relation_y::<F>(role_dims, &y_layout, &prepared.v, commitment)?;
     let relation_instance = RingRelationInstance::new(
         prepared.m_row_layout,
-        stage1_challenges,
-        prepared.ring_opening_point,
-        prepared.ring_multiplier_point,
+        vec![stage1_challenges],
+        vec![prepared.ring_opening_point],
+        vec![prepared.ring_multiplier_point],
         opening_shape,
         gamma,
         row_coefficient_rings,
@@ -645,11 +632,11 @@ where
             )
         }
     })?;
-    let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
+    let relation_claim = relation_claim_from_layout_extension::<F, E>(
         relation_instance.role_dims(),
+        &y_layout,
         &rs.tau1,
         rs.alpha,
-        prepared.lp.a_key.row_len(),
         relation_instance.v(),
         commitment,
     )?;
@@ -737,8 +724,8 @@ where
         prepared.lp,
         1,
         setup_claim,
-        relation_instance.opening_point(),
-        relation_instance.ring_multiplier_point(),
+        relation_instance.group_opening_point(0)?,
+        relation_instance.group_ring_multiplier_point(0)?,
         trace_wire,
     )?;
     let stage2_next_w_eval = if prepared.stage3.is_some() {

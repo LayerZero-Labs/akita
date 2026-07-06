@@ -391,9 +391,9 @@ mod tests {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F>(
                 &setup.expanded,
-                instance.opening_point(),
+                instance.group_opening_point(0).expect("opening point"),
                 &ring_multiplier_point,
-                &instance.challenges,
+                &instance.group_challenges()[0],
                 alpha,
                 &alpha_evals_y,
                 lp.role_dims(),
@@ -532,9 +532,9 @@ mod tests {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F>(
                 &setup.expanded,
-                instance.opening_point(),
+                instance.group_opening_point(0).expect("opening point"),
                 &ring_multiplier_point,
-                &instance.challenges,
+                &instance.group_challenges()[0],
                 alpha,
                 &alpha_evals_y,
                 lp.role_dims(),
@@ -702,7 +702,7 @@ mod tests {
             &setup.expanded,
             &ring_opening_point,
             &ring_multiplier_point,
-            &instance.challenges,
+            &instance.group_challenges()[0],
             alpha,
             &alpha_evals_y,
             level_params.role_dims(),
@@ -858,7 +858,7 @@ mod tests {
                 &setup.expanded,
                 &ring_opening_point,
                 &ring_multiplier_point,
-                &instance.challenges,
+                &instance.group_challenges()[0],
                 alpha,
                 &alpha_evals_y,
                 lp_w.role_dims(),

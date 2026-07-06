@@ -19,7 +19,7 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    assemble_relation_y, dispatch_ring_dim_result, RelationYLayout, RingVec, RingView,
+    assemble_relation_y, dispatch_ring_dim_result, relation_y_layout_for, RingVec, RingView,
 };
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, MRowLayout};
 use akita_types::{LevelParams, RingRelationInstance};
@@ -333,6 +333,7 @@ where
 /// verifier layout resolution.
 pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
     lp.witness_chunk.validate()?;
+    lp.reject_grouped_multi_chunk("chunked witness")?;
     let w = lp.witness_chunk.num_chunks;
     if w > 1 {
         if !lp.num_blocks.is_multiple_of(w) {
@@ -510,7 +511,6 @@ impl RingRelationProver {
         let num_digits_open = lp.num_digits_open;
         let log_basis = lp.log_basis;
         let d_row_len = lp.d_key.row_len();
-        let n_a = lp.a_key.row_len();
 
         // D-role operations: decompose the folded opening rows into `e_hat`
         // digits and (non-terminal layouts) compute + absorb the D-block rows
@@ -569,30 +569,17 @@ impl RingRelationProver {
                 terminal_tail_t_vectors,
             )?;
 
-        // `y` spans roles (D rows | COMMIT rows | B_inner zeros | A zeros).
+        // `y` spans roles (consistency | [A | B | B_inner]* | D).
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
-        let n_d_active = match m_row_layout {
-            MRowLayout::WithDBlock => d_row_len,
-            MRowLayout::WithoutDBlock => 0,
-        };
-        let y = assemble_relation_y::<F>(
-            dims,
-            RelationYLayout {
-                n_d: n_d_active,
-                commit_rows_per_group: lp.b_key.row_len(),
-                b_inner_rows_per_group: 0,
-                n_a,
-            },
-            &v,
-            &commitment_rows,
-        )?;
+        let y_layout = relation_y_layout_for(&lp, &opening_batch, m_row_layout)?;
+        let y = assemble_relation_y::<F>(dims, &y_layout, &v, &commitment_rows)?;
 
         let instance = RingRelationInstance::new(
             m_row_layout,
-            challenges,
-            opening_point,
-            ring_multiplier_point,
+            vec![challenges],
+            vec![opening_point],
+            vec![ring_multiplier_point],
             opening_batch,
             gamma,
             row_coefficient_rings,

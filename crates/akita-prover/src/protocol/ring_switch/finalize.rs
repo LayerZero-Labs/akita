@@ -78,7 +78,9 @@ where
         let ring_alpha_evals_y = scalar_powers(alpha, D);
         let alpha_evals_y = scalar_powers(alpha, D);
 
-        let challenges = &instance.challenges;
+        let challenges = instance.group_challenges();
+        let opening_point = instance.group_opening_point(0)?;
+        let ring_multiplier_point = instance.group_ring_multiplier_point(0)?;
         if gamma.len() != instance.opening_batch().num_total_polynomials() {
             return Err(AkitaError::InvalidInput(
                 "ring-switch gamma length does not match claim count".to_string(),
@@ -90,9 +92,9 @@ where
             || {
                 compute_m_evals_x::<F, E>(
                     setup,
-                    instance.opening_point(),
-                    instance.ring_multiplier_point(),
-                    challenges,
+                    opening_point,
+                    ring_multiplier_point,
+                    &challenges[0],
                     alpha,
                     &ring_alpha_evals_y,
                     dims,
@@ -109,9 +111,9 @@ where
         let (m_evals_x_result, w_result) = {
             let m_evals_x = compute_m_evals_x::<F, E>(
                 setup,
-                instance.opening_point(),
-                instance.ring_multiplier_point(),
-                challenges,
+                opening_point,
+                ring_multiplier_point,
+                &challenges[0],
                 alpha,
                 &ring_alpha_evals_y,
                 dims,

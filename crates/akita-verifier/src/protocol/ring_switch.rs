@@ -213,13 +213,13 @@ where
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let num_claims = relation.opening_batch().num_total_polynomials();
-    if relation.opening_point().a.len() < lp.block_len
-        || relation.opening_point().b.len() != lp.num_blocks
+    if relation.group_opening_point(0)?.a.len() < lp.block_len
+        || relation.group_opening_point(0)?.b.len() != lp.num_blocks
     {
         return Err(AkitaError::InvalidProof);
     }
-    if relation.ring_multiplier_point().a_len() < lp.block_len
-        || relation.ring_multiplier_point().b_len() != lp.num_blocks
+    if relation.group_ring_multiplier_point(0)?.a_len() < lp.block_len
+        || relation.group_ring_multiplier_point(0)?.b_len() != lp.num_blocks
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -301,8 +301,12 @@ where
     let num_polys = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polys, F::modulus_bits())?;
     let rows = lp.m_row_count_for(1, relation.m_row_layout())?;
+    let challenges = relation
+        .group_challenges()
+        .first()
+        .ok_or(AkitaError::InvalidProof)?;
     prepare_ring_switch_row_eval_inner::<F, E, D>(
-        &relation.challenges,
+        challenges,
         alpha,
         lp,
         tau1,
@@ -334,7 +338,7 @@ where
 {
     validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
     let setup_contribution_inputs =
-        SetupContributionPlanInputs::from_level_params(lp, num_polys, m_row_layout, depth_fold)?
+        SetupContributionPlanInputs::from_level_params(lp, &[num_polys], m_row_layout, depth_fold)?
             .with_eq_tau1_from_tau(tau1, rows)?;
     let eq_tau1 = setup_contribution_inputs.eq_tau1.clone();
     let alpha_pows = scalar_powers(alpha, D);
