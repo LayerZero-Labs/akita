@@ -31,7 +31,7 @@ use std::time::Instant;
 
 mod relation_quotient;
 
-pub use relation_quotient::{compute_relation_quotient, RelationQuotientShape};
+pub use relation_quotient::compute_relation_quotient;
 
 fn absorb_terminal_e_folded_fields<F, T>(
     transcript: &mut T,
