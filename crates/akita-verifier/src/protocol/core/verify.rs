@@ -260,8 +260,7 @@ where
         } else {
             &[]
         };
-        let block_digits =
-            decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
+        let block_digits = decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
         let t_rows = mat_vec_mul_i8_plain::<F, D>(&a_rows, &block_digits);
         out.extend(decompose_rows_i8(
             &t_rows,
