@@ -82,16 +82,8 @@ jobs:
             cases: |
               dense_fp128_d64:24:1
           - name: 2-fp128-tensor
-            # Keep the tensor case in its own group with the merge-base baseline
-            # skipped. main before the tensor prover cutover (this PR) ships a
-            # placeholder tensor schedule table: every nv is a non-committing
-            # Direct step, so the merge-base baseline binary panics resolving the
-            # commit layout for this mode at *any* nv. The name-based
-            # `baseline_required_mode` guard cannot detect this because the
-            # merge-base still defines the mode name. Skip the baseline until the
-            # real tensor schedules land on main; future PRs compare against
-            # merge-base like the rest.
-            skip_merge_base_baseline: true
+            # Tensor schedules and the `onehot_fp128_d64_tensor` profile mode are on
+            # main; benchmark merge-base like the other groups for Main baseline deltas.
             cases: |
               onehot_fp128_d64_tensor:26:1
           - name: 3-flat-onehot-suite
