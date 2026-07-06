@@ -197,6 +197,16 @@ mod tests {
         }
     }
 
+    fn assert_ntt_order_for_ring_d(prime: &NttPrime<i32>, ring_d: usize) {
+        let p = prime.p as i64;
+        let order = (2 * ring_d) as i64;
+        assert_eq!(
+            (p - 1) % order,
+            0,
+            "2*D={order} must divide p-1 for negacyclic NTT at D={ring_d} (p={p})"
+        );
+    }
+
     fn assert_i32_prime_profile(primes: &[NttPrime<i32>]) {
         for prime in primes {
             let p = prime.p as i64;
@@ -256,5 +266,18 @@ mod tests {
         assert_garner_profile("Q64", &Q64_PRIMES, q64_garner());
         let q128_primes = q128_primes();
         assert_garner_profile("Q128", &q128_primes, q128_garner());
+    }
+
+    #[test]
+    fn production_primes_support_profile_max_ring_degrees() {
+        for prime in &Q32_PRIMES {
+            assert_ntt_order_for_ring_d(prime, Q32_MAX_RING_D);
+        }
+        for prime in &Q64_PRIMES {
+            assert_ntt_order_for_ring_d(prime, Q64_MAX_RING_D);
+        }
+        for prime in &q128_primes() {
+            assert_ntt_order_for_ring_d(&prime, Q128_MAX_RING_D);
+        }
     }
 }
