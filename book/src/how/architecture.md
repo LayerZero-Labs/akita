@@ -48,13 +48,51 @@ Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/pro
 
 Further reading: [Configuration and planning](./configuration.md), [Proving](./proving/proving.md), [Verification](./verification.md).
 
+## Ring-dimension ownership
+
+The cyclotomic ring dimension is **schedule-derived shape metadata, not a
+type parameter of the protocol**. Protocol data — commitments, hints, proofs,
+claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`,
+`SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`). Per-level
+`CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `LevelParams::role_dims`) is
+the operation authority for how those vectors are interpreted; levels may
+differ. [`validate_schedule_ring_dims`] checks every level
+dimension against the setup's generation dimension.
+
+Every function on the prove/verify path has one of two roles:
+
+- **Orchestration** reads schedule types, drives the transcript, and moves
+  D-free storage. It never carries `const D`.
+- **Kernels** (NTT, digit decomposition, commit/opening/tensor folds,
+  ring-switch arithmetic) are const-generic over `D` and receive extracted
+  numbers, never schedule types.
+
+The bridge is the *operation adapter*: a D-free function that extracts the
+ring dimension of the specific data one operation touches and enters the
+kernel through `akita_types::dispatch_ring_dim_result!` exactly once,
+returning D-free storage. Dispatch is per operation — never per level or per
+proof — so that per-role ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
+see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different
+dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
+names the per-role dimensions; prove/verify hot paths dispatch on `d_a()`, `d_b()`,
+or `d_d()` per operation, not on a single fused dimension.
+
+The normative contract (discriminator rule, forbidden facade/level-
+monomorphization patterns) lives in `specs/runtime-ring-cutover.md`.
+Mixed-dimension execution is exercised end-to-end by
+`crates/akita-pcs/tests/mixed_d_per_level_e2e.rs` and
+`crates/akita-verifier/tests/mixed_d_rejections.rs` through the normal public API.
+
 ## Core types
 
 | Type | Role |
 |------|------|
-| `AkitaCommitmentScheme` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
+| `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
+| `AkitaProverSetup<F>` | Prover setup wrapper; `gen_ring_dim` is runtime shape metadata |
+| `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
+| `CommitmentRingDims`, `validate_schedule_ring_dims` | Per-role ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, SIS family, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
-| `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth) |
+| `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
 | `PlanPolicy` | Value-typed inputs to `akita_types::schedule_plan_from_table` |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `AkitaPolyOps` | Polynomial backends consumed by the scheme |

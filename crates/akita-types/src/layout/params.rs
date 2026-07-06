@@ -8,6 +8,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
+use crate::layout::ring_dims::CommitmentRingDims;
 use crate::schedule::PrecommittedGroupParams;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
@@ -166,9 +167,46 @@ pub struct LevelParams {
     /// group and `d_key` describes the shared D matrix over all group `w_hat`
     /// segments.
     pub precommitted_groups: Vec<GroupRootParams>,
+    /// Per-role ring dimensions at this level (`d_a`, `d_b`, `d_d`).
+    pub role_dims: CommitmentRingDims,
 }
 
 impl LevelParams {
+    /// Per-role ring dimensions at this level.
+    ///
+    /// Per-role ring dimensions stored on this level.
+    #[must_use]
+    pub fn role_dims(&self) -> CommitmentRingDims {
+        self.role_dims
+    }
+
+    /// A-role ring dimension (`d_a`); alias of [`CommitmentRingDims::d_a`] on [`Self::role_dims`].
+    #[inline]
+    #[must_use]
+    pub fn d_a(&self) -> usize {
+        self.role_dims.d_a()
+    }
+
+    /// Replace per-role ring dimensions after validating nesting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when dims are unsupported or fail nesting.
+    pub fn with_role_dims(mut self, dims: CommitmentRingDims) -> Result<Self, AkitaError> {
+        crate::layout::ring_dims::validate_role_dims(dims)?;
+        self.role_dims = dims;
+        Ok(self)
+    }
+
+    /// Derive `role_dims` from `ring_dimension` and each key's stored ring dimension.
+    pub fn stamp_role_dims_from_keys(&mut self) {
+        self.role_dims = CommitmentRingDims {
+            inner: self.ring_dimension,
+            outer: self.b_key.sis_table_key().ring_dimension as usize,
+            opening: self.d_key.sis_table_key().ring_dimension as usize,
+        };
+    }
+
     /// Synthetic `LevelParams` carrying only a terminal-direct's `log_basis`.
     ///
     /// `scheduled_next_level_params` returns this stub when the next step
@@ -206,6 +244,7 @@ impl LevelParams {
             cached_num_digits_fold_value: 1,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
+            role_dims: CommitmentRingDims::uniform(0),
         }
     }
 
@@ -266,6 +305,7 @@ impl LevelParams {
             cached_num_digits_fold_value: 1,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
+            role_dims: CommitmentRingDims::uniform(ring_dimension),
         }
     }
 
@@ -570,6 +610,35 @@ impl LevelParams {
         self.a_key.col_len()
     }
 
+    /// Total ring elements in the committed witness at this level (`num_blocks * block_len`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] on overflow.
+    pub fn n_ring_elems(&self) -> Result<usize, AkitaError> {
+        self.num_blocks.checked_mul(self.block_len).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "num_blocks={} * block_len={} overflows usize",
+                self.num_blocks, self.block_len,
+            ))
+        })
+    }
+
+    /// Total flat field-element count (`n_ring_elems * d_a`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] on overflow.
+    pub fn flat_field_len(&self) -> Result<usize, AkitaError> {
+        let n_ring_elems = self.n_ring_elems()?;
+        n_ring_elems.checked_mul(self.d_a()).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "n_ring_elems={n_ring_elems} * d_a={} overflows usize",
+                self.d_a(),
+            ))
+        })
+    }
+
     /// Append the descriptor digest encoding for this parameter set.
     ///
     /// Kept next to [`LevelParams`] so protocol-affecting field changes are
@@ -628,13 +697,13 @@ impl LevelParams {
     /// Logical opening-point variable count for recursive fold levels.
     ///
     /// Matches [`crate::prepare_opening_point`]: outer
-    /// block/position coordinates plus the inner `log2(ring_dimension)` bits.
+    /// block/position coordinates plus the inner `log2(d_a)` bits.
     ///
     /// # Errors
     ///
     /// Returns an error if the summed dimension overflows `usize`.
     pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
-        let alpha_bits = self.ring_dimension.trailing_zeros() as usize;
+        let alpha_bits = self.d_a().trailing_zeros() as usize;
         self.m_vars
             .checked_add(self.r_vars)
             .and_then(|n| n.checked_add(alpha_bits))
@@ -801,6 +870,7 @@ impl LevelParams {
             // a property of the witness this level commits, so preserve it.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
+            role_dims: self.role_dims,
         };
         let field_bits = self.field_bits_for_cache();
         rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims)
@@ -866,6 +936,7 @@ impl LevelParams {
             // the ranks, so it stays with `self` like the SIS buckets.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
+            role_dims: other.role_dims,
         }
         .with_fold_linf_cap_config(field_bits, 0)
     }

@@ -4,23 +4,34 @@ mod common;
 
 use akita_field::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::{sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaBatchedRootProof};
-use akita_verifier::CommitmentVerifier;
+use akita_types::{
+    sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
+    AkitaVerifierSetup, Commitment,
+};
 use common::*;
 
-type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
+type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
 /// Production-scale fold-linf e2e is exercised at nv=20: still folds with
 /// intermediate handles and TailBoundWithGrind, without the nv=28 CI cost.
 const FOLD_LINF_E2E_NV: usize = 20;
 
+fn bump_flat_ring_vec(flat: &mut akita_types::RingVec<F>) {
+    let mut coeffs = flat.coeffs().to_vec();
+    let first = coeffs
+        .first_mut()
+        .expect("tamper target must contain at least one coefficient");
+    *first += F::one();
+    *flat = akita_types::RingVec::from_coeffs(coeffs);
+}
+
 struct TailBoundGrindFixture {
     proof: AkitaBatchedProof<F, F>,
-    verifier_setup: <Scheme as CommitmentProver<F, ONEHOT_D>>::VerifierSetup,
-    commitment: <Scheme as CommitmentProver<F, ONEHOT_D>>::Commitment,
+    verifier_setup: AkitaVerifierSetup<F>,
+    commitment: Commitment<F>,
     point: Vec<F>,
     opening: F,
 }
@@ -37,24 +48,19 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
 
     let poly = make_onehot_poly(&layout, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
-    let opening = opening_from_poly(&poly, &point, &layout);
+    let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
-    let setup =
-        <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).expect("setup");
+    let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .expect("commit");
+    let verifier_setup = Scheme::setup_verifier(&setup);
+    let (commitment, hint) =
+        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _>(
         &setup,
         prove_input(&point, &[&poly], &commitment, hint),
         &stack,
@@ -65,7 +71,7 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
     .expect("prove");
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+    Scheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -117,7 +123,7 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &shape).expect("decode");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+        Scheme::batched_verify(
             &roundtrip,
             &fixture.verifier_setup,
             &mut verifier_transcript,
@@ -138,7 +144,7 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         }
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        let err = <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+        let err = Scheme::batched_verify(
             &roundtrip,
             &fixture.verifier_setup,
             &mut verifier_transcript,
@@ -149,6 +155,40 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         .expect_err("oversized grind nonce must be rejected");
         assert!(matches!(err, AkitaError::InvalidProof));
     });
+}
+
+#[test]
+fn fold_recursive_handle_tamper_rejected() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_04);
+        let mut malformed = fixture.proof;
+        let recursive = malformed
+            .steps
+            .iter_mut()
+            .find_map(AkitaLevelProof::as_intermediate_mut)
+            .expect("tail-bound-with-grind onehot should include an intermediate fold");
+        bump_flat_ring_vec(recursive.v_mut());
+
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
+        let result = Scheme::batched_verify(
+            &malformed,
+            &fixture.verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&fixture.point, &[fixture.opening], &fixture.commitment),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
+        assert!(matches!(result, Err(AkitaError::InvalidProof)));
+    });
+}
+
+#[allow(dead_code)]
+fn assert_invalid_proof<T: core::fmt::Debug>(label: &str, result: Result<T, AkitaError>) {
+    match result {
+        Err(AkitaError::InvalidProof) => {}
+        other => panic!("{label}: expected InvalidProof, got {other:?}"),
+    }
 }
 
 #[cfg(feature = "logging-transcript")]
@@ -165,10 +205,9 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x61_61);
         let point = random_point(num_vars, 0x71_71);
-        let opening = opening_from_poly(&poly, &point, &layout);
+        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
-        let setup =
-            <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1).expect("setup");
+        let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -176,17 +215,13 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .expect("commit");
+        let verifier_setup = Scheme::setup_verifier(&setup);
+        let (commitment, hint) =
+            Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
-        let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+        let proof = Scheme::batched_prove::<_, _, _>(
             &setup,
             prove_input(&point, &[&poly], &commitment, hint),
             &stack,
@@ -200,7 +235,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
-        <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+        Scheme::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

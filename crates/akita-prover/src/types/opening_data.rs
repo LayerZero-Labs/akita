@@ -1,24 +1,26 @@
 use crate::api::CommitmentWithHint;
-use crate::compute::{RootOpeningSource, RootPolyShape};
+use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
-use akita_types::{AkitaCommitmentHint, FlatRingVec, OpeningClaims, RingCommitment};
+use akita_types::{
+    padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AkitaCommitmentHint,
+    Commitment, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    RingVec,
+};
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
 #[derive(Debug, Clone)]
-pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize> {
-    opening_claims: OpeningClaims<'a, PointF, RingCommitment<CommitF, D>>,
-    hints: Vec<AkitaCommitmentHint<CommitF, D>>,
+pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: FieldCore> {
+    opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
+    hints: Vec<AkitaCommitmentHint<CommitF>>,
     polynomials: Vec<&'a [&'a P]>,
 }
 
-impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
-    ProverOpeningData<'a, PointF, P, CommitF, D>
-{
+impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, CommitF> {
     /// Bundle public claims with matching prover hints and polynomial groups.
     pub fn new(
-        opening_claims: OpeningClaims<'a, PointF, RingCommitment<CommitF, D>>,
-        hints: Vec<AkitaCommitmentHint<CommitF, D>>,
+        opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
+        hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
         let data = Self {
@@ -58,7 +60,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     pub fn validate<PolyF>(&self) -> Result<(), AkitaError>
     where
         PolyF: FieldCore,
-        P: RootPolyShape<PolyF, D> + RootOpeningSource<PolyF, D>,
+        P: RootPolyMeta<PolyF>,
     {
         self.check_alignment()?;
         let num_vars = self.num_vars::<PolyF>()?;
@@ -75,7 +77,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     pub fn num_vars<PolyF>(&self) -> Result<usize, AkitaError>
     where
         PolyF: FieldCore,
-        P: RootPolyShape<PolyF, D>,
+        P: RootPolyMeta<PolyF>,
     {
         self.polynomials
             .iter()
@@ -88,18 +90,43 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
             })
     }
 
+    /// Shared opening point.
+    pub fn point(&self) -> &[PointF] {
+        self.opening_claims.point()
+    }
+
     /// Public claims carried by this prover input.
-    pub fn opening_claims(&self) -> &OpeningClaims<'a, PointF, RingCommitment<CommitF, D>> {
+    pub fn opening_claims(&self) -> &OpeningClaims<'a, PointF, Commitment<CommitF>> {
         &self.opening_claims
     }
 
+    /// Layout-only opening geometry derived from prover polynomials.
+    pub fn opening_layout<PolyF>(&self) -> Result<OpeningClaimsLayout, AkitaError>
+    where
+        PolyF: FieldCore,
+        P: RootPolyMeta<PolyF>,
+    {
+        let padded_num_vars = padded_scalar_batch_num_vars(
+            self.polynomials
+                .iter()
+                .flat_map(|group| group.iter().map(|poly| poly.num_vars())),
+        )?;
+        validate_scalar_point_matches_poly_arity(self.point().len(), padded_num_vars)?;
+        let group_sizes = self
+            .polynomials
+            .iter()
+            .map(|group| group.len())
+            .collect::<Vec<_>>();
+        OpeningClaimsLayout::from_group_sizes(padded_num_vars, &group_sizes)
+    }
+
     /// Prover-only hints, one per polynomial group.
-    pub fn hints(&self) -> &[AkitaCommitmentHint<CommitF, D>] {
+    pub fn hints(&self) -> &[AkitaCommitmentHint<CommitF>] {
         &self.hints
     }
 
     /// Borrow one prover hint.
-    pub fn group_hint(&self, index: usize) -> Result<&AkitaCommitmentHint<CommitF, D>, AkitaError> {
+    pub fn group_hint(&self, index: usize) -> Result<&AkitaCommitmentHint<CommitF>, AkitaError> {
         self.hints.get(index).ok_or(AkitaError::InvalidProof)
     }
 
@@ -120,23 +147,43 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     }
 
     /// Commitments in commitment-group order.
-    pub fn commitments(&self) -> Vec<&RingCommitment<CommitF, D>> {
+    pub fn commitments(&self) -> Vec<&Commitment<CommitF>> {
         self.opening_claims
             .groups()
             .iter()
-            .map(|group| group.commitment())
+            .map(PolynomialGroupClaims::commitment)
             .collect()
     }
 
     /// Absorb the normalized batch shape, commitments, and shared point.
-    pub fn append_to_transcript<T>(&self, transcript: &mut T) -> Result<(), AkitaError>
+    pub fn append_to_transcript<T>(
+        &self,
+        ring_dim: usize,
+        transcript: &mut T,
+    ) -> Result<(), AkitaError>
     where
         CommitF: CanonicalField,
         PointF: ExtField<CommitF>,
+        P: RootPolyMeta<CommitF>,
         T: Transcript<CommitF>,
     {
-        self.opening_claims
-            .append_to_transcript::<CommitF, T>(transcript)
+        let layout = self.opening_layout::<CommitF>()?;
+        layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
+        for commitment in self.commitments() {
+            commitment.append_to_transcript(
+                akita_transcript::labels::ABSORB_COMMITMENT,
+                ring_dim,
+                transcript,
+            )?;
+        }
+        for coord in self.point() {
+            akita_transcript::append_ext_field::<CommitF, PointF, T>(
+                transcript,
+                akita_transcript::labels::ABSORB_EVALUATION_CLAIMS,
+                coord,
+            );
+        }
+        Ok(())
     }
 
     /// Return the only group when the current single-group path applies.
@@ -148,7 +195,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
     }
 
     /// Borrow the current single-group fold batch's commitment rows as flat proof storage.
-    pub(crate) fn single_fold_commitment(&self) -> Result<FlatRingVec<CommitF>, AkitaError> {
+    pub(crate) fn single_fold_commitment(&self) -> Result<RingVec<CommitF>, AkitaError> {
         let commitment = self
             .opening_claims
             .single_group_commitment()
@@ -157,14 +204,14 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
                     "multi-group fold proving is not supported yet".to_string(),
                 )
             })?;
-        Ok(FlatRingVec::from_ring_elems(&commitment.u))
+        Ok(commitment.rows().clone())
     }
 
     /// Preserve grouping metadata while replacing the flat polynomial stream.
     pub(crate) fn regroup_polynomial_refs<'b, Q>(
         self,
         polynomials: &'b [&'b Q],
-    ) -> Result<ProverOpeningData<'b, PointF, Q, CommitF, D>, AkitaError>
+    ) -> Result<ProverOpeningData<'b, PointF, Q, CommitF>, AkitaError>
     where
         'a: 'b,
     {
@@ -195,20 +242,15 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore, const D: usize>
         opening_point: &[PointF],
         recursive_num_vars: usize,
         polynomials: &'a [&'a P],
-        commitment: CommitmentWithHint<CommitF, D>,
+        commitment: CommitmentWithHint<CommitF>,
     ) -> Result<Self, AkitaError>
     where
         PointF: FieldCore,
     {
         let mut padded_point = opening_point.to_vec();
         padded_point.resize(recursive_num_vars, PointF::zero());
-        let point_vars =
-            akita_types::PointVariableSelection::prefix(recursive_num_vars, recursive_num_vars)?;
-        let claims = akita_types::PolynomialGroupClaims::new(
-            point_vars,
-            vec![PointF::zero()],
-            commitment.0,
-        )?;
+        let point_vars = PointVariableSelection::prefix(recursive_num_vars, recursive_num_vars)?;
+        let claims = PolynomialGroupClaims::new(point_vars, vec![PointF::zero()], commitment.0)?;
         ProverOpeningData::new(
             OpeningClaims::from_groups(padded_point, vec![claims])?,
             vec![commitment.1],

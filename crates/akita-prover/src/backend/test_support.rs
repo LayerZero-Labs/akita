@@ -47,35 +47,47 @@ pub(crate) fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
 }
 
 pub(crate) fn aggregate_witnesses<F: FieldCore, const D: usize>(
-    witnesses: &[DecomposeFoldWitness<F, D>],
-) -> DecomposeFoldWitness<F, D> {
-    let mut acc = witnesses[0].clone();
-    for witness in &witnesses[1..] {
-        for (dst, src) in acc
-            .z_folded_rings
+    witnesses: &[DecomposeFoldWitness<F>],
+) -> DecomposeFoldWitness<F> {
+    let Some((first, rest)) = witnesses.split_first() else {
+        panic!("aggregate_witnesses requires at least one witness");
+    };
+    first
+        .ensure_ring_dim::<D>()
+        .expect("witness ring dimension");
+    let mut z_folded_rings = first.z_folded_rings_trusted::<D>().to_vec();
+    let mut centered_coeffs = first.centered_coeffs_owned::<D>();
+
+    for witness in rest {
+        witness
+            .ensure_ring_dim::<D>()
+            .expect("witness ring dimension");
+        for (dst, src) in z_folded_rings
             .iter_mut()
-            .zip(witness.z_folded_rings.iter())
+            .zip(witness.z_folded_rings_trusted::<D>())
         {
             *dst += *src;
         }
-        for (dst, src) in acc
-            .centered_coeffs
+        for (dst, src) in centered_coeffs
             .iter_mut()
-            .zip(witness.centered_coeffs.iter())
+            .zip(witness.centered_coeffs_trusted::<D>())
         {
             for k in 0..D {
-                dst[k] += src[k];
+                dst[k] = dst[k]
+                    .checked_add(src[k])
+                    .expect("centered coefficient overflow");
             }
         }
     }
-    acc.centered_inf_norm = acc
-        .centered_coeffs
+
+    let centered_inf_norm = centered_coeffs
         .iter()
         .flat_map(|coeffs| coeffs.iter())
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
-    acc
+
+    DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
 }
 
 pub(crate) fn negacyclic_tensor_product_challenges_i8<const D: usize>(

@@ -12,9 +12,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FlatRingVec, FpExtEncoding,
+    gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup, FpExtEncoding,
     LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-    SetupContributionPlanInputs, TerminalWitnessTranscriptParts, WitnessLayout,
+    RingRole, RingVec, SetupContributionPlanInputs, TerminalWitnessTranscriptParts, WitnessLayout,
 };
 
 use super::slice_mle::{
@@ -22,7 +22,8 @@ use super::slice_mle::{
     SetupEvaluator, SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
     ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
-use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
+use super::validate_log_basis;
+use akita_types::validate_ring_dispatch;
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
 mod tensor_challenges;
@@ -110,22 +111,17 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) depth_commit: usize,
     pub(crate) depth_fold: usize,
     pub(crate) block_len: usize,
-    pub(crate) inner_width: usize,
     pub(crate) log_basis: u32,
     pub(crate) n_a: usize,
-    pub(crate) n_d: usize,
-    pub(crate) m_row_layout: MRowLayout,
-    pub(crate) n_b: usize,
-    pub(crate) rows: usize,
-    pub(crate) num_polys: usize,
     /// Resolved witness column layout (one chunk for the single-chunk case,
     /// `W` chunks for the distributed-prover layout).
     pub(crate) chunk_layout: WitnessLayout,
+    pub(crate) setup_contribution_inputs: SetupContributionPlanInputs<F>,
 }
 
 /// Fixed public relation inputs for verifier ring-switch replay.
-pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
-    pub relation: &'a RingRelationInstance<F, D>,
+pub struct RingSwitchReplay<'a, F: FieldCore, E> {
+    pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
     pub lp: &'a LevelParams,
 }
@@ -143,9 +139,10 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
+    replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
-    w_commitment: &FlatRingVec<F>,
+    w_commitment: &RingVec<F>,
+    next_ring_dim: usize,
     transcript: &mut T,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
@@ -155,6 +152,12 @@ where
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
+    // The next-witness commitment is shaped at the *next* level's schedule
+    // ring dimension, which may differ from this level's dispatch `D` in
+    // mixed-D schedules.
+    if next_ring_dim == 0 || !w_commitment.can_decode_vec(next_ring_dim) {
+        return Err(AkitaError::InvalidProof);
+    }
     transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
     ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
         .into_intermediate()
@@ -173,7 +176,7 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_terminal")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
+    replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
     terminal_parts: &TerminalWitnessTranscriptParts,
@@ -191,7 +194,7 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
 #[inline(never)]
 fn ring_switch_verifier_core<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
+    replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
     m_row_layout: MRowLayout,
@@ -282,7 +285,7 @@ where
 /// challenge evaluation fails.
 #[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
 pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E, D>,
+    replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
     witness_ring_len: Option<usize>,
@@ -295,15 +298,20 @@ where
     let lp = replay.lp;
     let chunk_layout = relation.segment_layout(lp, witness_ring_len)?;
     let opening_batch = relation.opening_batch();
+    let num_polys = opening_batch.num_total_polynomials();
+    let depth_fold = lp.num_digits_fold(num_polys, F::modulus_bits())?;
+    let rows = lp.m_row_count_for(1, relation.m_row_layout())?;
     prepare_ring_switch_row_eval_inner::<F, E, D>(
         &relation.challenges,
         alpha,
         lp,
         tau1,
-        opening_batch.num_total_polynomials(),
+        num_polys,
         replay.row_coefficients,
         relation.m_row_layout(),
         chunk_layout,
+        depth_fold,
+        rows,
     )
 }
 
@@ -317,12 +325,18 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     gamma: &[E],
     m_row_layout: MRowLayout,
     chunk_layout: WitnessLayout,
+    depth_fold: usize,
+    rows: usize,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
-    validate_level_dispatch::<D>(lp)?;
+    validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
+    let setup_contribution_inputs =
+        SetupContributionPlanInputs::from_level_params(lp, num_polys, m_row_layout, depth_fold)?
+            .with_eq_tau1_from_tau(tau1, rows)?;
+    let eq_tau1 = setup_contribution_inputs.eq_tau1.clone();
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
     if num_polys != num_claims {
@@ -333,27 +347,8 @@ where
     validate_log_basis(log_basis)?;
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold(num_claims, lp.field_bits_for_cache())?;
     let num_blocks = lp.num_blocks;
-    if num_blocks == 0 || !num_blocks.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "num_blocks must be a non-zero power of two".to_string(),
-        ));
-    }
-    if lp.block_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "block_len must be non-zero".to_string(),
-        ));
-    }
-    if depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "digit depths must be non-zero".to_string(),
-        ));
-    }
-    let n_b = lp.b_key.row_len();
-    let n_d = lp.d_key.row_len();
     let num_t_vectors = num_polys;
-    // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
@@ -364,46 +359,7 @@ where
         });
     }
     let block_len = lp.block_len;
-    let inner_width = block_len
-        .checked_mul(depth_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-    if lp.a_key.col_len() < inner_width {
-        return Err(AkitaError::InvalidSetup(
-            "A-key column width is too small for verifier layout".to_string(),
-        ));
-    }
-    let _expected_d_width = depth_open
-        .checked_mul(num_blocks)
-        .and_then(|width| width.checked_mul(num_claims))
-        .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
-    // TODO: re-enable (or gate on schedule shape) once root-direct
-    // commit params no longer carry zero-width D-key placeholders.
-    // The planner emits `d_key.col_len = 0` for root-direct schedules
-    // since the relation fold (which is what consumes D) doesn't run.
-    // if lp.d_key.col_len() < expected_d_width {
-    //     return Err(AkitaError::InvalidSetup(
-    //         "D-key column width is too small for verifier layout".to_string(),
-    //     ));
-    // }
-    let expected_b_width = num_polys
-        .checked_mul(lp.a_key.row_len())
-        .and_then(|width| width.checked_mul(depth_open))
-        .and_then(|width| width.checked_mul(num_blocks))
-        .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
-    if lp.b_key.col_len() < expected_b_width {
-        return Err(AkitaError::InvalidSetup(
-            "B-key column width is too small for verifier layout".to_string(),
-        ));
-    }
-    let rows = lp.m_row_count_for(1, m_row_layout)?;
-
-    let eq_tau1 = EqPolynomial::evals(tau1)?;
-    if eq_tau1.len() < rows {
-        return Err(AkitaError::InvalidSize {
-            expected: rows,
-            actual: eq_tau1.len(),
-        });
-    }
+    let n_a = lp.a_key.row_len();
 
     let c_alphas: PreparedChallengeEvals<E> = match challenges {
         Challenges::Sparse {
@@ -411,7 +367,7 @@ where
         } => PreparedChallengeEvals::Flat(
             sparse
                 .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
+                .map(|challenge| challenge.eval_at_pows::<F, E>(&alpha_pows))
                 .collect::<Result<_, _>>()?,
         ),
         Challenges::Tensor { factored } => {
@@ -451,15 +407,10 @@ where
         depth_commit,
         depth_fold,
         block_len,
-        inner_width,
         log_basis,
-        n_a: lp.a_key.row_len(),
-        n_d,
-        m_row_layout,
-        n_b,
-        rows,
-        num_polys,
+        n_a,
         chunk_layout,
+        setup_contribution_inputs,
     })
 }
 
@@ -478,24 +429,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
     }
 
     pub(crate) fn create_setup_contribution_inputs(&self) -> SetupContributionPlanInputs<E> {
-        SetupContributionPlanInputs {
-            eq_tau1: self.eq_tau1.clone(),
-            num_t_vectors: self.num_t_vectors,
-            num_blocks: self.num_blocks,
-            num_claims: self.num_claims,
-            depth_open: self.depth_open,
-            depth_commit: self.depth_commit,
-            depth_fold: self.depth_fold,
-            block_len: self.block_len,
-            inner_width: self.inner_width,
-            n_a: self.n_a,
-            n_d: self.n_d,
-            m_row_layout: self.m_row_layout,
-            n_b: self.n_b,
-            num_segments: 1,
-            rows: self.rows,
-            num_polys_per_segment: vec![self.num_polys],
-        }
+        self.setup_contribution_inputs.clone()
     }
 
     /// Evaluate the prepared ring-switch row table at the supplied point.
@@ -510,7 +444,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         x_challenges: &[E],
         setup: &AkitaExpandedSetup<F>,
         opening_point: &RingOpeningPoint<F>,
-        ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+        ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
         alpha: E,
         setup_claim: Option<E>,
     ) -> Result<E, AkitaError>
@@ -645,7 +579,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         &z_block_low_eq,
                         z_offset_low,
                         self.block_len,
-                        |idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows),
+                        |idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows),
                     )?];
                     let z_offset_high = chunk.offset_z >> z_offset_low_bits;
                     let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
@@ -665,7 +599,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 // the dense `z` segment is identical in every chunk; only the
                 // offset shifts.
                 let a_evals_by_point = vec![(0..self.block_len)
-                    .map(|idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows))
+                    .map(|idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows))
                     .collect::<Result<Vec<_>, _>>()?];
                 for chunk in &layout.chunks {
                     z_structured_contribution += ZDenseSlicesEvaluator {

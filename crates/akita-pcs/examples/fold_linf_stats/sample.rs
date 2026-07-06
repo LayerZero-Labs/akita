@@ -1,41 +1,41 @@
 //! Prove+verify sampling harness for the `fold_linf_stats` example.
 
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
+use akita_field::unreduced::ReduceTo;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
-    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
+    AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
+    FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
+    TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    OpeningFoldKernel, RecursiveProveBackend, RootCommitBackend, RootCommitPoly, RootPolyShape,
-    RootProvePoly,
+    OpeningFoldKernel, RecursiveProveBackend, RootPolyShape, RootProvePoly,
+    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
 use akita_prover::{
-    AkitaProverSetup, CommitmentProver, DensePoly, FoldGrindObservation, FoldGrindObserverGuard,
-    OneHotIndex, OneHotPoly, ProverOpeningData,
+    AkitaProverSetup, DensePoly, FoldGrindObservation, FoldGrindObserverGuard, OneHotIndex,
+    OneHotPoly, ProverOpeningData,
 };
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_serialization::AkitaSerialize;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
-    FpExtEncoding, LevelParams, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-    RingCommitment, Schedule, SetupContributionMode,
+    AkitaCommitmentHint, BasisMode, BlockOrder, Commitment, FpExtEncoding, LevelParams,
+    OpeningClaims, PointVariableSelection, PolynomialGroupClaims, Schedule, SetupContributionMode,
 };
-use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 const ONEHOT_K: usize = 256;
 
-fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore, const D: usize>(
+fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     point: &'a [E],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
-    hint: AkitaCommitmentHint<CommitF, D>,
-) -> ProverOpeningData<'a, E, P, CommitF, D> {
+    commitment: &'a Commitment<CommitF>,
+    hint: AkitaCommitmentHint<CommitF>,
+) -> ProverOpeningData<'a, E, P, CommitF> {
     let group = PolynomialGroupClaims::new(
         PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
         vec![E::zero(); polynomials.len()],
@@ -120,7 +120,7 @@ where
     layer[0]
 }
 
-fn onehot_lagrange_opening<FF, E, I, const D: usize>(poly: &OneHotPoly<FF, D, I>, point: &[E]) -> E
+fn onehot_lagrange_opening<FF, E, I>(poly: &OneHotPoly<FF, I>, point: &[E]) -> E
 where
     FF: FieldCore,
     E: ExtField<FF>,
@@ -193,7 +193,7 @@ where
 }
 
 fn run_fold_linf_prove_verify<FF, P, const D: usize, Cfg>(
-    setup: &AkitaProverSetup<FF, D>,
+    setup: &AkitaProverSetup<FF>,
     poly: &P,
     point: &[Cfg::ExtField],
     opening: Cfg::ExtField,
@@ -205,47 +205,30 @@ where
         + RandomSampling
         + FromPrimitiveInt
         + PseudoMersenneField
+        + HalvingField
         + HasWide
+        + Valid
         + AkitaSerialize
         + 'static,
-    P: RootCommitPoly<FF, D> + RootProvePoly<FF, D>,
+    <FF as HasWide>::Wide: From<FF> + ReduceTo<FF> + AdditiveGroup,
+    P: RuntimeRootProvePoly<FF> + RuntimeRootCommitPoly<FF>,
     Cfg: CommitmentConfig<Field = FF>,
-    Cfg::ExtField:
-        ExtField<FF> + FieldCore + FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-            FF,
-            D,
-            ProverSetup = AkitaProverSetup<FF, D>,
-            ExtField = Cfg::ExtField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
-        > + CommitmentVerifier<
-            FF,
-            D,
-            ExtField = Cfg::ExtField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-        >,
+    Cfg::ExtField: FpExtEncoding<FF>
+        + FrobeniusExtField<FF>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + AkitaSerialize,
     CpuBackend: ComputeBackendSetup<FF>
-        + RootCommitBackend<FF, P, Cfg::ExtField, D>
-        + RecursiveProveBackend<FF, P, Cfg::ExtField, D>,
+        + RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
+        + RecursiveProveBackend<FF, P, Cfg::ExtField>,
 {
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
-
     let prepared = CpuBackend.prepare_setup(setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
 
-    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_commit(
-        setup,
-        std::slice::from_ref(poly),
-        &stack,
-    )
-    .unwrap();
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit(setup, std::slice::from_ref(poly), &stack).unwrap();
 
     let poly_refs = [poly];
 
@@ -255,7 +238,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"fold_linf_stats");
     let _grind_observer = FoldGrindObserverGuard::install();
-    let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         setup,
         prover_claims(point, &poly_refs, &commitments[0], hint),
         &stack,
@@ -266,9 +249,9 @@ where
     .unwrap();
     let grind_observations = FoldGrindObserverGuard::take();
 
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(setup);
     let mut verifier_transcript = AkitaTranscript::<FF>::new(b"fold_linf_stats");
-    <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
+    AkitaCommitmentScheme::<Cfg>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -294,31 +277,17 @@ where
         + RandomSampling
         + FromPrimitiveInt
         + PseudoMersenneField
+        + HalvingField
         + HasWide
+        + Valid
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-            FF,
-            D,
-            ProverSetup = AkitaProverSetup<FF, D>,
-            ExtField = Cfg::ExtField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
-        > + CommitmentVerifier<
-            FF,
-            D,
-            ExtField = Cfg::ExtField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-        >,
-    Cfg::ExtField:
-        ExtField<FF> + FieldCore + FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF>
+        + FpExtEncoding<FF>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + AkitaSerialize,
 {
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
-
     let mut rng = StdRng::seed_from_u64(seed);
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
@@ -334,26 +303,21 @@ where
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    let onehot_poly = OneHotPoly::<FF, D, u8>::new(onehot_k, indices).unwrap();
+    let onehot_poly = OneHotPoly::<FF, u8>::new(onehot_k, D, indices).unwrap();
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let opening = if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&pt) {
-        Cfg::ExtField::lift_base(opening_from_poly(
+        Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
             &onehot_poly,
             &base_pt,
             layout,
             BasisMode::Lagrange,
         ))
     } else {
-        onehot_lagrange_opening::<FF, Cfg::ExtField, u8, D>(&onehot_poly, &pt)
+        onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt)
     };
 
-    let setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1).unwrap();
-    run_fold_linf_prove_verify::<FF, OneHotPoly<FF, D, u8>, D, Cfg>(
-        &setup,
-        &onehot_poly,
-        &pt,
-        opening,
-    )
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+    run_fold_linf_prove_verify::<FF, OneHotPoly<FF, u8>, D, Cfg>(&setup, &onehot_poly, &pt, opening)
 }
 
 pub(crate) fn run_dense_fold_linf_sample<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -369,31 +333,17 @@ where
         + RandomSampling
         + FromPrimitiveInt
         + PseudoMersenneField
+        + HalvingField
         + HasWide
+        + Valid
         + AkitaSerialize
         + 'static,
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-            FF,
-            D,
-            ProverSetup = AkitaProverSetup<FF, D>,
-            ExtField = Cfg::ExtField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
-        > + CommitmentVerifier<
-            FF,
-            D,
-            ExtField = Cfg::ExtField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ExtField>,
-        >,
-    Cfg::ExtField:
-        ExtField<FF> + FieldCore + FrobeniusExtField<FF> + FpExtEncoding<FF> + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<FF>
+        + FpExtEncoding<FF>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + AkitaSerialize,
 {
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
-
     let mut rng = StdRng::seed_from_u64(seed);
     let original_pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let len = 1usize << nv;
@@ -408,10 +358,10 @@ where
             .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
             .collect()
     };
-    let poly = DensePoly::<FF, D>::from_field_evals(nv, &evals).unwrap();
+    let poly = DensePoly::<FF>::from_field_evals(nv, D, &evals).unwrap();
     let opening =
         if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&original_pt) {
-            Cfg::ExtField::lift_base(opening_from_poly(
+            Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
                 &poly,
                 &base_pt,
                 layout,
@@ -421,10 +371,8 @@ where
             dense_lagrange_opening_from_evals::<FF, Cfg::ExtField>(&evals, &original_pt)
         };
 
-    let setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-        RootPolyShape::num_vars(&poly),
-        1,
-    )
-    .unwrap();
-    run_fold_linf_prove_verify::<FF, DensePoly<FF, D>, D, Cfg>(&setup, &poly, &original_pt, opening)
+    let setup =
+        AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
+            .unwrap();
+    run_fold_linf_prove_verify::<FF, DensePoly<FF>, D, Cfg>(&setup, &poly, &original_pt, opening)
 }

@@ -17,7 +17,7 @@ use akita_field::{CanonicalField, FieldCore};
 /// (e.g. `evaluate_and_fold`) against a straight-line implementation,
 /// so it lives in `test_helpers` rather than on the production trait.
 pub(crate) fn evaluate_ring_onehot<F, const D: usize, I>(
-    poly: &OneHotPoly<F, D, I>,
+    poly: &OneHotPoly<F, I>,
     scalars: &[F],
 ) -> CyclotomicRing<F, D>
 where

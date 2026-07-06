@@ -21,11 +21,11 @@ where
 {
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: DenseView<'_, F, D>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        source.poly.commit_inner(self, prepared, plan)
+    ) -> Result<CommitInnerWitness<F>, AkitaError> {
+        source.poly.commit_inner::<_, D>(self, prepared, plan)
     }
 }
 
@@ -35,7 +35,7 @@ where
 {
     fn evaluate_and_fold(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -46,7 +46,7 @@ where
                 block_len,
             } => source
                 .poly
-                .evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
+                .evaluate_and_fold::<D>(eval_outer_scalars, fold_scalars, block_len),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars,
                 fold_scalars,
@@ -60,11 +60,11 @@ where
 
     fn decompose_fold(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-        Ok(source.poly.decompose_fold(
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+        Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.block_len,
             plan.num_digits,
@@ -79,7 +79,7 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: DenseBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -90,7 +90,7 @@ where
                 block_len,
                 num_digits,
                 log_basis,
-            } => match DensePoly::decompose_fold_tensor_batched(
+            } => match DensePoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
                 block_len,
@@ -111,35 +111,37 @@ where
 {
     fn column_partials(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
-        source.poly.tensor_extension_column_partials(logical_point)
+        source
+            .poly
+            .tensor_extension_column_partials::<E, D>(logical_point)
     }
 
     fn packed_witness(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
-            source.poly.tensor_packed_extension_evals()?,
+            source.poly.tensor_packed_extension_evals::<E, D>()?,
         ))
     }
 
     fn root_projection(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {
-        source.poly.tensor_packed_extension_root_poly::<E>()
+        source.poly.tensor_packed_extension_root_poly::<E, D>()
     }
 }
 
@@ -151,19 +153,19 @@ where
 {
     fn column_partials_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: DenseBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
-        DensePoly::tensor_extension_column_partials_batch(source.polys, logical_point)
+        DensePoly::tensor_extension_column_partials_batch::<E, D>(source.polys, logical_point)
     }
 
     fn sparse_linear_combination(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: DenseBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {

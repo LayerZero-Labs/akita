@@ -196,22 +196,24 @@ where
     Ok(weights.iter().map(|&weight| weight * scale).collect())
 }
 
-struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
-    lp: &'a LevelParams,
+struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore> {
+    /// M-matrix block count per claim (`LevelParams::num_blocks`, extracted by
+    /// the caller — trace-weight construction must not read schedule types).
+    num_blocks: usize,
     opening_batch: &'a OpeningClaimsLayout,
-    prepared_point: &'a PreparedOpeningPoint<F, E, D>,
+    prepared_point: &'a PreparedOpeningPoint<F, E>,
     row_coefficients: &'a [E],
     claim_scales: Option<&'a [E]>,
 }
 
-struct RootTraceClaimItem<'a, F: FieldCore, E: FieldCore, const D: usize> {
-    prepared: &'a PreparedOpeningPoint<F, E, D>,
+struct RootTraceClaimItem<'a, F: FieldCore, E: FieldCore> {
+    prepared: &'a PreparedOpeningPoint<F, E>,
     scaled_coefficient: E,
     block_offset: usize,
 }
 
-fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore, const D: usize>(
-    inputs: &RootTraceClaimInputs<'_, F, E, D>,
+fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore>(
+    inputs: &RootTraceClaimInputs<'_, F, E>,
 ) -> Result<(), AkitaError> {
     if inputs.row_coefficients.len() != inputs.opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
@@ -230,9 +232,9 @@ fn validate_root_trace_claim_inputs<F: FieldCore, E: FieldCore, const D: usize>(
     Ok(())
 }
 
-fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore, const D: usize>(
-    inputs: &'a RootTraceClaimInputs<'a, F, E, D>,
-) -> Result<Vec<RootTraceClaimItem<'a, F, E, D>>, AkitaError> {
+fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
+    inputs: &'a RootTraceClaimInputs<'a, F, E>,
+) -> Result<Vec<RootTraceClaimItem<'a, F, E>>, AkitaError> {
     validate_root_trace_claim_inputs(inputs)?;
     let mut items = Vec::with_capacity(inputs.opening_batch.num_total_polynomials());
     for (claim_idx, &coefficient) in inputs.row_coefficients.iter().enumerate() {
@@ -241,7 +243,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore, const D: usize
             .and_then(|scales| scales.get(claim_idx).copied())
             .unwrap_or_else(E::one);
         let block_offset = claim_idx
-            .checked_mul(inputs.lp.num_blocks)
+            .checked_mul(inputs.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block offset overflow".to_string()))?;
         items.push(RootTraceClaimItem {
             prepared: inputs.prepared_point,
@@ -254,7 +256,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore, const D: usize
 
 /// Fused trace coefficient: `γ²` on terminal folds, otherwise `batching_coeff²`.
 #[inline]
-pub fn stage2_trace_coeff<L: FieldCore>(batching_coeff: L, trace_gamma: L, is_terminal: bool) -> L {
+pub fn stage2_trace_coeff<E: FieldCore>(batching_coeff: E, trace_gamma: E, is_terminal: bool) -> E {
     if is_terminal {
         trace_gamma * trace_gamma
     } else {
@@ -265,9 +267,9 @@ pub fn stage2_trace_coeff<L: FieldCore>(batching_coeff: L, trace_gamma: L, is_te
 /// Build public trace weights for a root opening_batch, optionally scaling each
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
-    lp: &LevelParams,
+    num_blocks: usize,
     opening_batch: &OpeningClaimsLayout,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
@@ -276,7 +278,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
-        lp,
+        num_blocks,
         opening_batch,
         prepared_point,
         row_coefficients,
@@ -292,7 +294,7 @@ where
                     &item.prepared.ring_opening_point.b,
                     item.scaled_coefficient,
                 )?,
-                inner_opening_ring: item.prepared.packed_inner_point,
+                inner_opening_ring: item.prepared.packed_inner_owned::<D>()?,
             });
         }
         trace_public_weights_field_terms(&terms)
@@ -300,20 +302,20 @@ where
         let terms = items
             .into_iter()
             .map(|item| {
-                let block_rings =
-                    item.prepared
-                        .ring_multiplier_point
-                        .b_rings()
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "extension trace opening point is missing ring block weights"
-                                    .to_string(),
-                            )
-                        })?;
+                let block_rings = item
+                    .prepared
+                    .ring_multiplier_point
+                    .b_rings_trusted::<D>()?
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "extension trace opening point is missing ring block weights"
+                                .to_string(),
+                        )
+                    })?;
                 Ok(TraceRingBlockOpening {
                     block_offset: item.block_offset,
                     block_rings: scaled_ring_weights(block_rings, item.scaled_coefficient)?,
-                    packed_inner_point: item.prepared.packed_inner_point,
+                    packed_inner_point: item.prepared.packed_inner_owned::<D>()?,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -324,7 +326,7 @@ where
 /// Build public trace weights for a recursive singleton fold, optionally
 /// scaling it by an EOR final tensor factor.
 pub fn trace_public_weights_recursive<F, E, const D: usize>(
-    prepared: &PreparedOpeningPoint<F, E, D>,
+    prepared: &PreparedOpeningPoint<F, E>,
     scale: E,
 ) -> Result<TracePublicWeights<F, E, D>, AkitaError>
 where
@@ -335,18 +337,21 @@ where
         trace_public_weights_field_terms(&[TraceFieldBlockOpening {
             block_offset: 0,
             block_weights: scaled_base_weights(&prepared.ring_opening_point.b, scale)?,
-            inner_opening_ring: prepared.packed_inner_point,
+            inner_opening_ring: prepared.packed_inner_owned::<D>()?,
         }])
     } else {
-        let block_rings = prepared.ring_multiplier_point.b_rings().ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "extension trace opening point is missing ring block weights".to_string(),
-            )
-        })?;
+        let block_rings = prepared
+            .ring_multiplier_point
+            .b_rings_trusted::<D>()?
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "extension trace opening point is missing ring block weights".to_string(),
+                )
+            })?;
         trace_public_weights_ring_terms(&[TraceRingBlockOpening {
             block_offset: 0,
             block_rings: scaled_ring_weights(block_rings, scale)?,
-            packed_inner_point: prepared.packed_inner_point,
+            packed_inner_point: prepared.packed_inner_owned::<D>()?,
         }])
     }
 }
@@ -392,7 +397,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
 pub fn trace_terms_root<F, E, const D: usize>(
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     b_open: &[E],
     basis: BasisMode,
     row_coefficients: &[E],
@@ -403,7 +408,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
-        lp,
+        num_blocks: lp.num_blocks,
         opening_batch,
         prepared_point,
         row_coefficients,
@@ -416,7 +421,7 @@ where
             block_offset: item.block_offset,
             b_open: b_open.to_vec(),
             basis,
-            packed_inner_point: item.prepared.packed_inner_point,
+            packed_inner_point: item.prepared.packed_inner_owned::<D>()?,
             coefficient: item.scaled_coefficient,
         });
     }
@@ -429,7 +434,7 @@ pub fn build_trace_claim_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
-    prepared_point: &PreparedOpeningPoint<F, E, D>,
+    prepared_point: &PreparedOpeningPoint<F, E>,
     b_open: &[E],
     basis: BasisMode,
     row_coefficients: &[E],
@@ -461,7 +466,7 @@ where
 /// fold. The block-axis opening is sliced from the retained padded point under
 /// the [`crate::BlockOrder::ColumnMajor`] convention.
 pub fn trace_terms_recursive<F, E, const D: usize>(
-    prepared: &PreparedOpeningPoint<F, E, D>,
+    prepared: &PreparedOpeningPoint<F, E>,
     lp: &LevelParams,
     basis: BasisMode,
     scale: E,
@@ -485,7 +490,7 @@ where
         block_offset: 0,
         b_open,
         basis,
-        packed_inner_point: prepared.packed_inner_point,
+        packed_inner_point: prepared.packed_inner_owned::<D>()?,
         coefficient: scale,
     }])
 }

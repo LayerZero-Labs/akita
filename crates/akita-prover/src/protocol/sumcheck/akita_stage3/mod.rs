@@ -17,7 +17,8 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    stage3_offload_natural_field_len, AkitaExpandedSetup, FpExtEncoding, LevelParams,
     RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
     SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
@@ -64,12 +65,12 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
     /// point that is a prefix/projection of the same batched challenge vector used
     /// by the setup-product opening.
     #[allow(clippy::too_many_arguments)]
-    pub fn new<F, T, const D: usize>(
+    pub fn new<F, T>(
         expanded: &AkitaExpandedSetup<F>,
-        prefix_slots: &SetupPrefixProverRegistry<F, D>,
+        prefix_slots: &SetupPrefixProverRegistry<F>,
         lp: &LevelParams,
         next_fold_level_params: &LevelParams,
-        relation: &RingRelationInstance<F, D>,
+        relation: &RingRelationInstance<F>,
         tau1: &[E],
         alpha: E,
         stage2_challenges: &[E],
@@ -86,7 +87,9 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
     {
-        let setup_term = build_setup_product_term::<F, E, T, D>(
+        let ring_d = relation.role_dims().d_a();
+        let setup_term = build_setup_product_term::<F, E, T>(
+            ring_d,
             expanded,
             prefix_slots,
             lp,
@@ -234,12 +237,13 @@ fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_setup_product_term<F, E, T, const D: usize>(
+fn build_setup_product_term<F, E, T>(
+    ring_d: usize,
     expanded: &AkitaExpandedSetup<F>,
-    prefix_slots: &SetupPrefixProverRegistry<F, D>,
+    prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &LevelParams,
     next_fold_level_params: &LevelParams,
-    relation: &RingRelationInstance<F, D>,
+    relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
@@ -251,18 +255,14 @@ where
     T: Transcript<F>,
 {
     let (required, mut bar_omega, alpha_pows) =
-        prepare_setup_sumcheck_terms::<F, E, D>(lp, relation, tau1, alpha, x_challenges)?;
+        prepare_setup_sumcheck_terms::<F, E>(ring_d, lp, relation, tau1, alpha, x_challenges)?;
 
-    let natural_field_len = required.checked_mul(D).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
-    })?;
-    let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-    if required > setup_len {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix is too small for selected setup product".to_string(),
-        ));
-    }
-    let setup_eval_len = if D == SETUP_OFFLOAD_D_SETUP {
+    ensure_setup_envelope(expanded, required, ring_d)?;
+    let natural_field_len = stage3_offload_natural_field_len(required, ring_d)?;
+    let setup_len = expanded
+        .shared_matrix()
+        .total_ring_elements_at_dyn(ring_d)?;
+    let setup_eval_len = if ring_d == SETUP_OFFLOAD_D_SETUP {
         let setup_prefix_selection = select_setup_prefix_slot(
             expanded.seed(),
             setup_len,
@@ -273,7 +273,7 @@ where
             },
             next_fold_level_params,
             natural_field_len,
-            D,
+            ring_d,
             "selected setup-prefix slot does not cover setup product",
         )?;
         if let Some((slot, setup_eval_len)) = setup_prefix_selection {
@@ -285,8 +285,20 @@ where
     } else {
         setup_len
     };
-    let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
-    let setup_entries = setup_view.as_slice();
+    // Ring elements at `ring_d` are `ring_d` consecutive field coefficients of
+    // the flat shared matrix; read them directly instead of building a typed
+    // ring view that would immediately be flattened back into the table. The
+    // former view carried the bounds the table fill relies on; assert them
+    // explicitly here.
+    let setup_field = expanded.shared_matrix().as_field_slice();
+    let setup_eval_field_len = setup_eval_len.checked_mul(ring_d).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup product view field length overflow".to_string())
+    })?;
+    if setup_eval_field_len > setup_field.len() || required > setup_eval_len {
+        return Err(AkitaError::InvalidSetup(
+            "setup product exceeds selected setup view".to_string(),
+        ));
+    }
 
     let lambda_len = required
         .checked_next_power_of_two()
@@ -294,14 +306,15 @@ where
     bar_omega.resize(lambda_len, E::zero());
 
     let table_len = lambda_len
-        .checked_mul(D)
+        .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("setup product table length overflow".into()))?;
     let mut setup_table = vec![E::zero(); table_len];
-    cfg_chunks_mut!(&mut setup_table, D)
+    cfg_chunks_mut!(&mut setup_table, ring_d)
         .enumerate()
         .for_each(|(lambda, row)| {
             if lambda < required {
-                for (slot, &coeff) in row.iter_mut().zip(setup_entries[lambda].coefficients()) {
+                let src = &setup_field[lambda * ring_d..(lambda + 1) * ring_d];
+                for (slot, &coeff) in row.iter_mut().zip(src) {
                     *slot = E::lift_base(coeff);
                 }
             }
@@ -366,9 +379,10 @@ where
 /// Derive the factored product-sumcheck terms `(required, bar_omega, alpha_pows)`
 /// from the level parameters and ring relation via the ring-switch row
 /// evaluation.
-fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
+fn prepare_setup_sumcheck_terms<F, E>(
+    ring_d: usize,
     lp: &LevelParams,
-    relation: &RingRelationInstance<F, D>,
+    relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
@@ -377,8 +391,8 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
-    let alpha_pows = scalar_powers(alpha, D);
-    let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
+    let alpha_pows = scalar_powers(alpha, ring_d);
+    let inputs = create_setup_contribution_inputs::<F, E>(relation, lp, tau1)?;
     let num_t_vectors = relation.opening_batch().num_total_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
         lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?,
@@ -393,8 +407,8 @@ where
 }
 
 /// Build the setup-contribution artifact from prover-owned relation data.
-fn create_setup_contribution_inputs<F, E, const D: usize>(
-    relation: &RingRelationInstance<F, D>,
+fn create_setup_contribution_inputs<F, E>(
+    relation: &RingRelationInstance<F>,
     lp: &LevelParams,
     tau1: &[E],
 ) -> Result<SetupContributionPlanInputs<E>, AkitaError>
@@ -404,72 +418,9 @@ where
 {
     let opening_batch = relation.opening_batch();
     let num_polynomials = opening_batch.num_total_polynomials();
-
-    let depth_commit = lp.num_digits_commit;
-    let depth_open = lp.num_digits_open;
     let depth_fold = lp.num_digits_fold(num_polynomials, lp.field_bits_for_cache())?;
-    if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "num_blocks must be a non-zero power of two".to_string(),
-        ));
-    }
-    if lp.block_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "block_len must be non-zero".to_string(),
-        ));
-    }
-    if depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "digit depths must be non-zero".to_string(),
-        ));
-    }
-
-    let inner_width = lp
-        .block_len
-        .checked_mul(depth_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-    if lp.a_key.col_len() < inner_width {
-        return Err(AkitaError::InvalidSetup(
-            "A-key column width is too small for setup contribution layout".to_string(),
-        ));
-    }
-    let expected_b_width = num_polynomials
-        .checked_mul(lp.a_key.row_len())
-        .and_then(|width| width.checked_mul(depth_open))
-        .and_then(|width| width.checked_mul(lp.num_blocks))
-        .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
-    if lp.b_key.col_len() < expected_b_width {
-        return Err(AkitaError::InvalidSetup(
-            "B-key column width is too small for setup contribution layout".to_string(),
-        ));
-    }
-
     let m_row_layout = relation.m_row_layout();
     let rows = lp.m_row_count_for(1, m_row_layout)?;
-    let eq_tau1 = EqPolynomial::evals(tau1)?;
-    if eq_tau1.len() < rows {
-        return Err(AkitaError::InvalidSize {
-            expected: rows,
-            actual: eq_tau1.len(),
-        });
-    }
-
-    Ok(SetupContributionPlanInputs {
-        eq_tau1,
-        num_t_vectors: num_polynomials,
-        num_blocks: lp.num_blocks,
-        num_claims: num_polynomials,
-        depth_open,
-        depth_commit,
-        depth_fold,
-        block_len: lp.block_len,
-        inner_width,
-        n_a: lp.a_key.row_len(),
-        n_d: lp.d_key.row_len(),
-        m_row_layout,
-        n_b: lp.b_key.row_len(),
-        num_segments: 1,
-        rows,
-        num_polys_per_segment: vec![num_polynomials],
-    })
+    SetupContributionPlanInputs::from_level_params(lp, num_polynomials, m_row_layout, depth_fold)?
+        .with_eq_tau1_from_tau(tau1, rows)
 }

@@ -335,7 +335,7 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
+    ) -> DecomposeFoldWitness<F> {
         let inner_width = block_len * num_digits;
         let num_blocks = challenges.len();
 
@@ -359,7 +359,7 @@ where
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
         Ok(None)
     }
 
@@ -367,9 +367,9 @@ where
     pub(crate) fn commit_inner<B>(
         &self,
         backend: &B,
-        prepared: &B::PreparedSetup<D>,
+        prepared: &B::PreparedSetup,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
+    ) -> Result<CommitInnerWitness<F>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
@@ -388,10 +388,7 @@ where
 
         let decomposed_inner_rows =
             decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
-        Ok(CommitInnerWitness {
-            recomposed_inner_rows: t,
-            decomposed_inner_rows,
-        })
+        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
     }
 }
 
@@ -403,8 +400,8 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootOpeningSource, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningFoldPlan, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
+    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
@@ -433,6 +430,42 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         padded_ring_elems_for_digits::<D>(&self.digits).unwrap_or(1)
+    }
+}
+
+/// D-free polynomial metadata for the recursive suffix witness (H2 boundary).
+///
+/// The recursive suffix witness is genuinely D-erased: it owns a flat `Vec<i8>`
+/// digit buffer (one digit per field-element coefficient) and is re-chunked
+/// under the level's ring dimension only inside D-typed kernels. The D-free
+/// `RootPolyMeta` is what the PCS-facing `ProverOpeningData::to_opening_shape`
+/// requires, so it must expose `num_vars` without a const `D`.
+///
+/// `num_vars` is the witness's logical variable count `log2(coeff_count)`, where
+/// `coeff_count` is the digit buffer length rounded up to the next power of two.
+/// The suffix opening point is sized by the schedule's `recursive_opening_num_vars`,
+/// and `to_opening_shape` validates the point length against this value. On uniform-D
+/// presets this matches the former typed `RootPolyShape::<F, D>::num_vars` =
+/// `log2(n_ring · D)` when the padded ring layout is a power of two. Per the cutover
+/// mandate, `num_vars` here is derived from the witness's own logical length, never
+/// from a const `D`.
+///
+/// `num_ring_elems` is not on the suffix `to_opening_shape` path (only
+/// `num_vars` is consumed there); the D-keyed ring-element count is recovered
+/// inside kernels via the D-typed `RootPolyShape`/`SuffixWitnessView`. The
+/// D-free value reported here is the flat coefficient count, consistent with
+/// `num_vars`.
+impl<F> RootPolyMeta<F> for RecursiveWitnessFlat
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        self.digits.len().max(1)
+    }
+
+    fn num_vars(&self) -> usize {
+        let coeff_count = self.digits.len().next_power_of_two().max(1);
+        coeff_count.trailing_zeros() as usize
     }
 }
 
@@ -507,7 +540,7 @@ where
 {
     fn evaluate_and_fold(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -528,10 +561,10 @@ where
 
     fn decompose_fold(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.decompose_fold(
             plan.challenges,
             plan.block_len,
@@ -547,7 +580,7 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -582,7 +615,7 @@ where
 {
     fn column_partials(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
@@ -594,7 +627,7 @@ where
 
     fn packed_witness(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         Ok(TensorPackedWitness::Dense(
@@ -604,9 +637,9 @@ where
 
     fn root_projection(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {
@@ -625,7 +658,7 @@ where
 {
     fn column_partials_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -643,7 +676,7 @@ where
 
     fn sparse_linear_combination(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {

@@ -4,22 +4,20 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    batched_prove, CommitCluster, CommitmentProver, ComputeBackendSetup, CpuBackend, DensePoly,
-    OpeningCluster, ProverComputeStack, ProverOpeningData, RingSwitchCluster, TensorCluster,
-    UniformProverStack,
+    batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, DensePoly, OpeningCluster,
+    ProverComputeStack, ProverOpeningData, RingSwitchCluster, TensorCluster, UniformProverStack,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, BasisMode, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
     PolynomialGroupClaims,
 };
-use akita_verifier::CommitmentVerifier;
 use std::any::TypeId;
 
 type Cfg = fp128::D64Full;
 type F = fp128::Field;
 const D: usize = Cfg::D;
-type Scheme = AkitaCommitmentScheme<D, Cfg>;
+type Scheme = AkitaCommitmentScheme<Cfg>;
 
 fn assert_distinct_cluster_types() {
     let types = [
@@ -47,9 +45,9 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
 
     let len = 1usize << full_num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F, D>::from_field_evals(full_num_vars, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(full_num_vars, D, &evals).unwrap();
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1).unwrap();
+    let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
 
     let commit_backend = CommitCluster;
@@ -73,10 +71,10 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     assert_eq!(stack.tensor().backend() as *const _, &tensor as *const _);
     assert_eq!(stack.ring_switch().backend() as *const _, &ring as *const _);
 
-    let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup);
     let commit_stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
         .expect("commit stack");
-    let (commitment, hint) = akita_prover::batched_commit::<Cfg, D, DensePoly<F, D>, CpuBackend>(
+    let (commitment, hint) = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&poly),
         setup.expanded.as_ref(),
         &commit_stack,
@@ -92,11 +90,11 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         .zip(lw.iter())
         .fold(F::zero(), |acc, (&coeff, &weight)| acc + coeff * weight);
 
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
-    let proof = batched_prove::<Cfg, _, DensePoly<F, D>, _, _, _, _, D>(
+    let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
         &setup.expanded,
         &setup.prefix_slots,
         &stack,
@@ -128,7 +126,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     );
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
-    <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+    Scheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,

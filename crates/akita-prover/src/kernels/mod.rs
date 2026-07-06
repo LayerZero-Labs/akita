@@ -7,7 +7,10 @@ pub(crate) mod decompose_fold_avx;
 pub(crate) mod decompose_fold_neon;
 pub mod linear;
 
-pub use crt_ntt::{build_ntt_slot, select_crt_ntt_params, NttSlotCache, ProtocolCrtNttParams};
+pub use crt_ntt::{
+    build_ntt_slot, select_crt_ntt_params, NttCacheMap, NttSlotCache, NttSlotCacheAny,
+    ProtocolCrtNttParams,
+};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 pub(crate) use decompose_fold_avx as avx_decompose_fold;

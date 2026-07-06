@@ -87,7 +87,7 @@ where
 mod tests {
     use super::*;
     use akita_field::{Fp32, FpExt2, NegOneNr};
-    use akita_types::{FlatRingVec, PointVariableSelection, PolynomialGroupClaims};
+    use akita_types::{PointVariableSelection, PolynomialGroupClaims, RingVec};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;
@@ -107,9 +107,9 @@ mod tests {
 
     #[test]
     fn root_direct_openings_accept_opening_batch() {
-        let witnesses = vec![CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(vec![F::from_u64(1), F::from_u64(2)]),
-        )];
+        let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            vec![F::from_u64(1), F::from_u64(2)],
+        ))];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let opening = [E::new(F::from_u64(4), F::from_u64(4))];
         let claims = claims(&point, &opening);
@@ -122,8 +122,8 @@ mod tests {
     fn root_direct_single_point_batch_checks_each_witness() {
         let raw_poly = vec![F::from_u64(1), F::from_u64(2)];
         let witnesses = vec![
-            CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly.clone())),
-            CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly)),
+            CleartextWitnessProof::FieldElements(RingVec::from_coeffs(raw_poly.clone())),
+            CleartextWitnessProof::FieldElements(RingVec::from_coeffs(raw_poly)),
         ];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let openings = [
@@ -141,11 +141,11 @@ mod tests {
         use akita_field::MulBase;
         use akita_types::basis_weights;
 
-        let witness0 = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
+        let witness0 = CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![
             F::from_u64(1),
             F::from_u64(0),
         ]));
-        let witness1 = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
+        let witness1 = CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![
             F::from_u64(0),
             F::from_u64(1),
         ]));

@@ -11,9 +11,7 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
-use akita_prover::{
-    batched_commit_with_params, CommitmentProver, OneHotPoly, RootTensorProjectionPoly,
-};
+use akita_prover::{commit_with_params, OneHotPoly, RootTensorProjectionPoly};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{FpExtEncoding, OpeningClaimsLayout};
 use criterion::measurement::WallTime;
@@ -72,7 +70,7 @@ fn make_onehot_indices(num_vars: usize, num_polys: usize) -> Vec<Vec<Option<u8>>
 fn build_onehot_polys<F, const D: usize>(
     num_vars: usize,
     indices: &[Vec<Option<u8>>],
-) -> Vec<OneHotPoly<F, D, u8>>
+) -> Vec<OneHotPoly<F, u8>>
 where
     F: FieldCore,
 {
@@ -80,7 +78,7 @@ where
     indices
         .iter()
         .map(|poly_indices| {
-            OneHotPoly::<F, D, u8>::new(onehot_k, poly_indices.clone())
+            OneHotPoly::<F, u8>::new(onehot_k, D, poly_indices.clone())
                 .expect("benchmark onehot poly")
         })
         .collect()
@@ -109,13 +107,11 @@ where
 {
     assert_eq!(D, Cfg::D);
 
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
-
     let num_vars = env_usize("AKITA_ROOT_COMMIT_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_ROOT_COMMIT_NUM_POLYS", DEFAULT_NUM_POLYS);
     let indices = make_onehot_indices(num_vars, num_polys);
     let onehot_polys = build_onehot_polys::<F, D>(num_vars, &indices);
-    let transformed_polys: Vec<RootTensorProjectionPoly<F, D>> = onehot_polys
+    let transformed_polys: Vec<RootTensorProjectionPoly<F>> = onehot_polys
         .iter()
         .map(|poly| {
             let view = poly.tensor_view()?;
@@ -127,8 +123,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
-    let setup =
-        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(num_vars, num_polys).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -159,7 +154,7 @@ where
                             view,
                         )
                     })
-                    .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()
+                    .collect::<Result<Vec<RootTensorProjectionPoly<F>>, _>>()
                     .expect("benchmark root projection");
                 total += start.elapsed();
                 black_box(projected);
@@ -173,14 +168,13 @@ where
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let start = Instant::now();
-                let committed =
-                    batched_commit_with_params::<F, D, RootTensorProjectionPoly<F, D>, CpuBackend>(
-                        &transformed_polys,
-                        setup.expanded.as_ref(),
-                        stack.commit(),
-                        &params,
-                    )
-                    .expect("benchmark transformed commitment");
+                let committed = commit_with_params::<F, RootTensorProjectionPoly<F>, CpuBackend>(
+                    &transformed_polys,
+                    setup.expanded.as_ref(),
+                    stack.commit(),
+                    &params,
+                )
+                .expect("benchmark transformed commitment");
                 total += start.elapsed();
                 black_box(committed);
             }
@@ -194,10 +188,9 @@ where
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
-                    &setup, &polys, &stack,
-                )
-                .expect("benchmark scheme commitment");
+                let committed =
+                    AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
+                        .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }
