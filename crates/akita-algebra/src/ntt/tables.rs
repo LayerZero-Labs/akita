@@ -276,7 +276,7 @@ mod tests {
         for prime in &Q64_PRIMES {
             assert_ntt_order_for_ring_d(prime, Q64_MAX_RING_D);
         }
-        for prime in &q128_primes() {
+        for prime in q128_primes() {
             assert_ntt_order_for_ring_d(&prime, Q128_MAX_RING_D);
         }
     }
