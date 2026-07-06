@@ -6,7 +6,7 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_challenges::{sample_folding_challenges, stage1_fold_challenge_labels, Challenges};
+use akita_challenges::{sample_folding_challenges, witness_fold_challenge_labels, Challenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
@@ -38,7 +38,7 @@ pub(crate) fn validate_fold_grind_nonce(
     contract.validate_nonce(fold_grind_nonce)
 }
 
-/// Absorb the prover's `v` rows and sample the stage-1 fold challenges. The
+/// Absorb the prover's `v` rows and sample witness-fold ring challenges. The
 /// returned [`Challenges`] is either `Flat` (per-block sparse) or
 /// `Tensor` (factored left/right) depending on `lp.fold_challenge_shape`.
 ///
@@ -46,7 +46,7 @@ pub(crate) fn validate_fold_grind_nonce(
 ///
 /// Returns an error if challenge sampling fails.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn derive_stage1_challenges<F, T>(
+pub(crate) fn derive_witness_fold_challenges<F, T>(
     transcript: &mut T,
     v_coeffs: &[F],
     ring_d: usize,
@@ -76,9 +76,9 @@ where
         ring_d,
         num_blocks_per_claim,
         num_claims,
-        &lp.stage1_config,
+        &lp.fold_challenge_config,
         &lp.fold_challenge_shape,
-        stage1_fold_challenge_labels(),
+        witness_fold_challenge_labels(),
         grind_nonce,
     )
 }
@@ -282,20 +282,28 @@ mod fold_grind_nonce_tests {
     use akita_types::{FoldLinfProtocolBinding, SisModulusFamily};
 
     fn sample_level_params(
-        stage1_config: SparseChallengeConfig,
+        fold_challenge_config: SparseChallengeConfig,
         fold_shape: TensorChallengeShape,
     ) -> LevelParams {
-        LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 2, 4, 3, stage1_config)
-            .with_decomp(4, 2, 2, 2, 0)
-            .expect("level params")
-            .with_fold_challenge_shape(fold_shape)
-            .expect("fold challenge shape")
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            4,
+            3,
+            fold_challenge_config,
+        )
+        .with_decomp(4, 2, 2, 2, 0)
+        .expect("level params")
+        .with_fold_challenge_shape(fold_shape)
+        .expect("fold challenge shape")
     }
 
     #[test]
     fn worst_case_beta_only_rejects_nonzero_nonce() {
         let lp = sample_level_params(
-            SparseChallengeConfig::BoundedL1Norm,
+            SparseChallengeConfig::pm1_only(31),
             TensorChallengeShape::Tensor,
         );
         let contract = lp
@@ -312,9 +320,9 @@ mod fold_grind_nonce_tests {
     #[test]
     fn tail_bound_with_grind_accepts_nonce_below_cap() {
         let lp = sample_level_params(
-            SparseChallengeConfig::ExactShell {
-                count_mag1: 30,
-                count_mag2: 12,
+            SparseChallengeConfig {
+                count_pm1: 30,
+                count_pm2: 12,
             },
             TensorChallengeShape::Flat,
         );
@@ -334,9 +342,9 @@ mod fold_grind_nonce_tests {
     #[test]
     fn tensor_tail_bound_with_grind_accepts_nonce_below_cap() {
         let lp = sample_level_params(
-            SparseChallengeConfig::ExactShell {
-                count_mag1: 30,
-                count_mag2: 12,
+            SparseChallengeConfig {
+                count_pm1: 30,
+                count_pm2: 12,
             },
             TensorChallengeShape::Tensor,
         );

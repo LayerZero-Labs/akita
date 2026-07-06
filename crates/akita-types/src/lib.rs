@@ -7,7 +7,12 @@
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
-pub use dispatch::{validate_ring_dispatch, validate_role_dispatch};
+pub use dispatch::{
+    field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
+    ntt_ring_degree_supported_for_tier, outer_opening_min_ring_d, protocol_dispatch_tier,
+    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
+    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+};
 pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod golomb_rice;
@@ -63,9 +68,10 @@ pub use layout::{
     gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
-    CommitmentRingDims, FlatMatrix, GroupRootParams, LevelParams, MRowLayout, RingMatrixView,
-    RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
+    sumcheck_rounds, validate_role_dims, BasisMode, BlockOrder, CommitmentRingDims, FlatMatrix,
+    GroupRootParams, LevelParams, MRowLayout, RingDimPlan, RingMatrixView, RingOpeningPoint,
+    RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::NttCacheKey;
 pub use proof::{
@@ -124,8 +130,9 @@ pub use schedule::{
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use setup_geometry::{
-    ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, stage3_offload_natural_field_len,
+    compute_setup_layout, ensure_setup_envelope, setup_active_ring_elems_at,
+    setup_active_ring_elems_for_fold, setup_required_for_inputs, stage3_offload_natural_field_len,
+    SetupLayoutFootprint,
 };
 pub use sis::{AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS};
 pub use tail_golomb_rice_low_bits::{

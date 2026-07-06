@@ -15,9 +15,9 @@ use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommittedGroupHandle};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
-use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    validate_ring_subfield_role, BasisMode, Commitment, FpExtEncoding, PolynomialGroupLayout,
+    dispatch_for_field, validate_ring_subfield_role, BasisMode, Commitment, FpExtEncoding,
+    PolynomialGroupLayout,
 };
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, SetupContributionMode};
 use akita_types::{AkitaVerifierSetup, OpeningClaims};
@@ -65,7 +65,7 @@ where
         max_num_polys_per_commitment_group: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
         let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_ring_dim_result!(ring_d, |D| {
+        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
             validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
             akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
                 max_num_vars,
@@ -84,7 +84,7 @@ where
         max_num_polys_per_commitment_group: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
         let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_ring_dim_result!(ring_d, |D| {
+        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
             validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
             akita_setup::new_prover_setup_recursion::<Cfg::Field, Cfg>(
                 max_num_vars,
@@ -104,7 +104,7 @@ where
     /// Validate the field tower against the config schedule policy ring dimension.
     fn validate_cfg_ring_policy() -> Result<usize, AkitaError> {
         let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_ring_dim_result!(ring_d, |D| {
+        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
             validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
         })?;
         Ok(ring_d)

@@ -21,7 +21,6 @@ use akita_field::{
 };
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
-use akita_types::dispatch_ring_dim_result;
 use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{

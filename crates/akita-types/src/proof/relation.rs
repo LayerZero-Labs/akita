@@ -1,6 +1,6 @@
 //! Shared protocol relation helpers.
 
-use crate::dispatch_ring_dim_result;
+use crate::dispatch_for_field;
 use crate::layout::CommitmentRingDims;
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
@@ -322,14 +322,24 @@ where
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let mut acc = E::zero();
     let mut row_idx = 1usize + n_a;
-    dispatch_ring_dim_result!(dims.d_b(), |D_B| {
-        let u_typed = u.as_ring_slice::<D_B>()?;
-        accumulate_extension_rows::<F, E, D_B>(&eq_tau1, alpha, u_typed, &mut row_idx, &mut acc)
-    })?;
-    dispatch_ring_dim_result!(dims.d_d(), |D_D| {
-        let v_typed = v.as_ring_slice::<D_D>()?;
-        accumulate_extension_rows::<F, E, D_D>(&eq_tau1, alpha, v_typed, &mut row_idx, &mut acc)
-    })?;
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        dims.d_b(),
+        |D_B| {
+            let u_typed = u.as_ring_slice::<D_B>()?;
+            accumulate_extension_rows::<F, E, D_B>(&eq_tau1, alpha, u_typed, &mut row_idx, &mut acc)
+        }
+    )?;
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Opening),
+        F,
+        dims.d_d(),
+        |D_D| {
+            let v_typed = v.as_ring_slice::<D_D>()?;
+            accumulate_extension_rows::<F, E, D_D>(&eq_tau1, alpha, v_typed, &mut row_idx, &mut acc)
+        }
+    )?;
     Ok(acc)
 }
 
@@ -382,7 +392,7 @@ mod tests {
 
     #[test]
     fn relation_claim_at_dims_matches_uniform_single_d() {
-        const D: usize = 32;
+        const D: usize = 64;
         let dims = CommitmentRingDims::uniform(D);
         let tau1 = [
             F::from_u64(3),

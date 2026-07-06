@@ -1,7 +1,8 @@
 //! Pure fold kernels and operation adapters for the prover core.
 //!
 //! Everything here passes the spec's kernel discriminator: no function reads a
-//! schedule type (`ExecutionSchedule`, `LevelParams`). Const-D functions receive extracted numbers and typed
+//! schedule type (`ExecutionSchedule`, `LevelParams`, `RingDimPlan`,
+//! `RingDimPlan`). Const-D functions receive extracted numbers and typed
 //! buffers; the D-free functions are operation adapters that dispatch exactly
 //! once on a schedule-derived ring dimension supplied by the caller.
 
@@ -9,6 +10,7 @@ use super::*;
 use crate::compute::{
     ComputeBackendSetup, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
 };
+use akita_types::{dispatch_for_field, TraceWeightLayout};
 
 /// Batched trace-target data derived from folded claim openings.
 pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
@@ -166,7 +168,7 @@ where
 /// derived by the caller from the level geometry.
 pub(in crate::protocol::core) fn build_recursive_stage2_trace_table<F, E>(
     ring_d: usize,
-    layout: &akita_types::TraceWeightLayout,
+    layout: &TraceWeightLayout,
     prepared: &PreparedOpeningPoint<F, E>,
     trace_scale: E,
     output_scale: E,
@@ -176,10 +178,15 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    dispatch_ring_dim_result!(ring_d, |D| {
-        let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
-        build_trace_table_scaled(layout, &public_weights, live_x_cols, output_scale)
-    })
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        ring_d,
+        |D| {
+            let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
+            build_trace_table_scaled(layout, &public_weights, live_x_cols, output_scale)
+        }
+    )
 }
 
 /// Build the root stage-2 trace table (operation adapter).
@@ -202,16 +209,21 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    dispatch_ring_dim_result!(ring_d, |D| {
-        let public_weights = trace_public_weights_root_terms::<F, E, D>(
-            num_blocks,
-            opening_batch,
-            prepared_point,
-            row_coefficients,
-            trace_claim_scales,
-        )?;
-        build_trace_table_scaled(layout, &public_weights, live_x_cols, output_scale)
-    })
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        ring_d,
+        |D| {
+            let public_weights = trace_public_weights_root_terms::<F, E, D>(
+                num_blocks,
+                opening_batch,
+                prepared_point,
+                row_coefficients,
+                trace_claim_scales,
+            )?;
+            build_trace_table_scaled(layout, &public_weights, live_x_cols, output_scale)
+        }
+    )
 }
 
 pub(in crate::protocol::core) fn scalar_opening_from_folded_ring<F, E, const D: usize>(

@@ -59,7 +59,7 @@ sub-Gaussian tail bound on `‖z‖_inf` instead of the worst-case envelope
 `β_inf`, and add a transcript-bound challenge reroll that re-derives the fold
 challenge until the realized `‖z‖_inf <= t*`.
 The first approved implementation covers the flat challenge families whose
-per-coordinate sign structure is proven in this spec: `ExactShell` at `d=64` and
+per-coordinate sign structure is proven in this spec: `signed-sparse` at `d=64` and
 `Uniform{[-1,1]}` at `d=128, 256`.
 `BoundedL1Norm` and tensor-shaped folds keep worst-case-β-only (`WorstCaseBetaOnly`)
 digit sizing until separate proofs pin their tail constants.
@@ -146,7 +146,7 @@ The feature introduces or modifies:
 ### Acceptance Criteria
 
 - [x] `SparseChallengeConfig::challenge_l2_sq_max()` returns the exact
-  worst-case `‖c‖_2²` for `Uniform`, `ExactShell`, `BoundedL1Norm`, validated by
+  worst-case `‖c‖_2²` for `pm1-only`, `signed-sparse`, `BoundedL1Norm`, validated by
   a unit test against hand-computed values.
 - [x] `fold_witness_linf_tail_bound_sq(...)` is integer-only, total, monotone in
   each argument; digit sizing uses `min(β_inf, t*)` (raw `t*` may exceed the
@@ -172,7 +172,7 @@ The feature introduces or modifies:
   fails.
 - [x] Net proof-size improvement at the affected modes, reported by the profile
   command (direction: smaller next-level width at wide folds).
-- [x] D64 production `ExactShell { count_mag1: 31, count_mag2: 10 }` (ω = 51,
+- [x] D64 production `signed-sparse { count_mag1: 31, count_mag2: 10 }` (ω = 51,
   `challenge_l2_sq_max` = 71); `fp128_d64_*` schedule tables regenerated;
   `generated_schedule_tables_match_find_schedule` passes.
 
@@ -286,7 +286,7 @@ adds exactly four bytes for every fold level (`MRowLayout::WithDBlock` and
 
 The nonce is one per `sample_folding_challenges` call. Under the single-point
 opening batch contract (#186), a batched root uses one shared opening point and
-one nonce for the whole stage-1 fold round: the prover samples one challenge
+one nonce for the whole witness fold round: the prover samples one challenge
 object, builds the folded witness, and accepts only if every emitted coefficient
 is at most `t*`. Flat recursive intermediate folds use the same one-nonce rule.
 Tensor folds do not reroll in this first cut, so they serialize nonce `0` and the
@@ -418,15 +418,15 @@ at `num_fold_blocks = 4, 8, 16, 32` before the tighter `ln_term`).
 
 | family                      | `challenge_l2_sq_max = max ‖c‖_2²` | note                                            |
 |-----------------------------|----------------------------|-------------------------------------------------|
-| `ExactShell{k1, k2}`        | `k1 + 4·k2`                | identical for every member; production `(31,10) → 71` |
+| `signed-sparse{k1, k2}`        | `k1 + 4·k2`                | identical for every member; production `(31,10) → 71` |
 | `Uniform{w, [-1,1]}`        | `w`                        | each nonzero `±1`; `d=128 → 31`, `d=256 → 23`   |
 | `Uniform{w, coeffs}`        | `w · max_{a∈coeffs} a²`    | symmetric alphabet                              |
 | `BoundedL1Norm` (M=8,B=121) | `M·B = 968` (safe), `961` exact | exposed for future policy; first cut keeps `β_inf` |
 
 **Sign-structure status per family.**
 
-- `ExactShell`: each nonzero gets an independent uniform sign
-  (`sample_exact_shell_challenge` via `XofCursor::next_sign`). Exact.
+- `signed-sparse`: each nonzero gets an independent uniform sign
+  (`sample_signed_sparse_challenge` via `XofCursor::next_sign`). Exact.
 - `Uniform{[-1,1]}`: each nonzero is iid uniform on the symmetric `{-1,+1}`.
   Exact. (A general symmetric alphabet keeps the proof; an asymmetric alphabet
   would not, but no preset uses one.)
@@ -501,7 +501,7 @@ worst-case path is generalized in place):
   degenerate guards and return `β_inf` for deterministic policies.
 - `src/sis/mod.rs`: re-export the new primitive.
 - `src/layout/params.rs`: `LevelParams::num_digits_fold` passes the new inputs
-  (`challenge_l2_sq_max` via `stage1_config`, `inner_width()·D`, and the
+  (`challenge_l2_sq_max` via `fold_challenge_config`, `inner_width()·D`, and the
   threshold policy). Add
   `fold_witness_linf_tail_bound_sq(num_claims)` so the prover reads the identical value
   (invariant 4).
@@ -573,7 +573,7 @@ worst-case path is generalized in place):
 
 - Update the "Folded-Witness ∞-Norm Rejection" section of
   [`specs/archive/2026-Q2/l2-msis-opnorm-folded-witness.md`](archive/2026-Q2/l2-msis-opnorm-folded-witness.md) to point
-  at this spec, mark flat `ExactShell`/`Uniform{[-1,1]}` as certified, and mark
+  at this spec, mark flat `signed-sparse`/`Uniform{[-1,1]}` as certified, and mark
   tensor/`BoundedL1Norm` as `WorstCaseBetaOnly` pending separate proofs.
 - Crate docs on `num_digits_fold` and the tail-bound primitive, stating the
   per-family `challenge_l2_sq_max` table and the sign-symmetry requirement inline.

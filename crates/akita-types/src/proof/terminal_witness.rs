@@ -239,10 +239,7 @@ mod tests {
             2,
             3,
             2,
-            SparseChallengeConfig::Uniform {
-                weight: 3,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            SparseChallengeConfig::pm1_only(3),
         )
         .with_decomp(m_vars, r_vars, 2, 3, 0)
         .expect("segment test params")

@@ -6,9 +6,9 @@
 use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
-    validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, AkitaSetupSeed,
-    CleartextWitnessShape, CommitmentRingDims, DirectStep, FoldStep, LevelParams, RingRole,
-    RingView, Schedule, Step,
+    validate_role_dims, validate_role_dispatch, AkitaSetupSeed, CleartextWitnessShape,
+    CommitmentRingDims, DirectStep, FoldStep, LevelParams, RingDimPlan, RingRole, RingView,
+    Schedule, Step,
 };
 
 const NUM_VARS: usize = 16;
@@ -74,7 +74,7 @@ fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
         ],
         total_bytes: 0,
     };
-    let err = validate_schedule_ring_dims(&schedule, &test_seed(64))
+    let err = RingDimPlan::from_schedule(&schedule, &test_seed(64))
         .expect_err("gen_ring_dim=64 cannot host fold d_a=128");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }

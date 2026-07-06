@@ -10,7 +10,17 @@ use super::prime::NttPrime;
 /// Polynomial degree for the base ring `Z_q[X]/(X^d + 1)`.
 pub const RING_DEGREE: usize = 64;
 /// Maximum ring degree covered by the CRT parameter sets.
-pub const MAX_CRT_RING_DEGREE: usize = 256;
+pub const MAX_CRT_RING_DEGREE: usize = 2048;
+
+/// Minimum `d_a` for sparse fold ring challenges (see [`CHALLENGE_MIN_RING_D`]).
+pub const CHALLENGE_MIN_RING_D: usize = 64;
+
+/// Maximum ring degree for Q128 CRT+NTT profile (challenge-supported paths).
+pub const Q128_MAX_RING_D: usize = 512;
+/// Maximum ring degree for Q64 CRT+NTT profile (challenge-supported paths).
+pub const Q64_MAX_RING_D: usize = 1024;
+/// Maximum ring degree for Q32 CRT+NTT profile (challenge-supported paths).
+pub const Q32_MAX_RING_D: usize = 2048;
 
 /// Number of CRT primes for the `logq = 32` parameter set.
 pub const Q32_NUM_PRIMES: usize = 2;
@@ -30,25 +40,27 @@ pub const Q128_NUM_PRIMES: usize = 5;
 /// Protocol modulus `q = 2^128 - 275`.
 pub const Q128_MODULUS: u128 = u128::MAX - 274;
 
-/// Raw 30-bit primes for the supported i32 profiles.
+/// Raw 30-bit primes for Q128 (`logq = 128`, K=5).
 ///
-/// They are ordered descending by value.
+/// Chosen v₂-descending under prefix min-v₂ floors for future ring-dim headroom
+/// (see `specs/ring-dim-challenge-cutover.md`). Q32/Q64 use separate const tables
+/// below with the matching prefix primes.
 pub const I32_RAW_PRIMES: [i32; Q128_NUM_PRIMES] =
-    [1073707009, 1073698817, 1073692673, 1073682433, 1073668097];
+    [1073692673, 1073668097, 1073707009, 1073738753, 1073732609];
 
 /// CRT primes and per-prime Montgomery constants for Q32 measured `2xi32` profile.
 pub const Q32_PRIMES: [NttPrime<i32>; Q32_NUM_PRIMES] = [
     NttPrime {
-        p: 1073707009,
-        pinv: 138446849,
-        mont: 139260,
-        montsq: 66621438,
+        p: 1073692673,
+        pinv: 1342226433,
+        mont: 196604,
+        montsq: 196588,
     },
     NttPrime {
-        p: 1073698817,
-        pinv: 775989249,
-        mont: 172028,
-        montsq: -469934092,
+        p: 1073668097,
+        pinv: 67182593,
+        mont: 294908,
+        montsq: 3612607,
     },
 ];
 
@@ -63,22 +75,22 @@ pub const Q128_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = I32_RAW_PRIMES;
 /// CRT primes and per-prime Montgomery constants for `logq = 64` reduced profile.
 pub const Q64_PRIMES: [NttPrime<i32>; Q64_NUM_PRIMES] = [
     NttPrime {
-        p: 1073707009,
-        pinv: 138446849,
-        mont: 139260,
-        montsq: 66621438,
-    },
-    NttPrime {
-        p: 1073698817,
-        pinv: 775989249,
-        mont: 172028,
-        montsq: -469934092,
-    },
-    NttPrime {
         p: 1073692673,
         pinv: 1342226433,
         mont: 196604,
         montsq: 196588,
+    },
+    NttPrime {
+        p: 1073668097,
+        pinv: 67182593,
+        mont: 294908,
+        montsq: 3612607,
+    },
+    NttPrime {
+        p: 1073707009,
+        pinv: 138446849,
+        mont: 139260,
+        montsq: 66621438,
     },
 ];
 
@@ -96,6 +108,26 @@ pub fn q128_primes() -> [NttPrime<i32>; Q128_NUM_PRIMES] {
 pub fn q128_garner() -> GarnerData<i32, Q128_NUM_PRIMES> {
     let primes = q128_primes();
     GarnerData::compute(&primes)
+}
+
+/// Validate CRT+NTT `ring_d` against a profile-specific maximum.
+///
+/// Not used for B/D matrix degrees below 64; callers skip validation there.
+pub fn validate_profile_crt_ring_degree(
+    ring_d: usize,
+    max_d: usize,
+) -> Result<(), akita_field::AkitaError> {
+    if ring_d == 0 || !ring_d.is_power_of_two() {
+        return Err(akita_field::AkitaError::InvalidSetup(format!(
+            "CRT ring degree must be a non-zero power of two, got {ring_d}"
+        )));
+    }
+    if ring_d > max_d {
+        return Err(akita_field::AkitaError::InvalidSetup(format!(
+            "ring degree {ring_d} exceeds profile max {max_d}"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -141,7 +173,6 @@ mod tests {
         for prime in primes {
             let p = prime.p as i64;
             assert!(is_prime(p), "p={p} must be prime");
-            assert!(p < (1 << 14), "p={p} must fit the i16 profile bound");
             assert_eq!(
                 (p - 1) % 512,
                 0,

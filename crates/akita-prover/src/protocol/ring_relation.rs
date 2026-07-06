@@ -18,9 +18,8 @@ use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
-use akita_types::{
-    assemble_relation_y, dispatch_ring_dim_result, RelationYLayout, RingVec, RingView,
-};
+use akita_types::dispatch_for_field;
+use akita_types::{assemble_relation_y, RelationYLayout, RingVec, RingView};
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, MRowLayout};
 use akita_types::{LevelParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -31,7 +30,7 @@ use std::time::Instant;
 
 mod relation_quotient;
 
-pub use relation_quotient::compute_relation_quotient;
+pub use relation_quotient::{compute_relation_quotient, RelationQuotientShape};
 
 fn absorb_terminal_e_folded_fields<F, T>(
     transcript: &mut T,
@@ -160,13 +159,39 @@ pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     ))
 }
 
+/// Extracted level numbers consumed by [`build_point_decompose_fold_witness`].
+///
+/// A-role fold shape: `block_len` / `num_digits_commit` / `log_basis` are the
+/// only schedule quantities the point-fold kernel reads. Callers extract them
+/// from the schedule (`from_level`); the kernel must not read schedule types.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PointFoldShape {
+    /// Ring elements per fold block (A-role row length).
+    pub block_len: usize,
+    /// Digit planes in the commit decomposition.
+    pub num_digits_commit: usize,
+    /// Log2 of the decomposition basis.
+    pub log_basis: u32,
+}
+
+impl PointFoldShape {
+    /// Extract the point-fold shape from one schedule level.
+    pub(super) fn from_level(lp: &LevelParams) -> Self {
+        Self {
+            block_len: lp.block_len,
+            num_digits_commit: lp.num_digits_commit,
+            log_basis: lp.log_basis,
+        }
+    }
+}
+
 pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     challenges: &Challenges,
     point_polys: &[&P],
     point_indices: &[usize],
-    lp: &LevelParams,
+    shape: PointFoldShape,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -206,9 +231,9 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
-                    block_len: lp.block_len,
-                    num_digits: lp.num_digits_commit,
-                    log_basis: lp.log_basis,
+                    block_len: shape.block_len,
+                    num_digits: shape.num_digits_commit,
+                    log_basis: shape.log_basis,
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
@@ -223,9 +248,9 @@ where
                                 poly.opening_view()?,
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
-                                    block_len: lp.block_len,
-                                    num_digits: lp.num_digits_commit,
-                                    log_basis: lp.log_basis,
+                                    block_len: shape.block_len,
+                                    num_digits: shape.num_digits_commit,
+                                    log_basis: shape.log_basis,
                                 },
                             )
                         })
@@ -254,9 +279,9 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
-                    block_len: lp.block_len,
-                    num_digits: lp.num_digits_commit,
-                    log_basis: lp.log_basis,
+                    block_len: shape.block_len,
+                    num_digits: shape.num_digits_commit,
+                    log_basis: shape.log_basis,
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(witness) => Ok(witness),
@@ -523,25 +548,30 @@ impl RingRelationProver {
         // reconstructs it, and downstream prover paths (`ring_switch_build_w`,
         // `relation_claim_from_rows_extension`) consume an empty `v` slice.
         // Skip the D-NTT under Terminal.
-        let (e_hat, v) = dispatch_ring_dim_result!(dims.d_d(), |D_D| {
-            let pre_folded_typed = pre_folded_e_by_poly
-                .iter()
-                .map(RingVec::as_ring_slice::<D_D>)
-                .collect::<Result<Vec<_>, _>>()?;
-            let e_hat_typed = {
-                let _span = tracing::info_span!("decompose_batched_e_hat").entered();
-                decompose_e_hat::<F, D_D>(&pre_folded_typed, num_digits_open, log_basis)?
-            };
-            let v_typed = compute_v_rows_for_layout::<F, T, RB, D_D>(
-                ring_switch_ctx,
-                transcript,
-                d_row_len,
-                log_basis,
-                &e_hat_typed,
-                m_row_layout,
-            )?;
-            Ok::<_, AkitaError>((e_hat_typed, RingVec::from_ring_elems(&v_typed)))
-        })?;
+        let (e_hat, v) = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Opening),
+            F,
+            dims.d_d(),
+            |D_D| {
+                let pre_folded_typed = pre_folded_e_by_poly
+                    .iter()
+                    .map(RingVec::as_ring_slice::<D_D>)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let e_hat_typed = {
+                    let _span = tracing::info_span!("decompose_batched_e_hat").entered();
+                    decompose_e_hat::<F, D_D>(&pre_folded_typed, num_digits_open, log_basis)?
+                };
+                let v_typed = compute_v_rows_for_layout::<F, T, RB, D_D>(
+                    ring_switch_ctx,
+                    transcript,
+                    d_row_len,
+                    log_basis,
+                    &e_hat_typed,
+                    m_row_layout,
+                )?;
+                Ok::<_, AkitaError>((e_hat_typed, RingVec::from_ring_elems(&v_typed)))
+            }
+        )?;
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F>(hints, &group_sizes)?;
         let opening_backend = opening_ctx.backend();
 

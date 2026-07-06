@@ -10,7 +10,7 @@ use akita_prover::{
 };
 use akita_serialization::Valid;
 use akita_types::{
-    active_setup_field_len, digest_level_params, dispatch_ring_dim_result, padded_setup_prefix_len,
+    active_setup_field_len, digest_level_params, dispatch_for_field, padded_setup_prefix_len,
     setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams,
     OpeningClaimsLayout, SETUP_OFFLOAD_D_SETUP,
 };
@@ -47,18 +47,23 @@ where
     }
     // Setup-offload prefix commitments are pinned to `SETUP_OFFLOAD_D_SETUP`;
     // dispatch on that (constant) dimension at this single kernel entry.
-    let slot = dispatch_ring_dim_result!(d_setup, |D| {
-        commit_setup_prefix::<F, D, B>(
-            &setup.expanded,
-            backend,
-            prepared,
-            &prefix_params,
-            level_params_digest,
-            seed_digest,
-            n_prefix,
-            natural_len,
-        )
-    })?;
+    let slot = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        d_setup,
+        |D| {
+            commit_setup_prefix::<F, D, B>(
+                &setup.expanded,
+                backend,
+                prepared,
+                akita_prover::SetupPrefixCommitShape::from_level(&prefix_params),
+                level_params_digest,
+                seed_digest,
+                n_prefix,
+                natural_len,
+            )
+        }
+    )?;
     setup.prefix_slots.insert(slot)?;
     Ok(())
 }
@@ -187,16 +192,5 @@ mod tests {
 
         let verifier_setup = setup.verifier_setup().expect("verifier setup");
         assert_eq!(verifier_setup.prefix_slots.len(), setup.prefix_slots.len());
-    }
-
-    #[test]
-    fn recursive_d32_setup_skips_prefix_slots() {
-        let setup =
-            new_prover_setup_recursion::<F, fp128::D32OneHot>(20, 1).expect("recursive D32 setup");
-
-        assert!(
-            setup.prefix_slots.is_empty(),
-            "D32 recursive setup should skip D64-gated prefix slots"
-        );
     }
 }

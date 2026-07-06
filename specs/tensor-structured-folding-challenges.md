@@ -10,7 +10,7 @@
 ## Summary
 
 This branch implements the tensor-structured folding-challenge optimization:
-stage-1 folding challenges can be sampled as a tensor product of two sparse
+witness folding challenges can be sampled as a tensor product of two sparse
 challenge vectors instead of as one independent sparse challenge per logical
 block. For a level with `B = 2^r` witness blocks, the tensor path samples
 `left_len + right_len ~= 2 * sqrt(B)` sparse challenges per claim and interprets
@@ -26,7 +26,7 @@ tensor shape at the root level only.
 
 ### Goal
 
-Add a protocol-selected tensor shape for stage-1 fold challenges so verifier
+Add a protocol-selected tensor shape for witness fold challenges so verifier
 challenge evaluation can use Kronecker structure while the rest of the folding
 protocol continues to consume a single logical challenge per `(claim, block)`.
 
@@ -60,7 +60,7 @@ benchmark matrix.
 ### Invariants
 
 1. Flat challenge behavior remains the default. Existing presets keep
-   `fold_challenge_shape = Flat`, use the original `CHALLENGE_STAGE1_FOLD`
+   `fold_challenge_shape = Flat`, use the original `CHALLENGE_WITNESS_FOLD`
    label, and interpret challenges in claim-major flat order.
 2. Tensor sampling is transcript-bound in two stages. The left vector is sampled
    first, a canonical SHA3-256 digest of the left vector and shape is absorbed,
@@ -285,7 +285,7 @@ keeps that product implicit and contracts/evaluates it from the factors.
 Flat sampling:
 
 ```text
-sample_sparse_challenges(CHALLENGE_STAGE1_FOLD, num_claims * num_blocks)
+sample_sparse_challenges(CHALLENGE_WITNESS_FOLD, num_claims * num_blocks)
 ```
 
 Tensor sampling:
@@ -425,8 +425,8 @@ The default is `Flat`. Tensor-aware schedule sizing calls:
 
 ```text
 challenge_l1_mass =
-  Flat   => stage1_config.l1_norm()
-  Tensor => stage1_config.l1_norm() * stage1_config.l1_norm()
+  Flat   => fold_challenge_config.l1_norm()
+  Tensor => fold_challenge_config.l1_norm() * fold_challenge_config.l1_norm()
 ```
 
 This feeds the existing fold decomposition formulas:
@@ -462,7 +462,7 @@ The fp128 tensor-verifier preset is:
 akita_config::tensor_verifier::fp128::D64OneHotTensor
 ```
 
-It uses the fp128 `D=64` exact-shell sparse challenge family:
+It uses the fp128 `D=64` signed-sparse sparse challenge family:
 
 ```text
 count_mag1 = 30

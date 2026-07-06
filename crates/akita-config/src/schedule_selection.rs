@@ -3,7 +3,7 @@
 use crate::CommitmentConfig;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    dispatch_ring_dim_result, folded_root_supports_opening_shape, root_direct_schedule,
+    dispatch_for_field, folded_root_supports_opening_shape, root_direct_schedule,
     root_tensor_projection_enabled, schedule_root_fold_step, FpExtEncoding, OpeningClaimsLayout,
     Schedule,
 };
@@ -31,14 +31,20 @@ where
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        let supports_opening_shape =
-            dispatch_ring_dim_result!(root_step.params.ring_dimension, |D| Ok(
-                folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
-                    std::slice::from_ref(&opening_point),
-                    &root_step.params,
-                    alpha_bits,
-                )
-            ))?;
+        let supports_opening_shape = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            Cfg::Field,
+            root_step.params.ring_dimension,
+            |D| Ok(folded_root_supports_opening_shape::<
+                Cfg::Field,
+                Cfg::ExtField,
+                D,
+            >(
+                std::slice::from_ref(&opening_point),
+                &root_step.params,
+                alpha_bits,
+            ))
+        )?;
         let tensor_projection_enabled = root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
             root_step.params.ring_dimension,
             num_vars,

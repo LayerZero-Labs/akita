@@ -1,6 +1,5 @@
 use super::*;
-use akita_types::dispatch_ring_dim_result;
-use akita_types::{terminal_witness_segment_layout, Commitment, RingView};
+use akita_types::{dispatch_for_field, terminal_witness_segment_layout, Commitment, RingView};
 
 /// Verify the folded-root proof payload for either an intermediate root or the
 /// 1-fold terminal root.
@@ -126,16 +125,17 @@ where
     };
 
     if extension_opening_reduction.is_none() {
-        let prepared_point = dispatch_ring_dim_result!(d_a, |D| {
-            prepare_opening_point::<F, E, D>(
-                shared_opening_point,
-                basis,
-                root_lp.m_vars,
-                root_lp.r_vars,
-                d_a.trailing_zeros() as usize,
-                BlockOrder::RowMajor,
-            )
-        })?;
+        let prepared_point =
+            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+                prepare_opening_point::<F, E, D>(
+                    shared_opening_point,
+                    basis,
+                    root_lp.m_vars,
+                    root_lp.r_vars,
+                    d_a.trailing_zeros() as usize,
+                    BlockOrder::RowMajor,
+                )
+            })?;
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
@@ -164,9 +164,10 @@ where
         }
     }
     let trace_block_opening: Vec<E> = if let Some(rho) = &reduction_check {
-        let protocol_point = dispatch_ring_dim_result!(d_a, |D| {
-            ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)
-        })?;
+        let protocol_point =
+            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+                ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)
+            })?;
         root_trace_block_opening::<E>(&protocol_point, root_lp, d_a.trailing_zeros() as usize)?
     } else {
         root_trace_block_opening::<E>(shared_opening_point, root_lp, d_a.trailing_zeros() as usize)?

@@ -1,7 +1,7 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
 use super::*;
-use akita_types::dispatch_ring_dim_result;
+use akita_types::dispatch_for_field;
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
@@ -90,7 +90,7 @@ where
     T: Transcript<F>,
 {
     let d_a = lp.role_dims().d_a();
-    dispatch_ring_dim_result!(d_a, |D| {
+    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_fold_eor_kernel::<F, E, T, D>(
             extension_opening_reduction,
             challenge_point,
@@ -338,7 +338,7 @@ where
         },
     };
     let d_a = lp.role_dims().d_a();
-    dispatch_ring_dim_result!(d_a, |D| {
+    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_stage2_kernel::<F, E, T, D>(
             transcript,
             setup,
@@ -509,26 +509,31 @@ where
             .get(rs.ring_bits..)
             .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-        let rho_w = dispatch_ring_dim_result!(role_d_a, |D| {
-            let verifier = SetupSumcheckVerifier::new::<F, D>(
-                &rs.prepared_row_eval,
-                setup_x_challenges,
-                rs.alpha,
-            )?;
-            let rho_w = verifier.verify_batched_stage3::<F, T>(
-                setup,
-                next_fold_level_params,
-                role_d_a,
-                proof,
-                stage2_next_w_eval,
-                sumcheck_challenges,
-                witness_rounds,
-                eta,
-                transcript,
-            )?;
-            transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
-            Ok(rho_w)
-        })?;
+        let rho_w = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            role_d_a,
+            |D| {
+                let verifier = SetupSumcheckVerifier::new::<F, D>(
+                    &rs.prepared_row_eval,
+                    setup_x_challenges,
+                    rs.alpha,
+                )?;
+                let rho_w = verifier.verify_batched_stage3::<F, T>(
+                    setup,
+                    next_fold_level_params,
+                    role_d_a,
+                    proof,
+                    stage2_next_w_eval,
+                    sumcheck_challenges,
+                    witness_rounds,
+                    eta,
+                    transcript,
+                )?;
+                transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
+                Ok(rho_w)
+            }
+        )?;
         return Ok(Some(rho_w));
     }
     Ok(None)
@@ -556,9 +561,12 @@ where
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
     let role_dims = prepared.lp.role_dims();
-    dispatch_ring_dim_result!(role_dims.d_b(), |D| {
-        commitment.as_ring_slice::<D>().map(|_| ())
-    })?;
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        role_dims.d_b(),
+        |D| commitment.as_ring_slice::<D>().map(|_| ())
+    )?;
     validate_fold_grind_nonce(
         &prepared.lp.fold_witness_grind_contract(
             opening_shape.num_total_polynomials(),
@@ -567,11 +575,14 @@ where
         prepared.fold_grind_nonce,
     )?;
     if !prepared.v.coeffs().is_empty() {
-        dispatch_ring_dim_result!(role_dims.d_d(), |D| {
-            prepared.v.as_ring_slice::<D>().map(|_| ())
-        })?;
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Opening),
+            F,
+            role_dims.d_d(),
+            |D| prepared.v.as_ring_slice::<D>().map(|_| ())
+        )?;
     }
-    let stage1_challenges = derive_stage1_challenges::<F, T>(
+    let fold_challenges = derive_witness_fold_challenges::<F, T>(
         transcript,
         prepared.v.coeffs(),
         role_dims.d_a(),
@@ -581,11 +592,16 @@ where
         prepared.m_row_layout,
         prepared.fold_grind_nonce,
     )?;
-    let (gamma, row_coefficient_rings) = dispatch_ring_dim_result!(role_dims.d_a(), |D| {
-        RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
-            &prepared.row_coefficients,
-        )
-    })?;
+    let (gamma, row_coefficient_rings) = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        role_dims.d_a(),
+        |D| {
+            RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
+                &prepared.row_coefficients,
+            )
+        }
+    )?;
     let n_d_active = match prepared.m_row_layout {
         MRowLayout::WithDBlock => prepared.lp.d_key.row_len(),
         MRowLayout::WithoutDBlock => 0,
@@ -603,7 +619,7 @@ where
     )?;
     let relation_instance = RingRelationInstance::new(
         prepared.m_row_layout,
-        stage1_challenges,
+        fold_challenges,
         prepared.ring_opening_point,
         prepared.ring_multiplier_point,
         opening_shape,
@@ -620,31 +636,38 @@ where
         lp: prepared.lp,
     };
     let d_a = role_dims.d_a();
-    let rs = dispatch_ring_dim_result!(d_a, |D| match prepared.stage2 {
-        AkitaStage2Proof::Intermediate(_) => {
-            let next_w_commitment = prepared.next_w_commitment.ok_or(AkitaError::InvalidProof)?;
-            let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
-            ring_switch_verifier::<F, E, T, D>(
-                &ring_switch_replay,
-                prepared.w_len,
-                next_w_commitment,
-                next_ring_dim,
-                transcript,
-            )
-        }
-        AkitaStage2Proof::Terminal(_) => {
-            let replay = prepared
-                .terminal_replay
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?;
-            ring_switch_verifier_terminal::<F, E, T, D>(
-                &ring_switch_replay,
-                prepared.w_len,
-                transcript,
-                replay,
-            )
-        }
-    })?;
+    let rs =
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            d_a,
+            |D| match prepared.stage2 {
+                AkitaStage2Proof::Intermediate(_) => {
+                    let next_w_commitment =
+                        prepared.next_w_commitment.ok_or(AkitaError::InvalidProof)?;
+                    let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
+                    ring_switch_verifier::<F, E, T, D>(
+                        &ring_switch_replay,
+                        prepared.w_len,
+                        next_w_commitment,
+                        next_ring_dim,
+                        transcript,
+                    )
+                }
+                AkitaStage2Proof::Terminal(_) => {
+                    let replay = prepared
+                        .terminal_replay
+                        .as_ref()
+                        .ok_or(AkitaError::InvalidProof)?;
+                    ring_switch_verifier_terminal::<F, E, T, D>(
+                        &ring_switch_replay,
+                        prepared.w_len,
+                        transcript,
+                        replay,
+                    )
+                }
+            }
+        )?;
     let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
         relation_instance.role_dims(),
         &rs.tau1,

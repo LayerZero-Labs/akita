@@ -525,7 +525,7 @@ fn grouped_root_main_level_params_candidate(
         block_len,
         m_vars,
         r_vars,
-        stage1_config: ctx.ring_challenge_cfg.clone(),
+        fold_challenge_config: *ctx.ring_challenge_cfg,
         fold_challenge_shape: ctx.fold_challenge_shape,
         num_digits_commit,
         num_digits_open,
@@ -848,10 +848,7 @@ mod tests {
     }
 
     fn ring_challenge_config(_: usize) -> Result<SparseChallengeConfig, AkitaError> {
-        Ok(SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![-1, 1],
-        })
+        Ok(SparseChallengeConfig::pm1_only(1))
     }
 
     fn fold_shape(_: AkitaScheduleInputs) -> TensorChallengeShape {

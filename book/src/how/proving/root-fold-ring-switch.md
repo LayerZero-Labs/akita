@@ -45,4 +45,4 @@ extraction it supports.
 
 - `crates/akita-challenges/src/tensor.rs` (`ChallengeShape`).
 - Paper §4.2 `sec:tensor-challenges` (`eq:tensor-challenge`, `lem:tensor-cwss`, `lem:tensor-norm`).
-- `specs/tensor-structured-folding-challenges.md` (implemented), `specs/bounded-l1-sparse-challenge.md`.
+- `specs/tensor-structured-folding-challenges.md` (implemented), `specs/archive/bounded-l1-sparse-challenge.md` (archived).

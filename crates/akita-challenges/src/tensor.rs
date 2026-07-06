@@ -157,12 +157,12 @@ pub struct ChallengeLabels<'a> {
     pub tensor_right: &'a [u8],
 }
 
-/// Canonical stage-1 fold challenge transcript labels.
+/// Canonical witness-fold challenge transcript labels.
 #[inline]
 #[must_use]
-pub fn stage1_fold_challenge_labels() -> ChallengeLabels<'static> {
+pub fn witness_fold_challenge_labels() -> ChallengeLabels<'static> {
     ChallengeLabels {
-        flat: labels::CHALLENGE_STAGE1_FOLD,
+        flat: labels::CHALLENGE_WITNESS_FOLD,
         tensor_left: labels::CHALLENGE_TENSOR_FOLD_LEFT,
         tensor_left_digest: labels::ABSORB_TENSOR_FOLD_LEFT,
         tensor_right: labels::CHALLENGE_TENSOR_FOLD_RIGHT,

@@ -552,7 +552,7 @@ Digest inputs use a fixed little-endian byte format:
 - `bool` is one byte (`0` or `1`).
 - `SparseChallengeConfig` is encoded by variant tag plus canonical fields:
   uniform configs encode weight and ordered `nonzero_coeffs` bytes; bounded-L1 /
-  exact-shell configs encode their public scalar parameters in declaration order.
+  signed-sparse configs encode their public scalar parameters in declaration order.
   Adding a new challenge variant must update this encoder.
 
 The emitter rejects a table whose key envelope would produce mixed root fold shapes.
@@ -623,7 +623,7 @@ trace the same name end to end.
 | `CommitmentConfig` | `ring_challenge_config` | unchanged (already correct) |
 | Planner fn params | `stage1` | `ring_challenge_config` |
 | Planner type alias | `Stage1Fn` | `RingChallengeConfigFn` |
-| Planner docs | "stage-1 sparse-challenge closure" | "ring challenge config closure (`SparseChallengeConfig` per ring degree `d`)" |
+| Planner docs | "ring fold sparse-challenge closure" | "ring challenge config closure (`SparseChallengeConfig` per ring degree `d`)" |
 
 Meaning (from `CommitmentConfig` docs): the sparse ring element `c(X)` used in the
 **weak-binding fold** before sumcheck stage 1. It is **not** a sumcheck round

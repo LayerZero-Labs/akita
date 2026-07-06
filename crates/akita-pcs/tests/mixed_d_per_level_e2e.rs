@@ -26,9 +26,9 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    validate_schedule_ring_dims, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaStage2Proof, CleartextWitnessProof, OpeningClaimsLayout, RingVec, Schedule,
-    SetupContributionMode, Step,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage2Proof,
+    CleartextWitnessProof, OpeningClaimsLayout, RingDimPlan, RingVec, Schedule,
+    SetupContributionMode,
 };
 use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
@@ -97,7 +97,7 @@ impl akita_config::CommitmentConfig for MixedD128To64 {
 
 /// Like [`MixedD128To64`], but one suffix fold level advertises a ring
 /// dimension that does not divide the setup's `gen_ring_dim`. Entry
-/// validation (`validate_schedule_ring_dims`) must reject it with an error, never a panic.
+/// validation (`RingDimPlan`) must reject it with an error, never a panic.
 #[derive(Clone, Copy, Debug, Default)]
 struct MixedDBadLevelDim;
 
@@ -149,6 +149,11 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
 
 type Scheme = AkitaCommitmentScheme<MixedD128To64>;
 
+fn make_envelope_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
+    let evals = dense_field_evals(nv, seed);
+    DensePoly::<F>::from_field_evals(nv, ENVELOPE_D, &evals).expect("dense poly")
+}
+
 fn mixed_schedule() -> Schedule {
     mixed_d_per_level_schedule::<Envelope, Suffix>(NUM_VARS, 1, MIXED_D_SWITCH_FOLD)
         .expect("mixed-D schedule")
@@ -191,9 +196,9 @@ fn prove_mixed_fixture() -> MixedDFixture {
         )
         .expect("commit layout");
 
-    let poly = make_dense_poly(NUM_VARS, 0xcede_0001);
+    let poly = make_envelope_dense_poly(NUM_VARS, 0xcede_0001);
     let point = random_point(NUM_VARS, 0xcede_0002);
-    let opening = opening_from_poly::<DENSE_D, _>(&poly, &point, &layout);
+    let opening = opening_from_poly::<ENVELOPE_D, _>(&poly, &point, &layout);
 
     let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
     assert_eq!(setup.expanded.seed().gen_ring_dim, ENVELOPE_D);
@@ -269,41 +274,24 @@ fn truncate_ring_vec(rv: &mut RingVec<F>, new_len: usize) {
 }
 
 #[test]
-fn mixed_d_schedule_shape_and_ring_dim_validation() {
+fn mixed_d_schedule_shape_and_ring_dim_plan() {
     let schedule = mixed_schedule();
     assert_mixed_d_fixture_schedule(&schedule);
     assert_eq!(schedule.num_fold_levels(), 4);
 
+    // RingDimPlan admits the schedule under a gen_ring_dim = 128 seed and
+    // reports the per-level dims.
     init_rayon_pool();
     run_on_large_stack(|| {
         let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
         let schedule = mixed_schedule();
-        validate_schedule_ring_dims(&schedule, setup.expanded.seed()).expect("ring dims valid");
-        for (level, expected_d) in [
-            (0, ENVELOPE_D),
-            (1, ENVELOPE_D),
-            (2, SUFFIX_D),
-            (3, SUFFIX_D),
-        ] {
-            let Step::Fold(step) = &schedule.steps[level] else {
-                panic!("level {level} is not a fold step");
-            };
-            assert_eq!(step.params.d_a(), expected_d, "level {level} d_a");
-        }
-        let mut unique = std::collections::BTreeSet::new();
-        for level in 0..schedule.num_fold_levels() {
-            let Step::Fold(step) = &schedule.steps[level] else {
-                panic!("level {level} is not a fold step");
-            };
-            let dims = step.params.role_dims;
-            unique.insert(dims.inner);
-            unique.insert(dims.outer);
-            unique.insert(dims.opening);
-        }
-        assert_eq!(
-            unique.into_iter().collect::<Vec<_>>(),
-            vec![SUFFIX_D, ENVELOPE_D]
-        );
+        let plan =
+            RingDimPlan::from_schedule(&schedule, setup.expanded.seed()).expect("ring dim plan");
+        assert_eq!(plan.dim_at(0).expect("d0"), ENVELOPE_D);
+        assert_eq!(plan.dim_at(1).expect("d1"), ENVELOPE_D);
+        assert_eq!(plan.dim_at(2).expect("d2"), SUFFIX_D);
+        assert_eq!(plan.dim_at(3).expect("d3"), SUFFIX_D);
+        assert_eq!(plan.unique_dims(), vec![SUFFIX_D, ENVELOPE_D]);
     });
 }
 
@@ -489,7 +477,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
 fn mixed_d_malformed_hint_digit_length_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let poly = make_dense_poly(NUM_VARS, 0xcede_0001);
+        let poly = make_envelope_dense_poly(NUM_VARS, 0xcede_0001);
         let point = random_point(NUM_VARS, 0xcede_0002);
 
         let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
@@ -547,9 +535,9 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
             get_params_for_batched_commitment(&opening_batch)
         .expect("commit layout (root level params are untouched)");
 
-        let poly = make_dense_poly(NUM_VARS, 0xcede_0001);
+        let poly = make_envelope_dense_poly(NUM_VARS, 0xcede_0001);
         let point = random_point(NUM_VARS, 0xcede_0002);
-        let opening = opening_from_poly::<DENSE_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly::<ENVELOPE_D, _>(&poly, &point, &layout);
 
         let setup = BadScheme::setup_prover(NUM_VARS, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");

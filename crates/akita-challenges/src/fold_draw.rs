@@ -22,7 +22,7 @@ fn preview_sparse_challenges(
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
     let absorb_buf = sparse_challenge_absorb_buf(label, n as u64, ring_d, cfg, grind_nonce);
     let seed = preview.preview_challenge_bytes_after_absorb(&absorb_buf, 32);
-    sparse_challenges_from_seed(&seed, ring_d, n, cfg)
+    sparse_challenges_from_seed(ring_d, &seed, n, cfg)
 }
 
 fn derive_live_sparse_seed<F, T>(transcript: &mut T, absorb_buf: &[u8]) -> Vec<u8>
@@ -114,7 +114,7 @@ pub fn preview_folding_challenges(
                 &[&left_buf, &left_digest, &right_buf],
                 &[32, 0, 32],
             );
-            let right = sparse_challenges_from_seed(&right_seed, ring_d, right_total, cfg)?;
+            let right = sparse_challenges_from_seed(ring_d, &right_seed, right_total, cfg)?;
             Challenges::from_tensor_dyn(
                 TensorChallenges {
                     left,

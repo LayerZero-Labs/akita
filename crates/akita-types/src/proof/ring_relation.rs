@@ -524,11 +524,8 @@ mod tests {
     type F = Fp32<251>;
     const D: usize = 32;
 
-    fn stage1_config() -> SparseChallengeConfig {
-        SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![1],
-        }
+    fn fold_challenge_config() -> SparseChallengeConfig {
+        SparseChallengeConfig::pm1_only(1)
     }
 
     fn opening_point(lp: &LevelParams) -> RingOpeningPoint<F> {
@@ -539,9 +536,17 @@ mod tests {
     }
 
     fn test_level_params() -> LevelParams {
-        LevelParams::params_only(crate::SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-            .with_decomp(2, 1, 1, 2, 0)
-            .expect("test params")
+        LevelParams::params_only(
+            crate::SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            fold_challenge_config(),
+        )
+        .with_decomp(2, 1, 1, 2, 0)
+        .expect("test params")
     }
 
     fn test_challenges(lp: &LevelParams, num_claims: usize) -> Challenges {
@@ -588,9 +593,17 @@ mod tests {
 
     fn chunk_test_level_params(r_vars: usize) -> LevelParams {
         // num_blocks = 2^r_vars, block_len = 2^m_vars, single-tier.
-        LevelParams::params_only(crate::SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-            .with_decomp(2, r_vars, 1, 2, 0)
-            .expect("test params")
+        LevelParams::params_only(
+            crate::SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            fold_challenge_config(),
+        )
+        .with_decomp(2, r_vars, 1, 2, 0)
+        .expect("test params")
     }
 
     /// Build a minimal `WithDBlock` relation instance whose layout-relevant

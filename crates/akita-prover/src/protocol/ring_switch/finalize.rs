@@ -1,4 +1,5 @@
 use super::*;
+use akita_types::dispatch_for_field;
 
 /// Complete the ring switch after the caller has bound the next witness.
 ///
@@ -32,7 +33,7 @@ where
 {
     let dims = instance.role_dims();
     let d_a = dims.d_a();
-    dispatch_ring_dim_result!(d_a, |D| {
+    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         let default_gamma;
         let gamma = if let Some(gamma) = gamma {
             gamma

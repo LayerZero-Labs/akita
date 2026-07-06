@@ -4,7 +4,7 @@ use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
-use akita_types::RingRole;
+use akita_types::{dispatch_for_field, RingRole};
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
 ///
@@ -167,101 +167,109 @@ where
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let dims = instance.role_dims();
-    dispatch_ring_dim_result!(dims.d_a(), |D| {
-        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-        witness.ensure_role_dim::<D>(RingRole::Opening)?;
-        witness.ensure_role_dim::<D>(RingRole::Inner)?;
-        let num_claims = instance.opening_batch().num_total_polynomials();
-        let RingRelationWitness {
-            z_folded_rings,
-            z_folded_centered_per_chunk,
-            fold_grind_nonce: _,
-            e_hat,
-            e_folded,
-            hint,
-            ..
-        } = witness;
-        e_hat.ensure_stride::<D>()?;
-        validate_chunked_witness_cfg(lp)?;
-        if dims.d_d() != D {
-            return Err(AkitaError::InvalidSetup(format!(
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        dims.d_a(),
+        |D| {
+            validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+            witness.ensure_role_dim::<D>(RingRole::Opening)?;
+            witness.ensure_role_dim::<D>(RingRole::Inner)?;
+            let num_claims = instance.opening_batch().num_total_polynomials();
+            let RingRelationWitness {
+                z_folded_rings,
+                z_folded_centered_per_chunk,
+                fold_grind_nonce: _,
+                e_hat,
+                e_folded,
+                hint,
+                ..
+            } = witness;
+            e_hat.ensure_stride::<D>()?;
+            validate_chunked_witness_cfg(lp)?;
+            if dims.d_d() != D {
+                return Err(AkitaError::InvalidSetup(format!(
                 "mixed-role ring switch build requires d_d={} to match d_a={D} until nested views land",
                 dims.d_d()
             )));
-        }
-        let e_folded = e_folded.as_ring_slice_trusted::<D>();
-        let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
-            &hint,
-            lp.num_digits_open,
-            lp.log_basis,
-        )?;
-        let decomposed_inner_rows = hint.into_flat_parts()?;
-        decomposed_inner_rows.ensure_stride::<D>()?;
-        let opening_batch = instance.opening_batch();
+            }
+            let e_folded = e_folded.as_ring_slice_trusted::<D>();
+            let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
+                &hint,
+                lp.num_digits_open,
+                lp.log_basis,
+            )?;
+            let decomposed_inner_rows = hint.into_flat_parts()?;
+            decomposed_inner_rows.ensure_stride::<D>()?;
+            let opening_batch = instance.opening_batch();
 
-        instance.ensure_ring_dim::<D>()?;
-        let z_folded_centered_per_chunk: Vec<Vec<[i32; D]>> = z_folded_centered_per_chunk
-            .iter()
-            .map(|chunk| {
-                chunk
-                    .iter()
-                    .map(|row| {
-                        row.as_slice()
-                            .try_into()
-                            .map_err(|_| AkitaError::InvalidSize {
-                                expected: D,
-                                actual: row.len(),
-                            })
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let r = compute_relation_quotient::<F, B, D>(
-            ring_switch_ctx,
-            lp,
-            &instance.challenges,
-            e_hat.typed_planes::<D>()?,
-            &decomposed_inner_rows,
-            &recomposed_inner_rows,
-            e_folded,
-            instance.ring_multiplier_point(),
-            instance.row_coefficient_rings_trusted::<D>()?,
-            z_folded_rings.centered_coeffs_trusted::<D>(),
-            z_folded_rings.centered_inf_norm,
-            instance.y_trusted::<D>()?,
-            opening_batch.num_total_polynomials(),
-            lp.num_blocks,
-            lp.inner_width(),
-            instance.m_row_layout(),
-        )?;
-        let z_centered = z_folded_rings.centered_coeffs_owned::<D>();
-        let w = {
-            let _span = tracing::info_span!("build_w_coeffs").entered();
-            build_w_coeffs::<F, D>(
-                &e_hat,
+            instance.ensure_ring_dim::<D>()?;
+            let z_folded_centered_per_chunk: Vec<Vec<[i32; D]>> = z_folded_centered_per_chunk
+                .iter()
+                .map(|chunk| {
+                    chunk
+                        .iter()
+                        .map(|row| {
+                            row.as_slice()
+                                .try_into()
+                                .map_err(|_| AkitaError::InvalidSize {
+                                    expected: D,
+                                    actual: row.len(),
+                                })
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let r = compute_relation_quotient::<F, B, D>(
+                ring_switch_ctx,
+                crate::protocol::ring_relation::RelationQuotientShape::from_level(
+                    lp,
+                    instance.m_row_layout(),
+                )?,
+                &instance.challenges,
+                e_hat.typed_planes::<D>()?,
                 &decomposed_inner_rows,
-                &z_folded_centered_per_chunk,
-                &r,
-                lp,
-                num_claims,
-            )?
-        };
-        let terminal_artifacts = if retain_terminal_artifacts {
-            Some(RingSwitchTerminalArtifacts::from_parts::<D>(
-                e_folded.to_vec(),
-                recomposed_inner_rows,
-                z_centered,
-                r,
-                0,
-            ))
-        } else {
-            None
-        };
-        Ok(RingSwitchBuildOutput {
-            w,
-            terminal_artifacts,
-        })
-    })
+                &recomposed_inner_rows,
+                e_folded,
+                instance.ring_multiplier_point(),
+                instance.row_coefficient_rings_trusted::<D>()?,
+                z_folded_rings.centered_coeffs_trusted::<D>(),
+                z_folded_rings.centered_inf_norm,
+                instance.y_trusted::<D>()?,
+                opening_batch.num_total_polynomials(),
+                lp.num_blocks,
+                lp.inner_width(),
+                instance.m_row_layout(),
+            )?;
+            let z_centered = z_folded_rings.centered_coeffs_owned::<D>();
+            let w = {
+                let _span = tracing::info_span!("build_w_coeffs").entered();
+                build_w_coeffs::<F, D>(
+                    &e_hat,
+                    &decomposed_inner_rows,
+                    &z_folded_centered_per_chunk,
+                    &r,
+                    lp,
+                    num_claims,
+                )?
+            };
+            let terminal_artifacts = if retain_terminal_artifacts {
+                Some(RingSwitchTerminalArtifacts::from_parts::<D>(
+                    e_folded.to_vec(),
+                    recomposed_inner_rows,
+                    z_centered,
+                    r,
+                    0,
+                ))
+            } else {
+                None
+            };
+            Ok(RingSwitchBuildOutput {
+                w,
+                terminal_artifacts,
+            })
+        }
+    )
 }
 
 pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(

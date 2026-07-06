@@ -29,6 +29,6 @@ pub use proof_size::{
     proof_ring_vec_bytes, sumcheck_rounds,
 };
 pub use ring_dims::{
-    validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,
-    SUPPORTED_RING_DIMS,
+    validate_role_dims, CommitmentRingDims, RingDimPlan, RingRole, MAX_FOLD_LEVELS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };

@@ -10,7 +10,7 @@ use akita_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::build_segment_typed_witness;
-use akita_types::dispatch_ring_dim_result;
+use akita_types::dispatch_for_field;
 use akita_types::validate_segment_typed_z_payload;
 use akita_types::CleartextWitnessShape;
 
@@ -101,17 +101,22 @@ where
     // the claim polynomials at this level's fold ring.
     let ring_d = level_params.role_dims().d_a();
     let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
-        let proved = dispatch_ring_dim_result!(ring_d, |D| {
-            prove_extension_opening_reduction::<F, E, T, P, TS, D>(
-                tensor.backend(),
-                Some(tensor.prepared()),
-                eor_polys,
-                eor_opening_batch,
-                pad_base_evals,
-                transcript,
-                if pad_base_evals { "recursive" } else { "root" },
-            )
-        })?;
+        let proved = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            ring_d,
+            |D| {
+                prove_extension_opening_reduction::<F, E, T, P, TS, D>(
+                    tensor.backend(),
+                    Some(tensor.prepared()),
+                    eor_polys,
+                    eor_opening_batch,
+                    pad_base_evals,
+                    transcript,
+                    if pad_base_evals { "recursive" } else { "root" },
+                )
+            }
+        )?;
         (
             proved.protocol_point,
             Some(proved.row_coefficients),
@@ -152,17 +157,22 @@ where
                 let _span =
                     tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
                         .entered();
-                dispatch_ring_dim_result!(ring_d, |D| {
-                    cfg_iter!(fold_polys)
-                        .map(|poly| {
-                            tensor_root_projection::<F, P, E, TS, D>(
-                                tensor.backend(),
-                                Some(tensor.prepared()),
-                                *poly,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })?
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    F,
+                    ring_d,
+                    |D| {
+                        cfg_iter!(fold_polys)
+                            .map(|poly| {
+                                tensor_root_projection::<F, P, E, TS, D>(
+                                    tensor.backend(),
+                                    Some(tensor.prepared()),
+                                    *poly,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                )?
             };
             let fold_refs = transformed.iter().collect::<Vec<_>>();
             let transformed_fold_claims = fold_claims.regroup_polynomial_refs(&fold_refs)?;
@@ -291,49 +301,54 @@ where
     // converted to D-free carriers (`PreparedOpeningPoint`, `RingVec`) inside
     // the arm.
     let (prepared_point, e_folded_by_claim, trace_target, row_coefficients, row_coefficient_rings) =
-        dispatch_ring_dim_result!(ring_d, |D| {
-            let prepared_point = prepare_opening_point::<F, E, D>(
-                protocol_point,
-                basis,
-                m_vars,
-                r_vars,
-                alpha_bits,
-                block_order,
-            )?;
-            let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_point(
-                opening.backend(),
-                Some(opening.prepared()),
-                fold_refs,
-                &prepared_point,
-                block_len,
-            )?;
-            for pt in &prepared_point.padded_point {
-                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            ring_d,
+            |D| {
+                let prepared_point = prepare_opening_point::<F, E, D>(
+                    protocol_point,
+                    basis,
+                    m_vars,
+                    r_vars,
+                    alpha_bits,
+                    block_order,
+                )?;
+                let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_point(
+                    opening.backend(),
+                    Some(opening.prepared()),
+                    fold_refs,
+                    &prepared_point,
+                    block_len,
+                )?;
+                for pt in &prepared_point.padded_point {
+                    append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+                }
+                let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
+                    &reduction,
+                    &folded_rings,
+                    &prepared_point,
+                    protocol_point,
+                    alpha_bits,
+                    basis,
+                    trace_opening_batch,
+                    row_coefficients,
+                    transcript,
+                )?;
+                let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
+                let e_folded_by_claim = e_folded_by_claim
+                    .iter()
+                    .map(|rows| RingVec::from_ring_elems(rows))
+                    .collect::<Vec<_>>();
+                Ok::<_, AkitaError>((
+                    prepared_point,
+                    e_folded_by_claim,
+                    trace_target,
+                    row_coefficients,
+                    RingVec::from_ring_elems(&row_coefficient_rings),
+                ))
             }
-            let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
-                &reduction,
-                &folded_rings,
-                &prepared_point,
-                protocol_point,
-                alpha_bits,
-                basis,
-                trace_opening_batch,
-                row_coefficients,
-                transcript,
-            )?;
-            let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-            let e_folded_by_claim = e_folded_by_claim
-                .iter()
-                .map(|rows| RingVec::from_ring_elems(rows))
-                .collect::<Vec<_>>();
-            Ok::<_, AkitaError>((
-                prepared_point,
-                e_folded_by_claim,
-                trace_target,
-                row_coefficients,
-                RingVec::from_ring_elems(&row_coefficient_rings),
-            ))
-        })?;
+        )?;
     let commitment = fold_claims.single_fold_commitment()?;
     let (instance, witness) = RingRelationProver::new(
         opening,

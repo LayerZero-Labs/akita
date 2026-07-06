@@ -1,17 +1,13 @@
-//! Sampling-family configuration for [`crate::SparseChallenge`].
+//! Ring fold challenge configuration for [`crate::SparseChallenge`].
 //!
-//! Many lattice protocols sample "short/sparse" ring challenges whose coefficients
-//! are mostly zero and whose non-zero coefficients come from a tiny integer
-//! alphabet (e.g. `{±1}` or `{±1,±2}`).
+//! Witness-fold challenges are fixed-weight sparse polynomials: `count_pm1`
+//! coefficients with magnitude 1 and `count_pm2` with magnitude 2, each with
+//! random sign. When `count_pm2 == 0` every non-zero coefficient is ±1; when
+//! `count_pm2 > 0` some coefficients are ±2 (production D=64).
 //!
-//! All families produce the same output type [`crate::SparseChallenge`].
-//! The actual sampler that turns this config plus a transcript into challenges
-//! lives in [`crate::sampler`]; this file is policy-only and has no transcript
-//! or PRG dependency.
+//! The actual sampler lives in [`crate::sampler`]; this file is policy-only.
 
-use crate::sampler::bounded_l1::{COEFFS_BOUND_32, D_32, MAX_L1_NORM_32};
-
-/// Minimum min-entropy (bits) for every stage-1 sparse-challenge transcript draw.
+/// Minimum min-entropy (bits) for every ring fold sparse-challenge transcript draw.
 ///
 /// Flat folds sample one such draw per logical block. Tensor folds sample
 /// independent left and right factor vectors; each factor is one draw and is
@@ -21,156 +17,115 @@ use crate::sampler::bounded_l1::{COEFFS_BOUND_32, D_32, MAX_L1_NORM_32};
 /// leave each factor brute-forceable).
 pub const MIN_FOLD_CHALLENGE_ENTROPY_BITS: u32 = 128;
 
-/// Production D=64 exact shell `(31, 10)` (LaBRADOR-aligned, log₂|C| ≈ 128.09).
-pub const D64_PRODUCTION_EXACT_SHELL_MAG1: usize = 31;
-pub const D64_PRODUCTION_EXACT_SHELL_MAG2: usize = 10;
+/// Production D=64 signed sparse ±1 count (LaBRADOR-aligned).
+pub const D64_PRODUCTION_PM1_COUNT: usize = 31;
+/// Production D=64 signed sparse ±2 count (LaBRADOR-aligned).
+pub const D64_PRODUCTION_PM2_COUNT: usize = 10;
 
-/// Specifies the distribution from which sparse ring challenges are sampled.
-///
-/// Different families trade off challenge entropy against the
-/// resulting coefficient mass, which in turn affects the folded witness bounds
-/// used by the protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum SparseChallengeConfig {
-    /// Uniform sparse challenge over the full ring.
-    ///
-    /// Sampling chooses `weight` distinct positions from `0..D`, then assigns
-    /// each position a coefficient drawn uniformly from `nonzero_coeffs`.
-    ///
-    /// The worst-case L1 mass is
-    /// `weight * max(|c| for c in nonzero_coeffs)`.
-    Uniform {
-        /// Exact number of non-zero coefficients.
-        weight: usize,
-        /// Allowed small non-zero coefficients, e.g. `[-1, 1]` or
-        /// `[-2, -1, 1, 2]`. Each entry must satisfy `|c| <= 127`; in
-        /// practice every shipping preset uses values with `|c| <= 8`.
-        nonzero_coeffs: Vec<i8>,
-    },
+/// Ring degrees with a production fold-challenge ladder entry.
+macro_rules! production_fold_challenge_ring_dims {
+    ($($dim:literal),+ $(,)?) => {
+        pub const PRODUCTION_FOLD_CHALLENGE_RING_DIMS: &[usize] = &[$($dim),+];
 
-    /// Exact-shell sparse challenge over the full ring.
-    ///
-    /// Sampling chooses `count_mag1 + count_mag2` distinct positions from
-    /// `0..D`, assigns `count_mag1` of them a random sign with magnitude 1, and
-    /// assigns the remaining `count_mag2` a random sign with magnitude 2.
-    ///
-    /// The L1 mass is exact: `count_mag1 + 2 * count_mag2`.
-    ExactShell {
-        /// Number of coefficients with magnitude 1.
-        count_mag1: usize,
-        /// Number of coefficients with magnitude 2.
-        count_mag2: usize,
-    },
-
-    /// Bounded-`L1` production preset for `D = 32`.
-    ///
-    /// The preset fixes the coefficient bound `||c||_inf <= 8`, then chooses
-    /// the smallest `L1` bound whose challenge space has at least 128 bits of
-    /// support. For `D = 32`, that minimum is `||c||_1 <= 121`.
-    /// Sampling draws a 128-bit rank and maps it into this bounded challenge
-    /// space with the crate-internal `sampler::bounded_l1` decoder.
-    ///
-    /// This sampler is slower than the fixed-shape `Uniform` and `ExactShell`
-    /// families, so it should be used only when the `L1` mass in this approach
-    /// is smaller than the other two.
-    BoundedL1Norm,
+        macro_rules! __dispatch_fold_challenge_ring_dim {
+            ($self:expr, $d:expr, $required_bits:expr) => {
+                match $d {
+                    $( $dim => $self.validate_min_entropy::<$dim>($required_bits), )+
+                    _ => Err("unsupported ring dimension for fold-challenge entropy audit"),
+                }
+            };
+        }
+    };
 }
 
-fn validate_uniform_coeffs(nonzero_coeffs: &[i8]) -> Result<(), &'static str> {
-    if nonzero_coeffs.is_empty() {
-        return Err("nonzero_coeffs must be non-empty");
-    }
-    if nonzero_coeffs.contains(&0) {
-        return Err("nonzero_coeffs must not contain 0");
-    }
-    Ok(())
+production_fold_challenge_ring_dims!(64, 128, 256, 512, 1024, 2048);
+
+const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize)] = &[
+    (64, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT),
+    (128, 31, 0),
+    (256, 23, 0),
+    (512, 19, 0),
+    (1024, 16, 0),
+    (2048, 14, 0),
+];
+
+/// Fixed-weight sparse ring fold challenge family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SparseChallengeConfig {
+    /// Number of non-zero coefficients with magnitude 1 (random sign).
+    pub count_pm1: usize,
+    /// Number of non-zero coefficients with magnitude 2 (random sign).
+    pub count_pm2: usize,
 }
 
 impl SparseChallengeConfig {
+    /// ±1-only sparse family with Hamming weight `count_pm1`.
+    #[inline]
+    #[must_use]
+    pub const fn pm1_only(count_pm1: usize) -> Self {
+        Self {
+            count_pm1,
+            count_pm2: 0,
+        }
+    }
+
+    /// Production ladder entry for ring degree `ring_d`, if defined.
+    #[inline]
+    #[must_use]
+    pub fn production_for_ring_dim(ring_d: usize) -> Option<Self> {
+        PRODUCTION_FOLD_CHALLENGE_LADDER
+            .iter()
+            .find(|(d, _, _)| *d == ring_d)
+            .map(|(_, pm1, pm2)| Self {
+                count_pm1: *pm1,
+                count_pm2: *pm2,
+            })
+    }
+
+    /// Whether this config matches the production ladder at `ring_d`.
+    #[inline]
+    #[must_use]
+    pub fn matches_production_ladder(&self, ring_d: usize) -> bool {
+        Self::production_for_ring_dim(ring_d).as_ref() == Some(self)
+    }
+
+    /// Total Hamming weight.
+    #[inline]
+    #[must_use]
+    pub fn weight(&self) -> usize {
+        self.count_pm1.saturating_add(self.count_pm2)
+    }
+
     /// Worst-case `L1` norm of the sampled coefficients.
     #[inline]
+    #[must_use]
     pub fn l1_norm(&self) -> usize {
-        match self {
-            Self::Uniform {
-                weight,
-                nonzero_coeffs,
-            } => {
-                let max_coeff = nonzero_coeffs
-                    .iter()
-                    .map(|c| c.unsigned_abs() as usize)
-                    .max()
-                    .unwrap_or(0);
-                weight.saturating_mul(max_coeff)
-            }
-            Self::ExactShell {
-                count_mag1,
-                count_mag2,
-            } => count_mag1 + 2 * count_mag2,
-            Self::BoundedL1Norm => MAX_L1_NORM_32,
-        }
+        self.count_pm1
+            .saturating_add(2usize.saturating_mul(self.count_pm2))
     }
 
     /// Worst-case squared ℓ₂ norm `max ‖c‖_2²` over the challenge family.
-    ///
-    /// Used by the folded-witness `‖z‖_inf` tail bound (`t*`) in
-    /// `akita-types::sis::fold_witness_linf_tail_bound_sq`. Exact integers for every
-    /// shipping preset; see `specs/fold-linf-rejection.md`.
     #[inline]
     #[must_use]
     pub fn challenge_l2_sq_max(&self) -> u128 {
-        match self {
-            Self::Uniform {
-                weight,
-                nonzero_coeffs,
-            } => {
-                let max_coeff_sq = nonzero_coeffs
-                    .iter()
-                    .map(|c| i128::from(*c).pow(2) as u128)
-                    .max()
-                    .unwrap_or(1);
-                (*weight as u128).saturating_mul(max_coeff_sq)
-            }
-            Self::ExactShell {
-                count_mag1,
-                count_mag2,
-            } => (*count_mag1 as u128).saturating_add(4u128.saturating_mul(*count_mag2 as u128)),
-            Self::BoundedL1Norm => (COEFFS_BOUND_32 as u128).saturating_mul(MAX_L1_NORM_32 as u128),
-        }
+        (self.count_pm1 as u128).saturating_add(4u128.saturating_mul(self.count_pm2 as u128))
     }
 
     /// Worst-case number of non-zero coefficients in one sampled challenge.
-    ///
-    /// This is the support-size factor used by tensor fold-grind tail bounds.
     #[inline]
     #[must_use]
     pub fn nonzero_count_max(&self) -> usize {
-        match self {
-            Self::Uniform { weight, .. } => *weight,
-            Self::ExactShell {
-                count_mag1,
-                count_mag2,
-            } => count_mag1.saturating_add(*count_mag2),
-            Self::BoundedL1Norm => MAX_L1_NORM_32,
-        }
+        self.weight()
     }
 
     /// Worst-case `L_infinity` norm of the sampled coefficients.
     #[inline]
+    #[must_use]
     pub fn infinity_norm(&self) -> u32 {
-        match self {
-            Self::Uniform { nonzero_coeffs, .. } => nonzero_coeffs
-                .iter()
-                .map(|c| c.unsigned_abs() as u32)
-                .max()
-                .unwrap_or(0),
-            Self::ExactShell { count_mag2, .. } => {
-                if *count_mag2 > 0 {
-                    2
-                } else {
-                    1
-                }
-            }
-            Self::BoundedL1Norm => COEFFS_BOUND_32 as u32,
+        if self.count_pm2 > 0 {
+            2
+        } else {
+            1
         }
     }
 
@@ -185,28 +140,11 @@ impl SparseChallengeConfig {
                 .map(|i| ((n - k + i) as f64 / i as f64).log2())
                 .sum()
         }
-        match self {
-            Self::Uniform {
-                weight,
-                nonzero_coeffs,
-            } => {
-                if *weight > D || nonzero_coeffs.is_empty() {
-                    return f64::NEG_INFINITY;
-                }
-                log2_binom(D, *weight) + (*weight as f64) * (nonzero_coeffs.len() as f64).log2()
-            }
-            Self::ExactShell {
-                count_mag1,
-                count_mag2,
-            } => {
-                let w = count_mag1 + count_mag2;
-                if w > D {
-                    return f64::NEG_INFINITY;
-                }
-                log2_binom(D, w) + log2_binom(w, *count_mag1) + w as f64
-            }
-            Self::BoundedL1Norm => 128.0,
+        let w = self.weight();
+        if w > D {
+            return f64::NEG_INFINITY;
         }
+        log2_binom(D, w) + log2_binom(w, self.count_pm1) + w as f64
     }
 
     /// Reject challenge families whose single-draw support is below
@@ -227,45 +165,22 @@ impl SparseChallengeConfig {
         ring_dim: usize,
         required_bits: u32,
     ) -> Result<(), &'static str> {
-        match ring_dim {
-            32 => self.validate_min_entropy::<32>(required_bits),
-            64 => self.validate_min_entropy::<64>(required_bits),
-            128 => self.validate_min_entropy::<128>(required_bits),
-            256 => self.validate_min_entropy::<256>(required_bits),
-            _ => Err("unsupported ring dimension for fold-challenge entropy audit"),
-        }
+        __dispatch_fold_challenge_ring_dim!(self, ring_dim, required_bits)
+    }
+
+    /// Structural invariants plus the 128-bit entropy floor at `ring_d`.
+    pub fn validate_for_ring_dim(&self, ring_d: usize) -> Result<(), &'static str> {
+        self.validate_dyn(ring_d)?;
+        self.validate_min_entropy_for_ring_dim(ring_d, MIN_FOLD_CHALLENGE_ENTROPY_BITS)
     }
 
     /// Canonical byte encoding used for transcript domain separation.
     #[inline]
     pub fn domain_separator_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        match self {
-            Self::Uniform {
-                weight,
-                nonzero_coeffs,
-            } => {
-                out.push(0);
-                out.extend_from_slice(&(*weight as u64).to_le_bytes());
-                out.extend_from_slice(&(nonzero_coeffs.len() as u64).to_le_bytes());
-                for &c in nonzero_coeffs {
-                    out.extend_from_slice(&c.to_le_bytes());
-                }
-            }
-            Self::ExactShell {
-                count_mag1,
-                count_mag2,
-            } => {
-                out.push(1);
-                out.extend_from_slice(&(*count_mag1 as u64).to_le_bytes());
-                out.extend_from_slice(&(*count_mag2 as u64).to_le_bytes());
-            }
-            Self::BoundedL1Norm => {
-                out.push(2);
-                out.extend_from_slice(&(COEFFS_BOUND_32 as u64).to_le_bytes());
-                out.extend_from_slice(&(MAX_L1_NORM_32 as u64).to_le_bytes());
-            }
-        }
+        let mut out = Vec::with_capacity(1 + 16);
+        out.push(0);
+        out.extend_from_slice(&(self.count_pm1 as u64).to_le_bytes());
+        out.extend_from_slice(&(self.count_pm2 as u64).to_le_bytes());
         out
     }
 
@@ -276,35 +191,14 @@ impl SparseChallengeConfig {
 
     /// Runtime ring-dimension form of [`Self::validate`].
     pub fn validate_dyn(&self, ring_d: usize) -> Result<(), &'static str> {
-        match self {
-            Self::Uniform {
-                weight,
-                nonzero_coeffs,
-            } => {
-                if *weight > ring_d {
-                    return Err("weight must be <= ring degree D");
-                }
-                validate_uniform_coeffs(nonzero_coeffs)
-            }
-            Self::ExactShell {
-                count_mag1,
-                count_mag2,
-            } => {
-                if count_mag1
-                    .checked_add(*count_mag2)
-                    .is_none_or(|weight| weight > ring_d)
-                {
-                    return Err("count_mag1 + count_mag2 must be <= ring degree D");
-                }
-                Ok(())
-            }
-            Self::BoundedL1Norm => {
-                if ring_d != D_32 {
-                    return Err("BoundedL1Norm: only D = 32 is supported");
-                }
-                Ok(())
-            }
+        if self
+            .count_pm1
+            .checked_add(self.count_pm2)
+            .is_none_or(|w| w > ring_d)
+        {
+            return Err("count_pm1 + count_pm2 must be <= ring degree D");
         }
+        Ok(())
     }
 }
 
@@ -313,46 +207,33 @@ mod entropy_tests {
     use super::*;
 
     #[test]
+    fn production_ladder_matches_proof_optimized_dims() {
+        for &d in PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
+            let cfg = SparseChallengeConfig::production_for_ring_dim(d).expect("ladder entry");
+            assert!(cfg.validate_for_ring_dim(d).is_ok(), "d={d}");
+        }
+    }
+
+    #[test]
     fn tiny_shell_is_rejected_at_128_bits() {
-        let tiny = SparseChallengeConfig::ExactShell {
-            count_mag1: 2,
-            count_mag2: 0,
-        };
+        let tiny = SparseChallengeConfig::pm1_only(2);
         assert!(tiny.log2_support_bits::<32>() < 128.0);
         assert!(tiny.validate_min_entropy::<32>(128).is_err());
     }
 
     #[test]
-    fn tiny_uniform_is_rejected_at_128_bits() {
-        let tiny = SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![-1, 1],
-        };
-        assert!(tiny.validate_min_entropy::<32>(128).is_err());
-    }
-
-    #[test]
     fn production_shell_clears_128_bits() {
-        let shell = SparseChallengeConfig::ExactShell {
-            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
-            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+        let shell = SparseChallengeConfig {
+            count_pm1: D64_PRODUCTION_PM1_COUNT,
+            count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
         assert!(shell.log2_support_bits::<64>() >= 128.0);
-        assert!(shell.validate_min_entropy::<64>(128).is_ok());
-    }
-
-    #[test]
-    fn bounded_l1_preset_clears_128_bits() {
-        let preset = SparseChallengeConfig::BoundedL1Norm;
-        assert!(preset.validate_min_entropy::<32>(128).is_ok());
+        assert!(shell.validate_for_ring_dim(64).is_ok());
     }
 
     #[test]
     fn tensor_floor_is_per_draw_not_product_budget() {
-        let weak = SparseChallengeConfig::ExactShell {
-            count_mag1: 1,
-            count_mag2: 0,
-        };
+        let weak = SparseChallengeConfig::pm1_only(1);
         let per_draw = weak.log2_support_bits::<4>();
         assert!(per_draw < 128.0);
         assert!(weak.validate_min_entropy::<4>(128).is_err());
@@ -360,43 +241,38 @@ mod entropy_tests {
 
     #[test]
     fn log2_support_matches_small_closed_form() {
-        let cfg = SparseChallengeConfig::ExactShell {
-            count_mag1: 1,
-            count_mag2: 0,
-        };
+        let cfg = SparseChallengeConfig::pm1_only(1);
         assert!((cfg.log2_support_bits::<4>() - 3.0).abs() < 1e-9);
-        let uni = SparseChallengeConfig::Uniform {
-            weight: 2,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let uni = SparseChallengeConfig::pm1_only(2);
         assert!((uni.log2_support_bits::<4>() - 24.0_f64.log2()).abs() < 1e-9);
     }
 
     #[test]
     fn challenge_l2_sq_max_matches_spec_table() {
-        let shell = SparseChallengeConfig::ExactShell {
-            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
-            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+        let shell = SparseChallengeConfig {
+            count_pm1: D64_PRODUCTION_PM1_COUNT,
+            count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
         assert_eq!(shell.l1_norm(), 51);
         assert_eq!(shell.challenge_l2_sq_max(), 71);
         assert_eq!(shell.nonzero_count_max(), 41);
 
-        let uni128 = SparseChallengeConfig::Uniform {
-            weight: 31,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let uni128 = SparseChallengeConfig::pm1_only(31);
         assert_eq!(uni128.challenge_l2_sq_max(), 31);
         assert_eq!(uni128.nonzero_count_max(), 31);
 
-        let uni256 = SparseChallengeConfig::Uniform {
-            weight: 23,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let uni256 = SparseChallengeConfig::pm1_only(23);
         assert_eq!(uni256.challenge_l2_sq_max(), 23);
         assert_eq!(uni256.nonzero_count_max(), 23);
 
-        let bounded = SparseChallengeConfig::BoundedL1Norm;
-        assert_eq!(bounded.challenge_l2_sq_max(), 8 * 121);
+        for (d, pm1, pm2) in PRODUCTION_FOLD_CHALLENGE_LADDER {
+            if *d >= 512 {
+                let cfg = SparseChallengeConfig {
+                    count_pm1: *pm1,
+                    count_pm2: *pm2,
+                };
+                assert!(cfg.validate_for_ring_dim(*d).is_ok());
+            }
+        }
     }
 }

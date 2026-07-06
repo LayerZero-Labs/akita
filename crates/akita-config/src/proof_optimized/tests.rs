@@ -31,10 +31,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{CleartextWitnessShape, DirectStep, FoldStep, SisModulusFamily, Step};
 
-    let sparse = SparseChallengeConfig::Uniform {
-        weight: 1,
-        nonzero_coeffs: vec![-1, 1],
-    };
+    let sparse = SparseChallengeConfig::pm1_only(1);
     let fold_lp = LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 1, 1, 1, sparse);
 
     let steps = vec![
@@ -111,10 +108,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         fn ring_challenge_config(
             _d: usize,
         ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-            Ok(akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            })
+            Ok(akita_challenges::SparseChallengeConfig::pm1_only(1))
         }
         fn sis_modulus_family() -> akita_types::SisModulusFamily {
             akita_types::SisModulusFamily::Q32
@@ -176,10 +170,7 @@ fn setup_matrix_envelope_does_not_add_conservative_layout() {
         fn ring_challenge_config(
             _d: usize,
         ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-            Ok(akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            })
+            Ok(akita_challenges::SparseChallengeConfig::pm1_only(1))
         }
 
         fn sis_modulus_family() -> akita_types::SisModulusFamily {
@@ -493,7 +484,7 @@ fn setup_envelope_endpoint_poly_scan_full_manual() {
 #[test]
 fn presets_select_expected_sis_modulus_family() {
     assert_eq!(
-        <fp128::D32Full as CommitmentConfig>::sis_modulus_family(),
+        <fp128::D64Full as CommitmentConfig>::sis_modulus_family(),
         akita_types::SisModulusFamily::Q128
     );
     assert_eq!(
@@ -840,7 +831,7 @@ fn tight_block_len_is_no_larger_than_pow2() {
 // support sets the Fiat-Shamir soundness of the fold. These tests pin the
 // shared dimension-keyed policy to its designed >=128-bit families and assert
 // no preset can silently regress to a low-support family (the historical
-// `Uniform { weight: 8, [-1, 1] }`, which has only ~31 bits at D=32).
+// `Uniform { weight: 8, [-1, 1] }`, which has only ~31 bits at small D).
 
 /// `log2` of the binomial coefficient `C(n, k)`, summed over logs so the large
 /// `(D, weight)` pairs used by these families never overflow.
@@ -855,25 +846,9 @@ fn log2_binomial(n: usize, k: usize) -> f64 {
 }
 
 /// Bits of Fiat-Shamir support in a ring-challenge family at ring degree `d`.
-/// `BoundedL1Norm` is constructed so its space exceeds `2^128` (proven in
-/// `akita_challenges::sampler::bounded_l1_support`), so it is reported as
-/// infinite here rather than re-running the bounded-L1 DP.
 fn challenge_support_bits(cfg: &SparseChallengeConfig, d: usize) -> f64 {
-    match cfg {
-        SparseChallengeConfig::Uniform {
-            weight,
-            nonzero_coeffs,
-        } => log2_binomial(d, *weight) + (*weight as f64) * (nonzero_coeffs.len() as f64).log2(),
-        SparseChallengeConfig::ExactShell {
-            count_mag1,
-            count_mag2,
-            ..
-        } => {
-            let support = count_mag1 + count_mag2;
-            log2_binomial(d, support) + log2_binomial(support, *count_mag1) + (support as f64)
-        }
-        SparseChallengeConfig::BoundedL1Norm => f64::INFINITY,
-    }
+    let w = cfg.weight();
+    log2_binomial(d, w) + log2_binomial(w, cfg.count_pm1) + w as f64
 }
 
 #[test]
@@ -883,34 +858,18 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     // the schedules are generated against.
     let cases = [
         (
-            32usize,
-            SparseChallengeConfig::BoundedL1Norm,
-            (121usize, 8u32),
-        ),
-        (
             64,
-            SparseChallengeConfig::ExactShell {
-                count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
-                count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+            SparseChallengeConfig {
+                count_pm1: akita_challenges::D64_PRODUCTION_PM1_COUNT,
+                count_pm2: akita_challenges::D64_PRODUCTION_PM2_COUNT,
             },
             (51, 2),
         ),
-        (
-            128,
-            SparseChallengeConfig::Uniform {
-                weight: 31,
-                nonzero_coeffs: vec![-1, 1],
-            },
-            (31, 1),
-        ),
-        (
-            256,
-            SparseChallengeConfig::Uniform {
-                weight: 23,
-                nonzero_coeffs: vec![-1, 1],
-            },
-            (23, 1),
-        ),
+        (128, SparseChallengeConfig::pm1_only(31), (31, 1)),
+        (256, SparseChallengeConfig::pm1_only(23), (23, 1)),
+        (512, SparseChallengeConfig::pm1_only(19), (19, 1)),
+        (1024, SparseChallengeConfig::pm1_only(16), (16, 1)),
+        (2048, SparseChallengeConfig::pm1_only(14), (14, 1)),
     ];
     for (d, expected, (l1, linf)) in cases {
         let got = proof_optimized_ring_challenge_config(d).unwrap();
@@ -931,14 +890,8 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     assert_eq!(d64.l1_norm(), 51);
     assert_eq!(d64.challenge_l2_sq_max(), 71);
 
-    // `BoundedL1Norm` is only valid at `D = 32`; confirm the policy wires it to
-    // the one degree its sampler accepts.
-    proof_optimized_ring_challenge_config(32)
-        .unwrap()
-        .validate::<32>()
-        .unwrap();
-
-    // Ring degrees no preset uses must be rejected, not silently defaulted.
+    // d_a=32 has no sparse fold challenge; non-power-of-two degrees are rejected.
+    assert!(proof_optimized_ring_challenge_config(32).is_err());
     assert!(proof_optimized_ring_challenge_config(16).is_err());
     assert!(proof_optimized_ring_challenge_config(48).is_err());
 }
@@ -983,8 +936,6 @@ fn all_proof_optimized_presets_use_shared_ring_challenge() {
     assert_preset_uses_shared_ring_challenge::<fp32::D256Full>();
     assert_preset_uses_shared_ring_challenge::<fp32::D256OneHot>();
 
-    assert_preset_uses_shared_ring_challenge::<fp64::D32Full>();
-    assert_preset_uses_shared_ring_challenge::<fp64::D32OneHot>();
     assert_preset_uses_shared_ring_challenge::<fp64::D64Full>();
     assert_preset_uses_shared_ring_challenge::<fp64::D64OneHot>();
     assert_preset_uses_shared_ring_challenge::<fp64::D128Full>();
@@ -992,8 +943,6 @@ fn all_proof_optimized_presets_use_shared_ring_challenge() {
     assert_preset_uses_shared_ring_challenge::<fp64::D256Full>();
     assert_preset_uses_shared_ring_challenge::<fp64::D256OneHot>();
 
-    assert_preset_uses_shared_ring_challenge::<fp128::D32Full>();
-    assert_preset_uses_shared_ring_challenge::<fp128::D32OneHot>();
     assert_preset_uses_shared_ring_challenge::<fp128::D64Full>();
     assert_preset_uses_shared_ring_challenge::<fp128::D64OneHot>();
     assert_preset_uses_shared_ring_challenge::<fp128::D128Full>();

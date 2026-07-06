@@ -31,7 +31,6 @@ use akita_transcript::labels::{
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::dispatch_ring_dim_result;
 use akita_types::FpExtEncoding;
 use akita_types::{
     append_claim_values_to_transcript, basis_weights, build_trace_table_scaled,

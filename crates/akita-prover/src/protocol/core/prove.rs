@@ -9,10 +9,10 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
+use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
-    schedule_terminal_direct_witness_shape, should_reject_grouped_root,
-    validate_schedule_ring_dims, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_grouped_root,
+    RingDimPlan, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 
 fn grouped_root_prover_error(message: &'static str) -> AkitaError {
@@ -38,19 +38,24 @@ pub fn prove_root_direct<F, E, P>(
     ring_d: usize,
 ) -> Result<AkitaBatchedProof<F, E>, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
     E: ExtField<F>,
     P: DirectRootWitnessSource<F, 32>
         + DirectRootWitnessSource<F, 64>
         + DirectRootWitnessSource<F, 128>
         + DirectRootWitnessSource<F, 256>,
 {
-    let witnesses = dispatch_ring_dim_result!(ring_d, |D| {
-        polys
-            .iter()
-            .map(|poly| DirectRootWitnessSource::<F, D>::direct_root_witness(*poly))
-            .collect::<Result<Vec<_>, _>>()
-    })?;
+    let witnesses = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        ring_d,
+        |D| {
+            polys
+                .iter()
+                .map(|poly| DirectRootWitnessSource::<F, D>::direct_root_witness(*poly))
+                .collect::<Result<Vec<_>, _>>()
+        }
+    )?;
     let _ = hints;
     Ok(AkitaBatchedProof {
         root: AkitaBatchedRootProof::new_zero_fold(witnesses),
@@ -147,7 +152,7 @@ where
         return Err(grouped_root_prover_error(message));
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
-    validate_schedule_ring_dims(&schedule, expanded.seed())?;
+    let ring_plan = RingDimPlan::from_schedule(&schedule, expanded.seed())?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => &root.params,
         Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {
@@ -168,15 +173,20 @@ where
     // exactly as the verifier's `batched_verify` does) keeps the prover and
     // verifier descriptors byte-identical under a future mixed-D preset. This is
     // the one absorption-parity point the compiler cannot check (S7/S9 caveat).
-    dispatch_ring_dim_result!(expanded.seed().gen_ring_dim, |GEN_D| {
-        bind_transcript_instance_descriptor::<Cfg::Field, T, GEN_D, Cfg>(
-            expanded.as_ref(),
-            &opening_batch,
-            &schedule,
-            basis,
-            transcript,
-        )
-    })?;
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Envelope,
+        Cfg::Field,
+        expanded.seed().gen_ring_dim,
+        |GEN_D| {
+            bind_transcript_instance_descriptor::<Cfg::Field, T, GEN_D, Cfg>(
+                expanded.as_ref(),
+                &opening_batch,
+                &schedule,
+                basis,
+                transcript,
+            )
+        }
+    )?;
 
     if schedule_is_root_direct(&schedule) {
         let commitment_hints = claims.hints().to_vec();
@@ -199,6 +209,7 @@ where
         transcript,
         claims,
         &schedule,
+        &ring_plan,
         basis,
         setup_contribution_mode,
     )
@@ -233,6 +244,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
     transcript: &mut T,
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &Schedule,
+    ring_plan: &RingDimPlan,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
@@ -279,10 +291,10 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    // Role dims were validated against the setup seed at batched_prove entry;
-    // NTT pre-warm reads the same schedule-owned dims per level.
-    for level in 0..schedule.num_fold_levels() {
-        let role_dims = schedule.get_execution_schedule(level)?.params.role_dims();
+    // `RingDimPlan` validates every level's role dims against the setup seed at
+    // entry; NTT pre-warm reads the same plan-derived dims per level.
+    for level in 0..ring_plan.num_folds() {
+        let role_dims = ring_plan.dims_at(level)?;
         stacks
             .prove_stack_at_level(level)
             .ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;

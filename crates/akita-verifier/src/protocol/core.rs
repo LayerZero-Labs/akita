@@ -10,7 +10,7 @@ use crate::protocol::ring_switch::{
     ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
 };
 use crate::stages::stage1::{
-    derive_stage1_challenges, validate_fold_grind_nonce, AkitaStage1Verifier,
+    derive_witness_fold_challenges, validate_fold_grind_nonce, AkitaStage1Verifier,
 };
 use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
 use crate::stages::SetupSumcheckVerifier;

@@ -31,7 +31,7 @@ protocol.
 
 The cutover has three linked parts.
 First, folding challenges are sampled from operator-norm accepted distributions,
-starting with the D=64 exact-shell family and production rejection threshold `gamma(c) <= 18`.
+starting with the D=64 signed-sparse family and production rejection threshold `gamma(c) <= 18`.
 Second, the folded witness `z = sum_i c_i * s_i` carries a certified Euclidean
 norm bound, proved over the finite field as an exact integer statement.
 Third, the SIS planner, generated tables, public security model, transcript
@@ -82,8 +82,8 @@ scoring cost (`(1 + n_a)·δ_open·2^r + δ_commit·δ_fold·m_eff`, same as
 the fold draw samples at most `2^12` sparse challenges (flat `2^{r_vars} · num_claims`,
 or tensor `num_claims · (left_len + right_len)`).
 **Production scope today is D=64 only.** The only shipped binding preset is
-`ExactShell { count_mag1: 31, count_mag2: 11 }` with `T = 18` at ring degree 64.
-D=32 uses `BoundedL1Norm`; D=128 and D=256 use `Uniform` sparse challenges
+`signed-sparse { count_mag1: 31, count_mag2: 11 }` with `T = 18` at ring degree 64.
+D=32 uses `BoundedL1Norm`; D=128 and D=256 use `pm1-only` sparse challenges
 (`proof_optimized_ring_challenge_config`). For those families
 `operator_norm_cap` equals L1 mass, so the flag stays false and the sampler
 skips the rejection oracle. D=128/D=256 flat folds may still use fold-linf
@@ -139,8 +139,8 @@ schedule search and table expansion.
   Prover and verifier must replay the same rejection-sampling transcript stream.
 - **Accepted challenge entropy.** Each production challenge family has at least
   128 bits of accepted Fiat-Shamir support after rejection sampling.
-  For D=64 exact shell, the target starting point is
-  `ExactShell { count_mag1: 31, count_mag2: 11 }` with `gamma(c) <= 18`, whose
+  For D=64 signed sparse, the target starting point is
+  `signed-sparse { count_mag1: 31, count_mag2: 11 }` with `gamma(c) <= 18`, whose
   raw support is about `2^130.152`.
   The rational acceptance floor `13/20` is certified for tail-bound sizing on
   levels with `op_norm_rejection` enabled; a vendored checked ≥128-bit artifact
@@ -208,7 +208,7 @@ schedule search and table expansion.
       `rounded_up_collision_norm_s`, derived `d·B²` table keys (`COEFF_LINF_BUCKETS`,
       `collision_l2_sq_for_linf_envelope`), and pow2-ladder fallback; `collision_inf` is
       removed from production call sites (`collision_l2_sq` on `AjtaiKeyParams`).
-- [x] *(#155, S3 infra; D64 op-norm split PR)* Exact-shell operator-norm rejection
+- [x] *(#155, S3 infra; D64 op-norm split PR)* signed-sparse operator-norm rejection
       sampling, `operator_norm_cap`, per-level `op_norm_rejection` on `LevelParams`,
       and descriptor binding are implemented. Production D=64 ships `(31, 11)` with
       `T = 18`; the planner enables rejection sampling only on fold levels where
@@ -280,7 +280,7 @@ schedule search and table expansion.
 
 Unit tests:
 
-- Challenge tests for D=64 exact-shell acceptance:
+- Challenge tests for D=64 signed-sparse acceptance:
   deterministic rejection replay, support-domain bytes, accepted `gamma(c) <= T`,
   and stable transcript behavior across prover and verifier.
 - Exact or interval-certified tests for the challenge support lower bound.
@@ -363,7 +363,7 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 - Fold width: `B = num_claims * num_blocks` (typically `num_claims = 1` at
   root).
 - Per-coordinate RMS: `z_rms = ||z||_2 / sqrt(coeffs)`.
-- Current production D=64 exact shell is `(31, 11)`, so
+- Current production D=64 signed sparse is `(31, 11)`, so
   `rho2 = 31 + 4 * 11 = 75`.
   Operator-norm rejection is enabled per fold level only when Γ pricing lowers
   audited A-rank and witness-scoring cost favors rejection; the sampler enforces
@@ -386,7 +386,7 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 - Dense profile runs may panic afterward on a pre-existing proof-size overcount
   assertion (`planned` vs `actual` bytes).
   Norm logs are emitted before that panic.
-- Op-norm rejection on fixed-energy exact shell does not change `rho2 = 75` for
+- Op-norm rejection on fixed-energy signed sparse does not change `rho2 = 75` for
   `(31, 11)`; it tightens Γ-priced A-role ranks and tail behavior on enabled levels.
 - Historical calibration tables below used the prior `(30, 12)` shell (`rho2 = 78`).
   Re-measure under `(31, 11)` before feeding backsolved second moments into planner code.
@@ -571,7 +571,7 @@ gamma(c) p99  = 62.26
 ```
 
 This is far below the coefficient worst-case `||c||_1 = 121`, but much larger
-than the D64 exact-shell threshold currently being studied.
+than the D64 signed-sparse threshold currently being studied.
 The numbers are calibration only.
 They suggest D32 is worth repricing under the L2/operator-norm model, but they
 do not by themselves justify adding D32 back to production schedules.
@@ -998,7 +998,7 @@ sumcheck.
 For D=64 the initial production candidate is:
 
 ```text
-SparseChallengeConfig::ExactShell {
+SparseChallengeConfig::signed-sparse {
     count_mag1: 31,
     count_mag2: 11,
 }
@@ -1110,7 +1110,7 @@ should trigger only for candidates extremely close to the threshold.
 
 The sampler must consume transcript randomness in a stable way.
 Rejected candidates are not allowed to create prover/verifier divergence.
-The challenge domain separator must include the exact shell parameters and
+The challenge domain separator must include the signed sparse parameters and
 operator-norm threshold.
 
 ### Folded-Witness ∞-Norm Rejection (digit-count tightening)
@@ -1120,7 +1120,7 @@ Operator-norm rejection (above) and the L2 certificate price the **A-role rank**
 this section instead tightens the **digit count** `num_digits_fold` of the next
 recursive witness `z_hat`, which is sized by the `‖z‖_inf` envelope `β_inf` and is
 orthogonal to the A-role collision bound.
-The analysis is specific to the D=64 exact-shell family.
+The analysis is specific to the D=64 signed-sparse family.
 
 **What sizes the digit count today.**
 `z` enters the next level only through its balanced base-`b` digit planes `z_hat`,
@@ -1148,9 +1148,9 @@ threshold `t < β_inf`. A level then commits the smallest `K` with
 `t` and `β_inf` straddle a power of `b`.
 
 **Why it terminates in poly time (D=64).**
-The D=64 exact shell `(count_mag1, count_mag2)` places `count_mag1` coordinates of
+The D=64 signed sparse `(count_mag1, count_mag2)` places `count_mag1` coordinates of
 magnitude 1 and `count_mag2` of magnitude 2 on a uniform support, each nonzero
-coordinate carrying an *independent uniform sign* (`sample_exact_shell_challenge`,
+coordinate carrying an *independent uniform sign* (`sample_signed_sparse_challenge`,
 `XofCursor::next_sign`). For production `(30, 12)`, `ω = ‖c‖_1 = 54` and the
 energy `rho2 = ‖c‖_2^2 = 30 + 4·12 = 78` are fixed (every member meets
 `rho2 <= ‖c‖_inf · ‖c‖_1 = 108`).
@@ -1420,7 +1420,7 @@ Each gates specific slices, noted in parentheses.
 
 - L2 MSIS definition and estimator input convention, including the B/D
   `||v||_2 <= sqrt(d)·||v||_inf` conversion into the single L2 table. (S4, S5)
-- D=64 exact-shell operator-norm acceptance lower bound, and the fallback if it
+- D=64 signed-sparse operator-norm acceptance lower bound, and the fallback if it
   lands below `0.225` (larger shell or higher `T`). (S2)
 - Production D=64 shell and threshold: **`(31, 11), T = 18` shipped** in
   [#207](https://github.com/LayerZero-Labs/akita/pull/207) (per-level `op_norm_rejection`
@@ -1517,7 +1517,7 @@ target path because `B_l2 - Z_SQUARED` can exceed `2^64`.
 `akita-types::sis::norm_bound` (Γ-vs-ω pricing, witness-scoring gate, `2^12` cap),
 `akita-planner` (`choose_op_norm_rejection_for_a_role`, `expand` n_a audit),
 `LevelParams.op_norm_rejection`.
-Production D=64: `ExactShell { count_mag1: 31, count_mag2: 11 }`, `T = 18`,
+Production D=64: `signed-sparse { count_mag1: 31, count_mag2: 11 }`, `T = 18`,
 certified acceptance floor `13/20`, `fp128_d64_*` schedule regen.
 **Landed** in [#207](https://github.com/LayerZero-Labs/akita/pull/207). Vendored S2 ≥128-bit acceptance cert remains open.
 
