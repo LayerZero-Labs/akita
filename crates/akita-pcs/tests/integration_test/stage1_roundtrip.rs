@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{

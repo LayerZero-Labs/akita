@@ -16,8 +16,9 @@
 //! Every preset listed in `presets.rs` for the production D64 merge gate gets its
 //! own module with the five tests.
 
-#![allow(missing_docs)]
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use akita_config::proof_optimized::fp128;

@@ -11,9 +11,8 @@
 //!
 //! `cargo test --release -p akita-pcs --test recursive_setup_e2e --features profile-ci -- --ignored`
 
-#![cfg(feature = "profile-ci")]
-#![allow(missing_docs)]
-
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use common::*;

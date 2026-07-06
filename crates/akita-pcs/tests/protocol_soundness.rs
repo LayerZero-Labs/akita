@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
@@ -31,6 +30,8 @@ use rand::{Rng, SeedableRng};
 use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 use common::opening_from_poly_for_layout;
 

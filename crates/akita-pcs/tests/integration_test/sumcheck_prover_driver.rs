@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 
 use akita_field::Fp64;
 use akita_field::RandomSampling;

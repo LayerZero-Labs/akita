@@ -1,5 +1,6 @@
-#![allow(missing_docs)]
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use akita_field::AkitaError;
