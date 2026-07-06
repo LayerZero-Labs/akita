@@ -374,6 +374,8 @@ mod round2_prefix;
 mod round_flow;
 mod segment_prefix;
 
+pub(crate) use pair_scan::WitnessPolynomial;
+
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[inline]
     pub(super) fn relation_weight_coeff_len(&self) -> usize {

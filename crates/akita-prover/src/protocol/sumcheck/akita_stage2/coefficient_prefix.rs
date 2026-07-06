@@ -3,9 +3,9 @@ use super::*;
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_compact_coefficient_prefix_terms"
+        name = "AkitaStage2Prover::scan_embedded_coefficient_compact"
     )]
-    pub(super) fn compute_round_compact_coefficient_prefix_terms(
+    pub(super) fn scan_embedded_coefficient_compact(
         &self,
         w_compact: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
@@ -170,9 +170,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_full_coefficient_prefix_terms"
+        name = "AkitaStage2Prover::scan_embedded_coefficient_full"
     )]
-    pub(super) fn compute_round_full_coefficient_prefix_terms(
+    pub(super) fn scan_embedded_coefficient_full(
         &self,
         w_full: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {

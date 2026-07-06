@@ -326,12 +326,36 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::scan_round")]
+    pub(super) fn scan_round(
+        &self,
+        witness: WitnessPolynomial<'_, E>,
+    ) -> (NormRoundTerms<E>, [E; 3]) {
+        if self.use_coefficient_prefix_round() {
+            match witness {
+                WitnessPolynomial::CompactDigits(w) => self.scan_embedded_coefficient_compact(w),
+                WitnessPolynomial::FieldEvals(w) => self.scan_embedded_coefficient_full(w),
+            }
+        } else if self.use_segment_prefix_round() {
+            match witness {
+                WitnessPolynomial::CompactDigits(w) => self.scan_embedded_segment_compact(w),
+                WitnessPolynomial::FieldEvals(w) => self.scan_embedded_segment_full(w),
+            }
+        } else {
+            match witness {
+                WitnessPolynomial::CompactDigits(w) => self.scan_round_compact_blocked(w),
+                WitnessPolynomial::FieldEvals(w) => self.scan_round_full_blocked(w),
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn compute_round_compact_dense_polys(
         &self,
         w_compact: &[i8],
     ) -> (UniPoly<E>, UniPoly<E>) {
-        let (virt_q_coeffs, rel_coeffs) = self.scan_round_compact_blocked(w_compact);
+        let (virt_q_coeffs, rel_coeffs) =
+            self.scan_round(WitnessPolynomial::CompactDigits(w_compact));
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
     }
 }

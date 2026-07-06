@@ -1,15 +1,6 @@
 use super::*;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
-    pub(super) fn compute_round_compact_segment_prefix_polys(
-        &self,
-        w_compact: &[i8],
-    ) -> (UniPoly<E>, UniPoly<E>) {
-        let (virt_q_coeffs, rel_coeffs) =
-            self.compute_round_compact_segment_prefix_terms(w_compact);
-        self.polys_from_terms(virt_q_coeffs, rel_coeffs)
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "AkitaStage2Prover::fuse_full_segment_prefix_and_compute_round"
@@ -266,9 +257,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_compact_segment_prefix_terms"
+        name = "AkitaStage2Prover::scan_embedded_segment_compact"
     )]
-    pub(super) fn compute_round_compact_segment_prefix_terms(
+    pub(super) fn scan_embedded_segment_compact(
         &self,
         w_compact: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
@@ -430,12 +421,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_full_segment_prefix_terms"
+        name = "AkitaStage2Prover::scan_embedded_segment_full"
     )]
-    pub(super) fn compute_round_full_segment_prefix_terms(
-        &self,
-        w_full: &[E],
-    ) -> (NormRoundTerms<E>, [E; 3]) {
+    pub(super) fn scan_embedded_segment_full(&self, w_full: &[E]) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.rounds_completed >= self.coeff_bits());
         debug_assert!(self.segment_rounds_completed() < self.segment_bits);
         debug_assert_eq!(

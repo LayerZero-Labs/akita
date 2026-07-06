@@ -830,7 +830,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     )
     .unwrap();
     let (virt_terms, rel_coeffs) =
-        expected.compute_round_full_segment_prefix_terms(&expected_next_w_full);
+        expected.scan_round(WitnessPolynomial::FieldEvals(&expected_next_w_full));
     let expected_round3 = expected.combine_terms(virt_terms, rel_coeffs);
 
     prover.ingest_challenge(2, r2);

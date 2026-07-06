@@ -4,9 +4,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
         let use_round_batching = self.using_initial_round_batch();
-        let use_coefficient_prefix_round =
-            !use_round_batching && self.use_coefficient_prefix_round();
-        let use_segment_prefix_round = !use_round_batching && self.use_segment_prefix_round();
         let rounds_completed = self.rounds_completed;
         let poly = if use_round_batching {
             let (virt_poly, rel_poly) = {
@@ -26,39 +23,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             self.prev_norm_poly = Some(virt_poly);
             combined
         } else {
-            match &self.witness_table {
+            let (virt_q_coeffs, rel_coeffs) = match &self.witness_table {
                 WitnessTable::Compact(w_compact) => {
-                    if use_coefficient_prefix_round {
-                        let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_compact_coefficient_prefix_terms(w_compact);
-                        self.combine_terms(virt_q_coeffs, rel_coeffs)
-                    } else if use_segment_prefix_round {
-                        let (virt_poly, rel_poly) =
-                            self.compute_round_compact_segment_prefix_polys(w_compact);
-                        let combined = self.combine_polys(&virt_poly, &rel_poly);
-                        self.prev_norm_poly = Some(virt_poly);
-                        combined
-                    } else {
-                        let (virt_q_coeffs, rel_coeffs) =
-                            self.scan_round_compact_blocked(w_compact);
-                        self.combine_terms(virt_q_coeffs, rel_coeffs)
-                    }
+                    self.scan_round(WitnessPolynomial::CompactDigits(w_compact))
                 }
                 WitnessTable::Full(w_full) => {
-                    if use_coefficient_prefix_round {
-                        let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_full_coefficient_prefix_terms(w_full);
-                        self.combine_terms(virt_q_coeffs, rel_coeffs)
-                    } else if use_segment_prefix_round {
-                        let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_full_segment_prefix_terms(w_full);
-                        self.combine_terms(virt_q_coeffs, rel_coeffs)
-                    } else {
-                        let (virt_q_coeffs, rel_coeffs) = self.scan_round_full_blocked(w_full);
-                        self.combine_terms(virt_q_coeffs, rel_coeffs)
-                    }
+                    self.scan_round(WitnessPolynomial::FieldEvals(w_full))
                 }
-            }
+            };
+            self.combine_terms(virt_q_coeffs, rel_coeffs)
         };
         self.scan_time_total += t_scan.elapsed().as_secs_f64();
         poly
