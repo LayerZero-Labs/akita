@@ -11,8 +11,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    digest_level_params, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
-    FlatDigitBlocks, LevelParams, RingCommitment, SetupPrefixSlot,
+    setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks, LevelParams,
+    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -25,15 +25,17 @@ use akita_types::{
 ///
 /// Returns an error if shapes overflow, the prefix does not fit the setup matrix,
 /// or backend commitment fails.
+#[allow(clippy::too_many_arguments)]
 pub fn commit_setup_prefix<F, const D: usize, B>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
-    prepared: &B::PreparedSetup<D>,
+    prepared: &B::PreparedSetup,
     level_params: &LevelParams,
+    level_params_digest: [u8; 32],
     setup_seed_digest: [u8; 32],
     n_prefix: usize,
     natural_len: usize,
-) -> Result<SetupPrefixSlot<F, D>, AkitaError>
+) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
@@ -100,8 +102,8 @@ where
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut decomposed_inner_rows = FlatDigitBlocks::zeroed(block_sizes)?;
-    let dst_blocks = decomposed_inner_rows.split_blocks_mut();
+    let mut decomposed_inner_rows = DigitBlocks::zeroed(block_sizes, D)?;
+    let dst_blocks = decomposed_inner_rows.split_typed_blocks_mut::<D>()?;
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
         .zip(cfg_iter!(recomposed_inner_rows))
@@ -135,7 +137,8 @@ where
     )?;
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
-    b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits());
+    let planes = decomposed_inner_rows.typed_planes::<D>()?;
+    b_input_digits.copy_from_slice(planes);
     let u = backend.digit_rows::<D>(
         prepared,
         level_params.b_key.row_len(),
@@ -150,22 +153,26 @@ where
         )));
     }
 
-    let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
-        decomposed_inner_rows,
-        recomposed_inner_rows,
-    );
+    // `recomposed_inner_rows` was only needed to decompose into the digit
+    // stream above; the protocol slot stores the D-free decomposed digits and a
+    // D-free flat commitment. Recomposed rows are recomputed on demand
+    // downstream (S5 re-home), not cached on the slot.
+    let _ = &recomposed_inner_rows;
+    let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows);
     let id = setup_prefix_slot_id(
         setup_seed_digest,
         D,
         natural_len,
         n_prefix,
-        digest_level_params(std::slice::from_ref(level_params)),
+        level_params_digest,
     );
     Ok(SetupPrefixSlot {
         id,
         natural_len,
         padded_len: n_prefix,
-        commitment: RingCommitment { u },
+        commitment: SetupPrefixPublicCommitment {
+            rows: vec![RingVec::from_ring_elems(&u)],
+        },
         hint,
     })
 }
@@ -229,8 +236,8 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, setup_seed_digest, OpeningClaimsLayout, SetupMatrixEnvelope,
-        SisModulusFamily,
+        active_setup_field_len, digest_level_params, setup_seed_digest, OpeningClaimsLayout,
+        SetupMatrixEnvelope, SisModulusFamily,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
@@ -269,10 +276,11 @@ mod tests {
     fn test_setup<const D: usize>(
         level_params: &LevelParams,
         n_prefix: usize,
-    ) -> AkitaProverSetup<F, D> {
-        AkitaProverSetup::<F, D>::generate_with_capacity(
+    ) -> AkitaProverSetup<F> {
+        AkitaProverSetup::<F>::generate_with_capacity(
             8,
             1,
+            D,
             SetupMatrixEnvelope {
                 max_setup_len: setup_capacity_for(level_params, n_prefix).max(1),
             },
@@ -319,13 +327,14 @@ mod tests {
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
-        let prepared = backend.prepare_setup::<D>(&setup).expect("prepared setup");
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let seed_digest = setup_seed_digest(setup.expanded.seed()).expect("digest");
         let slot = commit_setup_prefix::<F, D, _>(
             &setup.expanded,
             &backend,
             &prepared,
             &level_params,
+            digest_level_params(std::slice::from_ref(&level_params)),
             seed_digest,
             n_prefix,
             natural_len,

@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn verifier_setup_prefix_slots_roundtrip() {
         use crate::proof::{
-            FlatRingVec, SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierSlot,
+            RingVec, SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierSlot,
         };
 
         let setup_seed = seed([7u8; 32]);
@@ -556,7 +556,7 @@ mod tests {
             natural_len: D - 1,
             padded_len: D,
             commitment: SetupPrefixPublicCommitment {
-                rows: vec![FlatRingVec::from_coeffs(vec![F::zero(); D])],
+                rows: vec![RingVec::from_coeffs(vec![F::zero(); D])],
             },
         };
         prefix_slots.insert(slot).expect("insert prefix slot");

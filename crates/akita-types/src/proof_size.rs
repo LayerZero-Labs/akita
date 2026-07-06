@@ -154,8 +154,7 @@ mod tests {
     use crate::{
         direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
         AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape,
-        FlatRingVec, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof,
-        SETUP_SUMCHECK_DEGREE,
+        RingVec, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -179,9 +178,9 @@ mod tests {
         let witness = SegmentTypedWitness {
             layout,
             z_payload,
-            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
-            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
-            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+            e_fields: RingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: RingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
         };
         (CleartextWitnessProof::SegmentTyped(witness), shape)
     }
@@ -275,12 +274,12 @@ mod tests {
 
         let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
-            v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+                next_w_commitment: RingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
                 next_w_eval: F::zero(),
             }),
             stage3_sumcheck_proof: stage3_setup_ring_len.map(|setup_ring_len| {

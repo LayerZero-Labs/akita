@@ -31,6 +31,11 @@ akita-prover = { version = "0.1.0", path = "../akita-prover", default-features =
 akita-types = { version = "0.1.0", path = "../akita-types", features = [
   "jl-test-fixtures",
 ] }
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "test-support",
+  "schedules-fp128-d128-full",
+  "schedules-fp128-d64-full",
+] }
 
 [features]
 default = ["schedules-default"]

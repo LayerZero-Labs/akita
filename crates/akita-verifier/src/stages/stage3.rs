@@ -13,8 +13,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
-    LevelParams, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    dispatch_ring_dim_result, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
+    SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -84,10 +85,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     /// Returns the projected next-witness opening point `rho_w` to be threaded
     /// into the next recursive suffix level.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn verify_batched_stage3<F, T, const D: usize>(
+    pub(crate) fn verify_batched_stage3<F, T>(
         &self,
         setup: &AkitaVerifierSetup<F>,
         next_fold_level_params: &LevelParams,
+        ring_d: usize,
         proof: &SetupSumcheckProof<E>,
         stage2_next_w_eval: E,
         stage2_challenges: &[E],
@@ -109,10 +111,85 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let setup_len = setup
             .expanded
             .shared_matrix()
-            .total_ring_elements_at::<D>()?;
-        let setup_eval_len =
-            self.setup_eval_len::<F, T, D>(setup, next_fold_level_params, setup_len, transcript)?;
+            .total_ring_elements_at_dyn(ring_d)?;
+        let setup_eval_len = self.setup_eval_len::<F, T>(
+            setup,
+            next_fold_level_params,
+            ring_d,
+            setup_len,
+            transcript,
+        )?;
+        dispatch_ring_dim_result!(ring_d, |D| {
+            self.verify_batched_stage3_kernel::<F, T, D>(
+                setup,
+                proof,
+                stage2_next_w_eval,
+                stage2_challenges,
+                witness_rounds,
+                setup_eval_len,
+                eta,
+                transcript,
+            )
+        })
+    }
 
+    fn setup_eval_len<F, T>(
+        &self,
+        setup: &AkitaVerifierSetup<F>,
+        next_fold_level_params: &LevelParams,
+        ring_d: usize,
+        setup_len: usize,
+        transcript: &mut T,
+    ) -> Result<usize, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+    {
+        if ring_d == SETUP_OFFLOAD_D_SETUP {
+            let natural_field_len = stage3_offload_natural_field_len(self.plan.required(), ring_d)?;
+            ensure_setup_envelope(&setup.expanded, self.plan.required(), ring_d)?;
+            let setup_prefix_selection = select_setup_prefix_slot(
+                setup.expanded.seed(),
+                setup_len,
+                |id| {
+                    setup
+                        .prefix_slots
+                        .get(id)
+                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
+                },
+                next_fold_level_params,
+                natural_field_len,
+                ring_d,
+                "verifier setup-prefix slot does not cover setup product",
+            )?;
+            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
+                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
+                Ok(setup_eval_len)
+            } else {
+                Ok(setup_len)
+            }
+        } else {
+            Ok(setup_len)
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn verify_batched_stage3_kernel<F, T, const D: usize>(
+        &self,
+        setup: &AkitaVerifierSetup<F>,
+        proof: &SetupSumcheckProof<E>,
+        stage2_next_w_eval: E,
+        stage2_challenges: &[E],
+        witness_rounds: usize,
+        setup_eval_len: usize,
+        eta: E,
+        transcript: &mut T,
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+        T: Transcript<F>,
+    {
         let batched_rounds = self.rounds.max(witness_rounds);
         transcript.append_serde(
             ABSORB_SUMCHECK_CLAIM,
@@ -151,46 +228,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             ));
         }
         Ok(rho_w)
-    }
-
-    fn setup_eval_len<F, T, const D: usize>(
-        &self,
-        setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &LevelParams,
-        setup_len: usize,
-        transcript: &mut T,
-    ) -> Result<usize, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        T: Transcript<F>,
-    {
-        if D == SETUP_OFFLOAD_D_SETUP {
-            let natural_field_len = self.plan.required().checked_mul(D).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup product natural field length overflow".to_string())
-            })?;
-            let setup_prefix_selection = select_setup_prefix_slot(
-                setup.expanded.seed(),
-                setup_len,
-                |id| {
-                    setup
-                        .prefix_slots
-                        .get(id)
-                        .map(|slot| (slot, slot.natural_len, slot.padded_len))
-                },
-                next_fold_level_params,
-                natural_field_len,
-                D,
-                "verifier setup-prefix slot does not cover setup product",
-            )?;
-            if let Some((slot, setup_eval_len)) = setup_prefix_selection {
-                transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
-                Ok(setup_eval_len)
-            } else {
-                Ok(setup_len)
-            }
-        } else {
-            Ok(setup_len)
-        }
     }
 }
 

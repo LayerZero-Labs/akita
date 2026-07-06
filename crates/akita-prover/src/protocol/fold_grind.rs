@@ -1,12 +1,14 @@
 //! Fold-l∞ Fiat–Shamir grind: preview off-sponge clones, commit the winning nonce.
 
-use crate::compute::{OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource};
-use crate::DecomposeFoldWitness;
+use crate::compute::{
+    OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
+};
 use akita_challenges::{
     grind_probe_permutation, preview_folding_challenges, sample_folding_challenges,
     stage1_fold_challenge_labels, Challenges,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
     golomb_rice_rows_admit_terminal_wire,
@@ -23,6 +25,7 @@ use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
     window_sparse_challenges,
 };
+use crate::DecomposeFoldWitness;
 
 /// Preview-only transcript access for prover-side fold grinding.
 ///
@@ -79,9 +82,9 @@ fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
     }
 }
 
-fn accepts_fold_witness<const D: usize>(
+fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     contract: &FoldWitnessGrindContract,
-    witness: &DecomposeFoldWitness<impl CanonicalField, D>,
+    witness: &DecomposeFoldWitness<F>,
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],
     witness_linf_cap: u128,
     digit_negative_abs_bound: u128,
@@ -111,8 +114,11 @@ fn accepts_fold_witness<const D: usize>(
         return false;
     }
     if ctx.check_golomb
-        && golomb_rice_rows_admit_terminal_wire(&witness.centered_coeffs, ctx.witness_linf_cap)
-            .is_err()
+        && golomb_rice_rows_admit_terminal_wire(
+            witness.centered_coeffs_trusted::<D>(),
+            ctx.witness_linf_cap,
+        )
+        .is_err()
     {
         return false;
     }
@@ -169,14 +175,14 @@ fn grind_probe_nonces(
 /// coefficient-wise sum of the windows (`Σ_i z_i = z`), so grind acceptance on
 /// the global L∞ is identical to a standalone global fold over all blocks.
 #[allow(clippy::type_complexity)]
-fn fold_probe_witness<F, P, B, const D: usize>(
+fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     backend: &B,
-    prepared: Option<&B::PreparedSetup<D>>,
+    prepared: Option<&B::PreparedSetup>,
     challenges: &Challenges,
     polys: &[&P],
     point_indices: &[usize],
     lp: &LevelParams,
-) -> Result<(DecomposeFoldWitness<F, D>, Vec<Vec<[i32; D]>>), AkitaError>
+) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     P: RootOpeningSource<F, D>,
@@ -185,6 +191,7 @@ where
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
     let num_chunks = lp.witness_chunk.num_chunks;
+    let blocks_per_chunk = lp.num_blocks / num_chunks.max(1);
     if num_chunks <= 1 {
         let witness = build_point_decompose_fold_witness::<F, P, B, D>(
             backend,
@@ -194,11 +201,10 @@ where
             point_indices,
             lp,
         )?;
-        let per_chunk = vec![witness.centered_coeffs.clone()];
+        let per_chunk = vec![witness.centered_coeffs_owned::<D>()];
         return Ok((witness, per_chunk));
     }
 
-    let blocks_per_chunk = lp.num_blocks / num_chunks;
     let windows = (0..num_chunks)
         .map(|chunk| {
             let windowed = window_sparse_challenges(challenges, chunk, blocks_per_chunk)?;
@@ -212,9 +218,103 @@ where
             )
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    let per_chunk = windows.iter().map(|w| w.centered_coeffs.clone()).collect();
-    let global = aggregate_decompose_fold_witnesses(windows)?;
+    let per_chunk = windows
+        .iter()
+        .map(|w| w.centered_coeffs_owned::<D>())
+        .collect();
+    let global = aggregate_decompose_fold_witnesses::<F, D>(windows)?;
     Ok((global, per_chunk))
+}
+
+/// Grind loop for one compile-time ring dimension: one dispatch arm, no per-nonce rematch.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup>,
+    transcript: &mut T,
+    polys: &[&P],
+    lp: &LevelParams,
+    num_claims: usize,
+    tail_t_vectors: Option<usize>,
+    contract: &FoldWitnessGrindContract,
+    witness_linf_cap: u128,
+    digit_negative_abs_bound: u128,
+    digit_positive_bound: u128,
+    level_meta: FoldGrindLevelMeta,
+    probe_nonces: &[u32],
+) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, D>,
+    B: crate::compute::ComputeBackendSetup<F>
+        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
+        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
+{
+    let ring_d = lp.role_dims().d_a();
+    let point_indices = (0..polys.len()).collect::<Vec<_>>();
+    let labels = stage1_fold_challenge_labels();
+    let mut grind_probe_count = 0u32;
+    for &nonce in probe_nonces {
+        grind_probe_count = grind_probe_count.saturating_add(1);
+        let challenges = preview_folding_challenges(
+            transcript,
+            ring_d,
+            lp.num_blocks,
+            num_claims,
+            &lp.stage1_config,
+            &lp.fold_challenge_shape,
+            labels,
+            nonce,
+        )?;
+        let (witness, z_per_chunk) = fold_probe_witness_kernel::<F, P, B, D>(
+            backend,
+            prepared,
+            &challenges,
+            polys,
+            &point_indices,
+            lp,
+        )?;
+        if !accepts_fold_witness::<F, D>(
+            contract,
+            &witness,
+            &z_per_chunk,
+            witness_linf_cap,
+            digit_negative_abs_bound,
+            digit_positive_bound,
+            tail_t_vectors,
+        ) {
+            continue;
+        }
+        let z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>> = z_per_chunk
+            .into_iter()
+            .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
+            .collect();
+        fold_grind_observer::record_fold_grind_acceptance(FoldGrindObservation {
+            level_index: fold_grind_observer::next_fold_grind_level_index(),
+            grind_nonce: nonce,
+            grind_probe_count,
+            observed_linf: witness.centered_inf_norm,
+            level_meta,
+        });
+        let challenges = sample_folding_challenges::<F, T>(
+            transcript,
+            ring_d,
+            lp.num_blocks,
+            num_claims,
+            &lp.stage1_config,
+            &lp.fold_challenge_shape,
+            labels,
+            nonce,
+        )?;
+        return Ok((witness, z_folded_centered_per_chunk, challenges, nonce));
+    }
+
+    Err(AkitaError::InvalidInput(format!(
+        "fold grind exceeded {} attempts (threshold={})",
+        contract.max_nonce_exclusive, contract.witness_linf_cap
+    )))
 }
 
 /// Probe fold challenges off-sponge, accept the first witness under `t*`, then commit.
@@ -227,31 +327,27 @@ where
 /// fit the terminal Golomb planner budget at wire low bits (including `WorstCaseBetaOnly`
 /// presets that do not reroll on linf cap).
 #[allow(clippy::type_complexity)]
-pub(crate) fn sample_fold_decompose_witness<F, P, B, T, const D: usize>(
+pub(crate) fn sample_fold_decompose_witness<F, P, B, T>(
     backend: &B,
-    prepared: Option<&B::PreparedSetup<D>>,
+    prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
     polys: &[&P],
     lp: &LevelParams,
     num_claims: usize,
     tail_t_vectors: Option<usize>,
-) -> Result<
-    (
-        DecomposeFoldWitness<F, D>,
-        Vec<Vec<[i32; D]>>,
-        Challenges,
-        u32,
-    ),
-    AkitaError,
->
+) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    P: RootOpeningSource<F, D>,
-    B: crate::compute::ComputeBackendSetup<F>
-        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
-        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, 32>
+        + RootOpeningSource<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootOpeningSource<F, 256>,
+    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
+    // A-role fold dimension; per-role split attaches here (mixed-row spec).
+    let ring_d = lp.role_dims().d_a();
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
     // Tail Golomb grinding sizes caps from `tail_t_vectors`; keep observer metrics on the
@@ -278,69 +374,31 @@ where
         r_vars: u32::try_from(lp.r_vars).unwrap_or(u32::MAX),
         num_claims: u32::try_from(sizing_claims).unwrap_or(u32::MAX),
     };
-    let point_indices = (0..polys.len()).collect::<Vec<_>>();
-    let labels = stage1_fold_challenge_labels();
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
 
-    let mut grind_probe_count = 0u32;
-    for nonce in probe_nonces {
-        grind_probe_count = grind_probe_count.saturating_add(1);
-        let challenges = preview_folding_challenges::<D>(
-            transcript,
-            lp.num_blocks,
-            num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
-            labels,
-            nonce,
-        )?;
-        let (witness, z_folded_centered_per_chunk) = fold_probe_witness::<F, P, B, D>(
+    akita_types::dispatch_ring_dim_result!(ring_d, |D| {
+        sample_fold_decompose_witness_at_dim::<F, P, B, T, D>(
             backend,
             prepared,
-            &challenges,
+            transcript,
             polys,
-            &point_indices,
             lp,
-        )?;
-        if !accepts_fold_witness(
+            num_claims,
+            tail_t_vectors,
             &contract,
-            &witness,
-            &z_folded_centered_per_chunk,
             witness_linf_cap,
             digit_negative_abs_bound,
             digit_positive_bound,
-            tail_t_vectors,
-        ) {
-            continue;
-        }
-        fold_grind_observer::record_fold_grind_acceptance(FoldGrindObservation {
-            level_index: fold_grind_observer::next_fold_grind_level_index(),
-            grind_nonce: nonce,
-            grind_probe_count,
-            observed_linf: witness.centered_inf_norm,
             level_meta,
-        });
-        let challenges = sample_folding_challenges::<F, T, D>(
-            transcript,
-            lp.num_blocks,
-            num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
-            labels,
-            nonce,
-        )?;
-        return Ok((witness, z_folded_centered_per_chunk, challenges, nonce));
-    }
-
-    Err(AkitaError::InvalidInput(format!(
-        "fold grind exceeded {} attempts (threshold={})",
-        contract.max_nonce_exclusive, contract.witness_linf_cap
-    )))
+            &probe_nonces,
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_transcript::AkitaTranscript;
     use akita_types::sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy};
@@ -389,14 +447,14 @@ mod tests {
             witness_linf_cap: cap,
             max_nonce_exclusive: 1,
         };
-        let witness = DecomposeFoldWitness::<F, D> {
-            z_folded_rings: Vec::new(),
-            centered_coeffs: vec![[cap as i32; D]],
-            centered_inf_norm: cap as u32,
-        };
-        let chunks = vec![witness.centered_coeffs.clone()];
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[cap as i32; D]],
+            cap as u32,
+        );
+        let chunks = vec![witness.centered_coeffs_owned::<D>()];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
-        assert!(!accepts_fold_witness(
+        assert!(!accepts_fold_witness::<F, D>(
             &contract,
             &witness,
             &chunks,
@@ -416,14 +474,14 @@ mod tests {
             witness_linf_cap: cap,
             max_nonce_exclusive: 8,
         };
-        let witness = DecomposeFoldWitness::<F, D> {
-            z_folded_rings: Vec::new(),
-            centered_coeffs: vec![[12; D]],
-            centered_inf_norm: 12,
-        };
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[12; D]],
+            12,
+        );
         let chunks = vec![vec![[33, 0, 0, 0]], vec![[-12; D]]];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
-        assert!(!accepts_fold_witness(
+        assert!(!accepts_fold_witness::<F, D>(
             &contract, &witness, &chunks, cap, neg_bound, pos_bound, None,
         ));
     }
@@ -436,16 +494,16 @@ mod tests {
             witness_linf_cap: 2080,
             max_nonce_exclusive: 8,
         };
-        let witness = DecomposeFoldWitness::<F, D> {
-            z_folded_rings: Vec::new(),
-            centered_coeffs: vec![[2022, 0, 0, 0]],
-            centered_inf_norm: 2022,
-        };
-        let chunks = vec![witness.centered_coeffs.clone()];
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[2022, 0, 0, 0]],
+            2022,
+        );
+        let chunks = vec![witness.centered_coeffs_owned::<D>()];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(6, 2);
         assert_eq!(neg_bound, 2080);
         assert_eq!(pos_bound, 2015);
-        assert!(!accepts_fold_witness(
+        assert!(!accepts_fold_witness::<F, D>(
             &contract, &witness, &chunks, 2080, neg_bound, pos_bound, None,
         ));
     }

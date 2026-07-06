@@ -10,7 +10,6 @@ use crate::{
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
@@ -23,11 +22,12 @@ use akita_field::{
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::dispatch_ring_dim_result;
+use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths, AkitaCommitmentHint,
-    AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, FpExtEncoding, LevelParams, MRowLayout,
-    RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationOpeningCounts,
+    AkitaExpandedSetup, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationOpeningCounts, RingVec,
 };
 
 mod coeffs;
@@ -39,7 +39,7 @@ mod tests;
 
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
-pub use commit::{commit_next_w, commit_w, NextWitnessCommitment};
+pub use commit::{commit_w, NextWitnessCommitment};
 pub use evals::{build_w_evals_compact, compute_m_evals_x};
 pub use finalize::ring_switch_finalize;
 

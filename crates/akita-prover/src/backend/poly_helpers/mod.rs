@@ -399,7 +399,7 @@ pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
     centered_coeffs: Vec<[i32; D]>,
     modulus: u128,
-) -> DecomposeFoldWitness<F, D> {
+) -> DecomposeFoldWitness<F> {
     let centered_inf_norm = centered_coeffs
         .iter()
         .flat_map(|row| row.iter())
@@ -409,11 +409,7 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
     let z_folded_rings = cfg_iter!(centered_coeffs)
         .map(|coeff_accum| signed_accum_to_ring::<F, D>(*coeff_accum, modulus))
         .collect();
-    DecomposeFoldWitness {
-        z_folded_rings,
-        centered_coeffs,
-        centered_inf_norm,
-    }
+    DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
 }
 
 /// Fused base-field fold + evaluation shared by backends that do not specialize it.

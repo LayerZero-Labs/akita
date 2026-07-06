@@ -8,28 +8,30 @@ scheduling remain follow-up work.
 
 - `AkitaExpandedSetup<F>` owns setup data shared with verifier/protocol code:
   seed, shared matrix, descriptor digest, and setup shape.
-- `AkitaProverSetup<F, D>` is a prover setup wrapper around expanded setup. It
-  does not own CPU NTT caches, device buffers, command queues, or any
-  backend-prepared state.
-- `ComputeBackendSetup<F>` owns backend preparation. Its associated
-  `PreparedSetup<D>` is typed by ring dimension.
+- `AkitaProverSetup<F>` is a D-free prover setup wrapper around expanded setup.
+  It stores runtime `gen_ring_dim` and does not own CPU NTT caches, device
+  buffers, command queues, or any backend-prepared state.
+- `ComputeBackendSetup<F>` owns backend preparation. Prepared setup slots are
+  keyed by ring dimension at kernel boundaries via `dispatch_ring_dim_result!`.
 - `DigitRowsComputeBackend<F>`, `CyclicRowsComputeBackend<F>`,
-  `CommitmentComputeBackend<F>`, and `RingSwitchComputeBackend<F>` own the
-  migrated operation families.
-- `CpuBackend` prepares `CpuPreparedSetup<F, D>` from an
-  `AkitaProverSetup<F, D>` or an `Arc<AkitaExpandedSetup<F>>`. That prepared
-  state owns the CPU NTT cache internally.
+  `CommitmentComputeBackend<F>`, and `RingSwitchComputeBackend<F>` own the migrated operation families.
+- `CpuBackend` prepares `CpuPreparedSetup<F>` from an `AkitaProverSetup<F>` or
+  an `Arc<AkitaExpandedSetup<F>>`. Per-dimension NTT caches live inside the
+  prepared stack and are warmed from schedule-derived role dimensions.
 
 Callers prepare once, then pass both the backend and prepared setup into prover
 entrypoints:
 
 ```rust
-let setup = AkitaCommitmentScheme::<D, Cfg>::setup_prover(nv, num_polys, points)?;
+let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys, points)?;
 let backend = CpuBackend;
 let prepared = backend.prepare_setup(&setup)?;
 let (commitment, hint) =
-    AkitaCommitmentScheme::<D, Cfg>::commit(&setup, &backend, &prepared, polys)?;
+    AkitaCommitmentScheme::<Cfg>::commit(&setup, &backend, &prepared, polys)?;
 ```
+
+Ring dimension enters only at kernel boundaries through schedule-derived dispatch,
+not as a type parameter on the PCS API.
 
 ## Boundary Rules
 
@@ -43,17 +45,17 @@ let (commitment, hint) =
 - Backend operations return `Result<_, AkitaError>` whenever a future
   accelerator may need to report unsupported shape, device, or submission
   failure.
-- Migrated prover code must not accept `&NttSlotCache<D>` directly. CPU NTT
-  slots stay inside `CpuPreparedSetup`.
+- Migrated prover code must not accept legacy per-`D` NTT slot caches directly.
+  CPU NTT slots stay inside `CpuPreparedSetup` / `ProverComputeStack`.
 - One-hot and sparse-ring plans expose flat entry and offset tables so future
   out-of-crate backends can upload the compact representation without reaching
   into CPU storage.
-- Dynamic ring-dimension code uses typed dispatch and prepares the target
-  backend context inside the matched `D` arm.
+- Dynamic ring-dimension code uses `dispatch_ring_dim_result!` and prepares the
+  target backend context inside the matched `D` arm.
 
 ## Current Scope
 
-The CPU cutover (PR #206) routes root commit, prove, and ring-switch work through
+The CPU cutover routes root commit, prove, and ring-switch work through
 `CpuBackend`, `ProverComputeStack`, and source-typed kernels. Setup-owned CPU
 NTT caches live in `CpuPreparedSetup` only.
 

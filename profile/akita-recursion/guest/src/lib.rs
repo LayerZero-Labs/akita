@@ -102,7 +102,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     // surface is `<Cfg>`-generic and routes every policy through `Cfg`
     // internally — no closures to thread through.
     start_cycle_tracking("akita_verify");
-    let result = batched_verify::<Cfg, _, D>(
+    let result = batched_verify::<Cfg, _>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,

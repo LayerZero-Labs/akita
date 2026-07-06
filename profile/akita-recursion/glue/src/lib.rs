@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, FlatMatrix, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-    RingCommitment, SetupContributionMode, SetupPrefixVerifierRegistry,
+    AkitaVerifierSetup, Commitment, FlatMatrix, OpeningClaims, PointVariableSelection,
+    PolynomialGroupClaims, SetupContributionMode, SetupPrefixVerifierRegistry,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
@@ -87,7 +87,7 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// Claimed opening value at `opening_point`.
     pub opening: F,
     /// Single committed-poly group: one ring commitment per (poly, point) pair.
-    pub commitment: RingCommitment<F, D>,
+    pub commitment: Commitment<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
     /// Proof shape descriptor; needed to deserialize `proof` without
@@ -107,7 +107,7 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> OpeningClaims<'static, F, &'a RingCommitment<F, D>> {
+    ) -> OpeningClaims<'static, F, &'a Commitment<F>> {
         let point_vars = PointVariableSelection::prefix(
             usize::try_from(self.num_vars).expect("recursion blob num_vars fits usize"),
             self.opening_point.len(),
@@ -187,6 +187,13 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        let num_commitment_coeffs = u64::try_from(self.commitment.rows().coeff_len()).map_err(
+            |_| SerializationError::LengthLimitExceeded {
+                len: self.commitment.rows().coeff_len() as u64,
+                max: usize::MAX,
+            },
+        )?;
+        num_commitment_coeffs.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
@@ -206,6 +213,7 @@ where
             + setup_mode_to_u8(self.setup_contribution_mode).serialized_size(BLOB_COMPRESS)
             + self.opening_point.serialized_size(BLOB_COMPRESS)
             + self.opening.serialized_size(BLOB_COMPRESS)
+            + (self.commitment.rows().coeff_len() as u64).serialized_size(BLOB_COMPRESS)
             + self.commitment.serialized_size(BLOB_COMPRESS)
             + self.verifier_setup.serialized_size(BLOB_COMPRESS)
             + self.proof_shape.serialized_size(BLOB_COMPRESS)
@@ -400,11 +408,13 @@ where
         let opening_point =
             Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        let commitment = RingCommitment::<F, D>::deserialize_with_mode(
+        let num_commitment_coeffs =
+            Self::decode_capped_len(&mut rest, MAX_SETUP_MATRIX_FIELD_ELEMENTS)?;
+        let commitment = Commitment::<F>::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,
-            &(),
+            &num_commitment_coeffs,
         )?;
         let verifier_setup = decode_setup(&mut rest)?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
@@ -497,7 +507,7 @@ where
 }
 
 // `akita-algebra` is pulled in only so that downstream consumers can rely on
-// `RingCommitment<F, D>` having all of its trait bounds satisfied; declare it
+// `Commitment<F>` having all of its trait bounds satisfied; declare it
 // here to avoid a `cargo machete` style trim.
 #[doc(hidden)]
 pub use akita_algebra as _akita_algebra_dep;
@@ -507,7 +517,7 @@ mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
     use akita_types::{
-        derive_public_matrix_flat, sample_public_matrix_seed, FlatRingVec,
+        derive_public_matrix_flat, sample_public_matrix_seed, RingVec,
         SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierSlot,
     };
 
@@ -596,7 +606,7 @@ mod tests {
                 natural_len: 1,
                 padded_len: TEST_D,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![FlatRingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
+                    rows: vec![RingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
                 },
             })
             .expect("insert prefix slot");

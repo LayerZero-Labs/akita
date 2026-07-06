@@ -69,9 +69,10 @@ fn bench_batch(c: &mut Criterion) {
             group.bench_with_input(id, &n, |b, &n| {
                 b.iter(|| {
                     let mut tr = fresh_transcript();
-                    let challenges = sample_sparse_challenges::<F, _, D>(
+                    let challenges = sample_sparse_challenges::<F, _>(
                         &mut tr,
                         b"bench/batch",
+                        D,
                         n,
                         black_box(cfg),
                         0,
