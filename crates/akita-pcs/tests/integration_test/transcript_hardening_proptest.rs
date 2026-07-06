@@ -1,6 +1,6 @@
-#![allow(missing_docs)]
-#![cfg(feature = "logging-transcript")]
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;

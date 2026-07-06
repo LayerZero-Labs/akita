@@ -13,10 +13,11 @@
 //! - one-hot: 10, 15, 20
 //! - dense: 10, 15, 18
 
-#![allow(missing_docs)]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;

@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
@@ -33,6 +32,8 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 use std::time::Instant;
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 use common::opening_from_poly;
 

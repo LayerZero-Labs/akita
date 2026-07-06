@@ -1,7 +1,8 @@
 //! End-to-end tests for the tensor-shaped root fold path.
 
-#![allow(missing_docs)]
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use akita_config::tensor_verifier::fp128::D64OneHotTensor;

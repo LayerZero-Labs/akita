@@ -51,6 +51,14 @@ jobs:
       - name: Enforce Rust file line cap (zero exceptions)
         run: scripts/check-rust-file-lines.sh --no-baseline
 
+  pcs-integration-test-coverage:
+    name: akita-pcs integration test coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check all integration test files are wired into the suite
+        run: scripts/check-pcs-integration-test-coverage.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

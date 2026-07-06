@@ -13,8 +13,9 @@
 //! schedule (the same hook shipped presets use for their catalogs). No
 //! test-only typed path is involved.
 
-#![allow(missing_docs)]
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 #[path = "mixed_d_per_level/fixture.rs"]
 mod mixed_d_per_level_fixture;

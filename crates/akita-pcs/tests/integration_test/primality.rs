@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 
 use akita_field::{pseudo_mersenne_modulus, PrimeOffsetSpec, PRIME_OFFSET_SPECS};
 

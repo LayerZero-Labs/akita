@@ -1,8 +1,8 @@
-#![allow(missing_docs)]
-#![cfg(feature = "logging-transcript")]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use akita_field::CanonicalField;

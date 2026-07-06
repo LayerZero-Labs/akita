@@ -16,10 +16,11 @@
 //!   Direct mode, and a Direct proof must not verify under Recursive mode. This
 //!   pins the setup-product sumcheck as load-bearing rather than cosmetic.
 
-#![allow(missing_docs)]
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;

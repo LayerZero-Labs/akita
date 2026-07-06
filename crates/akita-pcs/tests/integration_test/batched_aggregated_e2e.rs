@@ -18,8 +18,9 @@
 //! This keeps good coverage of the aggregated path while avoiding the old
 //! near-cartesian-product runtime blowup.
 
-#![allow(missing_docs)]
 
+#[allow(dead_code)]
+#[path = "common/mod.rs"]
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
