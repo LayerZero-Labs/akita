@@ -31,7 +31,7 @@ use std::time::Instant;
 
 mod relation_quotient;
 
-pub use relation_quotient::compute_relation_quotient;
+pub use relation_quotient::{compute_relation_quotient, RelationQuotientShape};
 
 fn absorb_terminal_e_folded_fields<F, T>(
     transcript: &mut T,
@@ -160,13 +160,39 @@ pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     ))
 }
 
+/// Extracted level numbers consumed by [`build_point_decompose_fold_witness`].
+///
+/// A-role fold shape: `block_len` / `num_digits_commit` / `log_basis` are the
+/// only schedule quantities the point-fold kernel reads. Callers extract them
+/// from the schedule (`from_level`); the kernel must not read schedule types.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PointFoldShape {
+    /// Ring elements per fold block (A-role row length).
+    pub block_len: usize,
+    /// Digit planes in the commit decomposition.
+    pub num_digits_commit: usize,
+    /// Log2 of the decomposition basis.
+    pub log_basis: u32,
+}
+
+impl PointFoldShape {
+    /// Extract the point-fold shape from one schedule level.
+    pub(super) fn from_level(lp: &LevelParams) -> Self {
+        Self {
+            block_len: lp.block_len,
+            num_digits_commit: lp.num_digits_commit,
+            log_basis: lp.log_basis,
+        }
+    }
+}
+
 pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     challenges: &Challenges,
     point_polys: &[&P],
     point_indices: &[usize],
-    lp: &LevelParams,
+    shape: PointFoldShape,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -206,9 +232,9 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
-                    block_len: lp.block_len,
-                    num_digits: lp.num_digits_commit,
-                    log_basis: lp.log_basis,
+                    block_len: shape.block_len,
+                    num_digits: shape.num_digits_commit,
+                    log_basis: shape.log_basis,
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
@@ -223,9 +249,9 @@ where
                                 poly.opening_view()?,
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
-                                    block_len: lp.block_len,
-                                    num_digits: lp.num_digits_commit,
-                                    log_basis: lp.log_basis,
+                                    block_len: shape.block_len,
+                                    num_digits: shape.num_digits_commit,
+                                    log_basis: shape.log_basis,
                                 },
                             )
                         })
@@ -254,9 +280,9 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
-                    block_len: lp.block_len,
-                    num_digits: lp.num_digits_commit,
-                    log_basis: lp.log_basis,
+                    block_len: shape.block_len,
+                    num_digits: shape.num_digits_commit,
+                    log_basis: shape.log_basis,
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(witness) => Ok(witness),

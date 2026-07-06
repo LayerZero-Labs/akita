@@ -5,7 +5,7 @@ use crate::compute::{
 };
 use akita_challenges::{
     grind_probe_permutation, preview_folding_challenges, sample_folding_challenges,
-    stage1_fold_challenge_labels, Challenges,
+    stage1_fold_challenge_labels, Challenges, SparseChallengeConfig, TensorChallengeShape,
 };
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -23,7 +23,7 @@ use akita_types::{
 use super::fold_grind_observer::{self, FoldGrindLevelMeta, FoldGrindObservation};
 use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
-    window_sparse_challenges,
+    window_sparse_challenges, PointFoldShape,
 };
 use crate::DecomposeFoldWitness;
 
@@ -165,6 +165,28 @@ fn grind_probe_nonces(
     }
 }
 
+/// Extracted fold-probe geometry from one schedule level.
+///
+/// Callers extract these numbers from [`LevelParams`] before entering the
+/// const-`D` kernel; the kernel must not read schedule types.
+#[derive(Debug, Clone, Copy)]
+struct FoldProbeParams {
+    point_fold: PointFoldShape,
+    num_chunks: usize,
+    blocks_per_chunk: usize,
+}
+
+impl FoldProbeParams {
+    fn from_level(lp: &LevelParams) -> Self {
+        let num_chunks = lp.witness_chunk.num_chunks;
+        Self {
+            point_fold: PointFoldShape::from_level(lp),
+            num_chunks,
+            blocks_per_chunk: lp.num_blocks / num_chunks.max(1),
+        }
+    }
+}
+
 /// One fold probe: returns the global folded witness and the per-window centered
 /// responses `z_i` under the given (preview) challenges.
 ///
@@ -181,7 +203,7 @@ fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     challenges: &Challenges,
     polys: &[&P],
     point_indices: &[usize],
-    lp: &LevelParams,
+    params: FoldProbeParams,
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -190,8 +212,11 @@ where
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
-    let num_chunks = lp.witness_chunk.num_chunks;
-    let blocks_per_chunk = lp.num_blocks / num_chunks.max(1);
+    let FoldProbeParams {
+        point_fold: shape,
+        num_chunks,
+        blocks_per_chunk,
+    } = params;
     if num_chunks <= 1 {
         let witness = build_point_decompose_fold_witness::<F, P, B, D>(
             backend,
@@ -199,7 +224,7 @@ where
             challenges,
             polys,
             point_indices,
-            lp,
+            shape,
         )?;
         let per_chunk = vec![witness.centered_coeffs_owned::<D>()];
         return Ok((witness, per_chunk));
@@ -214,7 +239,7 @@ where
                 &windowed,
                 polys,
                 point_indices,
-                lp,
+                shape,
             )
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -233,14 +258,18 @@ fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
     polys: &[&P],
-    lp: &LevelParams,
+    num_blocks: usize,
+    stage1_config: &SparseChallengeConfig,
+    fold_challenge_shape: TensorChallengeShape,
     num_claims: usize,
     tail_t_vectors: Option<usize>,
+    ring_d: usize,
     contract: &FoldWitnessGrindContract,
     witness_linf_cap: u128,
     digit_negative_abs_bound: u128,
     digit_positive_bound: u128,
     level_meta: FoldGrindLevelMeta,
+    fold_probe_params: FoldProbeParams,
     probe_nonces: &[u32],
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
 where
@@ -252,7 +281,6 @@ where
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
-    let ring_d = lp.role_dims().d_a();
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
     let labels = stage1_fold_challenge_labels();
     let mut grind_probe_count = 0u32;
@@ -261,10 +289,10 @@ where
         let challenges = preview_folding_challenges(
             transcript,
             ring_d,
-            lp.num_blocks,
+            num_blocks,
             num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
+            stage1_config,
+            &fold_challenge_shape,
             labels,
             nonce,
         )?;
@@ -274,7 +302,7 @@ where
             &challenges,
             polys,
             &point_indices,
-            lp,
+            fold_probe_params,
         )?;
         if !accepts_fold_witness::<F, D>(
             contract,
@@ -301,10 +329,10 @@ where
         let challenges = sample_folding_challenges::<F, T>(
             transcript,
             ring_d,
-            lp.num_blocks,
+            num_blocks,
             num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
+            stage1_config,
+            &fold_challenge_shape,
             labels,
             nonce,
         )?;
@@ -374,7 +402,12 @@ where
         r_vars: u32::try_from(lp.r_vars).unwrap_or(u32::MAX),
         num_claims: u32::try_from(sizing_claims).unwrap_or(u32::MAX),
     };
+    let fold_probe_params = FoldProbeParams::from_level(lp);
     let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
+
+    let num_blocks = lp.num_blocks;
+    let stage1_config = &lp.stage1_config;
+    let fold_challenge_shape = lp.fold_challenge_shape;
 
     akita_types::dispatch_ring_dim_result!(ring_d, |D| {
         sample_fold_decompose_witness_at_dim::<F, P, B, T, D>(
@@ -382,14 +415,18 @@ where
             prepared,
             transcript,
             polys,
-            lp,
+            num_blocks,
+            stage1_config,
+            fold_challenge_shape,
             num_claims,
             tail_t_vectors,
+            ring_d,
             &contract,
             witness_linf_cap,
             digit_negative_abs_bound,
             digit_positive_bound,
             level_meta,
+            fold_probe_params,
             &probe_nonces,
         )
     })
