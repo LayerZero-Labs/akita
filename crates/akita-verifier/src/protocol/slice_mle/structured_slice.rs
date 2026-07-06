@@ -246,7 +246,7 @@ where
 }
 
 /// Dense fallback for non-pow2 Z segments. This path materializes the Z slice
-/// and evaluates it through the generic offset-equality tensor helper.
+/// and binds it over its live global interval with [`eval_offset_eq_interval`].
 pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
     /// Commit-side gadget. Length = `depth_commit`.
     pub g1_commit: &'a [F],
@@ -312,10 +312,10 @@ where
     E: ExtField<F>,
 {
     let levels = r_gadget.len();
+    let rows = prepared.setup_contribution_inputs.rows;
     if levels.is_power_of_two() {
         let _span = tracing::info_span!("r_structured").entered();
         let r_gadget_ext: Vec<E> = r_gadget.iter().copied().map(E::lift_base).collect();
-        let rows = prepared.setup_contribution_inputs.rows;
         // Peel the pow2 low factor into carry buckets [A0, A1], then evaluate
         // the small high factor at offsets `offset_hi` and `offset_hi + 1`.
         let m0 = levels.trailing_zeros() as usize;
@@ -329,7 +329,7 @@ where
         Ok(-denom * (a0 * b0 + a1 * b1))
     } else {
         let _span = tracing::info_span!("r_dense").entered();
-        let r_tail: Vec<E> = cfg_into_iter!(0..prepared.setup_contribution_inputs.rows * levels)
+        let r_tail: Vec<E> = cfg_into_iter!(0..rows * levels)
             .map(|idx| {
                 let row_idx = idx / levels;
                 let level_idx = idx % levels;
@@ -355,8 +355,6 @@ mod tests {
         RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
         SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
     };
-
-    use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -652,7 +650,7 @@ mod tests {
             EqPolynomial::evals(&fx.full_vec_randomness[..z_offset_low_bits]).unwrap();
         let z_offset_low = fx.offset_z & (p.block_len - 1);
 
-        let a_block_summary = summarize_pow2_block_carries_base::<F, F>(
+        let a_block_summary = summarize_pow2_block_carries(
             &z_block_low_eq,
             z_offset_low,
             &fx.opening_point.a[..p.block_len],

@@ -15,13 +15,9 @@ from collections import defaultdict
 
 LEVEL_MARK = "stage2_expected_output_claim"
 VERIFY_MARK = "verify_iter"
-# Components reported per level. `others` catches whatever is inside the level
-# span but not attributed to a named child.
+# Named child spans summed per level.
 COMPONENTS = [
     "stage2_witness_eval",
-    "e_structured",
-    "t_structured",
-    "z_structured",
     "setup_contribution",
     "r_structured",
     "r_dense",
@@ -112,7 +108,6 @@ def main():
     trow = ["ALL", f"{grand['total']:.1f}"] + [f"{grand[c]:.1f}" if grand[c] > 0 else "-"
                                                for c in COMPONENTS]
     print("".join(cell.rjust(w) for cell, w in zip(trow, widths)))
-    return grand, nverify, levels
 
 
 if __name__ == "__main__":
