@@ -38,6 +38,12 @@ pub(crate) enum FusedFoldScan<'a, E: FieldCore> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+    /// Relation and witness storage can fold on different axes in the same round.
+    ///
+    /// Compact witness digits are still laid out as a flat `live_len` vector until
+    /// the first promotion to field evals. Embedded coefficient-axis folding assumes
+    /// segment-major field layout, so compact witness must keep flat pairwise fold
+    /// even when relation weight uses `EmbeddedCoefficientAxis`.
     pub(super) fn witness_fold_kind(
         relation_kind: FoldRoundKind,
         witness_is_compact: bool,
@@ -75,6 +81,32 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> AkitaStage2Prover<E> {
+    pub(super) fn fold_witness_full_owned(
+        evals: Vec<E>,
+        kind: FoldRoundKind,
+        live_segments: usize,
+        coeff_len: usize,
+        challenge: E,
+        use_local_view_flat_fold: bool,
+    ) -> Vec<E> {
+        if use_local_view_flat_fold && kind == FoldRoundKind::FlatPair {
+            let mut evals = evals;
+            fold_evals_in_place(&mut evals, challenge);
+            evals
+        } else {
+            Self::fold_witness_polynomial(
+                WitnessFoldInput::Full {
+                    evals: &evals,
+                    challenge,
+                    use_local_view_flat_fold: false,
+                },
+                kind,
+                live_segments,
+                coeff_len,
+            )
+        }
+    }
+
     pub(super) fn fold_witness_polynomial(
         input: WitnessFoldInput<'_, E>,
         kind: FoldRoundKind,

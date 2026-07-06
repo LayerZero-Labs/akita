@@ -1,4 +1,5 @@
 mod boundary;
+mod fold_scan;
 mod trace_prefix;
 
 use super::*;

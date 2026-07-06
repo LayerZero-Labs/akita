@@ -180,7 +180,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         self.split_eq.bind(r);
         let folding_segment_round = !self.in_coefficient_round();
         let fold_kind = self.fold_round_kind(folding_segment_round);
-        let fuse_next_full_segment_prefix =
+        let fuse_next_segment_axis_round =
             fold_kind == FoldRoundKind::EmbeddedSegmentAxis
                 && self.next_use_segment_prefix_round_after_current();
         let coeff_len = self.relation_weight_coeff_len();
@@ -206,7 +206,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 }
                 WitnessTable::Full(w_full) => {
                     if fold_kind == FoldRoundKind::EmbeddedSegmentAxis {
-                        if fuse_next_full_segment_prefix {
+                        if fuse_next_segment_axis_round {
                             self.fold_relation_weight(r, fold_kind);
                             let (next_w_full, virt_terms, rel_coeffs) = self.run_fused_fold_scan(
                                 FusedFoldScan::SegmentAxis {
@@ -232,15 +232,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                             WitnessTable::Full(next_w_full)
                         }
                     } else {
-                        let next_w_full = Self::fold_witness_polynomial(
-                            WitnessFoldInput::Full {
-                                evals: &w_full,
-                                challenge: r,
-                                use_local_view_flat_fold: self.geometry.local_view().is_some(),
-                            },
+                        let next_w_full = Self::fold_witness_full_owned(
+                            w_full,
                             fold_kind,
                             live_segments,
                             coeff_len,
+                            r,
+                            self.geometry.local_view().is_some(),
                         );
                         self.fold_relation_weight(r, fold_kind);
                         WitnessTable::Full(next_w_full)
