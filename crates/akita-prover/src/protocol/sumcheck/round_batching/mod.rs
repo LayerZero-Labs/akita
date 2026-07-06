@@ -41,7 +41,8 @@ mod stage2;
 mod tests;
 
 pub(crate) use common::{
-    stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s,
+    stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, stage2_b4_w_digit,
+    stage2_b8_w_digit,
 };
 pub(crate) use stage1::{
     build_stage1_initial_round_batch_grid, can_use_stage1_initial_round_batch,

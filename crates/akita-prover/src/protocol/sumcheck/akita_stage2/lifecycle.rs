@@ -89,6 +89,66 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
+    pub(super) fn in_coefficient_round(&self) -> bool {
+        self.rounds_completed < self.coeff_bits()
+    }
+
+    #[inline]
+    pub(super) fn segment_rounds_completed(&self) -> usize {
+        self.rounds_completed.saturating_sub(self.coeff_bits())
+    }
+
+    #[inline]
+    pub(super) fn current_segment_width(&self) -> usize {
+        self.segment_bits
+            .saturating_sub(self.segment_rounds_completed())
+    }
+
+    #[inline]
+    pub(super) fn coefficient_rounds_completed(&self) -> usize {
+        self.rounds_completed.min(self.coeff_bits())
+    }
+
+    #[inline]
+    pub(super) fn current_coefficient_width(&self) -> usize {
+        self.coeff_bits()
+            .saturating_sub(self.coefficient_rounds_completed())
+    }
+
+    #[inline]
+    pub(super) fn current_segment_capacity(&self) -> usize {
+        1usize << self.current_segment_width()
+    }
+
+    #[inline]
+    pub(super) fn use_coefficient_prefix_round(&self) -> bool {
+        if self.geometry.local_view().is_none() {
+            return false;
+        }
+        self.in_coefficient_round() && self.live_segments < self.current_segment_capacity()
+    }
+
+    #[inline]
+    pub(super) fn use_segment_prefix_round(&self) -> bool {
+        if self.geometry.local_view().is_none() {
+            return false;
+        }
+        self.rounds_completed >= self.coeff_bits()
+            && self.segment_rounds_completed() < self.segment_bits
+            && self.live_segments < self.current_segment_capacity()
+    }
+
+    #[inline]
+    pub(super) fn next_use_segment_prefix_round_after_current(&self) -> bool {
+        if self.geometry.local_view().is_none() {
+            return false;
+        }
+        self.rounds_completed >= self.coeff_bits()
+            && self.segment_rounds_completed() + 1 < self.segment_bits
+            && self.live_segments.div_ceil(2) < (self.current_segment_capacity() / 2)
+    }
+
+    #[inline]
     pub(crate) fn can_use_stage2_initial_round_batch(&self) -> bool {
         self.prefix_r_stage1.is_some()
     }
