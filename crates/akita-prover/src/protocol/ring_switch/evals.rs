@@ -377,11 +377,65 @@ pub enum RelationWeightTraceBuild<F: FieldCore, E: FieldCore> {
     },
 }
 
+/// Embed per-column relation weights and optional trace row into the flat live
+/// witness coefficient range.
+///
+/// Each live flat index is `segment * witness_coeff_len + coeff` with
+/// `witness_coeff_len = role_dims.d_a()`. Coefficients past the live segment
+/// count or past `witness_coeff_len` are not stored (implicit zero).
+fn materialize_flat_relation_weight_evals<E: FieldCore>(
+    relation_column_weights: &[E],
+    live_segments: usize,
+    witness_coeff_len: usize,
+    alpha_evals_y: &[E],
+    trace_dense: Option<&[E]>,
+) -> Result<Vec<E>, AkitaError> {
+    if relation_column_weights.len() < live_segments {
+        return Err(AkitaError::InvalidSize {
+            expected: live_segments,
+            actual: relation_column_weights.len(),
+        });
+    }
+    let y_len = witness_coeff_len;
+    let witness_live_len = live_segments
+        .checked_mul(y_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness live length overflow".into()))?;
+    if let Some(trace) = trace_dense {
+        if trace.len() != witness_live_len {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_live_len,
+                actual: trace.len(),
+            });
+        }
+    }
+    let mut out = Vec::with_capacity(witness_live_len);
+    for (segment, column_weight) in relation_column_weights
+        .iter()
+        .copied()
+        .enumerate()
+        .take(live_segments)
+    {
+        let trace_column = trace_dense.map(|trace| &trace[segment * y_len..(segment + 1) * y_len]);
+        for (coeff, alpha_y) in alpha_evals_y.iter().copied().enumerate() {
+            let trace = trace_column
+                .map(|column| column[coeff])
+                .unwrap_or(E::zero());
+            out.push(alpha_y * column_weight + trace);
+        }
+    }
+    debug_assert_eq!(out.len(), witness_live_len);
+    Ok(out)
+}
+
 /// Build the materialized relation-weight evaluation table for stage-2 sumcheck.
 ///
-/// Fuses `M_alpha` column evaluations with the
-/// [`EvaluationTrace`](akita_types::RelationRowFamily::EvaluationTrace) row via
-/// `trace_weight` builders. Does not expose split `m_evals_x` / `alpha_evals_y`.
+/// Walks relation row families through [`compute_relation_column_weights`]
+/// (per-role ring dimensions for A/B/D matrix rows and quotient slices) and
+/// embeds the result into the flat live witness range `0..witness_live_len`
+/// with `witness_coeff_len = role_dims.d_a()`.
+///
+/// Fuses the [`EvaluationTrace`](akita_types::RelationRowFamily::EvaluationTrace)
+/// row via `trace_weight` builders when `trace` is present.
 ///
 /// # Errors
 ///
@@ -402,24 +456,29 @@ pub fn build_relation_weight_evals<F, E>(
     num_commitment_groups: usize,
     gamma: &[E],
     m_row_layout: MRowLayout,
-    ring_bits: usize,
-    live_x_cols: usize,
+    witness_live_len: usize,
     trace: Option<RelationWeightTraceBuild<F, E>>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + ExtField<F>,
 {
-    let d_a = role_dims.d_a();
-    let ring_alpha_evals_y = scalar_powers(alpha, d_a);
-    let alpha_evals_y = scalar_powers(alpha, 1usize << ring_bits);
+    let witness_coeff_len = role_dims.d_a();
+    if witness_coeff_len == 0 || !witness_live_len.is_multiple_of(witness_coeff_len) {
+        return Err(AkitaError::InvalidSize {
+            expected: witness_coeff_len,
+            actual: witness_live_len,
+        });
+    }
+    let live_segments = witness_live_len / witness_coeff_len;
+    let alpha_evals_y = scalar_powers(alpha, witness_coeff_len);
     let relation_column_weights = compute_relation_column_weights::<F, E>(
         setup,
         opening_point,
         ring_multiplier_point,
         challenges,
         alpha,
-        &ring_alpha_evals_y,
+        &alpha_evals_y,
         role_dims,
         lp,
         tau1,
@@ -428,18 +487,12 @@ where
         gamma,
         m_row_layout,
     )?;
-    let y_len = alpha_evals_y.len();
-    if relation_column_weights.len() < live_x_cols {
-        return Err(AkitaError::InvalidSize {
-            expected: live_x_cols,
-            actual: relation_column_weights.len(),
-        });
-    }
     let trace_row_weight = {
         let eq_tau1 = EqPolynomial::evals(tau1)?;
         eq_tau1.first().copied().unwrap_or(E::zero())
     };
     let trace_dense = if let Some(trace) = trace {
+        let y_len = witness_coeff_len;
         let table = match trace {
             RelationWeightTraceBuild::Root {
                 ring_d,
@@ -457,7 +510,7 @@ where
                     &row_coefficients,
                     trace_claim_scales.as_deref(),
                 )?;
-                build_trace_table_scaled(&layout, &public_weights, live_x_cols, E::one())
+                build_trace_table_scaled(&layout, &public_weights, live_segments, E::one())
             })?,
             RelationWeightTraceBuild::Recursive {
                 ring_d,
@@ -467,12 +520,12 @@ where
             } => akita_types::dispatch_ring_dim_result!(ring_d, |D| {
                 let public_weights =
                     trace_public_weights_recursive::<F, E, D>(&prepared, trace_scale)?;
-                build_trace_table_scaled(&layout, &public_weights, live_x_cols, E::one())
+                build_trace_table_scaled(&layout, &public_weights, live_segments, E::one())
             })?,
         };
         Some(
             table
-                .materialize_dense(live_x_cols, y_len)
+                .materialize_dense(live_segments, y_len)
                 .into_iter()
                 .map(|v| v * trace_row_weight)
                 .collect::<Vec<_>>(),
@@ -480,19 +533,91 @@ where
     } else {
         None
     };
-    let trace_dense = trace_dense.as_deref();
-    let mut out = Vec::with_capacity(live_x_cols * y_len);
-    for (x, column_weight) in relation_column_weights
-        .iter()
-        .copied()
-        .enumerate()
-        .take(live_x_cols)
-    {
-        let trace_column = trace_dense.map(|trace| &trace[x * y_len..(x + 1) * y_len]);
-        for (y, alpha_y) in alpha_evals_y.iter().copied().enumerate() {
-            let trace = trace_column.map(|column| column[y]).unwrap_or(E::zero());
-            out.push(alpha_y * column_weight + trace);
-        }
+    materialize_flat_relation_weight_evals(
+        &relation_column_weights,
+        live_segments,
+        witness_coeff_len,
+        &alpha_evals_y,
+        trace_dense.as_deref(),
+    )
+}
+
+#[cfg(test)]
+mod materialization_tests {
+    use super::materialize_flat_relation_weight_evals;
+    use akita_algebra::ring::scalar_powers;
+    use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
+    use akita_types::CommitmentRingDims;
+
+    type F = Prime128Offset275;
+    type E = FpExt2<F, NegOneNr>;
+
+    #[test]
+    fn flat_materialization_uses_witness_coeff_len_from_d_a() {
+        let witness_coeff_len = 128usize;
+        let live_segments = 3usize;
+        let witness_live_len = live_segments * witness_coeff_len;
+        let alpha = E::from_u64(5);
+        let alpha_evals_y = scalar_powers(alpha, witness_coeff_len);
+        let column_weights: Vec<E> = (0..live_segments)
+            .map(|i| E::from_u64((i + 1) as u64))
+            .collect();
+        let evals = materialize_flat_relation_weight_evals(
+            &column_weights,
+            live_segments,
+            witness_coeff_len,
+            &alpha_evals_y,
+            None,
+        )
+        .expect("materialize");
+        assert_eq!(evals.len(), witness_live_len);
+        assert_eq!(
+            evals[0],
+            alpha_evals_y[0] * column_weights[0],
+            "first flat slot is segment 0 coeff 0"
+        );
+        assert_eq!(
+            evals[witness_coeff_len],
+            alpha_evals_y[0] * column_weights[1],
+            "segment 1 starts at coeff_len offset"
+        );
     }
-    Ok(out)
+
+    #[test]
+    fn nested_role_dims_live_len_is_segments_times_d_a() {
+        let dims = CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 32,
+        };
+        assert!(dims.nests());
+        let witness_coeff_len = dims.d_a();
+        let live_segments = 4usize;
+        let witness_live_len = live_segments * witness_coeff_len;
+        let alpha_evals_y = vec![E::one(); witness_coeff_len];
+        let column_weights = vec![E::from_u64(2); live_segments];
+        let evals = materialize_flat_relation_weight_evals(
+            &column_weights,
+            live_segments,
+            witness_coeff_len,
+            &alpha_evals_y,
+            None,
+        )
+        .expect("nested role dims materialize");
+        assert_eq!(evals.len(), witness_live_len);
+        assert_eq!(evals[witness_coeff_len + 1], column_weights[1]);
+    }
+
+    #[test]
+    fn rejects_trace_length_mismatch() {
+        let err = materialize_flat_relation_weight_evals(
+            &[E::one(); 2],
+            2,
+            4,
+            &[E::one(); 4],
+            Some(&[E::zero(); 7]),
+        )
+        .expect_err("trace length mismatch");
+        assert!(matches!(err, akita_field::AkitaError::InvalidSize { .. }));
+    }
 }

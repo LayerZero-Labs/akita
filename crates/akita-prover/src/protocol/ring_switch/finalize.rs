@@ -56,7 +56,7 @@ where
         let num_polys = opening_batch.num_total_polynomials();
 
         let num_ring_elems = w.len() / D;
-        let live_x_cols = num_ring_elems;
+        let witness_live_len = w.len();
         let col_bits = num_ring_elems
             .checked_next_power_of_two()
             .ok_or_else(|| {
@@ -116,8 +116,7 @@ where
                     opening_batch.num_groups(),
                     gamma,
                     m_row_layout,
-                    ring_bits,
-                    live_x_cols,
+                    witness_live_len,
                     relation_weight.trace.clone(),
                 )
             },
@@ -138,8 +137,7 @@ where
                 opening_batch.num_groups(),
                 gamma,
                 m_row_layout,
-                ring_bits,
-                live_x_cols,
+                witness_live_len,
                 relation_weight.trace.clone(),
             )?;
             let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
@@ -151,7 +149,7 @@ where
 
         Ok(RingSwitchOutput {
             w_evals_compact,
-            live_x_cols,
+            live_x_cols: num_ring_elems,
             relation_weight_evals,
             relation_weight_claim,
             col_bits,

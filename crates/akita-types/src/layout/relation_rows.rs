@@ -533,6 +533,48 @@ mod tests {
     }
 
     #[test]
+    fn mixed_role_dims_quotient_slices_use_per_family_ring_dim() {
+        let lp = test_level_params();
+        let dims = CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 32,
+        };
+        assert!(dims.nests());
+        let opening = OpeningClaimsLayout::new(4, 1).expect("opening layout");
+        let layout = RelationRowLayout::for_scalar_level::<F>(
+            &lp,
+            dims,
+            MRowLayout::WithDBlock,
+            &opening,
+            1,
+        )
+        .expect("mixed role layout");
+        let fold_eval = layout
+            .family(RelationRowFamily::FoldEvaluation)
+            .expect("fold evaluation");
+        let outer = layout
+            .family(RelationRowFamily::OuterConsistency {
+                layer: ConsistencyLayer::Base,
+            })
+            .expect("outer consistency");
+        let opening_family = layout
+            .family(RelationRowFamily::OpeningConsistency {
+                layer: ConsistencyLayer::Base,
+            })
+            .expect("opening consistency");
+        assert_eq!(fold_eval.ring_dim, Some(128));
+        assert_eq!(outer.ring_dim, Some(64));
+        assert_eq!(opening_family.ring_dim, Some(32));
+        assert_eq!(fold_eval.quotient.as_ref().map(|q| q.ring_dim), Some(128));
+        assert_eq!(outer.quotient.as_ref().map(|q| q.ring_dim), Some(64));
+        assert_eq!(
+            opening_family.quotient.as_ref().map(|q| q.ring_dim),
+            Some(32)
+        );
+    }
+
+    #[test]
     fn uniform_quotient_len_matches_legacy_row_times_levels() {
         let lp = test_level_params();
         let num_commitments = 1;
