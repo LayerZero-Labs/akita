@@ -4,7 +4,7 @@ use crate::compute::{
     ProverComputeStack, RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
-use crate::protocol::sumcheck::akita_stage2::Stage2Layout;
+use crate::protocol::sumcheck::akita_stage2::Stage2Geometry;
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
@@ -798,6 +798,14 @@ where
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+    let witness_len = rs.w_evals_compact.len();
+    let geometry = Stage2Geometry::from_production_handoff(
+        witness_len,
+        stage1_point.len(),
+        rs.live_x_cols,
+        rs.col_bits,
+        rs.ring_bits,
+    )?;
     let mut stage2_prover = AkitaStage2Prover::new(
         batching_coeff,
         rs.w_evals_compact,
@@ -806,7 +814,7 @@ where
         rs.b,
         rs.relation_weight_evals,
         rs.relation_weight_claim,
-        Stage2Layout::uniform(rs.live_x_cols, rs.col_bits, rs.ring_bits)?,
+        geometry,
     )?;
     let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
         .prove::<F, T, _>(transcript, |tr| {

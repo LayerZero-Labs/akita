@@ -56,22 +56,26 @@ enum WitnessTable<E: FieldCore> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Stage2Layout {
+pub(crate) struct Stage2Geometry {
     live_len: usize,
     num_vars: usize,
-    uniform_tiling: Option<UniformStage2Tiling>,
+    local_view: Option<ScalarLevelLocalView>,
 }
 
+/// Optional scalar-level embedding for prefix and round-batching fast paths.
+///
+/// This is prover-only optimization metadata. It must not define the Stage 2
+/// protocol contract, which is always `live_len + num_vars`.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct UniformStage2Tiling {
+pub(crate) struct ScalarLevelLocalView {
     live_tiles: usize,
     tile_bits: usize,
     lane_bits: usize,
     lane_len: usize,
 }
 
-impl Stage2Layout {
-    pub(crate) fn flat(live_len: usize, num_vars: usize) -> Result<Self, AkitaError> {
+impl Stage2Geometry {
+    pub(crate) fn new(live_len: usize, num_vars: usize) -> Result<Self, AkitaError> {
         if live_len == 0 {
             return Err(AkitaError::InvalidInput(
                 "stage-2 live length must be at least 1".to_string(),
@@ -87,45 +91,42 @@ impl Stage2Layout {
         Ok(Self {
             live_len,
             num_vars,
-            uniform_tiling: None,
+            local_view: None,
         })
     }
 
-    pub(crate) fn uniform(
+    /// Build the production Stage 2 geometry from a ring-switch handoff.
+    ///
+    /// The semantic contract is `witness_len` and `num_vars` only. Scalar-level
+    /// tile parameters are consulted solely to attach an optional local fast-path
+    /// view when they embed consistently into the flat witness.
+    pub(crate) fn from_production_handoff(
+        witness_len: usize,
+        num_vars: usize,
         live_tiles: usize,
         tile_bits: usize,
         lane_bits: usize,
     ) -> Result<Self, AkitaError> {
-        if live_tiles == 0 {
-            return Err(AkitaError::InvalidInput(
-                "stage-2 live tile count must be at least 1".to_string(),
-            ));
+        let mut geometry = Self::new(witness_len, num_vars)?;
+        if let Ok(view) = ScalarLevelLocalView::embed(live_tiles, tile_bits, lane_bits) {
+            if view.validate_embeds(witness_len, num_vars).is_ok() {
+                geometry.local_view = Some(view);
+            }
         }
-        let tile_capacity = boolean_domain_len(tile_bits)?;
-        if live_tiles > tile_capacity {
-            return Err(AkitaError::InvalidSize {
-                expected: tile_capacity,
-                actual: live_tiles,
-            });
-        }
-        let lane_len = boolean_domain_len(lane_bits)?;
-        let live_len = live_tiles
-            .checked_mul(lane_len)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 live length overflow".to_string()))?;
-        let num_vars = tile_bits.checked_add(lane_bits).ok_or_else(|| {
-            AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
-        })?;
-        let layout = Self::flat(live_len, num_vars)?;
-        Ok(Self {
-            live_len: layout.live_len,
-            num_vars: layout.num_vars,
-            uniform_tiling: Some(UniformStage2Tiling {
-                live_tiles,
-                tile_bits,
-                lane_bits,
-                lane_len,
-            }),
-        })
+        Ok(geometry)
+    }
+
+    /// Attach a scalar-level local embedding for tests and fast-path planning.
+    pub(crate) fn with_scalar_local_view(
+        mut self,
+        live_tiles: usize,
+        tile_bits: usize,
+        lane_bits: usize,
+    ) -> Result<Self, AkitaError> {
+        let view = ScalarLevelLocalView::embed(live_tiles, tile_bits, lane_bits)?;
+        view.validate_embeds(self.live_len, self.num_vars)?;
+        self.local_view = Some(view);
+        Ok(self)
     }
 
     #[inline]
@@ -139,12 +140,57 @@ impl Stage2Layout {
     }
 
     #[inline]
-    pub(crate) fn uniform_tiling(&self) -> Option<UniformStage2Tiling> {
-        self.uniform_tiling
+    pub(crate) fn local_view(&self) -> Option<ScalarLevelLocalView> {
+        self.local_view
     }
 }
 
-impl UniformStage2Tiling {
+impl ScalarLevelLocalView {
+    fn embed(live_tiles: usize, tile_bits: usize, lane_bits: usize) -> Result<Self, AkitaError> {
+        if live_tiles == 0 {
+            return Err(AkitaError::InvalidInput(
+                "stage-2 live tile count must be at least 1".to_string(),
+            ));
+        }
+        let tile_capacity = boolean_domain_len(tile_bits)?;
+        if live_tiles > tile_capacity {
+            return Err(AkitaError::InvalidSize {
+                expected: tile_capacity,
+                actual: live_tiles,
+            });
+        }
+        let lane_len = boolean_domain_len(lane_bits)?;
+        Ok(Self {
+            live_tiles,
+            tile_bits,
+            lane_bits,
+            lane_len,
+        })
+    }
+
+    fn validate_embeds(&self, live_len: usize, num_vars: usize) -> Result<(), AkitaError> {
+        let embedded_live_len = self
+            .live_tiles
+            .checked_mul(self.lane_len)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-2 live length overflow".to_string()))?;
+        if embedded_live_len != live_len {
+            return Err(AkitaError::InvalidSize {
+                expected: live_len,
+                actual: embedded_live_len,
+            });
+        }
+        let embedded_num_vars = self.tile_bits.checked_add(self.lane_bits).ok_or_else(|| {
+            AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
+        })?;
+        if embedded_num_vars != num_vars {
+            return Err(AkitaError::InvalidSize {
+                expected: num_vars,
+                actual: embedded_num_vars,
+            });
+        }
+        Ok(())
+    }
+
     #[inline]
     fn coeff_bits(&self) -> usize {
         self.lane_bits
@@ -305,7 +351,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     split_eq: GruenSplitEq<E>,
 
     relation_weight: RelationWeightPolynomial<E>,
-    layout: Stage2Layout,
+    geometry: Stage2Geometry,
     live_segments: usize,
     relation_coeff_len: usize,
     segment_bits: usize,
@@ -386,7 +432,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
                     coeff_len,
                 )
             } else {
-                let evals = if self.layout.uniform_tiling().is_some() {
+                let evals = if self.geometry.local_view().is_some() {
                     let mut evals = self.relation_weight.evals().to_vec();
                     fold_evals_in_place(&mut evals, r);
                     evals

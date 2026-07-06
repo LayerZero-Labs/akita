@@ -18,6 +18,20 @@ pub(super) struct Stage2Params<'a> {
     coeff_bits: usize,
 }
 
+pub(super) fn stage2_geometry_with_local_view(
+    live_segments: usize,
+    segment_bits: usize,
+    coeff_bits: usize,
+) -> Stage2Geometry {
+    let coeff_len = 1usize << coeff_bits;
+    let live_len = live_segments * coeff_len;
+    let num_vars = segment_bits + coeff_bits;
+    Stage2Geometry::new(live_len, num_vars)
+        .unwrap()
+        .with_scalar_local_view(live_segments, segment_bits, coeff_bits)
+        .unwrap()
+}
+
 fn build_relation_weight_evals(
     alpha_evals_coeff: &[F],
     m_evals_segment: &[F],
@@ -155,8 +169,11 @@ fn new_stage2_test_prover(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        Stage2Layout::uniform(params.live_segments, params.segment_bits, params.coeff_bits)
-            .unwrap(),
+        stage2_geometry_with_local_view(
+            params.live_segments,
+            params.segment_bits,
+            params.coeff_bits,
+        ),
     )
     .unwrap()
 }
@@ -193,8 +210,11 @@ pub(super) fn new_stage2_test_prover_with_trace(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        Stage2Layout::uniform(params.live_segments, params.segment_bits, params.coeff_bits)
-            .unwrap(),
+        stage2_geometry_with_local_view(
+            params.live_segments,
+            params.segment_bits,
+            params.coeff_bits,
+        ),
     )
     .unwrap()
 }
@@ -234,8 +254,11 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        Stage2Layout::uniform(params.live_segments, params.segment_bits, params.coeff_bits)
-            .unwrap(),
+        stage2_geometry_with_local_view(
+            params.live_segments,
+            params.segment_bits,
+            params.coeff_bits,
+        ),
     )
     .unwrap()
 }

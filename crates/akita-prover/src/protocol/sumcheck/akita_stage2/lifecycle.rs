@@ -12,29 +12,28 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         b: usize,
         relation_weight_evals: Vec<E>,
         relation_weight_claim: E,
-        layout: Stage2Layout,
+        geometry: Stage2Geometry,
     ) -> Result<Self, AkitaError> {
-        let witness_len = layout.live_len();
+        let witness_len = geometry.live_len();
         if w_evals_compact.len() != witness_len {
             return Err(AkitaError::InvalidSize {
                 expected: witness_len,
                 actual: w_evals_compact.len(),
             });
         }
-        if stage1_point.len() != layout.num_vars() {
+        if stage1_point.len() != geometry.num_vars() {
             return Err(AkitaError::InvalidSize {
-                expected: layout.num_vars(),
+                expected: geometry.num_vars(),
                 actual: stage1_point.len(),
             });
         }
         let relation_weight =
             RelationWeightPolynomial::from_live_evals(relation_weight_evals, witness_len)?;
-        let uniform_tiling = layout.uniform_tiling();
-        let (live_segments, relation_coeff_len, segment_bits) = if let Some(tiling) = uniform_tiling
-        {
-            (tiling.live_tiles, tiling.coeff_len(), tiling.tile_bits)
+        let local_view = geometry.local_view();
+        let (live_segments, relation_coeff_len, segment_bits) = if let Some(view) = local_view {
+            (view.live_tiles, view.coeff_len(), view.tile_bits)
         } else {
-            (layout.live_len(), 1, layout.num_vars())
+            (geometry.live_len(), 1, geometry.num_vars())
         };
 
         let input_claim = batching_coeff * s_claim + relation_weight_claim;
@@ -47,15 +46,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             relation_weight,
-            layout,
+            geometry,
             live_segments,
             relation_coeff_len,
             segment_bits,
-            num_vars: layout.num_vars(),
+            num_vars: geometry.num_vars(),
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: uniform_tiling
-                .is_some_and(|tiling| can_use_stage2_initial_round_batch(tiling.coeff_bits(), b))
+            prefix_r_stage1: local_view
+                .is_some_and(|view| can_use_stage2_initial_round_batch(view.coeff_bits(), b))
                 .then(|| stage1_point.to_vec()),
             initial_round_batch: None,
             cached_round_poly: None,
@@ -83,9 +82,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn coeff_bits(&self) -> usize {
-        self.layout
-            .uniform_tiling()
-            .map(|tiling| tiling.coeff_bits())
+        self.geometry
+            .local_view()
+            .map(|view| view.coeff_bits())
             .unwrap_or(0)
     }
 
@@ -123,7 +122,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn use_coefficient_prefix_round(&self) -> bool {
-        if self.layout.uniform_tiling().is_none() {
+        if self.geometry.local_view().is_none() {
             return false;
         }
         self.in_coefficient_round() && self.live_segments < self.current_segment_capacity()
@@ -131,7 +130,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn use_segment_prefix_round(&self) -> bool {
-        if self.layout.uniform_tiling().is_none() {
+        if self.geometry.local_view().is_none() {
             return false;
         }
         self.rounds_completed >= self.coeff_bits()
@@ -141,7 +140,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn next_use_segment_prefix_round_after_current(&self) -> bool {
-        if self.layout.uniform_tiling().is_none() {
+        if self.geometry.local_view().is_none() {
             return false;
         }
         self.rounds_completed >= self.coeff_bits()

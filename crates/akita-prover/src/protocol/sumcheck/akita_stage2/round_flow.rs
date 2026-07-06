@@ -290,7 +290,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         ))
                     } else {
                         let mut w_full = w_full;
-                        if self.layout.uniform_tiling().is_some() {
+                        if self.geometry.local_view().is_some() {
                             fold_evals_in_place(&mut w_full, r);
                         } else {
                             w_full = fold_live_evals_zero_padded(&w_full, r);

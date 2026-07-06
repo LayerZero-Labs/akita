@@ -42,7 +42,7 @@ fn try_new_stage2_prover(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        Stage2Layout::uniform(live_segments, segment_bits, coeff_bits).unwrap(),
+        stage2_geometry_with_local_view(live_segments, segment_bits, coeff_bits),
     )
 }
 
@@ -98,7 +98,7 @@ fn stage2_constructor_rejects_undersized_witness() {
         8,
         relation_weight_evals,
         F::zero(),
-        Stage2Layout::uniform(live_segments, segment_bits, coeff_bits).unwrap(),
+        stage2_geometry_with_local_view(live_segments, segment_bits, coeff_bits),
     ) {
         Err(err) => err,
         Ok(_) => panic!("undersized witness must be rejected"),
@@ -143,7 +143,7 @@ fn stage2_constructor_rejects_relation_weight_length_mismatch() {
 }
 
 #[test]
-fn stage2_flat_layout_uses_dense_path_without_uniform_tiling() {
+fn stage2_flat_geometry_uses_dense_path_without_local_view() {
     let live_len = 13usize;
     let num_vars = 4usize;
     let b = 8usize;
@@ -173,12 +173,12 @@ fn stage2_flat_layout_uses_dense_path_without_uniform_tiling() {
         b,
         relation_weight_evals,
         relation_weight_claim,
-        Stage2Layout::flat(live_len, num_vars).unwrap(),
+        Stage2Geometry::new(live_len, num_vars).unwrap(),
     )
     .unwrap();
     assert!(
         !prover.can_use_stage2_initial_round_batch(),
-        "flat mixed layout must not opt into uniform round batching"
+        "flat geometry without local view must not opt into round batching"
     );
 
     let mut claim = prover.input_claim();
@@ -194,6 +194,98 @@ fn stage2_flat_layout_uses_dense_path_without_uniform_tiling() {
         prover.ingest_challenge(round, challenge);
     }
     assert_eq!(prover.rounds_completed, num_vars);
+}
+
+#[test]
+fn stage2_production_handoff_geometry_uses_flat_contract() {
+    let live_segments = 5usize;
+    let segment_bits = 3usize;
+    let coeff_bits = 2usize;
+    let coeff_len = 1usize << coeff_bits;
+    let live_len = live_segments * coeff_len;
+    let num_vars = segment_bits + coeff_bits;
+
+    let geometry = Stage2Geometry::from_production_handoff(
+        live_len,
+        num_vars,
+        live_segments,
+        segment_bits,
+        coeff_bits,
+    )
+    .unwrap();
+    assert_eq!(geometry.live_len(), live_len);
+    assert_eq!(geometry.num_vars(), num_vars);
+    assert!(
+        geometry.local_view().is_some(),
+        "consistent ring-switch embedding should attach a local fast-path view"
+    );
+
+    let b = 8usize;
+    let gamma = F::from_u64(11);
+    let stage1_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i as u64) + 3)).collect();
+    let w_compact: Vec<i8> = (0..live_len).map(|i| ((i * 2 + 1) % b) as i8 - 3).collect();
+    let relation_weight_evals: Vec<F> = (0..live_len)
+        .map(|i| F::from_u64((i as u64 * 5) + 2))
+        .collect();
+    let params = Stage2Params {
+        stage1_point: &stage1_point,
+        b,
+        live_segments,
+        segment_bits,
+        coeff_bits,
+    };
+    let s_claim = s_claim_from_compact_rows(&w_compact, &params);
+    let relation_weight_claim = relation_weight_claim_from_split(
+        &w_compact,
+        &(0..coeff_len)
+            .map(|i| F::from_u64(i as u64 + 1))
+            .collect::<Vec<_>>(),
+        &(0..(1usize << segment_bits))
+            .map(|i| F::from_u64(i as u64 + 4))
+            .collect::<Vec<_>>(),
+        None,
+        &params,
+    );
+
+    let prover = AkitaStage2Prover::new(
+        gamma,
+        w_compact,
+        &stage1_point,
+        s_claim,
+        b,
+        relation_weight_evals,
+        relation_weight_claim,
+        geometry,
+    )
+    .unwrap();
+    assert!(
+        prover.can_use_stage2_initial_round_batch(),
+        "production handoff with valid embedding may still opt into round batching"
+    );
+}
+
+#[test]
+fn stage2_production_handoff_rejects_tile_product_as_semantic_live_len() {
+    let live_segments = 5usize;
+    let segment_bits = 3usize;
+    let coeff_bits = 2usize;
+    let coeff_len = 1usize << coeff_bits;
+    let num_vars = segment_bits + coeff_bits;
+    let mismatched_live_len = live_segments * coeff_len - 1;
+
+    let geometry = Stage2Geometry::from_production_handoff(
+        mismatched_live_len,
+        num_vars,
+        live_segments,
+        segment_bits,
+        coeff_bits,
+    )
+    .unwrap();
+    assert_eq!(geometry.live_len(), mismatched_live_len);
+    assert!(
+        geometry.local_view().is_none(),
+        "live_len must not be inferred from live_tiles * lane_len when witness length differs"
+    );
 }
 
 #[test]
