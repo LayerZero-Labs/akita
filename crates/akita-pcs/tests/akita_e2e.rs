@@ -33,8 +33,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 use std::time::Instant;
 
-mod common;
-use common::opening_from_poly;
+use akita_pcs::test_support::opening_from_poly;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;

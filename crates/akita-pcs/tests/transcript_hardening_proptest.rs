@@ -1,13 +1,11 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-mod common;
-
+use akita_pcs::test_support::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
 use akita_types::OpeningClaimsLayout;
-use common::*;
 use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DenseCfg>;

@@ -15,12 +15,12 @@
 
 #![allow(missing_docs)]
 
-mod common;
 #[path = "mixed_d_per_level/fixture.rs"]
 mod mixed_d_per_level_fixture;
 
 use akita_config::proof_optimized::fp128;
 use akita_field::AkitaError;
+use akita_pcs::test_support::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -30,7 +30,6 @@ use akita_types::{
     AkitaStage2Proof, CleartextWitnessProof, OpeningClaimsLayout, RingVec, Schedule,
     SetupContributionMode, Step,
 };
-use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
 
 /// Envelope preset: root levels at `D = 128`, generation ring dimension 128.
@@ -193,7 +192,7 @@ fn prove_mixed_fixture() -> MixedDFixture {
 
     let poly = make_dense_poly(NUM_VARS, 0xcede_0001);
     let point = random_point(NUM_VARS, 0xcede_0002);
-    let opening = opening_from_poly::<DENSE_D, _>(&poly, &point, &layout);
+    let opening = opening_from_poly_dense(&poly, &point, &layout);
 
     let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
     assert_eq!(setup.expanded.seed().gen_ring_dim, ENVELOPE_D);
@@ -549,7 +548,7 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
 
         let poly = make_dense_poly(NUM_VARS, 0xcede_0001);
         let point = random_point(NUM_VARS, 0xcede_0002);
-        let opening = opening_from_poly::<DENSE_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly_dense(&poly, &point, &layout);
 
         let setup = BadScheme::setup_prover(NUM_VARS, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");

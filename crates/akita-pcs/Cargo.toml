@@ -60,6 +60,12 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
 ]
+# Test-only fixtures (`src/test_support.rs`), switched on only through this
+# crate's own dev-dependency edge below. Production builds never enable it.
+# `dep:rand` pulls in `rand` (otherwise dev-dependency-only) as a real
+# dependency, since `src/test_support.rs` is compiled as part of the lib
+# target, which only ever sees `[dependencies]`, never `[dev-dependencies]`.
+test-support = ["dep:rand"]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -75,6 +81,7 @@ akita-prover = { version = "0.1.0", path = "../akita-prover", default-features =
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
+rand = { version = "0.8", optional = true }
 
 [dev-dependencies]
 # Test/example-only: pull in `akita-config`'s test-support layout helpers
@@ -87,8 +94,13 @@ rayon = { version = "1.10", optional = true }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
+# Self-referential dev-dependency: turns on this crate's own `test-support`
+# feature (`src/test_support.rs`) for its own tests/examples/benches only.
+# Standard Cargo idiom for test-only helpers that must live in `src/` to be
+# compiled once into this crate's rlib instead of once per `tests/*.rs`
+# integration-test binary.
+akita-pcs = { path = ".", features = ["test-support"] }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
-rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"
@@ -103,6 +115,16 @@ p3-baby-bear = "=0.5.3"
 p3-koala-bear = "=0.5.3"
 tracing-chrome = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+
+[[test]]
+name = "transcript_hardening"
+path = "tests/transcript_hardening.rs"
+required-features = ["logging-transcript"]
+
+[[test]]
+name = "transcript_hardening_proptest"
+path = "tests/transcript_hardening_proptest.rs"
+required-features = ["logging-transcript"]
 
 [[example]]
 name = "profile"

@@ -1,42 +1,80 @@
-#![allow(dead_code)]
+//! Test-only fixtures shared by `akita-pcs`'s integration tests.
+//!
+//! Everything here used to live in `tests/common/mod.rs`, textually included
+//! via `mod common;` by every integration test file that needed it. Because
+//! each file under `tests/` compiles as its own separate binary crate, that
+//! meant the same ~200 lines of fixture code (and the generic
+//! `opening_from_poly` helper's monomorphized instances) were independently
+//! recompiled in every consuming binary.
+//!
+//! Moving it here means it compiles once as part of this crate's own rlib,
+//! which every test binary already depends on and which Cargo already
+//! caches/reuses across all of them. This module is gated behind the
+//! `test-support` feature, switched on only through this crate's own
+//! self-referential dev-dependency edge, so it is absent from every shipped
+//! artifact.
 
-pub(super) use akita_config::proof_optimized::fp128;
-pub(super) use akita_config::CommitmentConfig;
-pub(super) use akita_field::{CanonicalField, FieldCore};
+// Re-exported at the same visibility `tests/common/mod.rs` used to grant its
+// (single) consumer, so `use akita_pcs::test_support::*;` is a drop-in
+// replacement for the old `use common::*;` glob import.
+pub use crate::{
+    BasisMode, BlockOrder, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
+};
+pub use akita_config::proof_optimized::fp128;
+pub use akita_config::CommitmentConfig;
+pub use akita_field::{CanonicalField, FieldCore};
+pub use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
+pub use akita_types::LevelParams;
+pub use akita_types::{
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
+    Commitment,
+};
+pub use rand::rngs::StdRng;
+pub use rand::{Rng, SeedableRng};
+
+// Used only internally by `opening_from_poly`'s own signature; never part of
+// the module's public surface (matching the original file).
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::CpuBackend;
-pub(super) use akita_prover::DensePoly;
-pub(super) use akita_prover::OneHotPoly;
-pub(super) use akita_prover::ProverOpeningData;
-pub(super) use akita_types::LevelParams;
-pub(super) use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, BlockOrder, Commitment, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims,
-};
-pub(super) use rand::rngs::StdRng;
-pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
 
-pub(super) type F = fp128::Field;
-pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
+/// The field every fixture in this module is built over.
+pub type F = fp128::Field;
 
-// Bare presets: test-only non-singleton batched opening shapes
-// fall through to the offline DP planner on table miss via the default
-// `runtime_schedule` fallback.
-pub(super) type OneHotCfg = fp128::D64OneHot;
-pub(super) const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::D64OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
-// ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
-// per ring element. Must match `OneHotCfg::onehot_chunk_size()`.
-pub(super) const ONEHOT_K: usize = 256;
+/// Stack size used for tests that recurse deeply enough to overflow the
+/// default thread stack (see [`run_on_large_stack`]).
+pub const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-pub(super) type DenseCfg = fp128::D128Full;
-pub(super) const DENSE_D: usize = DenseCfg::D;
+/// The dominant one-hot commitment config shared by most `akita-pcs`
+/// integration tests.
+///
+/// Bare presets: test-only non-singleton batched opening shapes fall through
+/// to the offline DP planner on table miss via the default `runtime_schedule`
+/// fallback.
+pub type OneHotCfg = fp128::D64OneHot;
+
+/// Ring dimension of [`OneHotCfg`].
+pub const ONEHOT_D: usize = OneHotCfg::D;
+
+/// One-hot chunk size of [`OneHotCfg`].
+///
+/// `fp128::D64OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
+/// ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
+/// per ring element. Must match `OneHotCfg::onehot_chunk_size()`.
+pub const ONEHOT_K: usize = 256;
+
+/// The dominant dense commitment config shared by most `akita-pcs`
+/// integration tests.
+pub type DenseCfg = fp128::D128Full;
+
+/// Ring dimension of [`DenseCfg`].
+pub const DENSE_D: usize = DenseCfg::D;
 
 static INIT_RAYON: Once = Once::new();
 
-pub(super) fn init_rayon_pool() {
+/// Initializes the global Rayon pool with [`STACK_SIZE`] stacks, once per
+/// process.
+pub fn init_rayon_pool() {
     INIT_RAYON.call_once(|| {
         #[cfg(feature = "parallel")]
         rayon::ThreadPoolBuilder::new()
@@ -46,14 +84,18 @@ pub(super) fn init_rayon_pool() {
     });
 }
 
-pub(super) fn random_point(nv: usize, seed: u64) -> Vec<F> {
+/// Deterministically samples a random opening point of length `nv` from
+/// `seed`.
+pub fn random_point(nv: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
     (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 
-pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
+/// Runs `f` on a thread with a [`STACK_SIZE`] stack, for tests deep enough to
+/// overflow the default stack.
+pub fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(f)
@@ -62,7 +104,9 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
+/// Builds a single-group, full-point [`ProverOpeningData`] for `polynomials`
+/// opened at `point` against `commitment`.
+pub fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
     commitment: &'a Commitment<CommitF>,
@@ -80,7 +124,9 @@ pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
         .expect("valid prover opening data")
 }
 
-pub(super) fn verify_input<'a, FF: FieldCore, C>(
+/// Builds a single-group, full-point [`OpeningClaims`] asserting `openings`
+/// at `point` against `commitment`.
+pub fn verify_input<'a, FF: FieldCore, C>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
@@ -97,11 +143,8 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
     .expect("valid verifier input")
 }
 
-pub(super) fn opening_from_poly<'a, const D: usize, P>(
-    poly: &'a P,
-    point: &[F],
-    layout: &LevelParams,
-) -> F
+/// Evaluates `poly` at `point` under `layout`, using the Lagrange basis.
+pub fn opening_from_poly<'a, const D: usize, P>(poly: &'a P, point: &[F], layout: &LevelParams) -> F
 where
     P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
@@ -109,7 +152,8 @@ where
     opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
 }
 
-pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
+/// Evaluates `poly` at `point` under `layout`, using `basis_mode`.
+pub fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
     layout: &LevelParams,
@@ -158,7 +202,30 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
+/// Concrete, non-generic instantiation of [`opening_from_poly`] at
+/// [`OneHotCfg`]'s ring dimension for [`OneHotPoly<F, u8>`].
+///
+/// `opening_from_poly` is generic over `D` and the poly type, so calling the
+/// generic version directly re-monomorphizes it in every calling binary.
+/// This wrapper's body is fully concrete, so it is compiled exactly once
+/// here instead. Every `akita-pcs` integration test that opens a one-hot
+/// poly under [`OneHotCfg`] should call this instead of the generic
+/// function.
+pub fn opening_from_poly_onehot(poly: &OneHotPoly<F, u8>, point: &[F], layout: &LevelParams) -> F {
+    opening_from_poly::<ONEHOT_D, OneHotPoly<F, u8>>(poly, point, layout)
+}
+
+/// Concrete, non-generic instantiation of [`opening_from_poly`] at
+/// [`DenseCfg`]'s ring dimension for [`DensePoly<F>`].
+///
+/// See [`opening_from_poly_onehot`] for why this wrapper exists.
+pub fn opening_from_poly_dense(poly: &DensePoly<F>, point: &[F], layout: &LevelParams) -> F {
+    opening_from_poly::<DENSE_D, DensePoly<F>>(poly, point, layout)
+}
+
+/// Builds a one-hot polynomial fixture sized for `layout`, seeded from
+/// `seed`, under [`OneHotCfg`].
+pub fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_blocks · block_len) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
     let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
@@ -170,7 +237,9 @@ pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F,
     OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly")
 }
 
-pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
+/// Builds a dense polynomial fixture with `nv` variables, seeded from
+/// `seed`, under [`DenseCfg`].
+pub fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
     let evals = dense_field_evals(nv, seed);
     DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly")
 }
@@ -183,7 +252,8 @@ fn splitmix64_next(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
+/// Deterministically samples `2^nv` field elements from `seed`.
+pub fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     let n = 1usize << nv;
     let mut out = Vec::with_capacity(n);
     let mut state = seed;
@@ -194,8 +264,10 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     out
 }
 
+/// Filters wire events out of a transcript event log, for tests that assert
+/// on public-only transcript structure.
 #[cfg(feature = "logging-transcript")]
-pub(super) fn public_transcript_events(
+pub fn public_transcript_events(
     events: &[akita_transcript::TranscriptEvent],
 ) -> Vec<akita_transcript::TranscriptEvent> {
     events
@@ -205,8 +277,9 @@ pub(super) fn public_transcript_events(
         .collect()
 }
 
+/// Returns the label of a transcript event, if it carries one.
 #[cfg(feature = "logging-transcript")]
-pub(super) fn event_label(event: &akita_transcript::TranscriptEvent) -> Option<&[u8]> {
+pub fn event_label(event: &akita_transcript::TranscriptEvent) -> Option<&[u8]> {
     match event {
         akita_transcript::TranscriptEvent::Absorb { label, .. }
         | akita_transcript::TranscriptEvent::Squeeze { label, .. }
@@ -215,8 +288,9 @@ pub(super) fn event_label(event: &akita_transcript::TranscriptEvent) -> Option<&
     }
 }
 
+/// Finds the first event carrying `label`.
 #[cfg(feature = "logging-transcript")]
-pub(super) fn first_label_index(
+pub fn first_label_index(
     events: &[akita_transcript::TranscriptEvent],
     label: &[u8],
 ) -> Option<usize> {
@@ -225,8 +299,9 @@ pub(super) fn first_label_index(
         .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
 }
 
+/// Finds the first event carrying `label` at or after `start`.
 #[cfg(feature = "logging-transcript")]
-pub(super) fn first_label_index_after(
+pub fn first_label_index_after(
     events: &[akita_transcript::TranscriptEvent],
     start: usize,
     label: &[u8],
@@ -242,8 +317,10 @@ fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
     candidate == base || akita_transcript::is_ext_limb_label(candidate, base)
 }
 
+/// Finds the first event carrying `label` or one of its extension limbs, at
+/// or after `start`.
 #[cfg(feature = "logging-transcript")]
-pub(super) fn first_label_or_extension_limb_index_after(
+pub fn first_label_or_extension_limb_index_after(
     events: &[akita_transcript::TranscriptEvent],
     start: usize,
     label: &[u8],
@@ -288,8 +365,11 @@ fn assert_no_logical_label(
     );
 }
 
+/// Asserts that a terminal-round transcript's challenge/absorb events appear
+/// in the expected relative order, returning the index of the terminal
+/// e_hat absorb if present.
 #[cfg(feature = "logging-transcript")]
-pub(super) fn assert_terminal_event_order_if_present(
+pub fn assert_terminal_event_order_if_present(
     events: &[akita_transcript::TranscriptEvent],
 ) -> Option<usize> {
     use akita_transcript::labels;

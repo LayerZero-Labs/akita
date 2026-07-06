@@ -17,13 +17,11 @@
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
-mod common;
-
+use akita_pcs::test_support::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
-use common::*;
 
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();
@@ -43,7 +41,7 @@ fn run_single_onehot(nv: usize) {
         let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly");
 
         let pt = random_point(nv, 0xcafe_0000 + nv as u64);
-        let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly_onehot(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -128,7 +126,7 @@ fn run_single_dense(nv: usize) {
         let poly = DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly");
 
         let pt = random_point(nv, 0xbabe_0000 + nv as u64);
-        let expected_opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly_dense(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -265,7 +263,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly");
 
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-        let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+        let expected_opening = opening_from_poly_onehot(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();

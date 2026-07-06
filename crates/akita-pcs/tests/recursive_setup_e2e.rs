@@ -20,15 +20,13 @@
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
-mod common;
-
+use akita_pcs::test_support::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, SetupContributionMode,
 };
-use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"recursive_setup_e2e/onehot";
 
@@ -82,7 +80,7 @@ fn prove_onehot_with_setup_mode(
 
     let poly = make_onehot_poly(&layout, 0xdead_beef_0000 + nv as u64);
     let point = random_point(nv, 0xcafe_0000 + nv as u64);
-    let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+    let opening = opening_from_poly_onehot(&poly, &point, &layout);
 
     let setup = match setup_mode {
         SetupContributionMode::Direct => AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1),

@@ -1,8 +1,7 @@
 #![allow(missing_docs)]
 
-mod common;
-
 use akita_field::AkitaError;
+use akita_pcs::test_support::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -11,7 +10,6 @@ use akita_types::{
     sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaVerifierSetup, Commitment,
 };
-use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
@@ -48,7 +46,7 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
 
     let poly = make_onehot_poly(&layout, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
-    let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+    let opening = opening_from_poly_onehot(&poly, &point, &layout);
 
     let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
@@ -205,7 +203,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x61_61);
         let point = random_point(num_vars, 0x71_71);
-        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly_onehot(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");

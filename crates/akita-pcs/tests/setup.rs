@@ -18,21 +18,19 @@
 
 #![allow(missing_docs)]
 
-mod common;
-
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
+use akita_pcs::test_support::{
+    dense_field_evals, init_rayon_pool, opening_from_poly, prove_input, random_point,
+    run_on_large_stack, verify_input, F, STACK_SIZE,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, BasisMode};
-use common::{
-    dense_field_evals, init_rayon_pool, opening_from_poly, prove_input, random_point,
-    run_on_large_stack, verify_input, F,
-};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -62,7 +60,7 @@ fn assert_folded_proof(label: &str, proof: &AkitaBatchedProof<F, F>) {
 /// string that bare [`run_on_large_stack`] would surface.
 fn run_on_large_stack_propagate<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
     let handle = std::thread::Builder::new()
-        .stack_size(common::STACK_SIZE)
+        .stack_size(STACK_SIZE)
         .spawn(move || catch_unwind(AssertUnwindSafe(f)))
         .expect("failed to spawn thread");
     match handle

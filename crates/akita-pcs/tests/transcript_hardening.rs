@@ -3,9 +3,8 @@
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
-mod common;
-
 use akita_field::CanonicalField;
+use akita_pcs::test_support::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{
@@ -16,7 +15,6 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
     TerminalWitnessSegmentLayout,
 };
-use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 

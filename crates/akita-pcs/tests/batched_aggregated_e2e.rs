@@ -20,15 +20,13 @@
 
 #![allow(missing_docs)]
 
-mod common;
-
+use akita_pcs::test_support::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::MultilinearPolynomial;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, OpeningClaimsLayout};
-use common::*;
 
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
@@ -60,7 +58,7 @@ mod non_zk_aggregated_cases {
             let pt = random_point(nv, 0xf00d_0000 + nv as u64);
             let openings: Vec<F> = polys
                 .iter()
-                .map(|poly| opening_from_poly::<ONEHOT_D, _>(poly, &pt, &layout))
+                .map(|poly| opening_from_poly_onehot(poly, &pt, &layout))
                 .collect();
 
             let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
@@ -152,7 +150,7 @@ mod non_zk_aggregated_cases {
             let pt = random_point(nv, 0xaaaa_0000 + nv as u64);
             let openings: Vec<F> = polys
                 .iter()
-                .map(|poly| opening_from_poly::<DENSE_D, _>(poly, &pt, &layout))
+                .map(|poly| opening_from_poly_dense(poly, &pt, &layout))
                 .collect();
 
             let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
