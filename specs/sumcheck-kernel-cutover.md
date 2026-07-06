@@ -167,8 +167,9 @@ Reject and do not revive without a new spec:
                              │
 ┌────────────────────────────▼────────────────────────────────┐
 │ Prover kernel (this spec)                                    │
-│   PairScan: one accumulate_pair + PairIterator per round     │
-│   fold_table: witness + RelationWeightPolynomial in lockstep │
+│   PairScan: one accumulate_pair + FlatPairStream per round   │
+│   FusedFoldScan: fold + next-round scan in one flat pass     │
+│   fold: WitnessPolynomial + RelationWeightPolynomial         │
 │   round_batching: optional fast path for rounds 0–1          │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -220,46 +221,94 @@ rel[2] += dw * (p1 - p0);
 // Virtual: w*(w+1) with Gruen eq weights (compact i64 or field)
 ```
 
-**Witness encoding** (two arms inside one function, not two modules):
+**WitnessPolynomial storage** (two prover storage arms for one flat polynomial,
+not two modules):
 
-| Encoding | When | Virtual term |
-|----------|------|--------------|
-| `Compact(i8)` | Before / early binds | `i64` unreduced via `MulU64Accum` |
-| `Field(E)` | After compact→full transition | field arithmetic |
+```rust
+enum WitnessPolynomial<'a, E> {
+    CompactDigits(&'a [i8]),
+    FieldEvals(&'a [E]),
+}
+```
+
+Stage 2 starts from a live flat `Vec<i8>` of balanced digits and later folds to
+a live flat `Vec<E>`. This is the same witness polynomial from the protocol
+equation; the enum is only the prover storage representation. The compact arm
+must keep optimized field-times-small arithmetic (`MulU64Accum` /
+small-signed accumulation).
 
 **Relation weight** is always field `E` at `pair_flat(idx0, idx1)`.
 If either `idx0` or `idx1` lies outside the live range, both the witness and
 relation weight at that address are implicit zero. The kernel must not require
 relation-weight storage for padded Boolean-domain slots.
 
-### Pair iterators (replace prefix modules)
-
-One `PairIterator` implementation per **visit pattern**, not per stage half:
-
-| Iterator | Replaces | When selected |
-|----------|----------|---------------|
-| `SplitEqBlockedPairs` | `dense_terms` | Full active width; Gruen `e_first` × `e_second` blocking |
-| `LiveColumnPairs` | `y_prefix`, stage-1 `sparse_y` (current coefficient-axis phase) | Live range is shorter than the padded domain while binding the current inner storage axis |
-| `LiveRowPairs` | `x_prefix` (current column-axis phase) | Same sparsity while binding the current outer storage axis |
-
-All iterators call the same `accumulate_pair(step, w0, w1, p0, p1, …)`.
-
-**Dense is not "field inner product over the full hypercube."**
-It is the same field-weight × compact-witness scan with a full pair iterator.
-
-### Fold (replace four relation fold helpers)
+**Range binding** is an optional summand, not part of pair identity:
 
 ```rust
-fn fold_table_column_major(
-    evals: &mut [E],
-    live_cols: usize,
-    y_len: usize,
-    bind: BindAxis,  // Ring | Column
-    r: E,
-) -> (next_live_cols, next_y_len);
+enum RangeBindingTerm<'a, E> {
+    Absent,
+    Present { split_eq: &'a GruenSplitEq<E>, gamma: E },
+}
 ```
 
-Witness compact fold uses the same geometry with `CompactPairFoldLut`.
+Shape can differ, but the contract is fixed: the range term computes
+`gamma * eq(stage1_point, z) * w(z) * (w(z) + 1)` over the same flat witness
+addresses as the relation term. It must not use a separate global `x/y` scan.
+
+### Flat pair streams (replace prefix modules)
+
+One `FlatPairStream` implementation per **flat-address visit pattern**, not per
+stage half and not per global row/column axis:
+
+| Stream | Replaces | When selected |
+|--------|----------|---------------|
+| `BlockedFlatPairs` | `dense_terms` | Full active width; stream order is chosen to preserve current Gruen table locality |
+| `EmbeddedLocalAxisPairs` | `y_prefix`, `x_prefix`, stage-1 sparse-axis scans | A local segment view is useful for the current bind, but every local address maps to `Option<flat_live_address>` |
+| `FusedFoldPairs` | `fuse_full_prefix_x_and_compute_round` and analogous fused paths | The prover can fold the current live flat vectors and emit the next round's flat pairs in one memory pass |
+
+All streams emit only flat pair addresses:
+
+```rust
+struct PairStep {
+    idx0: usize,
+    idx1: usize,
+}
+```
+
+Do not put a global `row`, `column`, `x`, `y`, or `eq_weight` in `PairStep`.
+The relation summand only needs `(idx0, idx1)` and the live relation-weight
+accessor. Gruen equality weights belong to the fused range-term context, not to
+the generic pair identity.
+
+All streams call the same `accumulate_pair(step, w0, w1, p0, p1, …)`. Local
+axis streams may use current uniform coordinates internally, but they must map
+those coordinates to flat addresses before touching witness or relation-weight
+storage.
+
+**Dense is not "field inner product over the full hypercube."**
+It is the same field-weight × compact-witness scan with a full flat pair stream.
+
+### Fold (replace relation and witness fold helpers)
+
+```rust
+fn fold_witness_polynomial(
+    witness: WitnessPolynomial<'_, E>,
+    schedule: &FoldSchedule,
+    round: usize,
+    r: E,
+) -> WitnessPolynomial<'_, E>;
+
+fn fold_relation_weight(
+    relation_weight: &RelationWeightPolynomial<E>,
+    schedule: &FoldSchedule,
+    round: usize,
+    r: E,
+) -> RelationWeightPolynomial<E>;
+```
+
+The schedule maps local segment coordinates to flat addresses. A uniform
+column-major view may be an internal fast path, but it is not the fold API.
+Witness compact fold uses the same flat schedule with `CompactPairFoldLut`.
 
 Delete as separate concepts:
 
@@ -276,14 +325,48 @@ each round r:
   if using_initial_round_batch(r):
     round_batching.reconstruct_round_poly(r)   // prover-only grid
   else:
-    pair_scan(PairIterator::for_round(geom, r), witness, weight, split_eq)
-  fold_tables(geom.bind_axis(r), witness, weight, challenge)
+    pair_scan(
+      FlatPairStream::for_round(schedule, r),
+      WitnessPolynomial,
+      RelationWeightPolynomial,
+      RangeBindingTerm
+    )
+  fold_polynomials(schedule, witness, relation_weight, challenge)
 ```
 
-Fuse-fold-and-scan (today's `fuse_full_prefix_x_and_compute_round`) may remain as
-an optional **iterator that yields post-fold pairs in one pass** or as a
-post-fold cache of the next round polynomial.
-It must not be a third parallel module tree.
+### Fused fold-scan kernel
+
+The efficient fuse-fold-and-scan path is required in the final architecture. It
+is not an exception to pair scan, and it must not keep the current
+`fuse_full_prefix_x_and_compute_round` / `x_prefix` vocabulary.
+
+The target is a first-class `FusedFoldScan` kernel:
+
+```rust
+fn fused_fold_scan(
+    schedule: &FoldSchedule,
+    round: usize,
+    challenge: E,
+    witness: WitnessPolynomial<'_, E>,
+    relation_weight: &RelationWeightPolynomial<E>,
+    range: &RangeBindingTerm<'_, E>,
+) -> (WitnessPolynomial<'_, E>, RelationWeightPolynomial<E>, RoundMessageCache<E>);
+```
+
+Shape can differ, but the contract should not:
+
+- It consumes live flat witness and relation-weight vectors.
+- It folds both vectors by the same flat schedule.
+- It emits the next live flat witness and relation-weight vectors.
+- While data is hot in cache, it also scans the next round's `FusedFoldPairs`
+  and computes the next round message.
+- It preserves compact-digit lookup tables and field-times-small arithmetic
+  wherever the input witness is still `CompactDigits`.
+- It uses local segment coordinates only inside embedding helpers that emit
+  flat addresses.
+
+This is how the current efficient memory pipeline survives the cleanup. The old
+function names and module boundaries do not survive.
 
 ### `round_batching` (retain, isolate)
 
@@ -307,7 +390,7 @@ Stage 1 proves `0 = sum eq(tau0, z) * Q(S(z))` with eq-factored messages.
 It is **not** the same summand as stage 2, but shares:
 
 - `HypercubeGeom` / `FoldSchedule`
-- `PairIterator` visit patterns
+- `FlatPairStream` visit patterns
 - `round_batching` for stage 1 (`Stage1RoundBatchState`)
 - Gruen `split_eq` driver
 
@@ -340,18 +423,24 @@ Use consistently in code, specs, and book:
 
 | Term | Meaning |
 |------|---------|
-| **Pair scan** | Canonical prover kernel: one loop over active fold pairs |
-| **Pair iterator** | Geometry-driven pair visit order (`SplitEqBlocked`, `LiveColumn`, `LiveRow`) |
-| **Initial round batch** / **`round_batching`** | Prover-only two-round y-axis grid skip (rounds 0–1) |
-| **Sparse column fold** | Skip zero-padded x slots (`live_x_cols < 2^remaining_col_bits`) |
+| **Pair scan** | Canonical prover kernel: one loop over active flat fold pairs |
+| **Flat pair stream** | Flat-address pair source (`BlockedFlatPairs`, `EmbeddedLocalAxisPairs`, `FusedFoldPairs`) |
+| **WitnessPolynomial** | Live flat witness polynomial storage: compact balanced digits before folding, field evals after folding |
+| **RangeBindingTerm** | Optional Stage 2 `gamma * eq * w * (w+1)` summand over the flat witness |
+| **Initial round batch** / **`round_batching`** | Prover-only two-round local-axis grid skip (rounds 0–1) |
+| **Live-range fold** | Fold that skips or zero-extends padded flat addresses |
 | **Setup prefix** | Stage 3 setup slot absorb (unrelated to sumcheck pair scan) |
 
-Do not use **prefix** alone for multiple concepts.
+Forbidden final vocabulary in this area:
 
-Rename over time:
+- `prefix` as a generic sumcheck-kernel concept;
+- `x_prefix`, `y_prefix`, `prefix_r_stage1`, `use_prefix_x_round`,
+  `use_prefix_y_round`;
+- `LiveColumnPairs`, `LiveRowPairs`;
+- global `x`, `y`, `row`, or `column` in pair-stream APIs.
 
-- `prefix_r_stage1` → `cached_stage1_point_for_y_batch`
-- `use_prefix_x_round` → iterator kind, not a boolean on the prover
+Full cutover means deleting those names from live code, not renaming them
+later.
 
 ## Crate map (unchanged boundaries)
 
@@ -371,44 +460,70 @@ Full cutover in sequenced PRs on the active branch.
 Each slice compiles, tests green, deletes replaced code before the next slice
 depends on it.
 
-### Slice 1 — Stage 2 pair scan extraction
+### Slice 1 — Stage 2 flat scan extraction
 
-1. Add `akita_stage2/pair_scan.rs`:
-   - `accumulate_pair` (compact + field arms)
-   - `PairIterator` trait + `SplitEqBlockedPairs`, `LiveColumnPairs`,
-     `LiveRowPairs`
-   - `scan_round(iterator, witness, &RelationWeightPolynomial, &GruenSplitEq)`
-     → `(NormRoundTerms, rel_coeffs)`
-2. Rewire `round_flow.rs` to call `scan_round` when not batching.
-3. Delete scan bodies from `dense_terms.rs`, `y_prefix.rs`, `x_prefix.rs`
-   (keep fuse helpers temporarily if needed).
-4. Equivalence tests: new scan vs old modules on representative fixtures before
-   deletion.
+1. Add the flat kernel surface:
+   - `accumulate_pair` (compact + field arms);
+   - `FlatPairStream` trait with `BlockedFlatPairs` and
+     `EmbeddedLocalAxisPairs`;
+   - `WitnessPolynomial`;
+   - `RangeBindingTerm`;
+   - `scan_round(stream, &WitnessPolynomial, &RelationWeightPolynomial,
+     &RangeBindingTerm)` → `(NormRoundTerms, rel_coeffs)`.
+2. Rewire `round_flow.rs` to call `scan_round` when not batching or fused.
+3. Delete scan bodies from `dense_terms.rs`, `y_prefix.rs`, `x_prefix.rs` once
+   equivalent streams are in place.
+4. Equivalence tests: new flat streams vs old modules on representative
+   fixtures before deletion.
 
 **Tests:** `cargo test -p akita-prover akita_stage2`
 
-### Slice 2 — Unified fold + round dispatch
+### Slice 2 — Unified witness/range fold + round dispatch
 
-1. Add `fold_table_column_major` on witness + `RelationWeightPolynomial`.
-2. Replace `fold_relation_weight_for_round` and parallel witness fold branches
+1. Add `fold_witness_polynomial` and `fold_relation_weight` over the same flat
+   `FoldSchedule`.
+2. Route the Stage 2 relation summand and range-binding summand through the
+   same flat witness access.
+3. Replace `fold_relation_weight_for_round` and parallel witness fold branches
    in `ingest_challenge`.
-3. Collapse `round_flow` to: batch path | `scan_round` + `fold_tables`.
-4. Remove dead flags: `use_prefix_x_round`, `use_prefix_y_round` as public
-   dispatch inputs.
+4. Collapse `round_flow` to: initial batch | flat scan | fused fold-scan.
+5. Delete `use_prefix_x_round`, `use_prefix_y_round`, and similarly named
+   dispatch flags. Replace them with flat stream selection.
 
 **Tests:** `trace_prefix` tests, fused round-2 transition tests.
 
-### Slice 3 — Stage 1 pair scan share
+### Slice 3 — First-class fused fold-scan
 
-1. Extract stage-1 virt accumulation into shared iterator machinery.
-2. Point `akita_stage1/round_flow.rs` at shared iterators + range precomp.
-3. Delete `akita_stage1/x_prefix.rs`, `sparse_y.rs` scan duplication.
-4. Fix `can_use_stage2_initial_round_batch` misname on stage-1 prover
+1. Add `FusedFoldScan` over `WitnessPolynomial`, `RelationWeightPolynomial`,
+   `RangeBindingTerm`, and `FoldSchedule`.
+2. Replace `fuse_full_prefix_x_and_compute_round` with the flat fused kernel.
+3. Preserve the current efficient memory behavior:
+   - fold live flat vectors;
+   - emit next live flat vectors;
+   - compute the next round message while data is hot;
+   - keep compact lookup tables and field-times-small arithmetic.
+4. Delete the old fused function name and any x/y-shaped fused dispatch.
+5. Add equivalence tests against current fused fixtures before deletion.
+
+**Tests:** fused round-2 transition tests, trace-prefix fused tests,
+`cargo test -p akita-prover round_batching`.
+
+### Slice 4 — Stage 1 and range flat-scan share
+
+1. Move shared flat-stream and `WitnessPolynomial` primitives to
+   `sumcheck/kernel/` if Stage 1 also depends on them.
+2. Extract Stage 1 range accumulation into shared flat-stream machinery.
+3. Point `akita_stage1/round_flow.rs` at shared streams + range precomp.
+4. Delete `akita_stage1/x_prefix.rs`, `sparse_y.rs` scan duplication.
+5. Add fixtures where live length is not a rectangular global `x/y` grid and
+   padded witness data cannot affect the Stage 1 range check or Stage 2
+   range-binding term.
+6. Fix `can_use_stage2_initial_round_batch` misname on stage-1 prover
    (`can_use_stage1_initial_round_batch`).
 
 **Tests:** `cargo test -p akita-prover akita_stage1`
 
-### Slice 4 — Cleanup and test decomposition
+### Slice 5 — Cleanup and test decomposition
 
 1. Delete empty modules (`dense_terms`, `y_prefix`, `x_prefix` when fully migrated).
 2. Split `round_batching/tests.rs` and `akita_stage2/tests.rs` below 1k lines;
@@ -420,21 +535,23 @@ depends on it.
 
 **Tests:** full workspace `cargo test`; profile parity check.
 
-### Slice 5 — Docs
+### Slice 6 — Docs
 
 1. Expand `book/src/how/proving/sumcheck-stages.md` with prover-only optimization
    boundary paragraph.
 2. Cross-link this spec from `relation-weight-polynomial.md` and
    `akita-sumcheck` crate docs.
+3. Grep live code and docs for forbidden vocabulary from this spec.
 
 **Tests:** `./scripts/check-doc-guardrails.sh`
 
 ```text
 Slice 1 (stage2 pair_scan)
   └─→ Slice 2 (fold + dispatch)
-        └─→ Slice 3 (stage1 share)
-              └─→ Slice 4 (cleanup)
-                    └─→ Slice 5 (docs)
+        └─→ Slice 3 (fused fold-scan)
+              └─→ Slice 4 (stage1/range share)
+                    └─→ Slice 5 (cleanup)
+                          └─→ Slice 6 (docs)
 ```
 
 ## Evaluation
@@ -446,11 +563,17 @@ Slice 1 (stage2 pair_scan)
   coefficient range, and treats padded Boolean-domain entries as implicit
   zeroes.
 - [ ] `dense_terms.rs`, `y_prefix.rs` deleted or reduced to thin re-exports
-  during migration only (gone by Slice 4).
-- [ ] `fold_relation_weight_for_round` and separate x/y fold helpers deleted.
+  during migration only (gone by Slice 5).
+- [ ] `fold_relation_weight_for_round`, `fuse_full_prefix_x_and_compute_round`,
+  and separate x/y fold helpers deleted or replaced by `FusedFoldScan` /
+  flat-stream names.
+- [ ] `FusedFoldScan` preserves current fused fold+next-round performance
+  without carrying x/y-shaped names or APIs.
+- [ ] Stage 1 range scans and Stage 2 range-binding scans use flat
+  `WitnessPolynomial` addressing, not a global `x/y` split.
 - [ ] `round_flow.rs` has at most two top-level round branches (batch | scan).
 - [ ] Equivalence: `round_batching` path matches pair scan on same fixtures.
-- [ ] Equivalence: each `PairIterator` matches prior module output on fixtures.
+- [ ] Equivalence: each `FlatPairStream` matches prior module output on fixtures.
 - [ ] E2E and transcript hardening tests unchanged and green.
 - [ ] Stage-2 profile workload within noise of pre-cutover baseline.
 - [ ] Book + this spec cross-linked; unification spec deleted.
@@ -467,8 +590,12 @@ Slice 1 (stage2 pair_scan)
 **New:**
 
 - `pair_scan_matches_legacy_dense` — full-width instances, all rounds
-- `pair_scan_matches_legacy_prefix_y` — sparse `live_x_cols`
-- `pair_scan_matches_legacy_prefix_x` — x-phase sparse
+- `pair_scan_matches_legacy_local_axis_inner` — current sparse inner-axis case
+- `pair_scan_matches_legacy_local_axis_outer` — current sparse outer-axis case
+- `fused_fold_scan_matches_legacy_fused_path` — preserves current fused path
+  round messages and next folded vectors
+- `range_scan_ignores_padded_witness` — Stage 1 and Stage 2 range paths cannot
+  be changed by out-of-live witness advice
 - `round_batching_matches_pair_scan` — extend `trace_prefix` coverage
 - Optional: `fold_table_matches_legacy_relation_folds` per axis
 

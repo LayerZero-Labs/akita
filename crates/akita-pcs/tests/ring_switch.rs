@@ -369,7 +369,7 @@ mod tests {
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
+            build_w_evals_compact(build_output.w.as_i8_digits(), D).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(29);
@@ -399,6 +399,7 @@ mod tests {
                 lp.role_dims(),
                 &lp,
                 &tau1,
+                1,
                 1,
                 &[F::one()],
                 MRowLayout::WithDBlock,
@@ -512,7 +513,7 @@ mod tests {
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
+            build_w_evals_compact(build_output.w.as_i8_digits(), D).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(17);
@@ -540,6 +541,7 @@ mod tests {
                 lp.role_dims(),
                 &lp,
                 &tau1,
+                1,
                 1,
                 &[F::one()],
                 MRowLayout::WithDBlock,
@@ -709,6 +711,7 @@ mod tests {
             &level_params,
             &tau1,
             1,
+            1,
             &[F::one()],
             MRowLayout::WithDBlock,
         )
@@ -864,6 +867,7 @@ mod tests {
                 lp_w.role_dims(),
                 &lp_w,
                 &tau1,
+                1,
                 1,
                 &[F::one()],
                 MRowLayout::WithDBlock,

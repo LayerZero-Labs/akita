@@ -1,7 +1,6 @@
 //! Verifier-side prepared relation-weight polynomial evaluator.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use akita_algebra::ring::scalar_powers;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBase};
 use akita_sumcheck::multilinear_eval;
 use akita_types::{
@@ -80,7 +79,7 @@ where
         let y_len = 1usize
             .checked_shl(self.ring_bits as u32)
             .ok_or(AkitaError::InvalidProof)?;
-        let alpha_evals_y = scalar_powers(self.alpha, y_len);
+        let alpha_evals_y = akita_algebra::ring::scalar_powers(self.alpha, y_len);
         let alpha_val = multilinear_eval(&alpha_evals_y, y_challenges)?;
         let row_val = self.deferred.eval_at_point::<F, D>(
             x_challenges,

@@ -221,6 +221,7 @@ where
             crate::protocol::ring_relation::RelationQuotientShape::from_level(
                 lp,
                 instance.m_row_layout(),
+                opening_batch.num_groups(),
             )?,
             &instance.challenges,
             e_hat.typed_planes::<D>()?,

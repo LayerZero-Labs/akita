@@ -337,7 +337,7 @@ where
 /// [`EvaluationTrace`](crate::layout::RelationRowFamily::EvaluationTrace) row.
 ///
 /// Adds `eq(tau1, EvaluationTrace) * trace_eval_target` at row 0, then accumulates
-/// opening-consistency rows from `u` and `v` at the same indices as
+/// opening-consistency rows from `u` and `v` at the same row indices as
 /// [`relation_claim_from_rows_extension_at_dims`] (`2 + n_a` for uniform layouts).
 ///
 /// # Errors

@@ -90,9 +90,12 @@ impl TraceWeightLayout {
     }
 
     pub(crate) fn validate_ring_dimension<const D: usize>(&self) -> Result<(), AkitaError> {
-        if self.ring_bits != D.trailing_zeros() as usize {
+        let ring_len = 1usize.checked_shl(self.ring_bits as u32).ok_or_else(|| {
+            AkitaError::InvalidInput("trace-weight ring length overflow".to_string())
+        })?;
+        if ring_len == 0 || ring_len > D || !D.is_multiple_of(ring_len) {
             return Err(AkitaError::InvalidInput(
-                "ring_bits does not match ring dimension".to_string(),
+                "ring_bits does not embed in ring dimension".to_string(),
             ));
         }
         Ok(())

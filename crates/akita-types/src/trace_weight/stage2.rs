@@ -92,9 +92,13 @@ pub fn trace_weight_layout_from_segment(
             "trace-weight block count must be non-zero".to_string(),
         ));
     }
-    if ring_bits != lp.ring_dimension.trailing_zeros() as usize {
+    let ring_len = 1usize
+        .checked_shl(ring_bits as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("trace-weight ring length overflow".to_string()))?;
+    if ring_len == 0 || ring_len > lp.ring_dimension || !lp.ring_dimension.is_multiple_of(ring_len)
+    {
         return Err(AkitaError::InvalidInput(
-            "trace-weight ring bits do not match level ring dimension".to_string(),
+            "trace-weight ring bits do not embed in level ring dimension".to_string(),
         ));
     }
     let chunk0 = witness_layout.chunks.first().ok_or_else(|| {

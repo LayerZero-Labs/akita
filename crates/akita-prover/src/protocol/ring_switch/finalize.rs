@@ -113,14 +113,15 @@ where
                     lp,
                     &tau1,
                     num_polys,
+                    opening_batch.num_groups(),
                     gamma,
                     m_row_layout,
                     ring_bits,
                     live_x_cols,
-                    relation_weight.trace,
+                    relation_weight.trace.clone(),
                 )
             },
-            || build_w_evals_compact(w.as_i8_digits(), D, 1),
+            || build_w_evals_compact(w.as_i8_digits(), D),
         );
         #[cfg(not(feature = "parallel"))]
         let (relation_weight_evals_result, w_result) = {
@@ -134,13 +135,14 @@ where
                 lp,
                 &tau1,
                 num_polys,
+                opening_batch.num_groups(),
                 gamma,
                 m_row_layout,
                 ring_bits,
                 live_x_cols,
-                relation_weight.trace,
+                relation_weight.trace.clone(),
             )?;
-            let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
+            let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
             (Ok(relation_weight_evals), w_compact)
         };
 

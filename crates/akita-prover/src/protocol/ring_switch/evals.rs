@@ -10,43 +10,23 @@ use akita_types::{
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
-/// The compact witness stays in the raw [`build_w_coeffs`] order:
-/// `w[x * y_len + y]`, with x outer and y inner.
+/// The compact witness stays in the raw flat [`build_w_coeffs`] order.
 ///
 /// # Errors
 ///
 /// Returns an error if the witness length is not divisible by the ring
 /// dimension.
-pub fn build_w_evals_compact(
-    w: &[i8],
-    d: usize,
-    extension_degree: usize,
-) -> Result<(Vec<i8>, usize, usize), AkitaError> {
+pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usize), AkitaError> {
     if !w.len().is_multiple_of(d) {
         return Err(AkitaError::InvalidSize {
             expected: d,
             actual: w.len(),
         });
     }
-    let live_x_cols = w.len() / d;
-    let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-    if extension_degree == 1 {
-        let ring_bits = d.trailing_zeros() as usize;
-        return Ok((w.to_vec(), col_bits, ring_bits));
-    }
-    let packed_len = d / extension_degree;
-    if packed_len == 0 || !packed_len.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "packed recursive witness has invalid slot count".to_string(),
-        ));
-    }
-    let half = d / (2 * extension_degree);
-    let mut compact = Vec::with_capacity(live_x_cols * packed_len);
-    for ring in w.chunks_exact(d) {
-        compact.extend_from_slice(&ring[..half]);
-        compact.extend((half..packed_len).map(|low| ring[d / 2 + low - half]));
-    }
-    Ok((compact, col_bits, packed_len.trailing_zeros() as usize))
+    let live_ring_count = w.len() / d;
+    let col_bits = live_ring_count.next_power_of_two().trailing_zeros() as usize;
+    let ring_bits = d.trailing_zeros() as usize;
+    Ok((w.to_vec(), col_bits, ring_bits))
 }
 
 /// Unified M-table evaluation for the batched CWSS protocol.
@@ -70,6 +50,7 @@ pub fn compute_relation_column_weights<F, E>(
     lp: &LevelParams,
     tau1: &[E],
     num_polys: usize,
+    num_commitment_groups: usize,
     gamma: &[E],
     m_row_layout: MRowLayout,
 ) -> Result<Vec<E>, AkitaError>
@@ -150,10 +131,6 @@ where
         MRowLayout::WithDBlock => n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    let rows = lp
-        .m_row_count_for(num_claims, m_row_layout)?
-        .checked_add(1)
-        .ok_or_else(|| AkitaError::InvalidSetup("relation tau1 row count overflow".to_string()))?;
     let levels = r_decomp_levels::<F>(log_basis);
     let opening_batch = OpeningClaimsLayout::new(8, num_claims)?;
     let row_layout = RelationRowLayout::for_scalar_level::<F>(
@@ -161,8 +138,9 @@ where
         role_dims,
         m_row_layout,
         &opening_batch,
-        num_claims,
+        num_commitment_groups,
     )?;
+    let rows = row_layout.total_row_count();
     let quotient_layout = RelationQuotientLayout::from_row_layout(&row_layout, levels);
     quotient_layout.validate()?;
     let r_tail_len = quotient_layout.total_coeffs();
@@ -283,9 +261,9 @@ where
                         );
                 }
             }
-            acc
+            Ok(acc)
         })
-        .collect();
+        .collect::<Result<Vec<_>, AkitaError>>()?;
 
     let mut challenge_sums_by_t_block = vec![E::zero(); t_total_blocks];
     for claim_idx in 0..num_claims {
@@ -318,9 +296,9 @@ where
                         );
                 }
             }
-            acc
+            Ok(acc)
         })
-        .collect();
+        .collect::<Result<Vec<_>, AkitaError>>()?;
 
     let z_base: Vec<E> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
@@ -378,6 +356,7 @@ where
 }
 
 /// Trace segment inputs for unified relation-weight construction.
+#[derive(Clone)]
 pub enum RelationWeightTraceBuild<F: FieldCore, E: FieldCore> {
     /// Root fold: batched public row coefficients and block openings.
     Root {
@@ -420,6 +399,7 @@ pub fn build_relation_weight_evals<F, E>(
     lp: &LevelParams,
     tau1: &[E],
     num_polys: usize,
+    num_commitment_groups: usize,
     gamma: &[E],
     m_row_layout: MRowLayout,
     ring_bits: usize,
@@ -444,6 +424,7 @@ where
         lp,
         tau1,
         num_polys,
+        num_commitment_groups,
         gamma,
         m_row_layout,
     )?;

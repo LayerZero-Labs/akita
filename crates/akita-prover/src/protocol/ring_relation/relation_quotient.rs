@@ -241,7 +241,7 @@ pub struct RelationQuotientShape {
     pub num_digits_commit: usize,
     /// A-role: A-matrix row count (`a_key.row_len()`).
     pub n_a: usize,
-    /// B-role: B-matrix row count (`b_key.row_len()`).
+    /// B-role: physical B-matrix row count (`b_key.row_len()`).
     pub n_b: usize,
     /// D-role: D-matrix row count (`d_key.row_len()`).
     pub n_d: usize,
@@ -249,7 +249,7 @@ pub struct RelationQuotientShape {
     pub num_digits_open: usize,
     /// Total M rows for this layout.
     pub num_rows: usize,
-    /// Row-group start offsets in canonical order: consistency | A | B | D.
+    /// Row-group start offsets in canonical batched order: consistency | A | B | D.
     pub a_start: usize,
     pub b_start: usize,
     pub d_start: usize,
@@ -258,13 +258,14 @@ pub struct RelationQuotientShape {
 impl RelationQuotientShape {
     /// Extract the relation-quotient geometry from level params.
     ///
-    /// Public-output M rows are enforced by the fused trace term, not M
-    /// itself, so the public row count is pinned to zero here.
-    ///
     /// # Errors
     ///
     /// Returns an error when the layout arithmetic overflows.
-    pub fn from_level(lp: &LevelParams, m_row_layout: MRowLayout) -> Result<Self, AkitaError> {
+    pub fn from_level(
+        lp: &LevelParams,
+        m_row_layout: MRowLayout,
+        num_commitment_groups: usize,
+    ) -> Result<Self, AkitaError> {
         Ok(Self {
             log_basis: lp.log_basis,
             block_len: lp.block_len,
@@ -273,10 +274,10 @@ impl RelationQuotientShape {
             n_b: lp.b_key.row_len(),
             n_d: lp.d_key.row_len(),
             num_digits_open: lp.num_digits_open,
-            num_rows: lp.m_row_count_for(1, m_row_layout)?,
+            num_rows: lp.m_row_count_for(num_commitment_groups, m_row_layout)?,
             a_start: lp.a_start(),
             b_start: lp.b_start()?,
-            d_start: lp.d_start(1)?,
+            d_start: lp.d_start(num_commitment_groups)?,
         })
     }
 }
@@ -481,8 +482,9 @@ where
         } else if row_idx < d_start {
             // B-block: B·t̂; RHS is the sent commitment in `y`.
             let commit_idx = row_idx - b_start;
+            let matrix_row = commit_idx % n_b;
             let cyclic = commitment_cyclic_rows
-                .get(commit_idx)
+                .get(matrix_row)
                 .ok_or(AkitaError::InvalidProof)?;
             result.push(quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]));
         } else {
