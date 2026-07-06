@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::FlatDigitBlocks;
+use akita_types::DigitBlocks;
 
 /// Convert a field element to a centered signed byte when it fits.
 #[inline(always)]
@@ -99,7 +99,7 @@ pub fn decompose_commit_blocks_into<F, const D: usize>(
     rows: &[Vec<CyclotomicRing<F, D>>],
     num_digits_open: usize,
     log_basis: u32,
-) -> Result<FlatDigitBlocks<D>, AkitaError>
+) -> Result<DigitBlocks, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
@@ -116,8 +116,8 @@ where
                 })
         })
         .collect::<Result<_, _>>()?;
-    let mut out = FlatDigitBlocks::zeroed(block_sizes)?;
-    let dst_blocks = out.split_blocks_mut();
+    let mut out = DigitBlocks::zeroed(block_sizes, D)?;
+    let dst_blocks = out.split_typed_blocks_mut::<D>()?;
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
         .zip(cfg_iter!(rows))
@@ -206,16 +206,21 @@ fn check_rows_i8_digit_planes<F: FieldCore + CanonicalField, const D: usize>(
 /// Test helper for inner-commitment digit round-trip checks.
 #[cfg(test)]
 pub fn check_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
-    inner: &crate::CommitInnerWitness<F, D>,
+    inner: &crate::CommitInnerWitness<F>,
     n_a: usize,
     num_digits_open: usize,
     log_basis: u32,
 ) -> Result<(), AkitaError> {
     use crate::api::commitment::commit_inner_block_digit_count;
 
+    let decomposed = inner.decomposed_inner_rows_trusted::<D>()?;
+    let planes = decomposed.typed_planes::<D>()?;
     let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
-    for (block_idx, block_digits) in inner.decomposed_inner_rows.iter_blocks().enumerate() {
-        let recomposed_block = &inner.recomposed_inner_rows[block_idx];
+    let mut offset = 0usize;
+    for (block_idx, &block_size) in decomposed.block_sizes().iter().enumerate() {
+        let block_digits = &planes[offset..offset + block_size];
+        offset += block_size;
+        let recomposed_block = inner.recomposed_block_trusted::<D>(block_idx)?;
         if block_digits.len() != expected_block_digits {
             return Err(AkitaError::InvalidSetup(format!(
                 "backend returned {actual} decomposed digits for inner commitment block {block_idx}, expected {expected_block_digits}",

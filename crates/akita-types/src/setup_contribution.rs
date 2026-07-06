@@ -11,9 +11,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, ExtField, FieldCore, MulBase};
 
-use crate::layout::MRowLayout;
+use crate::layout::{LevelParams, MRowLayout};
 use crate::proof::AkitaExpandedSetup;
-
 const POSSIBLE_CARRIES: usize = 2;
 
 /// Minimal setup-contribution data needed to derive `bar_omega`.
@@ -35,6 +34,94 @@ pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub num_segments: usize,
     pub rows: usize,
     pub num_polys_per_segment: Vec<usize>,
+}
+
+impl<E: FieldCore> SetupContributionPlanInputs<E> {
+    /// Build challenge-free setup-contribution inputs from per-level params.
+    ///
+    /// Mirrors the prover's `create_setup_contribution_inputs` field derivation
+    /// without materializing `eq_tau1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when level layout parameters are inconsistent.
+    pub fn from_level_params(
+        lp: &LevelParams,
+        num_polynomials: usize,
+        m_row_layout: MRowLayout,
+        depth_fold: usize,
+    ) -> Result<Self, AkitaError> {
+        let depth_commit = lp.num_digits_commit;
+        let depth_open = lp.num_digits_open;
+        if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "num_blocks must be a non-zero power of two".into(),
+            ));
+        }
+        if lp.block_len == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup evaluator layout has zero width".into(),
+            ));
+        }
+        let inner_width = lp
+            .block_len
+            .checked_mul(depth_commit)
+            .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".into()))?;
+        if lp.a_key.col_len() < inner_width {
+            return Err(AkitaError::InvalidSetup(
+                "A-key column width is too small for setup contribution layout".into(),
+            ));
+        }
+        let expected_b_width = num_polynomials
+            .checked_mul(lp.a_key.row_len())
+            .and_then(|width| width.checked_mul(depth_open))
+            .and_then(|width| width.checked_mul(lp.num_blocks))
+            .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
+        if lp.b_key.col_len() < expected_b_width {
+            return Err(AkitaError::InvalidSetup(
+                "B-key column width is too small for setup contribution layout".into(),
+            ));
+        }
+        let rows = lp.m_row_count_for(1, m_row_layout)?;
+        Ok(Self {
+            eq_tau1: Vec::new(),
+            num_t_vectors: num_polynomials,
+            num_blocks: lp.num_blocks,
+            num_claims: num_polynomials,
+            depth_open,
+            depth_commit,
+            depth_fold,
+            block_len: lp.block_len,
+            inner_width,
+            n_a: lp.a_key.row_len(),
+            n_d: lp.d_key.row_len(),
+            m_row_layout,
+            n_b: lp.b_key.row_len(),
+            num_segments: 1,
+            rows,
+            num_polys_per_segment: vec![num_polynomials],
+        })
+    }
+
+    /// Attach the τ₁ eq-polynomial expansion after [`Self::from_level_params`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `tau1` cannot be expanded or is shorter than `min_rows`.
+    pub fn with_eq_tau1_from_tau(
+        mut self,
+        tau1: &[E],
+        min_rows: usize,
+    ) -> Result<Self, AkitaError> {
+        self.eq_tau1 = EqPolynomial::evals(tau1)?;
+        if self.eq_tau1.len() < min_rows {
+            return Err(AkitaError::InvalidSize {
+                expected: min_rows,
+                actual: self.eq_tau1.len(),
+            });
+        }
+        Ok(self)
+    }
 }
 
 /// Prepared setup-contribution weights.
@@ -380,13 +467,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let b_start = checked_add(a_start, inputs.n_a, "B row start")?;
         let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
         let d_start = checked_add(b_start, b_rows_total, "D row start")?;
-        let d_end = checked_add(d_start, n_d_active, "D row end")?;
-        if d_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
-            return Err(AkitaError::InvalidSetup(
-                "M-row weights are inconsistent with setup evaluator layout".into(),
-            ));
-        }
-
+        let a_end = checked_add(d_start, n_d_active, "D row end")?;
         let stride_t = checked_mul(inputs.n_a, inputs.depth_open, "T stride")?;
         let cols_per_poly_t = checked_mul(stride_t, inputs.num_blocks, "T polynomial width")?;
         let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
@@ -398,7 +479,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .max()
             .unwrap_or(0);
         let n_cols_t = checked_mul(max_group_poly_count, cols_per_poly_t, "T column width")?;
-
         let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
         let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
         let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
@@ -406,6 +486,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         if required == 0 {
             return Err(AkitaError::InvalidSetup(
                 "setup evaluator requires a non-empty packed footprint".into(),
+            ));
+        }
+        if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
+            return Err(AkitaError::InvalidSetup(
+                "M-row weights are inconsistent with setup evaluator layout".into(),
             ));
         }
 
@@ -549,7 +634,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             e_eq_slice,
             t_eq_slice_per_group,
             z_eq_slice,
-            d_weights: inputs.eq_tau1[d_start..d_end].to_vec(),
+            d_weights: inputs.eq_tau1[d_start..a_end].to_vec(),
             b_weights_by_row,
             a_weights: inputs.eq_tau1[a_start..(a_start + inputs.n_a)].to_vec(),
             endpoints,
@@ -1005,5 +1090,23 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(plan.z_eq_slice, expected);
+    }
+
+    #[test]
+    fn from_level_params_rejects_non_pow2_num_blocks() {
+        let mut lp = LevelParams::log_basis_stub(3);
+        lp.ring_dimension = 64;
+        lp.role_dims = crate::CommitmentRingDims::uniform(64);
+        lp.num_blocks = 3;
+        lp.block_len = 8;
+        lp.num_digits_commit = 2;
+        lp.num_digits_open = 3;
+        assert!(SetupContributionPlanInputs::<F>::from_level_params(
+            &lp,
+            2,
+            MRowLayout::WithoutDBlock,
+            2,
+        )
+        .is_err());
     }
 }

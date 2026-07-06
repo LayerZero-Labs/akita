@@ -354,6 +354,29 @@ where
     }
 }
 
+/// Runtime-dimension form of [`embed_ring_subfield_scalar`]: returns the
+/// embedded element as `ring_d` flat coefficients.
+///
+/// # Errors
+///
+/// Returns an error if `ring_d` is unsupported, the extension degree is
+/// unsupported, or the scalar does not expose exactly `K = [E:F]`
+/// ring-subfield coordinates.
+pub fn embed_ring_subfield_scalar_flat<F, E>(
+    ring_d: usize,
+    value: E,
+    error: AkitaError,
+) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FpExtEncoding<F>,
+{
+    crate::dispatch_ring_dim_result!(ring_d, |D| {
+        embed_ring_subfield_scalar::<F, E, D>(value, error.clone())
+            .map(|ring| ring.coefficients().to_vec())
+    })
+}
+
 /// Pack a base-field digit evaluation table into the canonical tensor
 /// extension ring-subfield representation.
 ///

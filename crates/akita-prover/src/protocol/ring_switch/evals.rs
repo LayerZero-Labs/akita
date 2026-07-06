@@ -1,5 +1,7 @@
 use super::*;
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
+use akita_algebra::ring::{eval_flat_ring_at_pows, scalar_powers};
+use akita_types::CommitmentRingDims;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
@@ -52,13 +54,14 @@ pub fn build_w_evals_compact(
 /// or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
-pub fn compute_m_evals_x<F, E, const D: usize>(
+pub fn compute_m_evals_x<F, E>(
     setup: &AkitaExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F, D>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     challenges: &Challenges,
     alpha: E,
     alpha_pows: &[E],
+    role_dims: CommitmentRingDims,
     lp: &LevelParams,
     tau1: &[E],
     num_polys: usize,
@@ -69,12 +72,18 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    if alpha_pows.len() != D {
+    let d_a = role_dims.d_a();
+    let d_b = role_dims.d_b();
+    let d_d = role_dims.d_d();
+    if alpha_pows.len() != d_a {
         return Err(AkitaError::InvalidSize {
-            expected: D,
+            expected: d_a,
             actual: alpha_pows.len(),
         });
     }
+    let alpha_pows_a = alpha_pows;
+    let alpha_pows_b = scalar_powers(alpha, d_b);
+    let alpha_pows_d = scalar_powers(alpha, d_d);
     let num_claims = gamma.len();
     if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
         return Err(AkitaError::InvalidInput(
@@ -113,7 +122,7 @@ where
         });
     }
     let block_len = lp.block_len;
-    let segment_lengths = ring_relation_segment_lengths::<F, D>(
+    let segment_lengths = ring_relation_segment_lengths::<F>(
         lp,
         RingRelationOpeningCounts {
             num_claims,
@@ -184,9 +193,9 @@ where
             challenges: sparse, ..
         } => sparse
             .iter()
-            .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
+            .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
             .collect::<Result<_, _>>()?,
-        Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
+        Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E>(alpha_pows)?,
     };
 
     let d_message_width = total_blocks
@@ -202,12 +211,18 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
     let b_width = b_message_width;
     let a_width = inner_width;
-    let d_view = setup.shared_matrix.ring_view::<D>(n_d, d_width)?;
-    let b_view = setup.shared_matrix.ring_view::<D>(n_b, b_width)?;
-    let a_view = setup.shared_matrix.ring_view::<D>(n_a, a_width)?;
-    let d_rows: Vec<_> = d_view.rows().collect();
-    let b_rows: Vec<_> = b_view.rows().collect();
-    let a_rows: Vec<_> = a_view.rows().collect();
+    let d_view = setup.shared_matrix.ring_view_dyn(n_d, d_width, d_d)?;
+    let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, d_b)?;
+    let a_view = setup.shared_matrix.ring_view_dyn(n_a, a_width, d_a)?;
+    let d_rows: Vec<&[F]> = (0..n_d)
+        .map(|r| d_view.row_flat(r))
+        .collect::<Result<_, _>>()?;
+    let b_rows: Vec<&[F]> = (0..n_b)
+        .map(|r| b_view.row_flat(r))
+        .collect::<Result<_, _>>()?;
+    let a_rows: Vec<&[F]> = (0..n_a)
+        .map(|r| a_view.row_flat(r))
+        .collect::<Result<_, _>>()?;
 
     // Canonical row layout: consistency (1) | A | B | D.
     let a_start = lp.a_start();
@@ -227,7 +242,11 @@ where
             // the D-block contribution is omitted.
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&d_rows[di][d_phys_col], alpha_pows);
+                    acc += *eq_i
+                        * eval_flat_ring_at_pows(
+                            &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
+                            &alpha_pows_d,
+                        );
                 }
             }
             acc
@@ -257,7 +276,11 @@ where
             let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
+                    acc += *eq_i
+                        * eval_flat_ring_at_pows(
+                            &b_rows[row_idx][local_col * d_b..(local_col + 1) * d_b],
+                            &alpha_pows_b,
+                        );
                 }
             }
             acc
@@ -269,11 +292,15 @@ where
             let local_k = k;
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
-            let a_eval = ring_multiplier_point.eval_a_at::<E>(block_idx, alpha_pows)?;
+            let a_eval = ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
             let mut acc = consistency_weight * a_eval * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&a_rows[a_idx][local_k], alpha_pows);
+                    acc += *eq_i
+                        * eval_flat_ring_at_pows(
+                            &a_rows[a_idx][local_k * d_a..(local_k + 1) * d_a],
+                            alpha_pows_a,
+                        );
                 }
             }
             Ok(acc)
@@ -293,7 +320,7 @@ where
         })
         .collect();
 
-    let alpha_pow_d = alpha_pows[D - 1] * alpha;
+    let alpha_pow_d = alpha_pows_d[d_d - 1] * alpha;
     let denom = alpha_pow_d + E::one();
     let r_tail_len = rows * levels;
     let r_tail: Vec<E> = cfg_into_iter!(0..r_tail_len)

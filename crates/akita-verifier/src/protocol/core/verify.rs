@@ -3,21 +3,24 @@ use super::*;
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
-use crate::protocol::{validate_level_dispatch, validate_log_basis};
+use crate::protocol::validate_log_basis;
 use akita_algebra::CyclotomicRing;
-use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
+use akita_config::{
+    bind_transcript_instance_descriptor, effective_batched_schedule, CommitmentConfig,
+};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
+use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_root_fold_step, should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingCommitment, Schedule,
-    SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    should_reject_grouped_root, validate_schedule_ring_dims, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
+    CleartextWitnessProof, Commitment, FpExtEncoding, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, RingVec, RingView, Schedule, SetupContributionMode, Step,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -45,10 +48,10 @@ where
         .collect())
 }
 
-fn check_batched_proof_step_shape<F, L>(proof: &AkitaBatchedProof<F, L>) -> Result<(), AkitaError>
+fn check_batched_proof_step_shape<F, E>(proof: &AkitaBatchedProof<F, E>) -> Result<(), AkitaError>
 where
     F: FieldCore,
-    L: FieldCore,
+    E: FieldCore,
 {
     match &proof.root {
         AkitaBatchedRootProof::Fold(_) => {
@@ -72,33 +75,6 @@ where
     Ok(())
 }
 
-fn effective_batched_schedule<Cfg, const D: usize>(
-    opening_batch: &OpeningClaimsLayout,
-    opening_point: &[Cfg::ExtField],
-) -> Result<Schedule, AkitaError>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-{
-    let num_vars = opening_batch.max_num_vars();
-    let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
-    if let Some(root_step) = schedule_root_fold_step(&schedule) {
-        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<Cfg::Field, Cfg::ExtField, D>(
-            std::slice::from_ref(&opening_point),
-            &root_step.params,
-            alpha_bits,
-        ) && !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField, D>(num_vars)
-        {
-            let commit_params = Cfg::get_params_for_batched_commitment(opening_batch)?;
-            schedule = root_direct_schedule(num_vars, commit_params)?;
-        }
-    }
-
-    Ok(schedule)
-}
-
 fn reject_unsupported_grouped_root(
     opening_batch: &OpeningClaimsLayout,
     setup_contribution_mode: SetupContributionMode,
@@ -114,16 +90,16 @@ fn reject_unsupported_grouped_root(
     Ok(())
 }
 
-fn validate_root_direct_recommitment_shape<F, const D: usize>(
+fn validate_root_direct_recommitment_shape<F>(
     witnesses: &[CleartextWitnessProof<F>],
+    params: &LevelParams,
     setup_seed: &AkitaSetupSeed,
     opening_batch: &OpeningClaimsLayout,
-    params: &LevelParams,
+    ring_d: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    validate_level_dispatch::<D>(params)?;
     validate_log_basis(params.log_basis)?;
     if params.num_blocks == 0 || params.block_len == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -144,7 +120,7 @@ where
         .num_blocks
         .checked_mul(params.block_len)
         .ok_or_else(|| AkitaError::InvalidSetup("direct witness capacity overflow".to_string()))?;
-    if expected_witness_len.div_ceil(D) > direct_capacity {
+    if expected_witness_len.div_ceil(ring_d) > direct_capacity {
         return Err(AkitaError::InvalidSetup(
             "direct witness exceeds selected verifier layout".to_string(),
         ));
@@ -153,27 +129,25 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
+    let a_row_len = params.a_key.row_len();
+    let b_row_len = params.b_key.row_len();
     let a_required_cols = params
         .block_len
         .checked_mul(params.num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
-    let a_required = params
-        .a_key
-        .row_len()
+    let a_required = a_row_len
         .checked_mul(a_required_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct A footprint overflow".to_string()))?;
     let per_witness_outer_cols = params
         .num_blocks
-        .checked_mul(params.a_key.row_len())
+        .checked_mul(a_row_len)
         .and_then(|cols| cols.checked_mul(params.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
     let b_required_cols = witnesses
         .len()
         .checked_mul(per_witness_outer_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
-    let b_required = params
-        .b_key
-        .row_len()
+    let b_required = b_row_len
         .checked_mul(b_required_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct B footprint overflow".to_string()))?;
     if a_required.max(b_required) > setup_seed.max_setup_len {
@@ -231,7 +205,7 @@ where
     out
 }
 
-pub(crate) fn direct_decomposed_inner_rows<F, const D: usize>(
+fn direct_decomposed_inner_rows<F, const D: usize>(
     witness_rings: &[CyclotomicRing<F, D>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
@@ -239,14 +213,15 @@ pub(crate) fn direct_decomposed_inner_rows<F, const D: usize>(
 where
     F: FieldCore + CanonicalField,
 {
+    let a_row_len = params.a_key.row_len();
     let a_matrix = setup
         .expanded
         .shared_matrix()
-        .ring_view::<D>(params.a_key.row_len(), params.a_key.col_len())?;
+        .ring_view::<D>(a_row_len, params.a_key.col_len())?;
     let a_rows: Vec<_> = a_matrix.rows().collect();
     let out_capacity = params
         .num_blocks
-        .checked_mul(params.a_key.row_len())
+        .checked_mul(a_row_len)
         .and_then(|len| len.checked_mul(params.num_digits_open))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("direct witness row capacity overflow".to_string())
@@ -315,10 +290,10 @@ where
 /// Returns an error if the direct witness shape does not match the batch shape,
 /// if witness reconstruction fails, or if any recomputed commitment differs
 /// from the proof commitment.
-pub(crate) fn verify_root_direct_commitments_with_params<F, E, const D: usize>(
+pub(crate) fn verify_root_direct_commitments_with_params<F, E>(
     witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    claims: &OpeningClaims<'_, E, &RingCommitment<F, D>>,
+    claims: &OpeningClaims<'_, E, &Commitment<F>>,
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
@@ -330,15 +305,26 @@ where
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    validate_root_direct_recommitment_shape::<F, D>(
-        witnesses,
-        setup.expanded.seed(),
-        &opening_batch,
-        params,
-    )?;
-
-    let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, params)?;
-    if &recomputed != commitment {
+    // Validate the flat commitment shape against the schedule-derived ring
+    // dimension before interpreting it. `RingView::new` enforces the
+    // multiple-of-`ring_dim` invariant; no panic on malformed lengths.
+    let ring_dim = params.role_dims().d_b();
+    let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
+    let recomputed_matches = dispatch_ring_dim_result!(ring_dim, |D| {
+        validate_root_direct_recommitment_shape::<F>(
+            witnesses,
+            params,
+            setup.expanded.seed(),
+            &opening_batch,
+            ring_dim,
+        )?;
+        let recomputed = recommit_direct_witness_group::<F, D>(witnesses, setup, params)?;
+        // Compare recomputed `u` to the proof commitment as flat coefficients
+        // under the same ring dimension (byte/coefficient parity with absorb).
+        let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
+        Ok(recomputed_vec.coeffs() == commitment_view.coeffs())
+    })?;
+    if !recomputed_matches {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -381,11 +367,11 @@ fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
 /// Returns an error if public claims are malformed, schedule/layout policy
 /// rejects the proof shape, root-direct commitment recomputation rejects, or
 /// proof replay fails.
-pub fn batched_verify<Cfg, T, const D: usize>(
+pub fn batched_verify<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: OpeningClaims<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -408,19 +394,26 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     reject_unsupported_grouped_root(&opening_batch, setup_contribution_mode)?;
-    let schedule = effective_batched_schedule::<Cfg, D>(&opening_batch, claims.point())
+    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
+    validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
-    bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
-        &setup.expanded,
-        &opening_batch,
-        &schedule,
-        basis,
-        transcript,
-    )?;
+    // The transcript instance descriptor binds the setup-wide root ring
+    // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
+    // the prover binds for uniform-D presets. Dispatch on the runtime value so
+    // the verifier entry stays D-free; the descriptor bytes are unchanged.
+    dispatch_ring_dim_result!(setup.expanded.seed().gen_ring_dim, |D| {
+        bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+            &setup.expanded,
+            &opening_batch,
+            &schedule,
+            basis,
+            transcript,
+        )
+    })?;
 
-    verify::<Cfg, T, D>(
+    verify::<Cfg, T>(
         proof,
         setup,
         transcript,
@@ -445,11 +438,11 @@ where
 /// replay rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(crate) fn verify<Cfg, T, const D: usize>(
+pub(crate) fn verify<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: OpeningClaims<'_, Cfg::ExtField, &RingCommitment<Cfg::Field, D>>,
+    claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     schedule: &Schedule,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
@@ -473,12 +466,12 @@ where
             verify_zero_fold_openings_with_opening_batch::<Cfg::Field, Cfg::ExtField, _>(
                 witnesses, &claims, basis,
             )?;
-            verify_root_direct_commitments_with_params::<Cfg::Field, Cfg::ExtField, D>(
+            verify_root_direct_commitments_with_params::<Cfg::Field, Cfg::ExtField>(
                 witnesses, setup, &claims, params,
             )?;
         }
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
-            verify_folded_batched_proof::<Cfg::Field, Cfg::ExtField, T, D>(
+            verify_folded_batched_proof::<Cfg::Field, Cfg::ExtField, T>(
                 proof,
                 setup,
                 transcript,
@@ -505,11 +498,11 @@ where
 /// Returns an error if the proof is not a folded-root proof, the schedule does
 /// not match the proof shape, the root proof rejects, or a suffix level rejects.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_folded_batched_proof<F, E, T, const D: usize>(
+pub(crate) fn verify_folded_batched_proof<F, E, T>(
     proof: &AkitaBatchedProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: OpeningClaims<'_, E, &RingCommitment<F, D>>,
+    claims: OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     schedule: &Schedule,
     setup_contribution_mode: SetupContributionMode,
@@ -523,7 +516,7 @@ where
         return Err(AkitaError::InvalidProof);
     };
     let root_lp = &root_step.params;
-    let total_fold_levels = schedule_num_fold_levels(schedule);
+    let total_fold_levels = schedule.num_fold_levels();
     let terminal_direct = schedule
         .steps
         .last()
@@ -550,7 +543,7 @@ where
             {
                 return Err(AkitaError::InvalidProof);
             }
-            verify_root::<F, E, T, D>(
+            verify_root::<F, E, T>(
                 &proof.root,
                 setup,
                 transcript,
@@ -595,7 +588,7 @@ where
                 .stage2
                 .as_intermediate()
                 .ok_or(AkitaError::InvalidProof)?;
-            let root_challenges = verify_root::<F, E, T, D>(
+            let root_challenges = verify_root::<F, E, T>(
                 &proof.root,
                 setup,
                 transcript,
@@ -607,7 +600,7 @@ where
                 root_step.next_w_len,
             )?;
 
-            let first_level_d = first_recursive_params.ring_dimension;
+            let first_level_d = first_recursive_params.role_dims().d_b();
             if !root_stage2.next_w_commitment.can_decode_vec(first_level_d) {
                 return Err(AkitaError::InvalidProof);
             }
@@ -643,7 +636,7 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
+    use akita_types::{AjtaiKeyParams, RingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -676,14 +669,15 @@ mod tests {
                 .with_decomp(1, 0, 2, 1, 0)
                 .expect("valid direct layout");
         let setup_seed = setup_seed(3);
-        let witnesses = vec![CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(vec![F::zero(); 64]),
-        )];
-        let err = validate_root_direct_recommitment_shape::<F, D>(
+        let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            vec![F::zero(); 64],
+        ))];
+        let err = validate_root_direct_recommitment_shape::<F>(
             &witnesses,
+            &params,
             &setup_seed,
             &opening_batch(6),
-            &params,
+            D,
         )
         .expect_err("A layout needs four setup entries but setup has three");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
@@ -704,17 +698,37 @@ mod tests {
             D,
         );
         let setup_seed = setup_seed(128);
-        let witnesses = vec![CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(vec![F::zero(); 32]),
-        )];
-        let err = validate_root_direct_recommitment_shape::<F, D>(
+        let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            vec![F::zero(); 32],
+        ))];
+        let err = validate_root_direct_recommitment_shape::<F>(
             &witnesses,
+            &params,
             &setup_seed,
             &opening_batch(6),
-            &params,
+            D,
         )
         .expect_err("num_vars=6 requires 64 direct witness elements");
         assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    /// The D-free commitment read path validates the flat coefficient length
+    /// against the schedule-derived ring dimension via `RingView::new` and
+    /// returns an error (never panics) when the length is not a multiple of the
+    /// ring dimension. This is the no-panic gate the verifier relies on before
+    /// interpreting any ring-shaped commitment.
+    #[test]
+    fn flat_commitment_length_not_multiple_of_ring_dim_rejects() {
+        // 33 coefficients is not a multiple of D = 32.
+        let commitment = RingVec::from_coeffs(vec![F::zero(); D + 1]);
+        let err = RingView::new(commitment.coeffs(), D)
+            .expect_err("commitment length must be a multiple of the ring dimension");
+        assert!(matches!(err, AkitaError::InvalidProof));
+
+        // A well-formed buffer (2 * D) is accepted and yields the expected ring count.
+        let well_formed = vec![F::zero(); 2 * D];
+        let ok = RingView::new(&well_formed, D).expect("valid flat commitment");
+        assert_eq!(ok.num_rings(), 2);
     }
 
     #[test]

@@ -14,12 +14,12 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 pub(super) fn decompose_fold_batched_tensor_dense<F, const D: usize>(
-    polys: &[&DensePoly<F, D>],
+    polys: &[&DensePoly<F>],
     tensor: &TensorChallengeSet,
     block_len: usize,
     num_digits: usize,
     log_basis: u32,
-) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>
+) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
@@ -37,7 +37,7 @@ where
     )?;
     let accum_i64 = if let Some(digit_planes) = polys
         .iter()
-        .map(|poly| poly.digit_planes_for(num_digits, log_basis))
+        .map(|poly| poly.digit_planes_for::<D>(num_digits, log_basis))
         .collect::<Option<Vec<_>>>()
     {
         let _span = tracing::info_span!("dense_tensor_cached_digit_accumulate").entered();
@@ -61,8 +61,8 @@ where
         };
         let coeff_slices = polys
             .iter()
-            .map(|poly| poly.coeffs.as_slice())
-            .collect::<Vec<_>>();
+            .map(|poly| poly.ring_coeffs::<D>())
+            .collect::<Result<Vec<_>, _>>()?;
         let _span = tracing::info_span!("dense_tensor_accumulate").entered();
         balanced_ring_decompose_fold_tensor_partitioned::<F, D>(
             &coeff_slices,

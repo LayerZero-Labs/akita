@@ -8,7 +8,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout,
-    WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
+    SetupContributionPlanInputs, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
@@ -168,6 +168,24 @@ impl SetupContributionFixture {
         let eq_tau1: Vec<TestField> = (0..rows.next_power_of_two())
             .map(|idx| test_scalar(11 + idx as u128))
             .collect();
+        let setup_contribution_inputs = SetupContributionPlanInputs {
+            eq_tau1: eq_tau1.clone(),
+            num_t_vectors,
+            num_blocks: shape.num_blocks,
+            num_claims: shape.num_claims,
+            depth_open: shape.depth_open,
+            depth_commit: shape.depth_commit,
+            depth_fold: shape.depth_fold,
+            block_len: shape.block_len,
+            inner_width,
+            n_a: shape.n_a,
+            n_d: shape.n_d,
+            m_row_layout: shape.m_row_layout,
+            n_b: shape.n_b,
+            num_segments: 1,
+            rows,
+            num_polys_per_segment: shape.num_polys_per_segment.clone(),
+        };
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -182,14 +200,8 @@ impl SetupContributionFixture {
             depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
             block_len: shape.block_len,
-            inner_width,
             log_basis: shape.log_basis,
             n_a: shape.n_a,
-            n_d: shape.n_d,
-            m_row_layout: shape.m_row_layout,
-            n_b: shape.n_b,
-            rows,
-            num_polys: shape.num_polys_per_segment.iter().sum(),
             chunk_layout: WitnessLayout {
                 blocks_per_chunk: shape.num_blocks,
                 chunks: vec![WitnessChunkLayout {
@@ -208,6 +220,7 @@ impl SetupContributionFixture {
                     r_len: Some(0),
                 }],
             },
+            setup_contribution_inputs,
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)

@@ -12,6 +12,7 @@ pub mod flat_matrix;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
+pub mod ring_dims;
 
 pub use digit_math::gadget_row_scalars;
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
@@ -26,4 +27,8 @@ pub use proof_size::{
     extension_opening_reduction_proof_bytes, field_bytes, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, sumcheck_rounds,
+};
+pub use ring_dims::{
+    validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,
+    SUPPORTED_RING_DIMS,
 };

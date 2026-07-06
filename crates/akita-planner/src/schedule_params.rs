@@ -21,8 +21,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
-    ChunkedWitnessCfg, CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, MRowLayout, PolynomialGroupLayout, Schedule, Step,
+    ChunkedWitnessCfg, CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep,
+    FoldStep, LevelParams, MRowLayout, PolynomialGroupLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -191,7 +191,7 @@ fn derive_candidate_level_params(
             d,
         )?;
 
-        let Ok(candidate_params) = LevelParams {
+        let Ok(mut candidate_params) = LevelParams {
             ring_dimension: policy.ring_dimension,
             log_basis,
             a_key,
@@ -214,10 +214,12 @@ fn derive_candidate_level_params(
             cached_num_digits_fold_value: 1,
             witness_chunk: policy.witness_chunk_for_level(fold_level),
             precommitted_groups: Vec::new(),
+            role_dims: CommitmentRingDims::uniform(policy.ring_dimension),
         }
         .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1) else {
             continue;
         };
+        candidate_params.stamp_role_dims_from_keys();
 
         let next_witness_len = w_ring_element_count_for_chunks(
             policy.decomposition.field_bits(),
@@ -748,7 +750,7 @@ fn compute_root_direct_level_params(
         0
     };
 
-    let root_direct_params = LevelParams {
+    let mut root_direct_params = LevelParams {
         ring_dimension: d,
         log_basis,
         a_key,
@@ -771,8 +773,10 @@ fn compute_root_direct_level_params(
         // Root-direct ships the raw polynomial on the wire (no chunked commitment).
         witness_chunk: ChunkedWitnessCfg::default(),
         precommitted_groups: Vec::new(),
+        role_dims: CommitmentRingDims::uniform(d),
     }
     .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
+    root_direct_params.stamp_role_dims_from_keys();
     Ok(Some(root_direct_params))
 }
 
@@ -981,7 +985,7 @@ fn find_schedule_inner(
             } else {
                 0
             };
-            let Ok(candidate_params) = LevelParams {
+            let Ok(mut candidate_params) = LevelParams {
                 ring_dimension: policy.ring_dimension,
                 log_basis: candidate_log_basis,
                 a_key,
@@ -1003,10 +1007,12 @@ fn find_schedule_inner(
                 cached_num_digits_fold_value: 1,
                 witness_chunk: root_witness_chunk,
                 precommitted_groups: Vec::new(),
+                role_dims: CommitmentRingDims::uniform(policy.ring_dimension),
             }
             .with_fold_linf_cap_config(field_bits, key.num_polynomials()) else {
                 continue;
             };
+            candidate_params.stamp_role_dims_from_keys();
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
                 let rings = w_ring_element_count_for_chunks(

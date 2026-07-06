@@ -40,18 +40,29 @@ impl SparseChallenge {
     /// position is outside `0..D`, if a coefficient is zero, or if a position is
     /// repeated.
     pub fn validate<const D: usize>(&self) -> Result<(), AkitaError> {
+        self.validate_dyn(D)
+    }
+
+    /// Runtime-dimension form of [`Self::validate`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if positions/coefficients have mismatched lengths, if a
+    /// position is outside `0..ring_d`, if a coefficient is zero, or if a
+    /// position is repeated.
+    pub fn validate_dyn(&self, ring_d: usize) -> Result<(), AkitaError> {
         if self.positions.len() != self.coeffs.len() {
             return Err(AkitaError::InvalidInput(
                 "sparse challenge positions/coeffs length mismatch".to_string(),
             ));
         }
 
-        let mut seen = [false; D];
+        let mut seen = vec![false; ring_d];
         for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
             let idx = pos as usize;
-            if idx >= D {
+            if idx >= ring_d {
                 return Err(AkitaError::InvalidInput(format!(
-                    "sparse challenge position {pos} out of range for D={D}"
+                    "sparse challenge position {pos} out of range for D={ring_d}"
                 )));
             }
             if coeff == 0 {
@@ -81,17 +92,12 @@ impl SparseChallenge {
     /// term would index outside the supplied powers. This method assumes the
     /// challenge came from [`crate::sample_sparse_challenges`] and therefore
     /// does not re-check uniqueness of positions on the hot path.
-    pub fn eval_at_pows<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    pub fn eval_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
         F: FieldCore + FromPrimitiveInt,
         E: FieldCore + MulBase<F>,
     {
-        if alpha_pows.len() != D {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: alpha_pows.len(),
-            });
-        }
+        let ring_d = alpha_pows.len();
         if self.positions.len() != self.coeffs.len() {
             return Err(AkitaError::InvalidInput(
                 "sparse challenge positions/coeffs length mismatch".to_string(),
@@ -101,9 +107,9 @@ impl SparseChallenge {
         let mut acc = E::zero();
         for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
             let idx = pos as usize;
-            if idx >= D {
+            if idx >= ring_d {
                 return Err(AkitaError::InvalidInput(format!(
-                    "sparse challenge position {idx} out of range for D={D}"
+                    "sparse challenge position {idx} out of range for D={ring_d}"
                 )));
             }
             if coeff == 0 {
@@ -141,30 +147,26 @@ mod tests {
             coeffs: vec![1, -2],
         };
 
-        let got = challenge.eval_at_pows::<F, F, D>(&alpha_pows()).unwrap();
+        let got = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap();
         let expected = F::from_u64(1) + F::from_i64(-2) * F::from_u64(9);
 
         assert_eq!(got, expected);
     }
 
     #[test]
-    fn eval_at_pows_rejects_wrong_power_count() {
+    fn eval_at_pows_rejects_position_beyond_power_count() {
+        // The ring dimension is `alpha_pows.len()`; a position that fits the
+        // nominal D but not the supplied power table must be rejected.
         let challenge = SparseChallenge {
-            positions: vec![0],
+            positions: vec![D as u32 - 1],
             coeffs: vec![1],
         };
 
         let err = challenge
-            .eval_at_pows::<F, F, D>(&alpha_pows()[..D - 1])
+            .eval_at_pows::<F, F>(&alpha_pows()[..D - 1])
             .unwrap_err();
 
-        assert_eq!(
-            err,
-            AkitaError::InvalidSize {
-                expected: D,
-                actual: D - 1
-            }
-        );
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
     }
 
     #[test]
@@ -174,9 +176,7 @@ mod tests {
             coeffs: vec![1],
         };
 
-        let err = challenge
-            .eval_at_pows::<F, F, D>(&alpha_pows())
-            .unwrap_err();
+        let err = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap_err();
 
         assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("out of range")));
     }
@@ -188,9 +188,7 @@ mod tests {
             coeffs: vec![1],
         };
 
-        let err = challenge
-            .eval_at_pows::<F, F, D>(&alpha_pows())
-            .unwrap_err();
+        let err = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap_err();
 
         assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("length mismatch")));
     }
