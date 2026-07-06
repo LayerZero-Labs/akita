@@ -201,8 +201,8 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
-mod dense_terms;
 mod lifecycle;
+mod pair_scan;
 mod round2_prefix;
 mod round_flow;
 mod x_prefix;

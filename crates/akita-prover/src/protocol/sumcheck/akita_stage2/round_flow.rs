@@ -39,7 +39,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         combined
                     } else {
                         let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_compact_dense_terms(w_compact);
+                            self.scan_round_compact_blocked(w_compact);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     }
                 }
@@ -53,8 +53,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             self.compute_round_full_prefix_x_terms(w_full);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     } else {
-                        let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_full_dense_terms(w_full);
+                        let (virt_q_coeffs, rel_coeffs) = self.scan_round_full_blocked(w_full);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     }
                 }
