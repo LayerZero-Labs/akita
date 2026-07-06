@@ -3,9 +3,9 @@ use super::*;
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::fuse_full_segment_prefix_and_compute_round"
+        name = "AkitaStage2Prover::fused_fold_scan_segment_axis"
     )]
-    pub(super) fn fuse_full_segment_prefix_and_compute_round(
+    pub(super) fn fused_fold_scan_segment_axis(
         &self,
         w_full: &[E],
         r: E,
@@ -554,7 +554,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
-    pub(super) fn fold_compact_segment_prefix(
+    pub(super) fn fold_witness_embedded_segment_compact(
         w_compact: &[i8],
         live_segments: usize,
         coeff_len: usize,
@@ -598,7 +598,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_full_segment_prefix(
+    pub(super) fn fold_witness_embedded_segment_full(
         w_full: &[E],
         live_segments: usize,
         coeff_len: usize,
@@ -644,7 +644,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_relation_weight_segment_major(
+    pub(super) fn fold_relation_weight_embedded_segment(
         evals: &[E],
         live_segments: usize,
         coeff_len: usize,
@@ -670,7 +670,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_relation_weight_coefficient_prefix(
+    pub(super) fn fold_relation_weight_embedded_coefficient(
         evals: &[E],
         live_segments: usize,
         coeff_len: usize,
@@ -691,7 +691,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_relation_weight_through_initial_batch(
+    pub(super) fn fold_relation_weight_initial_batch(
         evals: &[E],
         live_segments: usize,
         coeff_len: usize,

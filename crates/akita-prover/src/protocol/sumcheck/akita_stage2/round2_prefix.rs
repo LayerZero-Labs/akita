@@ -86,9 +86,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::fold_compact_through_initial_batch"
+        name = "AkitaStage2Prover::fold_witness_initial_batch"
     )]
-    pub(super) fn fold_compact_through_initial_batch(
+    pub(super) fn fold_witness_initial_batch(
         w_compact: &[i8],
         live_segments: usize,
         coeff_len: usize,
@@ -123,9 +123,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::fuse_compact_to_round2_and_compute_round"
+        name = "AkitaStage2Prover::fused_fold_scan_initial_round2"
     )]
-    pub(super) fn fuse_compact_to_round2_and_compute_round(
+    pub(super) fn fused_fold_scan_initial_round2(
         &self,
         w_compact: &[i8],
         relation_round2: &[E],

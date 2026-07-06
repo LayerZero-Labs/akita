@@ -360,7 +360,7 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
     let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
     let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::fold_compact_segment_prefix(&w_prefix, 5, 2, &fold_lut),
+        AkitaStage2Prover::<F>::fold_witness_embedded_segment_compact(&w_prefix, 5, 2, &fold_lut),
         fold_compact_segment_prefix_reference(&w_prefix, 5, 2, r)
     );
 
@@ -572,7 +572,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(97);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_through_initial_batch(
+    let expected_w_full = AkitaStage2Prover::<F>::fold_witness_initial_batch(
         &w_prefix,
         live_segments,
         coeff_len,
@@ -581,7 +581,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     );
     let relation_segments = live_segments;
     let expected_relation_round2 =
-        AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
+        AkitaStage2Prover::<F>::fold_relation_weight_initial_batch(
             prover.relation_weight.evals(),
             relation_segments,
             coeff_len,
@@ -677,7 +677,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(127);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_through_initial_batch(
+    let expected_w_full = AkitaStage2Prover::<F>::fold_witness_initial_batch(
         &w_prefix,
         live_segments,
         coeff_len,
@@ -686,7 +686,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     );
     let relation_segments = live_segments;
     let expected_relation_round2 =
-        AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
+        AkitaStage2Prover::<F>::fold_relation_weight_initial_batch(
             prover.relation_weight.evals(),
             relation_segments,
             coeff_len,
@@ -802,14 +802,14 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
         WitnessTable::Compact(_) => panic!("expected later prefix state to be full"),
     };
     let current_y_len = expected.relation_weight_coeff_len();
-    let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_segment_prefix(
+    let expected_next_w_full = AkitaStage2Prover::<F>::fold_witness_embedded_segment_full(
         &current_w_full,
         expected.live_segments,
         current_y_len,
         r2,
     );
     let relation_segments = expected.live_segments;
-    let expected_next_relation = AkitaStage2Prover::<F>::fold_relation_weight_segment_major(
+    let expected_next_relation = AkitaStage2Prover::<F>::fold_relation_weight_embedded_segment(
         expected.relation_weight.evals(),
         relation_segments,
         current_y_len,

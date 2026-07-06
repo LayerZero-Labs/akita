@@ -309,7 +309,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
-    pub(super) fn fold_full_coefficient_prefix(
+    pub(super) fn fold_witness_embedded_coefficient_full(
         w_full: &[E],
         live_segments: usize,
         coeff_len: usize,

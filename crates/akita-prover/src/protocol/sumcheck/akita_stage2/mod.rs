@@ -368,12 +368,14 @@ pub struct AkitaStage2Prover<E: FieldCore> {
 }
 
 mod coefficient_prefix;
+mod fold_scan;
 mod lifecycle;
 mod pair_scan;
 mod round2_prefix;
 mod round_flow;
 mod segment_prefix;
 
+pub(crate) use fold_scan::{FoldRoundKind, FusedFoldScan, WitnessFoldInput};
 pub(crate) use pair_scan::WitnessPolynomial;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
@@ -411,41 +413,38 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
         self.relation_coeff_len = coeff_len;
     }
 
-    pub(super) fn fold_relation_weight_for_round(
-        &mut self,
-        r: E,
-        folding_segment_round: bool,
-        use_segment_prefix_round: bool,
-        use_coefficient_prefix_round: bool,
-        in_coefficient_round: bool,
-    ) {
+    pub(super) fn fold_relation_weight(&mut self, r: E, kind: FoldRoundKind) {
         let coeff_len = self.relation_weight_coeff_len();
         let relation_segments = self.live_segments;
-        let (evals, next_relation_segments, next_coeff_len) = if folding_segment_round {
-            if use_segment_prefix_round {
-                (
-                    Self::fold_relation_weight_segment_major(
-                        self.relation_weight.evals(),
-                        relation_segments,
-                        coeff_len,
-                        r,
-                    ),
-                    relation_segments.div_ceil(2),
+        let (evals, next_relation_segments, next_coeff_len) = match kind {
+            FoldRoundKind::EmbeddedSegmentAxis => (
+                Self::fold_relation_weight_embedded_segment(
+                    self.relation_weight.evals(),
+                    relation_segments,
                     coeff_len,
-                )
-            } else {
-                let evals = if self.geometry.local_view().is_some() {
+                    r,
+                ),
+                relation_segments.div_ceil(2),
+                coeff_len,
+            ),
+            FoldRoundKind::FlatPair => {
+                if self.in_coefficient_round() {
                     let mut evals = self.relation_weight.evals().to_vec();
                     fold_evals_in_place(&mut evals, r);
-                    evals
+                    (evals, relation_segments, coeff_len / 2)
                 } else {
-                    fold_live_evals_zero_padded(self.relation_weight.evals(), r)
-                };
-                (evals, relation_segments.div_ceil(2), coeff_len)
+                    let evals = if self.geometry.local_view().is_some() {
+                        let mut evals = self.relation_weight.evals().to_vec();
+                        fold_evals_in_place(&mut evals, r);
+                        evals
+                    } else {
+                        fold_live_evals_zero_padded(self.relation_weight.evals(), r)
+                    };
+                    (evals, relation_segments.div_ceil(2), coeff_len)
+                }
             }
-        } else if in_coefficient_round && use_coefficient_prefix_round {
-            (
-                Self::fold_relation_weight_coefficient_prefix(
+            FoldRoundKind::EmbeddedCoefficientAxis => (
+                Self::fold_relation_weight_embedded_coefficient(
                     self.relation_weight.evals(),
                     relation_segments,
                     coeff_len,
@@ -453,11 +452,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
                 ),
                 relation_segments,
                 coeff_len / 2,
-            )
-        } else {
-            let mut evals = self.relation_weight.evals().to_vec();
-            fold_evals_in_place(&mut evals, r);
-            (evals, relation_segments, coeff_len / 2)
+            ),
         };
         self.set_relation_weight_evals(evals, next_relation_segments, next_coeff_len);
     }

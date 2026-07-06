@@ -283,7 +283,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(107);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_through_initial_batch(
+    let expected_w_full = AkitaStage2Prover::<F>::fold_witness_initial_batch(
         &w_prefix,
         live_segments,
         coeff_len,
@@ -292,7 +292,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     );
     let relation_segments = live_segments;
     let expected_relation_round2 =
-        AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
+        AkitaStage2Prover::<F>::fold_relation_weight_initial_batch(
             prover.relation_weight.evals(),
             relation_segments,
             coeff_len,
