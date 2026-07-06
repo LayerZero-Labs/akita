@@ -1,9 +1,9 @@
 //! Protocol commitment/opening wrapper types.
 
-use crate::proof::RingSliceSerializer;
+use crate::proof::RingVec;
 use crate::transcript::AppendToTranscript;
 use akita_algebra::ring::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -93,7 +93,100 @@ where
     }
 }
 
+/// D-free protocol commitment storage: a flat ring-coefficient buffer.
+///
+/// This is the protocol-facing replacement for the former
+/// `RingCommitment<F, D>` storage. It carries the outer commitment vector
+/// `u in R_q^{n_B}` as raw field coefficients (a [`RingVec`]), with the ring
+/// dimension supplied at runtime from the schedule rather than a const generic.
+/// Transcript absorption goes through the flat coefficient encoder; the bytes
+/// are identical to the former typed path (proven by the S2 byte-identity test).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commitment<F: FieldCore>(pub RingVec<F>);
+
+impl<F: FieldCore> Commitment<F> {
+    /// Wrap a flat ring-coefficient buffer.
+    pub fn new(rows: RingVec<F>) -> Self {
+        Self(rows)
+    }
+
+    /// Construct from typed ring elements.
+    pub fn from_ring_elems<const D: usize>(elems: &[CyclotomicRing<F, D>]) -> Self {
+        Self(RingVec::from_ring_elems(elems))
+    }
+
+    /// Borrow the underlying flat ring-coefficient buffer.
+    pub fn rows(&self) -> &RingVec<F> {
+        &self.0
+    }
+
+    /// Consume into the underlying flat ring-coefficient buffer.
+    pub fn into_rows(self) -> RingVec<F> {
+        self.0
+    }
+
+    /// Absorb this commitment into `transcript` using the canonical flat
+    /// coefficient encoding under the schedule-derived `ring_dim`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] if the stored buffer is not
+    /// well-formed for `ring_dim` (see [`RingVec::append_flat_to_transcript`]).
+    pub fn append_to_transcript<T: Transcript<F>>(
+        &self,
+        label: &[u8],
+        ring_dim: usize,
+        transcript: &mut T,
+    ) -> Result<(), AkitaError>
+    where
+        F: CanonicalField,
+    {
+        self.0
+            .append_flat_to_transcript(label, ring_dim, transcript)
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for Commitment<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.0.check()
+    }
+}
+
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for Commitment<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.0.serialized_size(compress)
+    }
+}
+
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Commitment<F> {
+    /// Number of field-element coefficients to read (same as [`RingVec`]).
+    type Context = usize;
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+        num_coeffs: &usize,
+    ) -> Result<Self, SerializationError> {
+        Ok(Self(RingVec::deserialize_with_mode(
+            reader, compress, validate, num_coeffs,
+        )?))
+    }
+}
+
 /// Ring-native commitment object `u in R_q^{n_B}` used by §4.1.
+///
+/// **Arithmetic-only leaf helper.** As of S4 this type is no longer used for
+/// protocol-facing storage, serialization, or transcript absorption — that role
+/// belongs to the D-free [`Commitment`] / [`RingVec`]. It is kept solely as a
+/// typed arithmetic carrier inside kernels.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RingCommitment<F: FieldCore, const D: usize> {
     /// Outer commitment vector.
@@ -162,14 +255,5 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const D: usize> Akit
             out.check()?;
         }
         Ok(out)
-    }
-}
-
-impl<F, const D: usize> AppendToTranscript<F> for RingCommitment<F, D>
-where
-    F: FieldCore + CanonicalField,
-{
-    fn append_to_transcript<T: Transcript<F>>(&self, label: &[u8], transcript: &mut T) {
-        transcript.append_serde(label, &RingSliceSerializer(&self.u));
     }
 }

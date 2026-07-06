@@ -23,24 +23,22 @@
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, OpeningClaimsLayout};
-use akita_verifier::CommitmentVerifier;
 use common::*;
 
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
-fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, DENSE_D, u8> {
+fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_ring)
         .map(|_| Some(rng.gen_range(0..DENSE_ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, DENSE_D, u8>::new(DENSE_ONEHOT_K, indices)
+    OneHotPoly::<F, u8>::new(DENSE_ONEHOT_K, DENSE_D, indices)
         .expect("onehot poly under dense config")
 }
 
@@ -55,7 +53,7 @@ mod non_zk_aggregated_cases {
             let layout =
                 OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-            let polys: Vec<OneHotPoly<F, ONEHOT_D, u8>> = (0..batch_size)
+            let polys: Vec<OneHotPoly<F, u8>> = (0..batch_size)
                 .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
                 .collect();
 
@@ -65,11 +63,7 @@ mod non_zk_aggregated_cases {
                 .map(|poly| opening_from_poly::<ONEHOT_D, _>(poly, &pt, &layout))
                 .collect();
 
-            let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-                F,
-                ONEHOT_D,
-            >>::setup_prover(nv, batch_size)
-            .unwrap();
+            let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let stack = akita_prover::UniformProverStack::uniform(
                 &CpuBackend,
@@ -77,16 +71,11 @@ mod non_zk_aggregated_cases {
                 setup.expanded.as_ref(),
             )
             .expect("stack");
-            let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-                F,
-                ONEHOT_D,
-            >>::setup_verifier(&setup);
+            let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
 
-            let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-                F,
-                ONEHOT_D,
-            >>::batched_commit(&setup, &polys, &stack)
-            .expect("grouped commit");
+            let (commitment, hint) =
+                AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, &polys, &stack)
+                    .expect("grouped commit");
             let commitments = [commitment];
             let hints = vec![hint];
 
@@ -97,10 +86,7 @@ mod non_zk_aggregated_cases {
             );
 
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
-            let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-                F,
-                ONEHOT_D,
-            >>::batched_prove(
+            let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
                 &setup,
                 prove_input(
                     &pt[..],
@@ -135,10 +121,7 @@ mod non_zk_aggregated_cases {
             let opening_groups: [&[F]; 1] = [&openings];
             let mut verifier_transcript =
                 AkitaTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
-            let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
-                F,
-                ONEHOT_D,
-            >>::batched_verify(
+            let result = AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -162,7 +145,7 @@ mod non_zk_aggregated_cases {
             let layout =
                 DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-            let polys: Vec<DensePoly<F, DENSE_D>> = (0..batch_size)
+            let polys: Vec<DensePoly<F>> = (0..batch_size)
                 .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))
                 .collect();
 
@@ -172,11 +155,7 @@ mod non_zk_aggregated_cases {
                 .map(|poly| opening_from_poly::<DENSE_D, _>(poly, &pt, &layout))
                 .collect();
 
-            let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-                F,
-                DENSE_D,
-            >>::setup_prover(nv, batch_size)
-            .unwrap();
+            let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let stack = akita_prover::UniformProverStack::uniform(
                 &CpuBackend,
@@ -184,17 +163,12 @@ mod non_zk_aggregated_cases {
                 setup.expanded.as_ref(),
             )
             .expect("stack");
-            let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-                F,
-                DENSE_D,
-            >>::setup_verifier(&setup);
+            let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
 
             let (commitments, hints) =
-                <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
-                    &setup, &polys, &stack,
-                )
-                .map(|(commitment, hint)| (vec![commitment], vec![hint]))
-                .expect("grouped commit");
+                AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
+                    .map(|(commitment, hint)| (vec![commitment], vec![hint]))
+                    .expect("grouped commit");
 
             assert_eq!(
                 commitments.len(),
@@ -203,10 +177,7 @@ mod non_zk_aggregated_cases {
             );
 
             let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/dense");
-            let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-                F,
-                DENSE_D,
-            >>::batched_prove(
+            let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
                 &setup,
                 prove_input(
                     &pt[..],
@@ -241,10 +212,7 @@ mod non_zk_aggregated_cases {
             let opening_groups: [&[F]; 1] = [&openings];
             let mut verifier_transcript =
                 AkitaTranscript::<F>::new(b"batched_aggregated_e2e/dense");
-            let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
-                F,
-                DENSE_D,
-            >>::batched_verify(
+            let result = AkitaCommitmentScheme::<DenseCfg>::batched_verify(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -311,11 +279,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             .map(|poly| opening_from_poly::<DENSE_D, _>(poly, &pt, &layout))
             .collect();
 
-        let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-            F,
-            DENSE_D,
-        >>::setup_prover(NV, BATCH_SIZE)
-        .unwrap();
+        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, BATCH_SIZE).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -323,32 +287,25 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-            F,
-            DENSE_D,
-        >>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
 
-        let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-            F,
-            DENSE_D,
-        >>::batched_commit(&setup, &polys, &stack)
-        .expect("mixed aggregated commit");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
+                .expect("mixed aggregated commit");
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
-        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-            F,
-            DENSE_D,
-        >>::batched_prove(
+        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
             &setup,
             prove_input(
                 &pt[..],
                 &polys.iter().collect::<Vec<_>>()[..],
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
-            ), &stack,
+            ),
+            &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
@@ -373,15 +330,14 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let opening_groups: [&[F]; 1] = [&openings];
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
-        let result =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
-                &decoded,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verify_input(&pt[..], opening_groups[0], &commitments[0]),
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            );
+        let result = AkitaCommitmentScheme::<DenseCfg>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
+        );
         assert!(
             result.is_ok(),
             "aggregated mixed dense/onehot verification failed: {:?}",

@@ -5,7 +5,7 @@ use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
     MulBaseUnreduced,
 };
-use akita_types::{CleartextWitnessProof, FlatRingVec, FpExtEncoding};
+use akita_types::{CleartextWitnessProof, FpExtEncoding, RingVec};
 
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
@@ -13,8 +13,8 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
     OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyShape, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -22,19 +22,23 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 /// Borrowed single-polynomial view over sparse signed ring coefficients.
 ///
 /// One view type backs the commit, opening-fold, and tensor-projection kernels;
-/// the kernel trait it is passed to selects the operation.
+/// the kernel trait it is passed to selects the operation. `D` is the kernel
+/// dispatch dimension: the underlying polynomial stores flat field data, and
+/// the view fixes the ring dimension the kernels operate at.
 #[derive(Debug, Clone, Copy)]
 pub struct SparseRingView<'a, F: FieldCore, const D: usize> {
-    pub(super) poly: &'a SparseRingPoly<F, D>,
+    pub(super) poly: &'a SparseRingPoly<F>,
 }
 
 /// Same-point batch view over several sparse-ring polynomials.
+///
+/// `D` is the kernel dispatch dimension, as in [`SparseRingView`].
 #[derive(Debug, Clone, Copy)]
 pub struct SparseRingBatchView<'a, F: FieldCore, const D: usize> {
-    pub(super) polys: &'a [&'a SparseRingPoly<F, D>],
+    pub(super) polys: &'a [&'a SparseRingPoly<F>],
 }
 
-impl<F, const D: usize> RootPolyShape<F, D> for SparseRingPoly<F, D>
+impl<F> RootPolyMeta<F> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
@@ -47,7 +51,20 @@ where
     }
 }
 
-impl<F, const D: usize> RootCommitSource<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> RootPolyShape<F, D> for SparseRingPoly<F>
+where
+    F: FieldCore,
+{
+    fn num_ring_elems(&self) -> usize {
+        (1usize << self.num_vars) / D
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+}
+
+impl<F, const D: usize> RootCommitSource<F, D> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
@@ -61,7 +78,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootOpeningSource<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> RootOpeningSource<F, D> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
@@ -84,7 +101,7 @@ where
     }
 }
 
-impl<F, const D: usize> RootTensorSource<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> RootTensorSource<F, D> for SparseRingPoly<F>
 where
     F: FieldCore,
 {
@@ -107,27 +124,14 @@ where
     }
 }
 
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for SparseRingPoly<F, D>
+impl<F, const D: usize> DirectRootWitnessSource<F, D> for SparseRingPoly<F>
 where
     F: FieldCore + FromPrimitiveInt,
 {
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        let total_coeffs = self.total_ring_elems.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidInput("sparse direct witness length overflow".to_string())
-        })?;
-        let mut coeffs = vec![F::zero(); total_coeffs];
-        for entry in &self.coeffs {
-            let idx = (entry.ring_idx as usize)
-                .checked_mul(D)
-                .and_then(|base| base.checked_add(entry.coeff_idx as usize))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("sparse direct witness index overflow".to_string())
-                })?;
-            coeffs[idx] += F::from_i8(entry.value);
-        }
-        Ok(CleartextWitnessProof::FieldElements(
-            FlatRingVec::from_coeffs(coeffs),
-        ))
+        Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
+            self.direct_field_evals()?,
+        )))
     }
 }
 
@@ -138,11 +142,11 @@ where
 {
     fn commit_inner(
         &self,
-        prepared: &Self::PreparedSetup<D>,
+        prepared: &Self::PreparedSetup,
         source: SparseRingView<'_, F, D>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        source.poly.commit_inner(self, prepared, plan)
+    ) -> Result<CommitInnerWitness<F>, AkitaError> {
+        source.poly.commit_inner::<_, D>(self, prepared, plan)
     }
 }
 
@@ -153,7 +157,7 @@ where
 {
     fn evaluate_and_fold(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
@@ -164,25 +168,27 @@ where
                 block_len,
             } => source
                 .poly
-                .evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
+                .evaluate_and_fold::<D>(eval_outer_scalars, fold_scalars, block_len),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars,
                 fold_scalars,
                 block_len,
-            } => source
-                .poly
-                .evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len),
+            } => {
+                source
+                    .poly
+                    .evaluate_and_fold_ring::<D>(eval_outer_scalars, fold_scalars, block_len)
+            }
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
 
     fn decompose_fold(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-        Ok(source.poly.decompose_fold(
+    ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
+        Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
             plan.block_len,
             plan.num_digits,
@@ -198,7 +204,7 @@ where
 {
     fn decompose_fold_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingBatchView<'_, F, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
@@ -209,7 +215,7 @@ where
                 block_len,
                 num_digits,
                 log_basis,
-            } => match SparseRingPoly::decompose_fold_tensor_batched(
+            } => match SparseRingPoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
                 block_len,
@@ -231,7 +237,7 @@ where
 {
     fn column_partials(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
@@ -243,7 +249,7 @@ where
 
     fn packed_witness(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
         Ok(match source.poly.tensor_packed_extension_sparse_evals()? {
@@ -254,14 +260,14 @@ where
 
     fn root_projection(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {
         Ok(RootTensorProjectionPoly::Dense(
-            source.poly.tensor_packed_extension_poly::<E>()?,
+            source.poly.tensor_packed_extension_poly::<E, D>()?,
         ))
     }
 }
@@ -275,7 +281,7 @@ where
 {
     fn column_partials_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingBatchView<'_, F, D>,
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
@@ -291,7 +297,7 @@ where
 
     fn sparse_linear_combination(
         &self,
-        _prepared: Option<&Self::PreparedSetup<D>>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingBatchView<'_, F, D>,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {

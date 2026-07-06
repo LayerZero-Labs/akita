@@ -6,7 +6,6 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_algebra::CyclotomicRing;
 use akita_challenges::{sample_folding_challenges, stage1_fold_challenge_labels, Challenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -14,11 +13,12 @@ use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInsta
 use akita_transcript::labels::{self, ABSORB_PROVER_V};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::eval_poly;
+use akita_types::proof::append_flat_coefficients;
 use akita_types::{
     combine_polys, linear_combination, sis::FoldWitnessGrindContract,
     stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
     stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
-    MRowLayout, RingSliceSerializer,
+    MRowLayout,
 };
 
 type Stage1VerifyOutput<E> = Vec<E>;
@@ -45,9 +45,11 @@ pub(crate) fn validate_fold_grind_nonce(
 /// # Errors
 ///
 /// Returns an error if challenge sampling fails.
-pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_stage1_challenges<F, T>(
     transcript: &mut T,
-    v: &[CyclotomicRing<F, D>],
+    v_coeffs: &[F],
+    ring_d: usize,
     num_blocks_per_claim: usize,
     num_claims: usize,
     lp: &LevelParams,
@@ -55,7 +57,7 @@ pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     grind_nonce: u32,
 ) -> Result<Challenges, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + AkitaSerialize,
     T: Transcript<F>,
 {
     // Terminal layout drops the D-block (`v = D · ŵ`) from M entirely;
@@ -63,10 +65,15 @@ where
     // both prover and verifier to keep the Fiat-Shamir transcript in
     // sync. Intermediate layouts still bind the prover's `v` rows.
     if matches!(m_row_layout, MRowLayout::WithDBlock) {
-        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
+        // Absorb `v` as flat ring coefficients under dimension `ring_d` —
+        // byte-identical to the former typed `RingSliceSerializer(v)` path
+        // (S2 byte-identity test): ring-major coefficient order, no length
+        // header.
+        append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, ring_d, transcript)?;
     }
-    sample_folding_challenges::<F, T, D>(
+    sample_folding_challenges::<F, T>(
         transcript,
+        ring_d,
         num_blocks_per_claim,
         num_claims,
         &lp.stage1_config,

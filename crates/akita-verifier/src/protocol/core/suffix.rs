@@ -1,15 +1,14 @@
 use super::*;
-use akita_types::dispatch_ring_dim_result;
-use akita_types::{terminal_witness_segment_layout, OpeningClaimsLayout};
+use akita_types::{terminal_witness_segment_layout, OpeningClaimsLayout, RingView};
 
 /// Verifier state carried between suffix fold levels.
-pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
+pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     /// Current opening point for the committed suffix witness.
-    pub opening_point: Vec<L>,
+    pub opening_point: Vec<E>,
     /// Claimed opening value for the current commitment.
-    pub opening: L,
+    pub opening: E,
     /// Current suffix witness commitment.
-    pub commitment: &'a FlatRingVec<F>,
+    pub commitment: &'a RingVec<F>,
     /// Basis used to interpret the current opening point.
     pub basis: BasisMode,
     /// Current suffix witness length in field elements.
@@ -27,47 +26,51 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, L: FieldCore> {
 /// fails, or the terminal witness replay is malformed.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-#[tracing::instrument(skip_all, name = "prepare_fold_data")]
-fn prepare_fold_data<'a, F, L, T, const D: usize>(
-    proof: &'a AkitaLevelProof<F, L>,
+#[tracing::instrument(skip_all, name = "prepare_fold_replay")]
+fn prepare_fold_replay<'a, F, E, T>(
+    proof: &'a AkitaLevelProof<F, E>,
     transcript: &mut T,
-    current_state: &'a SuffixVerifierState<'a, F, L>,
+    current_state: &'a SuffixVerifierState<'a, F, E>,
     scheduled: &'a ExecutionSchedule,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
-) -> Result<PreparedFoldReplay<'a, F, L, D>, AkitaError>
+) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let lp = &scheduled.params;
+    let role_dims = lp.role_dims();
+    let commit_d = role_dims.d_b();
     let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
-    let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let m_row_layout = proof.m_row_layout();
-    let v_typed = proof.v_as_ring_slice::<D>()?;
-    let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
+    let alpha_bits = role_dims.d_a().trailing_zeros() as usize;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
         ));
     }
-    current_state
-        .commitment
-        .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    // Absorb the current suffix commitment as flat coefficients under the
+    // schedule's ring dimension — byte-identical to the prover's absorb and to
+    // the former typed `append_as_ring_commitment` path (S2 byte-identity test).
+    current_state.commitment.append_flat_to_transcript::<T>(
+        ABSORB_COMMITMENT,
+        commit_d,
+        transcript,
+    )?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
     let opening_batch = OpeningClaimsLayout::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
-    let row_coefficients = vec![L::one()];
+    let row_coefficients = vec![E::one()];
     let FoldEorReplay {
         prepared_points,
         reduction_challenges: _,
         final_relation: eor_trace_final,
         ..
-    } = verify_fold_eor::<F, L, T, D>(
+    } = verify_fold_eor::<F, E, T>(
         proof.extension_opening_reduction(),
-        &[],
         current_state.opening_point.as_slice(),
         &openings,
         &row_coefficients,
@@ -83,7 +86,7 @@ where
     }
     let prepared_point = &prepared_points[0];
     for pt in &prepared_point.padded_point {
-        append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
 
     let w_len = match proof.final_w_len() {
@@ -106,7 +109,7 @@ where
                     MRowLayout::WithDBlock,
                 )?
             };
-            ring.checked_mul(D).ok_or_else(|| {
+            ring.checked_mul(role_dims.d_a()).ok_or_else(|| {
                 AkitaError::InvalidSetup("next witness length overflow".to_string())
             })?
         }
@@ -136,10 +139,14 @@ where
             *final_claim,
             *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
         ),
-        None => (current_state.opening, L::one()),
+        None => (current_state.opening, E::one()),
     };
 
     let fold_grind_nonce = proof.fold_grind_nonce();
+    let v_storage = match proof {
+        AkitaLevelProof::Intermediate { v, .. } => v.clone(),
+        AkitaLevelProof::Terminal { .. } => RingVec::from_coeffs(Vec::new()),
+    };
     let replay_opening_batch = OpeningClaims::from_groups(
         current_state.opening_point.as_slice(),
         vec![PolynomialGroupClaims::new(
@@ -148,14 +155,14 @@ where
                 current_state.opening_point.len(),
             )?,
             openings,
-            commitment_u,
+            current_state.commitment,
         )?],
     )?;
     Ok(PreparedFoldReplay {
         lp,
         m_row_layout,
         fold_grind_nonce,
-        v: v_typed.to_vec(),
+        v: v_storage,
         opening_batch: replay_opening_batch,
         row_coefficients,
         ring_opening_point: prepared_point.ring_opening_point.clone(),
@@ -164,6 +171,7 @@ where
         stage1: stage1_proof,
         stage2,
         next_w_commitment,
+        next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
         terminal_replay,
         stage3,
         trace_prepared_point: Some(prepared_point.clone()),
@@ -188,17 +196,17 @@ where
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the suffix witness handoff has the wrong shape.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_suffix<'a, F, L, T>(
-    steps: &'a [AkitaLevelProof<F, L>],
+pub(super) fn verify_suffix<'a, F, E, T>(
+    steps: &'a [AkitaLevelProof<F, E>],
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
-    mut current_state: SuffixVerifierState<'a, F, L>,
+    mut current_state: SuffixVerifierState<'a, F, E>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    L: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     for (offset, step) in steps.iter().enumerate() {
@@ -208,7 +216,9 @@ where
         let current_lp = &scheduled.params;
         let next_params = &scheduled.next_params;
         let next_w_len = scheduled.next_w_len;
-        let level_d = current_lp.ring_dimension;
+        let role_dims = current_lp.role_dims();
+        let commit_d = role_dims.d_b();
+        let witness_d = role_dims.d_a();
 
         match step {
             AkitaLevelProof::Intermediate { .. } => {
@@ -216,14 +226,18 @@ where
                 if scheduled.is_terminal {
                     return Err(AkitaError::InvalidProof);
                 }
-                if !current_state.commitment.can_decode_vec(level_d)
-                    || !level_proof.v().can_decode_vec(level_d)
+                if !current_state.commitment.can_decode_vec(commit_d)
+                    || !level_proof.v().can_decode_vec(witness_d)
                 {
                     return Err(AkitaError::InvalidProof);
                 }
+                let commitment_view = RingView::new(current_state.commitment.coeffs(), commit_d)?;
+                if commitment_view.num_rings() != current_lp.b_key.row_len() {
+                    return Err(AkitaError::InvalidProof);
+                }
 
-                let challenges = dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
+                let challenges = {
+                    let prepared = prepare_fold_replay::<F, E, T>(
                         level_proof,
                         transcript,
                         &current_state,
@@ -231,12 +245,14 @@ where
                         BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                     )?;
-                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
-                })?;
+                    verify_fold::<F, E, T>(setup, transcript, prepared)?
+                };
 
-                let next_level_d = next_params.ring_dimension;
-                if next_level_d == 0
-                    || !level_proof.next_w_commitment().can_decode_vec(next_level_d)
+                let next_commit_d = next_params.role_dims().d_b();
+                if next_commit_d == 0
+                    || !level_proof
+                        .next_w_commitment()
+                        .can_decode_vec(next_commit_d)
                 {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -258,7 +274,7 @@ where
                     )?
                 };
                 let computed_next_w_len =
-                    computed_next_w_ring.checked_mul(level_d).ok_or_else(|| {
+                    computed_next_w_ring.checked_mul(witness_d).ok_or_else(|| {
                         AkitaError::InvalidSetup("next witness length overflow".to_string())
                     })?;
                 scheduled.validate_next_w_len(computed_next_w_len)?;
@@ -274,7 +290,7 @@ where
             }
             AkitaLevelProof::Terminal { .. } => {
                 let terminal_proof = step;
-                if !current_state.commitment.can_decode_vec(level_d) {
+                if !current_state.commitment.can_decode_vec(commit_d) {
                     return Err(AkitaError::InvalidProof);
                 }
                 if terminal_proof
@@ -284,17 +300,15 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                dispatch_ring_dim_result!(level_d, |D_LEVEL| {
-                    let prepared = prepare_fold_data::<F, L, T, D_LEVEL>(
-                        terminal_proof,
-                        transcript,
-                        &current_state,
-                        &scheduled,
-                        BlockOrder::ColumnMajor,
-                        setup_contribution_mode,
-                    )?;
-                    verify_fold::<F, L, T, D_LEVEL>(setup, transcript, prepared)
-                })?;
+                let prepared = prepare_fold_replay::<F, E, T>(
+                    terminal_proof,
+                    transcript,
+                    &current_state,
+                    &scheduled,
+                    BlockOrder::ColumnMajor,
+                    setup_contribution_mode,
+                )?;
+                verify_fold::<F, E, T>(setup, transcript, prepared)?;
                 // The trailing-Direct witness shape is already validated in
                 // `verify_folded_batched_proof` before this loop.
                 if !scheduled.is_terminal {

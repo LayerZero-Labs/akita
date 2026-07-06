@@ -67,3 +67,15 @@ where
     // batched commit layout `Scheme::commit` actually uses.
     Cfg::get_params_for_batched_commitment(&OpeningClaimsLayout::new(num_vars, num_polynomials)?)
 }
+
+/// Minimal setup seed for schedule ring-dimension integration tests.
+#[must_use]
+pub fn ring_plan_test_seed(gen_ring_dim: usize) -> akita_types::AkitaSetupSeed {
+    akita_types::AkitaSetupSeed {
+        max_num_vars: 20,
+        max_num_batched_polys: 1,
+        gen_ring_dim,
+        max_setup_len: 1 << 20,
+        public_matrix_seed: [0u8; 32],
+    }
+}

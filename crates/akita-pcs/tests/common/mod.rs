@@ -11,8 +11,8 @@ pub(super) use akita_prover::ProverOpeningData;
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, BlockOrder, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-    RingCommitment,
+    BasisMode, BlockOrder, Commitment, OpeningClaims, PointVariableSelection,
+    PolynomialGroupClaims,
 };
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
@@ -62,12 +62,12 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore, const D: usize>(
+pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
-    hint: AkitaCommitmentHint<CommitF, D>,
-) -> ProverOpeningData<'a, FF, P, CommitF, D> {
+    commitment: &'a Commitment<CommitF>,
+    hint: AkitaCommitmentHint<CommitF>,
+) -> ProverOpeningData<'a, FF, P, CommitF> {
     let group = PolynomialGroupClaims::new(
         PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
         vec![FF::zero(); polynomials.len()],
@@ -158,7 +158,7 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, ONEHOT_D, u8> {
+pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_blocks · block_len) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
     let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
@@ -167,12 +167,12 @@ pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F,
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly")
 }
 
-pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F, DENSE_D> {
+pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
     let evals = dense_field_evals(nv, seed);
-    DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly")
+    DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly")
 }
 
 fn splitmix64_next(state: &mut u64) -> u64 {

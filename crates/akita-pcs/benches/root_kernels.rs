@@ -9,7 +9,6 @@ use akita_prover::kernels::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row,
 };
-use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::rngs::StdRng;
@@ -38,13 +37,12 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
 
 fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     let evals = make_dense_evals::<Cfg>(NV);
-    let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+    let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
     let layout = Cfg::get_params_for_batched_commitment(
         &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
     )
     .expect("layout");
-    let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
     let total = setup
         .expanded
         .shared_matrix
@@ -58,14 +56,15 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
             .unwrap(),
     )
     .unwrap();
-    let num_blocks = poly.coeffs.len().div_ceil(layout.block_len);
+    let rings = poly.ring_coeffs::<D>().expect("dense ring view");
+    let num_blocks = rings.len().div_ceil(layout.block_len);
     let block_slices: Vec<&[akita_algebra::CyclotomicRing<F, D>]> = (0..num_blocks)
         .map(|i| {
             let start = i * layout.block_len;
-            if start >= poly.coeffs.len() {
+            if start >= rings.len() {
                 &[] as &[akita_algebra::CyclotomicRing<F, D>]
             } else {
-                &poly.coeffs[start..(start + layout.block_len).min(poly.coeffs.len())]
+                &rings[start..(start + layout.block_len).min(rings.len())]
             }
         })
         .collect();

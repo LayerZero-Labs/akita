@@ -21,7 +21,7 @@ use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    CommitmentProver, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
+    ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
     ProverOpeningData,
 };
 use akita_recursion_glue::AkitaJoltInputs;
@@ -90,14 +90,14 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
 }
 
 fn opening_from_poly<'a, I>(
-    poly: &'a OneHotPoly<F, D, I>,
+    poly: &'a OneHotPoly<F, I>,
     point: &[F],
     layout: &LevelParams,
     basis: BasisMode,
 ) -> Result<F, String>
 where
     I: OneHotIndex,
-    CpuBackend: OpeningFoldKernel<<OneHotPoly<F, D, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
+    CpuBackend: OpeningFoldKernel<<OneHotPoly<F, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
@@ -211,10 +211,10 @@ fn verify_with_setup_mode(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
-    claims: OpeningClaims<'_, Claim, &akita_types::RingCommitment<F, D>>,
+    claims: OpeningClaims<'_, Claim, &akita_types::Commitment<F>>,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), String> {
-    batched_verify::<Cfg, _, D>(
+    batched_verify::<Cfg, _>(
         proof,
         verifier_setup,
         transcript,
@@ -307,7 +307,7 @@ fn run() -> Result<(), String> {
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    let onehot_poly = OneHotPoly::<F, D, u8>::new(onehot_k, indices)
+    let onehot_poly = OneHotPoly::<F, u8>::new(onehot_k, D, indices)
         .map_err(|err| format!("failed to build onehot polynomial: {err}"))?;
     let opening_point: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -317,10 +317,10 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let prover_setup = match setup_contribution_mode {
         SetupContributionMode::Direct => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1)
+            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
         }
         SetupContributionMode::Recursive => {
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover_recursion(
+            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(
                 nv, 1,
             )
         }
@@ -341,8 +341,7 @@ fn run() -> Result<(), String> {
     );
 
     let t0 = Instant::now();
-    let (commitment, hint) =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
         &prover_setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
@@ -350,12 +349,12 @@ fn run() -> Result<(), String> {
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
 
-    let poly_refs: [&OneHotPoly<F, D, u8>; 1] = [&onehot_poly];
+    let poly_refs: [&OneHotPoly<F, u8>; 1] = [&onehot_poly];
     let openings = [opening];
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let prove_group = PolynomialGroupClaims::new(
+let prove_group = PolynomialGroupClaims::new(
         PointVariableSelection::prefix(opening_point.len(), opening_point.len())
             .map_err(|err| format!("invalid opening point shape: {err}"))?,
         openings.to_vec(),
@@ -369,7 +368,7 @@ fn run() -> Result<(), String> {
         vec![&poly_refs[..]],
     )
     .map_err(|err| format!("invalid prover opening data: {err}"))?;
-    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
         &prover_setup,
         prove_input,
         &stack,
@@ -381,7 +380,7 @@ fn run() -> Result<(), String> {
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
     let verifier_setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&prover_setup);
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup);
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();

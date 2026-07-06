@@ -4,8 +4,8 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
 use akita_field::LiftBase;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
-use akita_prover::{CommitmentProver, DensePoly, OneHotPoly, ProverOpeningData};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
@@ -19,20 +19,19 @@ use akita_types::{
 };
 use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
-    AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
-    TerminalLevelProofShape,
+    AkitaBatchedProofShape, AkitaProofStepShape, LevelProofShape, RingVec, TerminalLevelProofShape,
 };
 use akita_types::{
-    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    AkitaCommitmentHint, Commitment, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims,
 };
 use akita_verifier::cleartext_witness_opening_matches;
-use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::D64Full;
 type F = fp128::Field;
 const D: usize = Cfg::D;
-type Scheme = AkitaCommitmentScheme<D, Cfg>;
+type Scheme = AkitaCommitmentScheme<Cfg>;
 
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
@@ -41,8 +40,8 @@ const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::D64OneHot` requires K=256 one-hot schedules (must match
 // `OneHotCfg::onehot_chunk_size()`); chunks span `K/D = 4` ring elements.
 const BENCH_ONEHOT_K: usize = 256;
-type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
-type ConservativeOneHotScheme = AkitaCommitmentScheme<ONEHOT_D, ConservativeOneHotCfg>;
+type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
+type ConservativeOneHotScheme = AkitaCommitmentScheme<ConservativeOneHotCfg>;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
 /// sends `w` directly instead of recursing.
@@ -227,12 +226,12 @@ fn expected_same_point_batched_shape(
     shape
 }
 
-fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore, const D: usize>(
+fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     point: &'a [E],
     polynomials: &'a [&'a P],
-    commitment: &'a RingCommitment<CommitF, D>,
-    hint: AkitaCommitmentHint<CommitF, D>,
-) -> ProverOpeningData<'a, E, P, CommitF, D> {
+    commitment: &'a Commitment<CommitF>,
+    hint: AkitaCommitmentHint<CommitF>,
+) -> ProverOpeningData<'a, E, P, CommitF> {
     let group = PolynomialGroupClaims::new(
         PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
         vec![E::zero(); polynomials.len()],
@@ -262,10 +261,10 @@ fn verifier_claims<'a, E: FieldCore, C>(
     .expect("valid verifier claims")
 }
 
-fn make_dense_poly(num_vars: usize) -> (DensePoly<F, D>, Vec<F>) {
+fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
     let len = 1usize << num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
     (poly, evals)
 }
 
@@ -276,7 +275,7 @@ fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> LevelParams {
 
 type VerifyFixture = (
     AkitaVerifierSetup<F>,
-    RingCommitment<F, D>,
+    Commitment<F>,
     AkitaBatchedProof<F, F>,
     Vec<F>,
     F,
@@ -289,18 +288,14 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1).unwrap();
+    let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::batched_commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-    )
-    .unwrap();
+    let verifier_setup = Scheme::setup_verifier(&setup);
+    let (commitment, hint) =
+        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
@@ -311,11 +306,11 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         .zip(lw.iter())
         .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+    let proof = Scheme::batched_prove::<_, _, _>(
         &setup,
         prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
         &stack,
@@ -351,7 +346,7 @@ fn debug_random_point(nv: usize) -> Vec<OneHotF> {
         .collect()
 }
 
-fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF, ONEHOT_D, u8> {
+fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let num_vars = layout.m_vars + layout.r_vars + ONEHOT_D.trailing_zeros() as usize;
     // `total_ring` ring elements of degree D cover `2^num_vars` field elements,
@@ -365,7 +360,7 @@ fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF
         .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
         .collect();
 
-    OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
+    OneHotPoly::<OneHotF, u8>::new(BENCH_ONEHOT_K, ONEHOT_D, indices).expect("debug onehot poly")
 }
 
 fn opening_from_poly<'a, P>(poly: &'a P, point: &[OneHotF], layout: &LevelParams) -> OneHotF

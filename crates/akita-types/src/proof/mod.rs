@@ -37,10 +37,15 @@ pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, padded_scalar_batch_num_vars, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_scalar_point_matches_poly_arity, PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    validate_batched_inputs, validate_scalar_point_matches_poly_arity, PreparedOpeningPoint,
+    RingMultiplierOpeningPoint,
 };
-pub use commitment::{AkitaCommitment, DummyProof, ProverCommitmentRows, RingCommitment};
-pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
+pub use commitment::{
+    AkitaCommitment, Commitment, DummyProof, ProverCommitmentRows, RingCommitment,
+};
+pub use containers::{
+    append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
+};
 pub use direct_witness::{
     segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape,
 };
@@ -51,7 +56,11 @@ pub use levels::{
     AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
     TerminalLevelProof,
 };
-pub use relation::{generate_y, relation_claim_from_rows, relation_claim_from_rows_extension};
+pub use relation::{
+    assemble_relation_y, generate_y, relation_claim_from_rows, relation_claim_from_rows_extension,
+    relation_claim_from_rows_extension_at_dims, relation_y_coeff_len, relation_y_row_count,
+    RelationYLayout,
+};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,

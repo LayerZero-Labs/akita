@@ -734,8 +734,8 @@ mod tests {
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-        MRowLayout, SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, MRowLayout,
+        RingVec, SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -833,9 +833,9 @@ mod tests {
         let witness = SegmentTypedWitness {
             layout,
             z_payload,
-            e_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
-            t_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
-            r_fields: FlatRingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+            e_fields: RingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
+            t_fields: RingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
         };
         (CleartextWitnessProof::SegmentTyped(witness), shape)
     }
@@ -930,12 +930,12 @@ mod tests {
 
         let proof = AkitaLevelProof::Intermediate {
             extension_opening_reduction: None,
-            v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+                next_w_commitment: RingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
                 next_w_eval: F::zero(),
             }),
             stage3_sumcheck_proof: None,
@@ -1071,7 +1071,7 @@ mod tests {
             .unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
             let b = 1usize << log_basis;
-            let next_commitment = FlatRingVec::from_ring_elems(&vec![
+            let next_commitment = RingVec::from_ring_elems(&vec![
                 CyclotomicRing::<F, D>::zero();
                 next_lp.b_key.row_len()
             ])
