@@ -44,7 +44,7 @@ upserted comment per PR.
 - **Timing telemetry must not change test selection.** It observes the canonical
   CI nextest run; it does not skip, filter, or reorder tests.
 - **The CI merge gate is the transparent pass.** `test` runs
-  `cargo nextest run --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence`
+  `cargo nextest run --profile ci --no-default-features --features parallel,disk-persistence`
   sharded across matrix jobs.
 - **Schedule drift remains explicit.** `test-all-schedules-drift` runs the
   `all-schedules` drift guard outside the timing artifact.
@@ -160,7 +160,7 @@ always renders a fresh comment from `summary.json`.
 `test` is the merge-gate nextest job:
 
 ```bash
-cargo nextest run --profile ci --cargo-profile ci-test \
+cargo nextest run --profile ci \
   --no-default-features --features parallel,disk-persistence \
   --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
 ```

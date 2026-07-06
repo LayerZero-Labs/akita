@@ -98,8 +98,3 @@ todo = "deny"
 unimplemented = "deny"
 print_stdout = "allow"
 print_stderr = "allow"
-
-[profile.ci-test]
-inherits = "release"
-debug-assertions = true
-overflow-checks = true
