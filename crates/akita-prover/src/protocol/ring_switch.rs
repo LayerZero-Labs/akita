@@ -10,7 +10,6 @@ use crate::{
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_config::CommitmentConfig;

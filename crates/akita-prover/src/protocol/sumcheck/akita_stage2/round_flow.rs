@@ -214,7 +214,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
             use_prefix_x_round && self.next_use_prefix_x_round_after_current();
         let y_len = self.relation_weight_y_len();
         let live_x_cols = self.live_x_cols;
-        let mut fused_full_prefix_x = false;
 
         self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
             WTable::Compact(w_compact) => {
@@ -246,7 +245,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         let (next_w_full, virt_terms, rel_coeffs) =
                             self.fuse_full_prefix_x_and_compute_round(&w_full, r);
                         self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
-                        fused_full_prefix_x = true;
                         WTable::Full(next_w_full)
                     } else {
                         let next_w_full = Self::fold_full_prefix_x(&w_full, live_x_cols, y_len, r);

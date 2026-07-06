@@ -254,20 +254,6 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
     Ok(items)
 }
 
-/// Fused trace coefficient: `γ²` on terminal folds, otherwise `batching_coeff²`.
-#[inline]
-pub(crate) fn stage2_trace_coeff<E: FieldCore>(
-    batching_coeff: E,
-    trace_gamma: E,
-    is_terminal: bool,
-) -> E {
-    if is_terminal {
-        trace_gamma * trace_gamma
-    } else {
-        batching_coeff * batching_coeff
-    }
-}
-
 /// Build public trace weights for a root opening_batch, optionally scaling each
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(

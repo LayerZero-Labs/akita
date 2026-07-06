@@ -121,26 +121,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_alpha_to_round2")]
-    pub(super) fn fold_alpha_to_round2(alpha_compact: &[E], r0: E, r1: E) -> Vec<E> {
-        debug_assert!(alpha_compact.len().is_power_of_two());
-        debug_assert!(alpha_compact.len() >= 4);
-        let next_y_len = alpha_compact.len() >> 2;
-        let mut out = vec![E::zero(); next_y_len];
-        for (quad_y, dst) in out.iter_mut().enumerate() {
-            let base = 4 * quad_y;
-            *dst = Self::direct_fold_e_quad_to_round2(
-                alpha_compact[base],
-                alpha_compact[base + 1],
-                alpha_compact[base + 2],
-                alpha_compact[base + 3],
-                r0,
-                r1,
-            );
-        }
-        out
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "AkitaStage2Prover::fuse_compact_to_round2_and_compute_round"

@@ -276,7 +276,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let current_x_half = 1usize << (self.current_x_width() - 1);
         let live_pairs = self.live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
-        let y_len = self.relation_weight_y_len();
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
@@ -441,7 +440,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let current_x_half = 1usize << (self.current_x_width() - 1);
         let live_pairs = self.live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
-        let y_len = self.relation_weight_y_len();
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(

@@ -12,9 +12,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup, FpExtEncoding,
-    LevelParams, MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-    RingRole, RingVec, SetupContributionPlanInputs, TerminalWitnessTranscriptParts, WitnessLayout,
+    gadget_row_scalars, validate_role_dispatch, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingRole,
+    RingVec, SetupContributionPlanInputs, TerminalWitnessTranscriptParts, WitnessLayout,
 };
 
 use super::slice_mle::{

@@ -333,7 +333,8 @@ where
     Ok(acc)
 }
 
-/// Stage-2 relation-weight claim `V_alpha` including the [`EvaluationTrace`] row.
+/// Stage-2 relation-weight claim `V_alpha` including the
+/// [`EvaluationTrace`](crate::layout::RelationRowFamily::EvaluationTrace) row.
 ///
 /// Adds `eq(tau1, EvaluationTrace) * trace_eval_target` at row 0, then accumulates
 /// opening-consistency rows from `u` and `v` at the same indices as

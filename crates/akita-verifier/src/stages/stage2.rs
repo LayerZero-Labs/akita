@@ -5,7 +5,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
-use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
+use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding, RingMultiplierOpeningPoint,
     RingOpeningPoint,

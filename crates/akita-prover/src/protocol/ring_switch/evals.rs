@@ -3,8 +3,8 @@ use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use akita_algebra::ring::{eval_flat_ring_at_pows, scalar_powers};
 use akita_types::{
     bridge_relation_weight_from_split, build_trace_table_scaled, trace_public_weights_recursive,
-    trace_public_weights_root_terms, BasisMode, CommitmentRingDims, OpeningClaimsLayout,
-    PreparedOpeningPoint, RelationQuotientLayout, RelationRowLayout, TraceTable, TraceWeightLayout,
+    trace_public_weights_root_terms, CommitmentRingDims, OpeningClaimsLayout, PreparedOpeningPoint,
+    RelationQuotientLayout, RelationRowLayout, TraceWeightLayout,
 };
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.

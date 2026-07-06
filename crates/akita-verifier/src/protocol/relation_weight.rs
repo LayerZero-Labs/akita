@@ -58,10 +58,6 @@ where
         self.deferred.create_setup_contribution_inputs()
     }
 
-    pub(crate) fn deferred(&self) -> &RingSwitchDeferredRowEval<E> {
-        &self.deferred
-    }
-
     pub(crate) fn eval_at_point(
         &self,
         challenges: &[E],
@@ -96,8 +92,7 @@ where
         )?;
         let trace_val = if let Some(trace) = &self.evaluation_trace {
             let eq_trace = self
-                .deferred
-                .setup_contribution_inputs
+                .setup_contribution_inputs()
                 .eq_tau1
                 .first()
                 .copied()

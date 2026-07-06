@@ -98,8 +98,7 @@ impl RelationQuotientLayout {
             let witness_offset = family
                 .row_start
                 .saturating_sub(1)
-                .checked_mul(digit_depth)
-                .unwrap_or(usize::MAX);
+                .saturating_mul(digit_depth);
             let slice = RelationQuotientSlice {
                 witness_offset,
                 row_start: family.row_start,
@@ -309,7 +308,6 @@ impl RelationRowLayout {
             .checked_mul(num_commitments)
             .ok_or_else(|| AkitaError::InvalidSetup("B row count overflow".into()))?;
 
-        let digit_depth = digit_depth;
         let log_basis = lp.log_basis;
 
         let mut row_start = 0usize;
@@ -443,10 +441,9 @@ mod tests {
     use crate::layout::{LevelParams, SisModulusFamily};
     use crate::proof::OpeningClaimsLayout;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
+    use akita_field::Prime128Offset275;
 
     type F = Prime128Offset275;
-    type E = FpExt2<F, NegOneNr>;
 
     fn test_level_params() -> LevelParams {
         LevelParams::params_only(

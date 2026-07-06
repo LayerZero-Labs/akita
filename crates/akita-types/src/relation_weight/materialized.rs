@@ -124,6 +124,11 @@ impl<E: FieldCore> RelationWeightPolynomial<E> {
         self.evals.len()
     }
 
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.evals.is_empty()
+    }
+
     /// Pair of relation-weight evaluations for one sumcheck fold step.
     pub fn pair_flat(&self, idx0: usize, idx1: usize) -> (E, E) {
         (self.evals[idx0], self.evals[idx1])
@@ -173,11 +178,10 @@ pub fn bridge_relation_weight_from_split<E: FieldCore>(
         }
     }
     let mut out = Vec::with_capacity(table_len);
-    for x in 0..live_x_cols {
-        let m_val = m_evals_x[x];
-        for y in 0..y_len {
+    for (x, m_val) in m_evals_x.iter().enumerate().take(live_x_cols) {
+        for (y, alpha_y) in alpha_evals_y.iter().enumerate().take(y_len) {
             let idx = x * y_len + y;
-            let mut weight = alpha_evals_y[y] * m_val;
+            let mut weight = *alpha_y * *m_val;
             if let Some(trace) = trace_table {
                 weight += trace[idx];
             }
@@ -190,7 +194,7 @@ pub fn bridge_relation_weight_from_split<E: FieldCore>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{FpExt2, FromPrimitiveInt, NegOneNr, Prime128Offset275, Zero};
+    use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
 
     type F = Prime128Offset275;
     type E = FpExt2<F, NegOneNr>;
@@ -208,10 +212,10 @@ mod tests {
         let bridged =
             bridge_relation_weight_from_split(&alpha, &m, Some(&trace), y_len, live_x_cols)
                 .unwrap();
-        for x in 0..live_x_cols {
-            for y in 0..y_len {
+        for (x, m_x) in m.iter().enumerate().take(live_x_cols) {
+            for (y, alpha_y) in alpha.iter().enumerate().take(y_len) {
                 let idx = x * y_len + y;
-                let expected = alpha[y] * m[x] + trace[idx];
+                let expected = *alpha_y * *m_x + trace[idx];
                 assert_eq!(bridged[idx], expected, "mismatch at ({x},{y})");
             }
         }

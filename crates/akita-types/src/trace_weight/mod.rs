@@ -29,7 +29,6 @@ pub use stage2::{
     root_trace_block_opening, trace_public_weights_recursive, trace_public_weights_root_terms,
     trace_terms_recursive, trace_terms_root, trace_weight_layout_from_segment, TracePublicWeights,
 };
-pub(crate) use stage2::{stage2_trace_coeff, TraceClaim};
 pub use trace_table::{TraceSparseColumn, TraceTable};
 
 #[cfg(test)]
