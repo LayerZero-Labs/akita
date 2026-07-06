@@ -44,12 +44,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Cases are split across parallel jobs. Each job builds BOTH the PR and
-  # merge-base binaries and benchmarks them interleaved (PR, base, ...) to cancel
-  # drift; the build is paid per job, but the jobs run concurrently. The split
-  # keeps fp128 dense/tensor root-fold tracking in one job, flat one-hot coverage
-  # in the second, and distributed multi-chunk coverage in a third parallel group.
-  # `report` then concatenates per-job summaries.
+  # Cases are split across parallel jobs. Each PR job resolves merge-base baseline
+  # policy via `scripts/profile_bench_merge_base_policy.py`: when merge-base
+  # defines every profile mode in the group, build merge-base and benchmark
+  # interleaved; otherwise benchmark PR head only (Main=n/a in the report).
   bench:
     name: Bench (${{ matrix.group.name }})
     runs-on: ubuntu-latest
@@ -140,6 +138,30 @@ jobs:
               core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);
             }
 
+      - name: Resolve merge-base baseline policy
+        if: github.event_name == 'pull_request'
+        env:
+          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
+        run: |
+          case_args=()
+          while IFS= read -r case_spec; do
+            if [ -n "$case_spec" ]; then
+              case_args+=(--case "$case_spec")
+            fi
+          done <<< "$AKITA_BENCH_GROUP_CASES"
+
+          if [ -z "$AKITA_BENCH_MERGE_BASE_SHA" ]; then
+            echo "AKITA_BENCH_BASELINE_AVAILABLE=0" >> "$GITHUB_ENV"
+            echo "AKITA_BENCH_BASELINE_MISSING_MODES=" >> "$GITHUB_ENV"
+            echo "::notice::Skipping merge-base baseline: merge-base SHA is unset."
+            exit 0
+          fi
+
+          python3 scripts/profile_bench_merge_base_policy.py check \
+            --merge-base-ref "$AKITA_BENCH_MERGE_BASE_SHA" \
+            --github-env "$GITHUB_ENV" \
+            "${case_args[@]}"
+
       # Pin a fixed baseline ISA instead of `-C target-cpu=native`.
       # GitHub-hosted `ubuntu-latest` is a heterogeneous fleet (Skylake,
       # Cascade Lake, Ice Lake, Zen3), so `native` compiles a different binary
@@ -167,12 +189,8 @@ jobs:
         run: ./scripts/check_profile_ci_features.sh
 
       - name: Build merge-base profile binary
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_AVAILABLE == '1'
         run: |
-          if [ -z "$AKITA_BENCH_MERGE_BASE_SHA" ]; then
-            echo "::error::Merge-base SHA is unset; profile benchmarks require a main baseline on PRs." >&2
-            exit 1
-          fi
           git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
           mkdir -p "$RUNNER_TEMP/bench-bins"
           (
@@ -212,20 +230,18 @@ jobs:
           done <<< "$AKITA_BENCH_GROUP_CASES"
 
           baseline_args=()
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            if [ -z "$AKITA_BENCH_MERGE_BASE_SHA" ]; then
-              echo "::error::Merge-base SHA is unset; profile benchmarks require a main baseline on PRs." >&2
-              exit 1
-            fi
-            if [ ! -x "$RUNNER_TEMP/bench-bins/profile-base" ]; then
-              echo "::error::Merge-base profile binary is missing." >&2
-              exit 1
-            fi
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ "$AKITA_BENCH_BASELINE_AVAILABLE" = "1" ]; then
             echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA interleaved with merge-base baseline $AKITA_BENCH_MERGE_BASE_SHA"
             baseline_args+=(
               --baseline-binary "$RUNNER_TEMP/bench-bins/profile-base"
               --baseline-output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR"
             )
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            if [ -n "$AKITA_BENCH_BASELINE_MISSING_MODES" ]; then
+              echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base; missing mode(s): $AKITA_BENCH_BASELINE_MISSING_MODES"
+            else
+              echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base baseline"
+            fi
           else
             echo "Benchmarking $AKITA_BENCH_SOURCE_BRANCH commit $AKITA_BENCH_SOURCE_SHA"
           fi

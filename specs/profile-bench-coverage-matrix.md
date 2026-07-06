@@ -352,8 +352,11 @@ runner so the batched profile emits planned-level output too.
 ### Workflow Behavior
 
 `profile-bench.yml` builds the profile example once per matrix group. On pull
-requests every group also builds the merge-base profile binary and benchmarks PR
-head interleaved with merge-base so Main baseline deltas are always available.
+requests, `scripts/profile_bench_merge_base_policy.py` checks whether merge-base
+defines every profile mode in the group (`PROFILE_CI_MODES` when merge-base has
+`profile-ci`, else `PROFILE_ALL_MODES`). When all modes exist, the job builds
+merge-base and benchmarks PR head interleaved with merge-base; otherwise it
+benchmarks PR head only and the report shows Main=n/a for that group.
 
 The workflow:
 
