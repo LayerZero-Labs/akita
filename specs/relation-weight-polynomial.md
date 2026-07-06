@@ -6,7 +6,7 @@
 | Created     | 2026-07-06                     |
 | Status      | proposed                       |
 | Branch      | `quang/relation-weight-polynomial-spec` |
-| Related     | [`specs/y-ring-trace-internalization.md`](y-ring-trace-internalization.md), [`specs/runtime-ring-cutover.md`](runtime-ring-cutover.md), [`specs/setup-product-sumcheck.md`](setup-product-sumcheck.md) |
+| Related     | [`specs/y-ring-trace-internalization.md`](y-ring-trace-internalization.md) (superseded trace mechanism; see below), [`specs/runtime-ring-cutover.md`](runtime-ring-cutover.md), [`specs/setup-product-sumcheck.md`](setup-product-sumcheck.md) |
 
 ## Summary
 
@@ -74,9 +74,9 @@ the ring rows, even though it is field-level and has no quotient block and no
 polynomial and one claimed value.
 
 The split also keeps mixed ring dimensions awkward. The code already has partial
-per-role support for `d_a`, `d_b`, and `d_d`, but the quotient witness and final
-Stage-2 oracle still behave as if one ring-coordinate axis and one quotient
-denominator control the whole relation.
+per-role support for `d_a`, `d_b`, and `d_d`, but the quotient witness and
+`expected_output_claim` path still behave as if one ring-coordinate axis and one
+quotient denominator control the whole relation.
 
 The refactor makes the code say the same thing as the protocol:
 
@@ -127,16 +127,18 @@ row_val   = prepared_row_eval(r_x)
 trace_val = TraceWeight(r_x, r_y)
 ```
 
-and returns:
+and returns (intermediate levels):
 
 ```text
 w_eval * alpha_val * row_val
   + trace_coeff * w_eval * trace_val
-  + virtual_term
+  + batching_coeff * eq(stage1_point, r) * w_eval * (w_eval + 1)
 ```
 
 This is the main verifier-side place where the target protocol shape is
-obscured.
+obscured. The trace piece is a separate summand with `trace_coeff = gamma^2`
+today; the cutover folds it into `RelationWeightPolynomial` as the
+`EvaluationTrace` relation row (no `trace_coeff`, no `gamma^2`).
 
 ### Ring-Switch Prover
 
@@ -209,15 +211,22 @@ including the evaluation/trace row target. The Stage-2 input claim is:
 V_alpha + gamma * s_claim
 ```
 
-and the final verifier oracle is:
+At the final sumcheck point `r`, the verifier checks
+`expected_output_claim(r)` (`SumcheckInstanceVerifier`, `check_sumcheck_output_claim`):
 
 ```text
-w(r) * RelationWeightPolynomial(r)
+expected_output_claim(r)
+  = w(r) * RelationWeightPolynomial(r)
   + gamma * eq(stage1_point, r) * w(r) * (w(r) + 1)
 ```
 
-Terminal Stage 2 sets `gamma = 0`, so the virtual term vanishes and the same
-relation-weight form remains.
+Do not call this object a "stage-2 oracle". That label collides with
+`Stage2WitnessOracle` (how `w(r)` is obtained) and with per-summand local names
+in the current code. Use **expected final evaluation** or cite
+`expected_output_claim(r)` directly.
+
+Terminal Stage 2 sets `gamma = 0`, so the range-binding term vanishes and only
+the relation term remains.
 
 ### Logical Row Order
 
@@ -247,6 +256,27 @@ The implementation must not expose the old "ring rows plus separate trace"
 shape. Any bridge from old physical row indices belongs inside the relation
 row-layout constructor and must not leak into the Stage-2 prover or verifier
 APIs.
+
+### Protocol change: `EvaluationTrace` row (supersedes `gamma^2` trace batching)
+
+[`y-ring-trace-internalization.md`](y-ring-trace-internalization.md) still
+describes removing on-wire `y_ring` via a fused stage-2 addend
+`gamma^2 * w * TraceWeight` with input contribution `trace_coeff * opening`.
+**This spec supersedes that mechanism.**
+
+The opening still binds through committed `e_hat`, but as a **field-level
+relation row** (`EvaluationTrace`), not a third gamma-batched summand:
+
+- Row equation: `omega_Tr^T e_hat = v` with scalar RHS `v` equal to the opening
+  claim.
+- Row weight: `eq(tau1, EvaluationTrace)` alongside every other relation row.
+- `V_alpha` includes the trace row target; there is no separate
+  `trace_opening_claim` in `input_claim`.
+- Stage 2 has only two summands: relation (`w * RelationWeightPolynomial`) and
+  range binding (`gamma * eq * w * (w+1)`).
+
+This is an intentional protocol change. Transcript tests that expect a separate
+trace batching scalar or terminal `trace_gamma` squeeze must be updated.
 
 ## Naming
 
@@ -537,7 +567,8 @@ only:
 ```rust
 let relation_weight_eval =
     self.prepared_relation_weight.eval_at_point(challenges)?;
-let relation_oracle = w_eval * relation_weight_eval;
+let relation_term = w_eval * relation_weight_eval;
+// full expected_output_claim adds the range-binding term when gamma != 0
 ```
 
 `AkitaStage2Verifier` no longer stores `alpha_evals_y`, `prepared_row_eval`,
@@ -794,52 +825,124 @@ After the implementation lands, update:
 
 ## Implementation Plan
 
-### Phase A: Mechanical RelationWeightPolynomial Cutover
+Full cutover in sequenced PRs. Each slice should compile, test green, and
+delete the API it replaces before the next slice depends on it. No compatibility
+wrappers.
 
-1. Add `RelationWeightPolynomial<E>`, `PreparedRelationWeightPolynomial`
-   interfaces, `RelationRowLayout`, and `RelationQuotientLayout` in
-   `akita-types`.
-2. Change `AkitaStage2Prover` to own `relation_weight`.
-3. Replace all relation kernels to read paired relation weights directly.
-4. Update the initial round-batching builder to consume relation-weight quads
-   rather than `(alpha_quad, m_value, trace_quad)`.
-5. Update Stage-2 tests to construct relation weights explicitly.
-6. Rename the Stage-2 "two-round prefix" layer to initial round batching in the
-   same pass. Do not leave aliases under the old names.
+### Slice 0 — Types foundation (`akita-types` only)
 
-### Phase B: Prover Builder Cutover
+Land layout and polynomial shells without changing prover/verifier behavior.
 
-1. Replace `compute_m_evals_x` with a segment-wise relation-weight builder and
-   delete the old x-factor builder in the same PR.
-2. Build `relation_weight_evals` after ring-switch challenge sampling.
-3. Add trace weights into the relation weight before calling Stage 2.
-4. Pass `relation_weight_claim` to Stage 2 as one value.
+1. Add `layout/relation_rows.rs`: `RelationRowFamily`, `ConsistencyLayer`,
+   `RelationRowFamilyLayout`, `RelationRowLayout`, `RelationQuotientSlice`,
+   `RelationQuotientLayout`, `from_level_params` builder, validation.
+2. Add `relation_weight/` module: `RelationWeightPolynomial<E>` (materialized
+   evals, fold helpers, padding-zero validation).
+3. Add `RingRelationInstance::relation_row_layout()` (additive; `segment_layout`
+   unchanged for now).
+4. Unit tests: uniform quotient length equals current `m_row_count_for *
+   r_decomp_levels`; `EvaluationTrace` has `ring_dim = None`, `quotient = None`;
+   bridge formula on fixtures:
 
-### Phase C: Verifier Prepared Evaluator
+   ```text
+   relation_weight[a] == alpha_evals_y[y] * m_evals_x[x] + trace[x,y]
+   ```
 
-1. Add `PreparedRelationWeightPolynomial`.
-2. Move all row-family evaluation behind its `eval_at_point` method.
-3. Change `AkitaStage2Verifier` to store only this prepared evaluator.
-4. Change `input_claim()` and `expected_output_claim()` to use one relation
-   claim and one relation-weight evaluation.
+**Tests:** `cargo test -p akita-types`
 
-### Phase D: Quotient Family Layout
+### Slice 1 — Prover Stage-2 mechanical cutover
 
-1. Add `RelationRowLayout` and `RelationQuotientLayout`.
-2. Replace `rows * levels` quotient sizing with layout-derived sizing.
-3. Emit family slices in the current row order for uniform schedules.
-4. Change prover and verifier quotient contribution evaluation to use each
-   family's `ring_dim`.
-5. Keep mixed role dimensions rejected at the schedule validation boundary until
-   typed quotient computation is implemented.
-6. Rename the current `split_eq` quotient/product kernel surface to relation
-   family products. Do not leave wrapper functions with the old names.
+Depends on Slice 0.
 
-### Phase E: Tests and Cleanup
+1. `AkitaStage2Prover` owns `relation_weight: RelationWeightPolynomial<E>`;
+   constructor takes `(relation_weight_evals, relation_weight_claim)` only.
+2. `input_claim = batching_coeff * s_claim + relation_weight_claim`.
+3. Round kernels use `accumulate_relation_coeffs(_signed)` with paired relation
+   weights only; delete `alpha_compact`, `m_compact`, `trace_table` folds.
+4. Update `akita_stage2/tests*.rs` to build `relation_weight_evals` via bridge
+   formula (synthetic until Slice 3).
 
-1. Delete the old split Stage-2 fields and helper wrappers.
-2. Update names and comments to the target protocol shape.
-3. Run full formatting, lint, and tests.
+**Tests:** `cargo test -p akita-prover akita_stage2`
+
+### Slice 2 — Round-batching rename + relation-weight grid
+
+Depends on Slice 1.
+
+1. Rename `two_round_prefix` → `round_batching` (Stage 1 + Stage 2 names per
+   §1a tables).
+2. `build_stage2_initial_round_batch_grid(w, relation_weight_evals, …)`; no
+   `(alpha_quad, m_value, trace_quad)`.
+
+**Tests:** `cargo test -p akita-prover round_batching` (after rename)
+
+### Slice 3 — Prover ring-switch builder + fold wiring
+
+Depends on Slices 0–1. **Protocol/transcript change lands here.**
+
+1. Segment-wise `build_relation_weight_evals` in `ring_switch/evals.rs`; fold
+   `EvaluationTrace` into relation weight (reuse `trace_weight/` as private
+   builder).
+2. `relation_weight_claim = sum_row eq(tau1, row) * row_target(row)` including
+   opening scalar on `EvaluationTrace` row.
+3. `RingSwitchOutput` → `{ relation_weight_evals, relation_weight_claim, … }`;
+   delete public `m_evals_x` / `alpha_evals_y`.
+4. `fold.rs`: remove `stage2_trace_coeff`, `trace_opening_claim`,
+   `build_*_stage2_trace_table` from Stage-2 path; pass unified claim to
+   `prove_stage2`.
+5. Remove terminal `trace_gamma` squeeze from verifier fold path in the same PR
+   (prover/verifier transcript must stay matched).
+
+**Tests:** `cargo test -p akita-pcs --test ring_switch`;
+`--test transcript_hardening`; `--test akita_e2e`
+
+### Slice 4 — Verifier prepared evaluator + Stage-2 cutover
+
+Depends on Slice 0; wire with Slice 3 for e2e.
+
+1. `PreparedRelationWeightPolynomial::eval_at_point` wrapping deferred row eval +
+   closed-form `EvaluationTrace` row eval (no `trace_coeff`).
+2. `AkitaStage2Verifier` stores one prepared evaluator + `relation_weight_claim`.
+3. `expected_output_claim(r) = w(r) * RelationWeightPolynomial(r) + gamma * eq *
+   w * (w+1)`; `input_claim = relation_weight_claim + gamma * s_claim`.
+4. `RingSwitchVerifyOutput` packages `prepared_relation_weight`.
+5. Stage 3 keeps `SetupContributionPlanInputs` accessor on the prepared object.
+
+**Tests:** `cargo test -p akita-verifier`; `ring_switch.rs` relation-claim tests;
+`recursive_setup_e2e` if enabled
+
+### Slice 5 — Quotient family layout + kernel rename
+
+Depends on Slice 0; can follow Slice 3/4 once relation-weight path is stable.
+
+1. Wire `RelationQuotientLayout` through `segment_layout` / `WitnessLayout`.
+2. Family-specific quotient weights; uniform mode byte-identical `r` tail.
+3. Rename `fused_split_eq_quotients` → `fused_relation_family_products`.
+4. Delete all split Stage-2 fields, `stage2_trace_coeff`, stale module docs.
+
+**Tests:** quotient byte identity; `cargo test` full workspace
+
+### Slice 6 — Docs and book
+
+Update `akita_stage2/mod.rs`, `docs/verifier-contract.md`, book sumcheck pages;
+mark `y-ring-trace-internalization.md` gamma^2 sections superseded.
+
+**Tests:** `./scripts/check-doc-guardrails.sh`
+
+### Dependency summary
+
+```text
+Slice 0 (types)
+  ├─→ Slice 1 (stage2 prover mechanical)
+  │     └─→ Slice 2 (round batching)
+  │           └─→ Slice 3 (ring-switch + fold + transcript)
+  ├─→ Slice 4 (verifier prepared eval) ← wire with Slice 3
+  └─→ Slice 5 (quotient layout + cleanup) ← after 3/4
+        └─→ Slice 6 (docs)
+```
+
+**Blast radius:** ~40–50 Rust files across `akita-types`, `akita-prover`,
+`akita-verifier`, `akita-pcs/tests`. Stage 3 setup-product sumcheck is coupled
+via `SetupContributionPlanInputs`, not the relation-weight summand shape.
 
 ## Invariants
 
@@ -847,13 +950,18 @@ After the implementation lands, update:
 - Trace/evaluation is part of the relation weight.
 - No Stage-2 round kernel multiplies `alpha(y) * m(x)`.
 - No Stage-2 round kernel branches on trace presence.
-- The verifier's final Stage-2 oracle has the form:
+- No `trace_coeff`, `trace_opening_claim`, or `gamma^2` trace batching in Stage-2
+  APIs or transcript.
+- `expected_output_claim(r)` equals:
 
   ```text
-  w(r) * RelationWeightPolynomial(r) + virtual_term
+  w(r) * RelationWeightPolynomial(r)
+    + gamma * eq(stage1_point, r) * w(r) * (w(r) + 1)
   ```
 
-- Uniform schedules produce the same accepted proof language as before.
+  with `EvaluationTrace` inside `RelationWeightPolynomial`, not a third summand.
+- Uniform schedules produce byte-identical quotient tails and equivalent opening
+  binding semantics under the `EvaluationTrace` row model.
 - Mixed role dimensions remain rejected at the schedule validation boundary
   until all quotient-family computation is implemented. The row and quotient
   layout APIs already encode the per-family dimensions that removal will use.
@@ -885,11 +993,14 @@ After the implementation lands, update:
 
 ### Unit Tests
 
-- Relation-weight materialization equals the old split formula:
+- Bridge test (pre-cutover equivalence only; delete after Slice 3):
 
   ```text
   relation_weight[x,y] == alpha_evals_y[y] * m_evals_x[x] + trace[x,y]
   ```
+
+  After Slice 3, trace enters only through the `EvaluationTrace` row inside
+  `RelationWeightPolynomial`, not as a separate table.
 
 - Dense trace and sparse trace produce identical `RelationWeightPolynomial`
   evaluations.
