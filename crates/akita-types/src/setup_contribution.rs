@@ -13,6 +13,8 @@ use akita_field::{AkitaError, ExtField, FieldCore, MulBase};
 
 use crate::layout::{LevelParams, MRowLayout};
 use crate::proof::AkitaExpandedSetup;
+use crate::setup_geometry::{compute_setup_layout, SetupLayoutFootprint};
+
 const POSSIBLE_CARRIES: usize = 2;
 
 /// Minimal setup-contribution data needed to derive `bar_omega`.
@@ -450,44 +452,23 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let z_range = inputs.inner_width;
-        let expected_z_range = checked_mul(inputs.block_len, inputs.depth_commit, "Z width")?;
-        if z_range != expected_z_range {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_z_range,
-                actual: z_range,
-            });
-        }
-
-        let n_d_active = match inputs.m_row_layout {
-            MRowLayout::WithDBlock => inputs.n_d,
-            MRowLayout::WithoutDBlock => 0,
-        };
-        // Canonical row layout: consistency (1) | A | B | D.
-        let a_start = 1usize;
-        let b_start = checked_add(a_start, inputs.n_a, "B row start")?;
-        let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
-        let d_start = checked_add(b_start, b_rows_total, "D row start")?;
-        let a_end = checked_add(d_start, n_d_active, "D row end")?;
-        let stride_t = checked_mul(inputs.n_a, inputs.depth_open, "T stride")?;
-        let cols_per_poly_t = checked_mul(stride_t, inputs.num_blocks, "T polynomial width")?;
-        let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
-        let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
-        let max_group_poly_count = inputs
-            .num_polys_per_segment
-            .iter()
-            .copied()
-            .max()
-            .unwrap_or(0);
-        let n_cols_t = checked_mul(max_group_poly_count, cols_per_poly_t, "T column width")?;
-        let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
-        let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
-        let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
-        let required = d_required.max(b_required).max(a_required);
-        if required == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "setup evaluator requires a non-empty packed footprint".into(),
-            ));
-        }
+        let SetupLayoutFootprint {
+            required,
+            d_required,
+            b_required,
+            a_required,
+            d_start,
+            b_start,
+            a_start,
+            n_d_active,
+            stride_t,
+            cols_per_poly_t,
+            b_per_claim_e,
+            n_cols_e,
+            n_cols_t,
+            a_end,
+            ..
+        } = compute_setup_layout(inputs)?;
         if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
             return Err(AkitaError::InvalidSetup(
                 "M-row weights are inconsistent with setup evaluator layout".into(),

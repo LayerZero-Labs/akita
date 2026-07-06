@@ -25,27 +25,12 @@ use akita_types::{
 /// are recomputed on demand, see [`crate::compute::recompose_hint_inner_rows`]).
 pub type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
-/// Commitment group handle specialized to Akita's native D-free commitment and
-/// hint types.
-pub type CommittedGroupWithHint<F> = CommittedGroupHandle<Commitment<F>, AkitaCommitmentHint<F>>;
-
-/// Schedule metadata returned by a standalone commitment-group precommit.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommittedGroupScheduleMeta {
-    /// Frozen group layout used to commit this group.
-    pub layout: PrecommittedGroupParams,
-}
-
-/// Standalone committed group plus the metadata needed by the final grouped plan.
-#[derive(Debug, Clone)]
-pub struct CommittedGroupHandle<C, H> {
-    /// Frozen schedule metadata for this commitment group.
-    pub schedule: CommittedGroupScheduleMeta,
-    /// Commitment rows for this group.
-    pub commitment: C,
-    /// Prover-side hint for opening this group later.
-    pub hint: H,
-}
+/// Frozen layout, commitment rows, and prover hint for one standalone group.
+pub type CommittedGroupWithHint<F> = (
+    PrecommittedGroupParams,
+    Commitment<F>,
+    AkitaCommitmentHint<F>,
+);
 
 pub(crate) fn commit_inner_block_digit_count(
     n_a: usize,
@@ -684,13 +669,11 @@ where
         } else {
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
         };
-    Ok(CommittedGroupHandle {
-        schedule: CommittedGroupScheduleMeta {
-            layout: PrecommittedGroupParams::from_params(key, &params),
-        },
+    Ok((
+        PrecommittedGroupParams::from_params(key, &params),
         commitment,
         hint,
-    })
+    ))
 }
 
 fn precommitted_layouts_from_keys<Cfg>(
@@ -783,7 +766,8 @@ where
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
     let schedule_key = final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds)?;
-    let params = Cfg::get_params_for_grouped_batched_commitment(&schedule_key)?;
+    let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
+    let params = Cfg::grouped_root_commit_params(&schedule)?;
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {
