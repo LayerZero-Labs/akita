@@ -1,52 +1,25 @@
 //! Challenge-free setup product geometry shared by prover and verifier.
 //!
-//! [`compute_setup_layout`] factors the row-layout footprint (`required`) out of
-//! [`crate::SetupContributionPlan::prepare`] so NTT sizing, prefix offload, and
-//! NTT envelope checks do not depend on `tau1` / fold challenges.
+//! [`setup_required_for_inputs`] derives the packed-scan footprint (`required`)
+//! without fold challenges so NTT sizing, prefix offload, and envelope checks
+//! do not depend on `tau1`.
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::{outer_consistency_row_start, MRowLayout, FOLD_CONSISTENCY_ROW};
+use crate::layout::{outer_consistency_row_start, MRowLayout};
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;
 
-/// Full row-layout footprint used by weight materialization and geometry tests.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SetupLayoutFootprint {
-    pub required: usize,
-    pub d_required: usize,
-    pub b_required: usize,
-    pub a_required: usize,
-    pub b_inner_required: usize,
-    pub f_required: usize,
-    pub a_end: usize,
-    pub d_start: usize,
-    pub f_start: usize,
-    pub b_start: usize,
-    pub b_inner_start: usize,
-    pub a_start: usize,
-    pub n_d_active: usize,
-    pub tiered: bool,
-    pub b_inner_stride: usize,
-    pub f_stride: usize,
-    pub n_cols_e: usize,
-    pub n_cols_t: usize,
-    pub z_range: usize,
-    pub stride_t: usize,
-    pub cols_per_poly_t: usize,
-    pub b_per_claim_e: usize,
-}
-
-/// Pure, challenge-free row-layout footprint for a setup level.
+/// Required setup ring rows for one level (challenge-free).
 ///
 /// # Errors
 ///
 /// Returns an error when layout parameters are inconsistent with the canonical
 /// M-row packing used by setup sumcheck.
-pub fn compute_setup_layout<E: FieldCore>(
+pub fn setup_required_for_inputs<E: FieldCore>(
     inputs: &SetupContributionPlanInputs<E>,
-) -> Result<SetupLayoutFootprint, AkitaError> {
+) -> Result<usize, AkitaError> {
     if inputs.num_blocks == 0 || !inputs.num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "num_blocks must be a non-zero power of two".into(),
@@ -82,19 +55,21 @@ pub fn compute_setup_layout<E: FieldCore>(
         MRowLayout::WithoutDBlock => 0,
     };
     // Canonical row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
-    let a_start = FOLD_CONSISTENCY_ROW;
     let b_start = outer_consistency_row_start(inputs.n_a);
     let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
-    let d_start = checked_add(b_start, b_rows_total, "D row start")?;
-    let a_end = checked_add(d_start, n_d_active, "D row end")?;
+    let a_end = checked_add(
+        b_start
+            .checked_add(b_rows_total)
+            .ok_or_else(|| AkitaError::InvalidSetup("D row start overflow".into()))?,
+        n_d_active,
+        "D row end",
+    )?;
     if a_end > inputs.rows {
         return Err(AkitaError::InvalidSetup(
             "M-row weights are inconsistent with setup evaluator layout".into(),
         ));
     }
 
-    let stride_t = checked_mul(inputs.n_a, inputs.depth_open, "T stride")?;
-    let cols_per_poly_t = checked_mul(stride_t, inputs.num_blocks, "T polynomial width")?;
     let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
     let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
     let max_group_poly_count = inputs
@@ -103,7 +78,15 @@ pub fn compute_setup_layout<E: FieldCore>(
         .copied()
         .max()
         .unwrap_or(0);
-    let n_cols_t = checked_mul(max_group_poly_count, cols_per_poly_t, "T column width")?;
+    let n_cols_t = checked_mul(
+        max_group_poly_count,
+        checked_mul(
+            checked_mul(inputs.n_a, inputs.depth_open, "T stride")?,
+            inputs.num_blocks,
+            "T polynomial width",
+        )?,
+        "T column width",
+    )?;
 
     let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
     let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
@@ -115,41 +98,7 @@ pub fn compute_setup_layout<E: FieldCore>(
         ));
     }
 
-    Ok(SetupLayoutFootprint {
-        required,
-        d_required,
-        b_required,
-        a_required,
-        b_inner_required: 0,
-        f_required: 0,
-        a_end,
-        d_start,
-        f_start: b_start,
-        b_start,
-        b_inner_start: 0,
-        a_start,
-        n_d_active,
-        tiered: false,
-        b_inner_stride: 0,
-        f_stride: 0,
-        n_cols_e,
-        n_cols_t,
-        z_range,
-        stride_t,
-        cols_per_poly_t,
-        b_per_claim_e,
-    })
-}
-
-/// Required setup ring rows for one level (challenge-free).
-///
-/// # Errors
-///
-/// Returns an error when layout parameters are inconsistent.
-pub fn setup_required_for_inputs<E: FieldCore>(
-    inputs: &SetupContributionPlanInputs<E>,
-) -> Result<usize, AkitaError> {
-    Ok(compute_setup_layout(inputs)?.required)
+    Ok(required)
 }
 
 /// Fail-closed envelope guard: `required` inner (`d_a`) rows must fit the shared
@@ -274,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_setup_layout_matches_prepare_required() {
+    fn setup_required_for_inputs_matches_prepare_required() {
         let block_len = 12;
         let depth_commit = 3;
         let depth_fold = 2;
@@ -303,7 +252,7 @@ mod tests {
             rows: 3,
             num_polys_per_segment: vec![0],
         };
-        let layout = compute_setup_layout(&inputs).expect("layout");
+        let required = setup_required_for_inputs(&inputs).expect("required");
         let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
         let plan = SetupContributionPlan::prepare::<F>(
             &inputs,
@@ -314,7 +263,7 @@ mod tests {
             &chunk_layout,
         )
         .expect("plan");
-        assert_eq!(layout.required, plan.required());
+        assert_eq!(required, plan.required());
     }
 
     #[test]
@@ -406,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_setup_layout_rejects_non_pow2_num_blocks() {
+    fn setup_required_for_inputs_rejects_non_pow2_num_blocks() {
         let inputs = SetupContributionPlanInputs::<F> {
             eq_tau1: vec![],
             num_t_vectors: 1,
@@ -425,7 +374,7 @@ mod tests {
             rows: 8,
             num_polys_per_segment: vec![1],
         };
-        let err = compute_setup_layout(&inputs).expect_err("non-pow2 blocks");
+        let err = setup_required_for_inputs(&inputs).expect_err("non-pow2 blocks");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 

@@ -308,6 +308,8 @@ where
         chunk_layout,
         depth_fold,
         rows,
+        opening_batch.num_groups(),
+        opening_batch.group_sizes(),
     )
 }
 
@@ -323,15 +325,23 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     chunk_layout: WitnessLayout,
     depth_fold: usize,
     rows: usize,
+    num_commitment_groups: usize,
+    num_polys_per_group: Vec<usize>,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
     validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
-    let setup_contribution_inputs =
-        SetupContributionPlanInputs::from_level_params(lp, num_polys, m_row_layout, depth_fold)?
-            .with_eq_tau1_from_tau(tau1, rows)?;
+    let setup_contribution_inputs = SetupContributionPlanInputs::from_level_params(
+        lp,
+        num_polys,
+        num_commitment_groups,
+        num_polys_per_group,
+        m_row_layout,
+        depth_fold,
+    )?
+    .with_eq_tau1_from_tau(tau1, rows)?;
     let eq_tau1 = setup_contribution_inputs.eq_tau1.clone();
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();

@@ -11,10 +11,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, ExtField, FieldCore, MulBase};
 
-use crate::layout::{LevelParams, MRowLayout};
+use crate::layout::{outer_consistency_row_start, LevelParams, MRowLayout, FOLD_CONSISTENCY_ROW};
 use crate::proof::AkitaExpandedSetup;
-use crate::setup_geometry::{compute_setup_layout, SetupLayoutFootprint};
-
 const POSSIBLE_CARRIES: usize = 2;
 
 /// Minimal setup-contribution data needed to derive `bar_omega`.
@@ -50,6 +48,8 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
     pub fn from_level_params(
         lp: &LevelParams,
         num_polynomials: usize,
+        num_commitment_groups: usize,
+        num_polys_per_group: Vec<usize>,
         m_row_layout: MRowLayout,
         depth_fold: usize,
     ) -> Result<Self, AkitaError> {
@@ -74,7 +74,24 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
                 "A-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let expected_b_width = num_polynomials
+        if num_commitment_groups == 0 || num_polys_per_group.len() != num_commitment_groups {
+            return Err(AkitaError::InvalidSetup(
+                "setup contribution group layout mismatch".into(),
+            ));
+        }
+        let grouped_polys = num_polys_per_group.iter().try_fold(0usize, |acc, &count| {
+            acc.checked_add(count).ok_or_else(|| {
+                AkitaError::InvalidSetup("setup contribution group count overflow".into())
+            })
+        })?;
+        if grouped_polys != num_polynomials {
+            return Err(AkitaError::InvalidSize {
+                expected: num_polynomials,
+                actual: grouped_polys,
+            });
+        }
+        let max_group_poly_count = num_polys_per_group.iter().copied().max().unwrap_or(0);
+        let expected_b_width = max_group_poly_count
             .checked_mul(lp.a_key.row_len())
             .and_then(|width| width.checked_mul(depth_open))
             .and_then(|width| width.checked_mul(lp.num_blocks))
@@ -85,7 +102,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
             ));
         }
         let rows = lp
-            .m_row_count_for(num_polynomials, m_row_layout)?
+            .m_row_count_for(num_commitment_groups, m_row_layout)?
             .checked_add(1)
             .ok_or_else(|| AkitaError::InvalidSetup("relation tau1 row count overflow".into()))?;
         Ok(Self {
@@ -102,9 +119,9 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
             n_d: lp.d_key.row_len(),
             m_row_layout,
             n_b: lp.b_key.row_len(),
-            num_segments: 1,
+            num_segments: num_commitment_groups,
             rows,
-            num_polys_per_segment: vec![num_polynomials],
+            num_polys_per_segment: num_polys_per_group,
         })
     }
 
@@ -455,23 +472,44 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let z_range = inputs.inner_width;
-        let SetupLayoutFootprint {
-            required,
-            d_required,
-            b_required,
-            a_required,
-            d_start,
-            b_start,
-            a_start,
-            n_d_active,
-            stride_t,
-            cols_per_poly_t,
-            b_per_claim_e,
-            n_cols_e,
-            n_cols_t,
-            a_end,
-            ..
-        } = compute_setup_layout(inputs)?;
+        let expected_z_range = checked_mul(inputs.block_len, inputs.depth_commit, "Z width")?;
+        if z_range != expected_z_range {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_z_range,
+                actual: z_range,
+            });
+        }
+
+        let n_d_active = match inputs.m_row_layout {
+            MRowLayout::WithDBlock => inputs.n_d,
+            MRowLayout::WithoutDBlock => 0,
+        };
+        // Canonical row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
+        let a_start = FOLD_CONSISTENCY_ROW;
+        let b_start = outer_consistency_row_start(inputs.n_a);
+        let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
+        let d_start = checked_add(b_start, b_rows_total, "D row start")?;
+        let a_end = checked_add(d_start, n_d_active, "D row end")?;
+        let stride_t = checked_mul(inputs.n_a, inputs.depth_open, "T stride")?;
+        let cols_per_poly_t = checked_mul(stride_t, inputs.num_blocks, "T polynomial width")?;
+        let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
+        let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
+        let max_group_poly_count = inputs
+            .num_polys_per_segment
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0);
+        let n_cols_t = checked_mul(max_group_poly_count, cols_per_poly_t, "T column width")?;
+        let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
+        let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
+        let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
+        let required = d_required.max(b_required).max(a_required);
+        if required == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup evaluator requires a non-empty packed footprint".into(),
+            ));
+        }
         if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
             return Err(AkitaError::InvalidSetup(
                 "M-row weights are inconsistent with setup evaluator layout".into(),
@@ -1089,6 +1127,8 @@ mod tests {
         assert!(SetupContributionPlanInputs::<F>::from_level_params(
             &lp,
             2,
+            1,
+            vec![2],
             MRowLayout::WithoutDBlock,
             2,
         )

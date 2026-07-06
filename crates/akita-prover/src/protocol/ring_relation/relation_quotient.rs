@@ -5,6 +5,7 @@ use crate::compute::{
     RingSwitchRelationKernel, RingSwitchRelationPlan,
 };
 use crate::validation::validate_i8_setup_log_basis;
+use akita_types::{LevelParams, MRowLayout};
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
@@ -224,69 +225,10 @@ where
 /// Returns an error if the claim grouping, row layout, or split-eq witness
 /// dimensions are inconsistent.
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
-/// Extracted level geometry for the fused relation-quotient kernel, grouped
-/// by row role (canonical order: consistency | D | COMMIT | B_inner | A).
-///
-/// Callers derive this from `LevelParams`; the kernel itself must not read
-/// schedule types. Under per-role ring dimensions (mixed-row spec) each role
-/// group additionally gains its own ring dimension; this struct is where
-/// those dims will attach.
-#[derive(Clone, Copy, Debug)]
-pub struct RelationQuotientShape {
-    /// Digit basis shared by all decompositions (`log_basis`).
-    pub log_basis: u32,
-    /// A-role: witness block length (`block_len`).
-    pub block_len: usize,
-    /// A-role: inner commit digit depth (`num_digits_commit`).
-    pub num_digits_commit: usize,
-    /// A-role: A-matrix row count (`a_key.row_len()`).
-    pub n_a: usize,
-    /// B-role: physical B-matrix row count (`b_key.row_len()`).
-    pub n_b: usize,
-    /// D-role: D-matrix row count (`d_key.row_len()`).
-    pub n_d: usize,
-    /// D-role: opening digit depth (`num_digits_open`).
-    pub num_digits_open: usize,
-    /// Total M rows for this layout.
-    pub num_rows: usize,
-    /// Row-group start offsets in canonical batched order: consistency | A | B | D.
-    pub a_start: usize,
-    pub b_start: usize,
-    pub d_start: usize,
-}
-
-impl RelationQuotientShape {
-    /// Extract the relation-quotient geometry from level params.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the layout arithmetic overflows.
-    pub fn from_level(
-        lp: &LevelParams,
-        m_row_layout: MRowLayout,
-        num_commitment_groups: usize,
-    ) -> Result<Self, AkitaError> {
-        Ok(Self {
-            log_basis: lp.log_basis,
-            block_len: lp.block_len,
-            num_digits_commit: lp.num_digits_commit,
-            n_a: lp.a_key.row_len(),
-            n_b: lp.b_key.row_len(),
-            n_d: lp.d_key.row_len(),
-            num_digits_open: lp.num_digits_open,
-            num_rows: lp.m_row_count_for(num_commitment_groups, m_row_layout)?,
-            a_start: lp.a_start(),
-            b_start: lp.b_start()?,
-            d_start: lp.d_start(num_commitment_groups)?,
-        })
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_relation_quotient")]
 pub fn compute_relation_quotient<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
-    shape: RelationQuotientShape,
+    lp: &LevelParams,
     challenges: &Challenges,
     e_hat_flat: &[[i8; D]],
     t_hat: &DigitBlocks,
@@ -298,6 +240,7 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     z_folded_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
     num_polys: usize,
+    num_commitment_groups: usize,
     blocks_per_claim: usize,
     inner_width: usize,
     m_row_layout: MRowLayout,
@@ -308,7 +251,7 @@ where
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    validate_i8_setup_log_basis(shape.log_basis, "for i8 prover decomposition")?;
+    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     if num_polys == 0 {
         return Err(AkitaError::InvalidProof);
     }
@@ -333,16 +276,16 @@ where
     }
     if e_hat_flat.len()
         != expected_challenges
-            .checked_mul(shape.num_digits_open)
+            .checked_mul(lp.num_digits_open)
             .ok_or(AkitaError::InvalidProof)?
     {
         return Err(AkitaError::InvalidProof);
     }
-    let n_b = shape.n_b;
-    let n_d = shape.n_d;
-    let n_a = shape.n_a;
+    let n_b = lp.b_key.row_len();
+    let n_d = lp.d_key.row_len();
+    let n_a = lp.a_key.row_len();
     let expected_t_hat_block_digits = n_a
-        .checked_mul(shape.num_digits_open)
+        .checked_mul(lp.num_digits_open)
         .ok_or(AkitaError::InvalidProof)?;
     let expected_t_hat_flat_digits = expected_inner_rows
         .checked_mul(expected_t_hat_block_digits)
@@ -362,14 +305,14 @@ where
         MRowLayout::WithDBlock => n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    let num_rows = shape.num_rows;
+    let num_rows = lp.m_row_count_for(num_commitment_groups, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Canonical row layout: consistency (1) | A | B | D.
-    let a_start = shape.a_start;
-    let b_start = shape.b_start;
-    let d_start = shape.d_start;
+    // Canonical row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
+    let a_start = lp.a_start();
+    let b_start = lp.b_start()?;
+    let d_start = lp.d_start(num_commitment_groups)?;
 
     if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidProof);
@@ -391,7 +334,7 @@ where
             n_d: n_d_active,
             n_b,
             n_a,
-            log_basis: shape.log_basis,
+            log_basis: lp.log_basis,
         },
     )?;
     if relation_rows.opening_cyclic_products.len() != n_d_active
@@ -437,9 +380,9 @@ where
         let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
             ring_multiplier_point,
             z_folded_centered,
-            shape.block_len,
-            shape.num_digits_commit,
-            shape.log_basis,
+            lp.block_len,
+            lp.num_digits_commit,
+            lp.log_basis,
         )?;
         quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
     };

@@ -234,7 +234,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             self.role_dims,
             self.m_row_layout,
             &self.opening_batch,
-            self.opening_batch.num_total_polynomials(),
+            self.opening_batch.num_groups(),
         )
     }
 

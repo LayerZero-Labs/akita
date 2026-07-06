@@ -218,11 +218,7 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let r = compute_relation_quotient::<F, B, D>(
             ring_switch_ctx,
-            crate::protocol::ring_relation::RelationQuotientShape::from_level(
-                lp,
-                instance.m_row_layout(),
-                opening_batch.num_groups(),
-            )?,
+            lp,
             &instance.challenges,
             e_hat.typed_planes::<D>()?,
             &decomposed_inner_rows,
@@ -234,6 +230,7 @@ where
             z_folded_rings.centered_inf_norm,
             instance.y_trusted::<D>()?,
             opening_batch.num_total_polynomials(),
+            opening_batch.num_groups(),
             lp.num_blocks,
             lp.inner_width(),
             instance.m_row_layout(),

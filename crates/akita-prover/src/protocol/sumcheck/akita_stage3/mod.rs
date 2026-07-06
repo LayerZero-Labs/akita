@@ -421,6 +421,13 @@ where
     let depth_fold = lp.num_digits_fold(num_polynomials, lp.field_bits_for_cache())?;
     let m_row_layout = relation.m_row_layout();
     let rows = relation.relation_row_layout(lp)?.total_row_count();
-    SetupContributionPlanInputs::from_level_params(lp, num_polynomials, m_row_layout, depth_fold)?
-        .with_eq_tau1_from_tau(tau1, rows)
+    SetupContributionPlanInputs::from_level_params(
+        lp,
+        num_polynomials,
+        opening_batch.num_groups(),
+        opening_batch.group_sizes(),
+        m_row_layout,
+        depth_fold,
+    )?
+    .with_eq_tau1_from_tau(tau1, rows)
 }
