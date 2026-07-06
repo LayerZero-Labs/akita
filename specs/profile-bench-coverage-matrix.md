@@ -352,11 +352,16 @@ runner so the batched profile emits planned-level output too.
 ### Workflow Behavior
 
 `profile-bench.yml` builds the profile example once per matrix group. On pull
-requests, `scripts/profile_bench_merge_base_policy.py` checks whether merge-base
-defines every profile mode in the group (`PROFILE_CI_MODES` when merge-base has
-`profile-ci`, else `PROFILE_ALL_MODES`). When all modes exist, the job builds
-merge-base and benchmarks PR head interleaved with merge-base; otherwise it
-benchmarks PR head only and the report shows Main=n/a for that group.
+requests, `scripts/profile_bench_merge_base_policy.py resolve` is the single
+source of truth for merge-base baseline:
+
+1. **Mode names** — merge-base must define every profile mode in the group
+   (`PROFILE_CI_MODES`, or legacy `PROFILE_MODES` / `PROFILE_ALL_MODES`).
+2. **Smoke** — when (1) passes, CI builds the merge-base profile binary and runs
+   one smoke execution per case. If merge-base cannot complete a case (placeholder
+   schedules, panic, missing tables), baseline is skipped for the group.
+3. **Benchmark** — when (1) and (2) pass, PR head and merge-base run
+   interleaved; otherwise PR head only (Main=n/a, job stays green).
 
 The workflow:
 
