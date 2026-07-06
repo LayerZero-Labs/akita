@@ -100,7 +100,7 @@ impl CommitmentRingDims {
 
 /// Validate every fold level's per-role ring dimensions against the setup seed.
 ///
-/// Reads [`LevelParams::role_dims`] from each scheduled fold step; does not copy
+/// Reads [`super::LevelParams::role_dims`] from each scheduled fold step; does not copy
 /// them into a separate plan object.
 ///
 /// # Errors
