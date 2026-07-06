@@ -4,6 +4,7 @@ use crate::compute::{
     ProverComputeStack, RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
+use crate::protocol::sumcheck::akita_stage2::Stage2Layout;
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
@@ -805,9 +806,7 @@ where
         rs.b,
         rs.relation_weight_evals,
         rs.relation_weight_claim,
-        rs.live_x_cols,
-        rs.col_bits,
-        rs.ring_bits,
+        Stage2Layout::uniform(rs.live_x_cols, rs.col_bits, rs.ring_bits)?,
     )?;
     let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
         .prove::<F, T, _>(transcript, |tr| {

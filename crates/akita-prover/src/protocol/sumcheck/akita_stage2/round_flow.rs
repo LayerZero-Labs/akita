@@ -87,8 +87,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         w_compact: &[i8],
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
-        cfg_into_iter!(0..w_compact.len() / 2)
-            .map(|j| fold_lut.fold(i16::from(w_compact[2 * j]), i16::from(w_compact[2 * j + 1])))
+        cfg_into_iter!(0..w_compact.len().div_ceil(2))
+            .map(|j| {
+                let left = 2 * j;
+                let w0 = i16::from(w_compact[left]);
+                let w1 = w_compact.get(left + 1).copied().map(i16::from).unwrap_or(0);
+                fold_lut.fold(w0, w1)
+            })
             .collect()
     }
 }
@@ -285,7 +290,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         ))
                     } else {
                         let mut w_full = w_full;
-                        fold_evals_in_place(&mut w_full, r);
+                        if self.layout.uniform_tiling().is_some() {
+                            fold_evals_in_place(&mut w_full, r);
+                        } else {
+                            w_full = fold_live_evals_zero_padded(&w_full, r);
+                        }
                         self.fold_relation_weight_for_round(
                             r,
                             folding_segment_round,

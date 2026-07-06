@@ -71,7 +71,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * dw);
 
                             let (p0, p1) =
-                                self.relation_weight_pair_segments(left_next, left_next + 1, y);
+                                self.relation_weight_pair_tiles(left_next, left_next + 1, y);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -130,7 +130,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * dw);
 
                             let (p0, p1) =
-                                self.relation_weight_pair_segments(left_next, left_next + 1, y);
+                                self.relation_weight_pair_tiles(left_next, left_next + 1, y);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -184,7 +184,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[2] += e_in * (dw * dw);
 
                             let (p0, p1) =
-                                self.relation_weight_pair_segments(left_next, left_next + 1, y);
+                                self.relation_weight_pair_tiles(left_next, left_next + 1, y);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -246,7 +246,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[2] += e_in * (dw * dw);
 
                             let (p0, p1) =
-                                self.relation_weight_pair_segments(left_next, left_next + 1, y);
+                                self.relation_weight_pair_tiles(left_next, left_next + 1, y);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -325,7 +325,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let (p0, p1) = self.relation_weight_pair_segments(left, left + 1, y);
+                            let (p0, p1) = self.relation_weight_pair_tiles(left, left + 1, y);
 
                             accumulate_relation_coeffs_signed(&mut rel, w0_i64, dw_i64, p0, p1);
                         }
@@ -395,7 +395,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let (p0, p1) = self.relation_weight_pair_segments(left, left + 1, y);
+                            let (p0, p1) = self.relation_weight_pair_tiles(left, left + 1, y);
 
                             accumulate_relation_coeffs_signed(&mut rel, w0_i64, dw_i64, p0, p1);
                         }
@@ -481,7 +481,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let (p0, p1) = self.relation_weight_pair_segments(left, left + 1, y);
+                            let (p0, p1) = self.relation_weight_pair_tiles(left, left + 1, y);
 
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
@@ -538,7 +538,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let (p0, p1) = self.relation_weight_pair_segments(left, left + 1, y);
+                            let (p0, p1) = self.relation_weight_pair_tiles(left, left + 1, y);
 
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }

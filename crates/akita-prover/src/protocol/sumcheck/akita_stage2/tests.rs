@@ -155,9 +155,8 @@ fn new_stage2_test_prover(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        params.live_segments,
-        params.segment_bits,
-        params.coeff_bits,
+        Stage2Layout::uniform(params.live_segments, params.segment_bits, params.coeff_bits)
+            .unwrap(),
     )
     .unwrap()
 }
@@ -194,9 +193,8 @@ pub(super) fn new_stage2_test_prover_with_trace(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        params.live_segments,
-        params.segment_bits,
-        params.coeff_bits,
+        Stage2Layout::uniform(params.live_segments, params.segment_bits, params.coeff_bits)
+            .unwrap(),
     )
     .unwrap()
 }
@@ -236,9 +234,8 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        params.live_segments,
-        params.segment_bits,
-        params.coeff_bits,
+        Stage2Layout::uniform(params.live_segments, params.segment_bits, params.coeff_bits)
+            .unwrap(),
     )
     .unwrap()
 }

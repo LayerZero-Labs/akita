@@ -12,51 +12,30 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         b: usize,
         relation_weight_evals: Vec<E>,
         relation_weight_claim: E,
-        live_segments: usize,
-        segment_bits: usize,
-        coeff_bits: usize,
+        layout: Stage2Layout,
     ) -> Result<Self, AkitaError> {
-        let num_vars = segment_bits.checked_add(coeff_bits).ok_or_else(|| {
-            AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
-        })?;
-        if live_segments == 0 {
-            return Err(AkitaError::InvalidInput(
-                "live_segments must be at least 1".to_string(),
-            ));
-        }
-        let col_bits_u32 = u32::try_from(segment_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
-        let ring_bits_u32 = u32::try_from(coeff_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
-        let segment_capacity = 1usize
-            .checked_shl(col_bits_u32)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
-        if live_segments > segment_capacity {
-            return Err(AkitaError::InvalidSize {
-                expected: segment_capacity,
-                actual: live_segments,
-            });
-        }
-        let coeff_len = 1usize
-            .checked_shl(ring_bits_u32)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
-        let witness_len = live_segments
-            .checked_mul(coeff_len)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
+        let witness_len = layout.live_len();
         if w_evals_compact.len() != witness_len {
             return Err(AkitaError::InvalidSize {
                 expected: witness_len,
                 actual: w_evals_compact.len(),
             });
         }
-        if stage1_point.len() != num_vars {
+        if stage1_point.len() != layout.num_vars() {
             return Err(AkitaError::InvalidSize {
-                expected: num_vars,
+                expected: layout.num_vars(),
                 actual: stage1_point.len(),
             });
         }
         let relation_weight =
             RelationWeightPolynomial::from_live_evals(relation_weight_evals, witness_len)?;
+        let uniform_tiling = layout.uniform_tiling();
+        let (live_segments, relation_coeff_len, segment_bits) = if let Some(tiling) = uniform_tiling
+        {
+            (tiling.live_tiles, tiling.coeff_len(), tiling.tile_bits)
+        } else {
+            (layout.live_len(), 1, layout.num_vars())
+        };
 
         let input_claim = batching_coeff * s_claim + relation_weight_claim;
 
@@ -68,13 +47,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             relation_weight,
+            layout,
             live_segments,
-            relation_coeff_len: coeff_len,
+            relation_coeff_len,
             segment_bits,
-            num_vars,
+            num_vars: layout.num_vars(),
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: can_use_stage2_initial_round_batch(coeff_bits, b)
+            prefix_r_stage1: uniform_tiling
+                .is_some_and(|tiling| can_use_stage2_initial_round_batch(tiling.coeff_bits(), b))
                 .then(|| stage1_point.to_vec()),
             initial_round_batch: None,
             cached_round_poly: None,
@@ -102,7 +83,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn coeff_bits(&self) -> usize {
-        self.num_vars - self.segment_bits
+        self.layout
+            .uniform_tiling()
+            .map(|tiling| tiling.coeff_bits())
+            .unwrap_or(0)
     }
 
     #[inline]
@@ -139,11 +123,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn use_coefficient_prefix_round(&self) -> bool {
+        if self.layout.uniform_tiling().is_none() {
+            return false;
+        }
         self.in_coefficient_round() && self.live_segments < self.current_segment_capacity()
     }
 
     #[inline]
     pub(super) fn use_segment_prefix_round(&self) -> bool {
+        if self.layout.uniform_tiling().is_none() {
+            return false;
+        }
         self.rounds_completed >= self.coeff_bits()
             && self.segment_rounds_completed() < self.segment_bits
             && self.live_segments < self.current_segment_capacity()
@@ -151,6 +141,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     pub(super) fn next_use_segment_prefix_round_after_current(&self) -> bool {
+        if self.layout.uniform_tiling().is_none() {
+            return false;
+        }
         self.rounds_completed >= self.coeff_bits()
             && self.segment_rounds_completed() + 1 < self.segment_bits
             && self.live_segments.div_ceil(2) < (self.current_segment_capacity() / 2)

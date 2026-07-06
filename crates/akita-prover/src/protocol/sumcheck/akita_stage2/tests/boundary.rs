@@ -42,9 +42,7 @@ fn try_new_stage2_prover(
         params.b,
         relation_weight_evals,
         relation_weight_claim,
-        live_segments,
-        segment_bits,
-        coeff_bits,
+        Stage2Layout::uniform(live_segments, segment_bits, coeff_bits).unwrap(),
     )
 }
 
@@ -100,9 +98,7 @@ fn stage2_constructor_rejects_undersized_witness() {
         8,
         relation_weight_evals,
         F::zero(),
-        live_segments,
-        segment_bits,
-        coeff_bits,
+        Stage2Layout::uniform(live_segments, segment_bits, coeff_bits).unwrap(),
     ) {
         Err(err) => err,
         Ok(_) => panic!("undersized witness must be rejected"),
@@ -144,6 +140,60 @@ fn stage2_constructor_rejects_relation_weight_length_mismatch() {
             actual: 19
         }
     ));
+}
+
+#[test]
+fn stage2_flat_layout_uses_dense_path_without_uniform_tiling() {
+    let live_len = 13usize;
+    let num_vars = 4usize;
+    let b = 8usize;
+    let gamma = F::from_u64(23);
+    let stage1_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i as u64) + 5)).collect();
+    let w_compact: Vec<i8> = (0..live_len).map(|i| ((i * 5 + 1) % b) as i8 - 4).collect();
+    let relation_weight_evals: Vec<F> = (0..live_len)
+        .map(|i| F::from_u64((i as u64 * 11) + 7))
+        .collect();
+
+    let mut s_evals = vec![F::zero(); 1usize << num_vars];
+    for (idx, &w) in w_compact.iter().enumerate() {
+        let w = F::from_i64(w as i64);
+        s_evals[idx] = w * (w + F::one());
+    }
+    let s_claim = multilinear_eval(&s_evals, &stage1_point).expect("valid flat range table");
+    let relation_weight_claim = w_compact
+        .iter()
+        .zip(relation_weight_evals.iter())
+        .fold(F::zero(), |acc, (&w, &r)| acc + F::from_i64(w as i64) * r);
+
+    let mut prover = AkitaStage2Prover::new(
+        gamma,
+        w_compact,
+        &stage1_point,
+        s_claim,
+        b,
+        relation_weight_evals,
+        relation_weight_claim,
+        Stage2Layout::flat(live_len, num_vars).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !prover.can_use_stage2_initial_round_batch(),
+        "flat mixed layout must not opt into uniform round batching"
+    );
+
+    let mut claim = prover.input_claim();
+    for round in 0..num_vars {
+        let poly = prover.compute_round_univariate(round, claim);
+        assert_eq!(
+            poly.evaluate(&F::zero()) + poly.evaluate(&F::one()),
+            claim,
+            "flat dense path sumcheck invariant failed at round {round}"
+        );
+        let challenge = F::from_u64((round as u64 * 17) + 29);
+        claim = poly.evaluate(&challenge);
+        prover.ingest_challenge(round, challenge);
+    }
+    assert_eq!(prover.rounds_completed, num_vars);
 }
 
 #[test]

@@ -23,7 +23,7 @@
 //! `sum_z [ w(z) * RelationWeightPolynomial(z)`
 //! `      + gamma * eq(stage1_point, z) * w(z) * (w(z) + 1) ]`.
 //!
-//! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
+//! After all rounds, at `r_stage2`, the verifier checks
 //!
 //! `w(r_stage2) * RelationWeightPolynomial(r_stage2)`
 //! `  + gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`,
@@ -53,6 +53,115 @@ use std::time::Instant;
 enum WitnessTable<E: FieldCore> {
     Compact(Vec<i8>),
     Full(Vec<E>),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Stage2Layout {
+    live_len: usize,
+    num_vars: usize,
+    uniform_tiling: Option<UniformStage2Tiling>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct UniformStage2Tiling {
+    live_tiles: usize,
+    tile_bits: usize,
+    lane_bits: usize,
+    lane_len: usize,
+}
+
+impl Stage2Layout {
+    pub(crate) fn flat(live_len: usize, num_vars: usize) -> Result<Self, AkitaError> {
+        if live_len == 0 {
+            return Err(AkitaError::InvalidInput(
+                "stage-2 live length must be at least 1".to_string(),
+            ));
+        }
+        let domain_len = boolean_domain_len(num_vars)?;
+        if live_len > domain_len {
+            return Err(AkitaError::InvalidSize {
+                expected: domain_len,
+                actual: live_len,
+            });
+        }
+        Ok(Self {
+            live_len,
+            num_vars,
+            uniform_tiling: None,
+        })
+    }
+
+    pub(crate) fn uniform(
+        live_tiles: usize,
+        tile_bits: usize,
+        lane_bits: usize,
+    ) -> Result<Self, AkitaError> {
+        if live_tiles == 0 {
+            return Err(AkitaError::InvalidInput(
+                "stage-2 live tile count must be at least 1".to_string(),
+            ));
+        }
+        let tile_capacity = boolean_domain_len(tile_bits)?;
+        if live_tiles > tile_capacity {
+            return Err(AkitaError::InvalidSize {
+                expected: tile_capacity,
+                actual: live_tiles,
+            });
+        }
+        let lane_len = boolean_domain_len(lane_bits)?;
+        let live_len = live_tiles
+            .checked_mul(lane_len)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-2 live length overflow".to_string()))?;
+        let num_vars = tile_bits.checked_add(lane_bits).ok_or_else(|| {
+            AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
+        })?;
+        let layout = Self::flat(live_len, num_vars)?;
+        Ok(Self {
+            live_len: layout.live_len,
+            num_vars: layout.num_vars,
+            uniform_tiling: Some(UniformStage2Tiling {
+                live_tiles,
+                tile_bits,
+                lane_bits,
+                lane_len,
+            }),
+        })
+    }
+
+    #[inline]
+    pub(crate) fn live_len(&self) -> usize {
+        self.live_len
+    }
+
+    #[inline]
+    pub(crate) fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    #[inline]
+    pub(crate) fn uniform_tiling(&self) -> Option<UniformStage2Tiling> {
+        self.uniform_tiling
+    }
+}
+
+impl UniformStage2Tiling {
+    #[inline]
+    fn coeff_bits(&self) -> usize {
+        self.lane_bits
+    }
+
+    #[inline]
+    fn coeff_len(&self) -> usize {
+        self.lane_len
+    }
+}
+
+fn boolean_domain_len(num_vars: usize) -> Result<usize, AkitaError> {
+    let bits = u32::try_from(num_vars)
+        .map_err(|_| AkitaError::InvalidInput("stage-2 width overflow".to_string()))?;
+    1usize
+        .checked_shl(bits)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-2 width overflow".to_string()))
 }
 
 struct Stage2InitialRoundBatch<E: FieldCore> {
@@ -123,6 +232,18 @@ fn reduce_compact_rel<E: FieldCore + HasUnreducedOps>(rel: CompactRelAccum<E>) -
     ]
 }
 
+fn fold_live_evals_zero_padded<E: HasOptimizedFold>(evals: &[E], r: E) -> Vec<E> {
+    let ctx = E::precompute_fold(r);
+    cfg_into_iter!(0..evals.len().div_ceil(2))
+        .map(|i| {
+            let left = 2 * i;
+            let a = evals[left];
+            let b = evals.get(left + 1).copied().unwrap_or_else(E::zero);
+            E::fold_one(&ctx, a, b)
+        })
+        .collect()
+}
+
 #[inline]
 fn stage2_eq_block(
     j_base: usize,
@@ -184,6 +305,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     split_eq: GruenSplitEq<E>,
 
     relation_weight: RelationWeightPolynomial<E>,
+    layout: Stage2Layout,
     live_segments: usize,
     relation_coeff_len: usize,
     segment_bits: usize,
@@ -213,15 +335,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    fn relation_weight_pair_segments(&self, x0: usize, x1: usize, y: usize) -> (E, E) {
+    fn relation_weight_pair_tiles(&self, tile0: usize, tile1: usize, lane: usize) -> (E, E) {
         let coeff_len = self.relation_weight_coeff_len();
         let evals = self.relation_weight.evals();
         let p0 = evals
-            .get(x0 * coeff_len + y)
+            .get(tile0 * coeff_len + lane)
             .copied()
             .unwrap_or_else(E::zero);
         let p1 = evals
-            .get(x1 * coeff_len + y)
+            .get(tile1 * coeff_len + lane)
             .copied()
             .unwrap_or_else(E::zero);
         (p0, p1)
@@ -264,8 +386,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
                     coeff_len,
                 )
             } else {
-                let mut evals = self.relation_weight.evals().to_vec();
-                fold_evals_in_place(&mut evals, r);
+                let evals = if self.layout.uniform_tiling().is_some() {
+                    let mut evals = self.relation_weight.evals().to_vec();
+                    fold_evals_in_place(&mut evals, r);
+                    evals
+                } else {
+                    fold_live_evals_zero_padded(self.relation_weight.evals(), r)
+                };
                 (evals, relation_segments.div_ceil(2), coeff_len)
             }
         } else if in_coefficient_round && use_coefficient_prefix_round {
