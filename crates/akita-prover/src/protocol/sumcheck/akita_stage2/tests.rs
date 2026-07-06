@@ -1,3 +1,4 @@
+mod boundary;
 mod trace_prefix;
 
 use super::*;
