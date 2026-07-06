@@ -21,7 +21,7 @@ struct CenteredRhsBounds {
 /// column tile, cache entries are loaded once and reused across all three
 /// products with their exact row bounds, eliminating redundant DRAM reads.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(super) fn fused_split_eq_quotients_with_params<
+pub(super) fn fused_relation_family_products_with_params<
     F: FieldCore + CanonicalField + HalvingField,
     W: PrimeWidth,
     const K: usize,
@@ -94,7 +94,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
         || z_bounds.capacity == 0
         || safe_crt_chunk_width::<F, W, K, D>(params, z_len, z_bounds.capacity) == Some(z_len);
     if w_safe && t_safe && z_safe {
-        return Ok(fused_split_eq_quotients_one_shot(
+        return Ok(fused_relation_family_products_one_shot(
             d_cyc_rows,
             b_cyc_rows,
             a_cyc_rows,
@@ -134,7 +134,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn fused_split_eq_quotients_one_shot<
+fn fused_relation_family_products_one_shot<
     F: FieldCore + CanonicalField + HalvingField,
     W: PrimeWidth,
     const K: usize,
@@ -301,7 +301,7 @@ fn accumulate_cyclic_i8_rows<
     let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, rhs_len, rhs_abs_bound)
         .expect("single i8 CRT term must fit supported parameters");
     if rhs_len <= chunk_width {
-        let (rows, _, _) = fused_split_eq_quotients_one_shot(
+        let (rows, _, _) = fused_relation_family_products_one_shot(
             cyc_rows,
             &[],
             &[],
@@ -416,7 +416,7 @@ fn accumulate_centered_quotient_rows<
         );
     };
     if z_len <= chunk_width {
-        let (_, _, rows) = fused_split_eq_quotients_one_shot(
+        let (_, _, rows) = fused_relation_family_products_one_shot(
             &[],
             &[],
             cyc_rows,
@@ -537,9 +537,9 @@ fn accumulate_centered_quotient_rows_field<
 /// All roles share the same underlying coefficient matrix, but each role uses
 /// its own packed row width.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
+#[tracing::instrument(skip_all, name = "fused_relation_family_products")]
 #[cfg(test)]
-pub(crate) fn fused_split_eq_quotients<
+pub(crate) fn fused_relation_family_products<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
@@ -559,7 +559,7 @@ pub(crate) fn fused_split_eq_quotients<
     ),
     AkitaError,
 > {
-    fused_split_eq_quotients_with_digit_bound(
+    fused_relation_family_products_with_digit_bounds(
         slot,
         n_d,
         n_b,
@@ -574,7 +574,7 @@ pub(crate) fn fused_split_eq_quotients<
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(crate) fn fused_split_eq_quotients_prover_bounds<
+pub(crate) fn fused_relation_family_products_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
@@ -597,7 +597,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
 > {
     validate_i8_log_basis(log_basis)?;
     let digit_bound = balanced_digit_abs_bound(log_basis);
-    fused_split_eq_quotients_with_digit_bound(
+    fused_relation_family_products_with_digit_bounds(
         slot,
         n_d,
         n_b,
@@ -612,7 +612,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn fused_split_eq_quotients_with_digit_bound<
+fn fused_relation_family_products_with_digit_bounds<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
@@ -655,7 +655,7 @@ fn fused_split_eq_quotients_with_digit_bound<
             let a_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &cyc[i * a_width..(i + 1) * a_width])
                 .collect();
-            fused_split_eq_quotients_with_params(
+            fused_relation_family_products_with_params(
                 &d_rows,
                 &b_rows,
                 &a_rows,
@@ -689,7 +689,7 @@ fn fused_split_eq_quotients_with_digit_bound<
             let a_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &cyc[i * a_width..(i + 1) * a_width])
                 .collect();
-            fused_split_eq_quotients_with_params(
+            fused_relation_family_products_with_params(
                 &d_rows,
                 &b_rows,
                 &a_rows,
@@ -723,7 +723,7 @@ fn fused_split_eq_quotients_with_digit_bound<
             let a_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &cyc[i * a_width..(i + 1) * a_width])
                 .collect();
-            fused_split_eq_quotients_with_params(
+            fused_relation_family_products_with_params(
                 &d_rows,
                 &b_rows,
                 &a_rows,

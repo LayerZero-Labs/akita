@@ -333,6 +333,58 @@ where
     Ok(acc)
 }
 
+/// Stage-2 relation-weight claim `V_alpha` including the [`EvaluationTrace`] row.
+///
+/// Adds `eq(tau1, EvaluationTrace) * trace_eval_target` at row 0, then accumulates
+/// opening-consistency rows from `u` and `v` at the same indices as
+/// [`relation_claim_from_rows_extension_at_dims`] (`1 + n_a` for uniform layouts).
+///
+/// # Errors
+///
+/// Returns an error if `v`/`u` cannot decode at their role dimensions or `tau1` is too short.
+#[tracing::instrument(skip_all, name = "relation_weight_claim_from_rows_extension_at_dims")]
+pub fn relation_weight_claim_from_rows_extension_at_dims<F, E>(
+    dims: CommitmentRingDims,
+    tau1: &[E],
+    alpha: E,
+    n_a: usize,
+    trace_eval_target: E,
+    v: &RingVec<F>,
+    u: &RingVec<F>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + MulBase<F>,
+{
+    let eq_tau1 = EqPolynomial::evals(tau1)?;
+    let trace_row_weight = eq_tau1.first().copied().unwrap_or(E::zero());
+    let mut acc = trace_row_weight * trace_eval_target;
+    let mut row_idx = 1usize
+        .checked_add(n_a)
+        .ok_or_else(|| AkitaError::InvalidSetup("relation row index overflow".to_string()))?;
+    if !v.can_decode_vec(dims.d_d()) {
+        return Err(AkitaError::InvalidSize {
+            expected: dims.d_d(),
+            actual: v.coeff_len(),
+        });
+    }
+    if !u.can_decode_vec(dims.d_b()) {
+        return Err(AkitaError::InvalidSize {
+            expected: dims.d_b(),
+            actual: u.coeff_len(),
+        });
+    }
+    dispatch_ring_dim_result!(dims.d_b(), |D_B| {
+        let u_typed = u.as_ring_slice::<D_B>()?;
+        accumulate_extension_rows::<F, E, D_B>(&eq_tau1, alpha, u_typed, &mut row_idx, &mut acc)
+    })?;
+    dispatch_ring_dim_result!(dims.d_d(), |D_D| {
+        let v_typed = v.as_ring_slice::<D_D>()?;
+        accumulate_extension_rows::<F, E, D_D>(&eq_tau1, alpha, v_typed, &mut row_idx, &mut acc)
+    })?;
+    Ok(acc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

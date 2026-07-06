@@ -26,15 +26,16 @@ pub use params::{
     AjtaiKeyParams, LevelParams, LevelParamsLike, MRowLayout, PrecommittedLevelParams,
     SisModulusFamily,
 };
-pub use relation_rows::{
-    ConsistencyLayer, RelationQuotientLayout, RelationQuotientSlice, RelationRowFamily,
-    RelationRowFamilyLayout, RelationRowLayout,
-};
 pub use proof_size::{
     direct_witness_bytes, extension_opening_reduction_level_bytes,
     extension_opening_reduction_proof_bytes, field_bytes, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, sumcheck_rounds,
+};
+pub use relation_rows::{
+    quotient_witness_coeff_count_for_scalar_level,
+    quotient_witness_coeff_count_for_scalar_level_bits, ConsistencyLayer, RelationQuotientLayout,
+    RelationQuotientSlice, RelationRowFamily, RelationRowFamilyLayout, RelationRowLayout,
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,

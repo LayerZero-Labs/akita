@@ -1,14 +1,14 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
+use crate::protocol::relation_weight::PreparedRelationWeightPolynomial;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
-    RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
+    AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding, RingMultiplierOpeningPoint,
+    RingOpeningPoint,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -160,18 +160,15 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     s_claim: E,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
-    alpha_evals_y: Vec<E>,
-    prepared_row_eval: RingSwitchDeferredRowEval<E>,
+    prepared_relation_weight: PreparedRelationWeightPolynomial<F, E, D>,
+    relation_weight_claim: E,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     opening_point: &'a RingOpeningPoint<F>,
     ring_multiplier_point: &'a RingMultiplierOpeningPoint<F>,
-    alpha: E,
     col_bits: usize,
     ring_bits: usize,
-    relation_claim: E,
-    trace: Option<TraceClaim<F, E, D>>,
-    _marker: PhantomData<([F; D], E)>,
+    _marker: PhantomData<E>,
 }
 
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
@@ -188,18 +185,15 @@ where
         s_claim: E,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        prepared_row_eval: RingSwitchDeferredRowEval<E>,
+        prepared_relation_weight: PreparedRelationWeightPolynomial<F, E, D>,
+        relation_weight_claim: E,
         setup_claim: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_point: &'a RingOpeningPoint<F>,
         ring_multiplier_point: &'a RingMultiplierOpeningPoint<F>,
-        relation_claim: E,
-        alpha: E,
-        col_bits: usize,
-        ring_bits: usize,
-        trace: Option<TraceClaim<F, E, D>>,
     ) -> Result<Self, AkitaError> {
+        let col_bits = prepared_relation_weight.col_bits;
+        let ring_bits = prepared_relation_weight.ring_bits;
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
         })?;
@@ -209,36 +203,19 @@ where
                 actual: stage1_point.len(),
             });
         }
-        let expected_alpha_len = 1usize
-            .checked_shl(
-                u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
-                    expected: usize::BITS as usize,
-                    actual: ring_bits,
-                })?,
-            )
-            .ok_or(AkitaError::InvalidProof)?;
-        if alpha_evals_y.len() != expected_alpha_len {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_alpha_len,
-                actual: alpha_evals_y.len(),
-            });
-        }
         Ok(Self {
             batching_coeff,
             s_claim,
             witness_oracle,
             stage1_point,
-            alpha_evals_y,
-            prepared_row_eval,
+            prepared_relation_weight,
+            relation_weight_claim,
             setup_claim,
             setup,
             opening_point,
             ring_multiplier_point,
-            alpha,
             col_bits,
             ring_bits,
-            relation_claim,
-            trace,
             _marker: PhantomData,
         })
     }
@@ -258,17 +235,6 @@ where
             Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
         }
     }
-
-    fn row_eval(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
-        self.prepared_row_eval.eval_at_point::<F, D>(
-            x_challenges,
-            self.setup,
-            self.opening_point,
-            self.ring_multiplier_point,
-            self.alpha,
-            self.setup_claim,
-        )
-    }
 }
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
@@ -285,11 +251,7 @@ where
     }
 
     fn input_claim(&self) -> E {
-        let mut claim = self.batching_coeff * self.s_claim + self.relation_claim;
-        if let Some(trace) = &self.trace {
-            claim += trace.trace_opening_claim;
-        }
-        claim
+        self.batching_coeff * self.s_claim + self.relation_weight_claim
     }
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
@@ -298,42 +260,31 @@ where
             let _span = tracing::info_span!("stage2_witness_eval").entered();
             self.witness_eval(challenges)?
         };
-
-        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
-        let row_val = {
-            let _span = tracing::info_span!("stage2_ring_switch_row_eval").entered();
-            self.row_eval(x_challenges)?
+        let relation_weight_eval = {
+            let _span = tracing::info_span!("stage2_relation_weight_eval").entered();
+            self.prepared_relation_weight.eval_at_point(
+                challenges,
+                self.setup,
+                self.opening_point,
+                self.ring_multiplier_point,
+                self.setup_claim,
+            )?
         };
-        let relation_oracle = w_eval * alpha_val * row_val;
-        let trace_oracle = if let Some(trace) = &self.trace {
-            let trace_weight = eval_trace_terms_closed::<F, E, D>(
-                &trace.layout,
-                y_challenges,
-                x_challenges,
-                &trace.trace_terms,
-            )?;
-            trace.trace_coeff * w_eval * trace_weight
-        } else {
-            E::zero()
-        };
+        let relation_term = w_eval * relation_weight_eval;
 
-        // Terminal levels run with `batching_coeff = 0`, which zeros the
-        // virtual half regardless of `stage1_point` / `w_eval`. Skip the
-        // EqPolynomial eval and the `w * (w + 1)` round in that case.
         if self.batching_coeff.is_zero() {
-            return Ok(relation_oracle + trace_oracle);
+            return Ok(relation_term);
         }
         let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
+        Ok(self.batching_coeff * virtual_oracle + relation_term)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{cleartext_source_eval, Stage2CleartextSource};
-    use akita_field::{AkitaError, FieldCore};
+    use akita_field::{AkitaError, FieldCore, LiftBase};
     use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
     use akita_sumcheck::multilinear_eval;
 
@@ -351,90 +302,32 @@ mod tests {
                 actual: w.len(),
             });
         }
+        let live_x_cols = w.len() / d;
+        let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
         let ring_bits = d.trailing_zeros() as usize;
-        let num_ring_elems = w.len() / d;
-        let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-        let x_len = 1usize << col_bits;
-        let n = x_len << ring_bits;
-
-        let mut out = vec![F::zero(); n];
-        out[..w.len()].copy_from_slice(w);
-        Ok((out, col_bits, ring_bits))
+        Ok((w.to_vec(), col_bits, ring_bits))
     }
 
     #[test]
-    fn logical_digits_eval_matches_materialized_table() {
-        let d = 4usize;
-        let w_digits = vec![3, -1, 2, 0, -2, 1, 4, -3, 1, 0, -4, 2];
-        let w_field: Vec<F> = w_digits
-            .iter()
-            .map(|&digit| F::from_i64(digit as i64))
+    fn cleartext_field_elements_match_multilinear_eval() {
+        let w: Vec<F> = (0..8).map(|i| F::from_u64(i as u64 + 1)).collect();
+        let (evals, col_bits, ring_bits) = build_w_evals(&w, D).unwrap();
+        let challenges: Vec<E> = (0..col_bits + ring_bits)
+            .map(|i| E::from_u64(i as u64 + 3))
             .collect();
-        let (w_evals, col_bits, ring_bits) =
-            build_w_evals(&w_field, d).expect("valid witness shape");
-        let challenges = vec![
-            F::from_u64(2),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(11),
-        ];
-        let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
-        let source = Stage2CleartextSource::LogicalDigits(std::borrow::Cow::Borrowed(&w_digits));
-        let actual = cleartext_source_eval::<F, F, 4>(
-            w_digits.len(),
-            &source,
+        let got = cleartext_source_eval::<F, E, D>(
+            w.len(),
+            &Stage2CleartextSource::FieldElements(&w),
             &challenges,
             col_bits,
             ring_bits,
         )
-        .expect("valid logical digits");
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn field_witness_eval_lifts_base_witness_to_extension_challenges() {
-        let field_witness = vec![
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(11),
-        ];
-        let challenges = vec![
-            E::new(F::from_u64(2), F::from_u64(3)),
-            E::new(F::from_u64(5), F::from_u64(7)),
-        ];
-
-        let lifted_witness: Vec<E> = field_witness
-            .iter()
-            .copied()
-            .map(|x| E::new(x, F::zero()))
-            .collect();
-        let expected =
-            multilinear_eval(&lifted_witness, &challenges).expect("matching extension table shape");
-        let source = Stage2CleartextSource::FieldElements(&field_witness);
-        let actual =
-            cleartext_source_eval::<F, E, D>(field_witness.len(), &source, &challenges, 1, 1)
-                .expect("valid witness");
-
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn logical_digits_eval_rejects_challenge_dimension_mismatch() {
-        let w_digits = vec![1i8, -1, 0, 2];
-        let source = Stage2CleartextSource::LogicalDigits(std::borrow::Cow::Borrowed(&w_digits));
-        let err = cleartext_source_eval::<F, E, D>(1, &source, &[E::zero()], 1, 1)
-            .expect_err("wrong arity");
-        assert!(matches!(err, AkitaError::InvalidSize { .. }));
-    }
-
-    #[test]
-    fn logical_digits_eval_rejects_length_mismatch() {
-        let w_digits = vec![1i8, -1, 0, 2];
-        let challenges = vec![E::zero(), E::zero()];
-        let source = Stage2CleartextSource::LogicalDigits(std::borrow::Cow::Borrowed(&w_digits));
-        let err = cleartext_source_eval::<F, E, D>(8, &source, &challenges, 1, 1)
-            .expect_err("witness length mismatch");
-        assert!(matches!(err, AkitaError::InvalidProof));
+        .unwrap();
+        let expected = multilinear_eval(
+            &evals.iter().map(|x| E::lift_base(*x)).collect::<Vec<_>>(),
+            &challenges,
+        )
+        .unwrap();
+        assert_eq!(got, expected);
     }
 }

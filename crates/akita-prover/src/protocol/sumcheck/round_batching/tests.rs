@@ -7,7 +7,9 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
-use akita_types::{bridge_relation_weight_from_split, range_check_eval_from_s, reorder_stage1_coords};
+use akita_types::{
+    bridge_relation_weight_from_split, range_check_eval_from_s, reorder_stage1_coords,
+};
 use akita_types::{TraceSparseColumn, TraceTable};
 use std::collections::HashMap;
 
@@ -56,8 +58,14 @@ fn build_stage2_grid_from_split(
     col_bits: usize,
     ring_bits: usize,
 ) -> Option<Stage2RoundBatchGrid<F>> {
-    let relation_weight_evals =
-        stage2_relation_weight_evals(alpha_evals_y, m_evals_x, trace, col_bits, ring_bits, live_x_cols);
+    let relation_weight_evals = stage2_relation_weight_evals(
+        alpha_evals_y,
+        m_evals_x,
+        trace,
+        col_bits,
+        ring_bits,
+        live_x_cols,
+    );
     build_stage2_initial_round_batch_grid(
         w_compact,
         &relation_weight_evals,
@@ -80,8 +88,14 @@ fn build_stage2_grid_from_split_reference(
     col_bits: usize,
     ring_bits: usize,
 ) -> Option<Stage2RoundBatchGrid<F>> {
-    let relation_weight_evals =
-        stage2_relation_weight_evals(alpha_evals_y, m_evals_x, trace, col_bits, ring_bits, live_x_cols);
+    let relation_weight_evals = stage2_relation_weight_evals(
+        alpha_evals_y,
+        m_evals_x,
+        trace,
+        col_bits,
+        ring_bits,
+        live_x_cols,
+    );
     build_stage2_initial_round_batch_grid_reference(
         w_compact,
         &relation_weight_evals,
@@ -92,8 +106,6 @@ fn build_stage2_grid_from_split_reference(
         ring_bits,
     )
 }
-
-
 
 fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {
     rows.retain(|row| row.iter().any(|x| !x.is_zero()));
@@ -195,7 +207,8 @@ fn stage2_norm_round_values_from_full_grid(full_grid: [F; 9], tau0: F, tau1: F, 
     }
     for y in [F::zero(), F::one(), F::from_u64(2), F::from_u64(3)] {
         let y_point = RoundBatchPoint::Finite(y);
-        let q_r0_y = eval_biquadratic_from_full_grid(full_grid, RoundBatchPoint::Finite(r0), y_point);
+        let q_r0_y =
+            eval_biquadratic_from_full_grid(full_grid, RoundBatchPoint::Finite(r0), y_point);
         let l1_y = tau1 * y + (F::one() - tau1) * (F::one() - y);
         out.push(l1_y * l0_at(RoundBatchPoint::Finite(r0)) * q_r0_y);
     }
@@ -341,15 +354,15 @@ fn build_stage2_initial_round_batch_grid_reference(
         for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate().take(y_quads) {
             let base = 4 * y_quad;
             let w_quad = std::array::from_fn(|offset| F::from_i64(column[base + offset] as i64));
-            let weight_quad = std::array::from_fn(|offset| {
-                relation_weight_evals[x_idx * y_len + base + offset]
-            });
+            let weight_quad =
+                std::array::from_fn(|offset| relation_weight_evals[x_idx * y_len + base + offset]);
             let norm_weight = eq_y_weight * eq_x_weight;
             for idx in 0..9 {
                 let x = points[idx / 3];
                 let y = points[idx % 3];
                 norm_full[idx] += norm_weight * stage2_local_norm_raw_eval(w_quad, x, y);
-                relation_full[idx] += stage2_local_relation_eval(w_quad, weight_quad, F::one(), x, y);
+                relation_full[idx] +=
+                    stage2_local_relation_eval(w_quad, weight_quad, F::one(), x, y);
             }
         }
     }
@@ -1168,8 +1181,10 @@ fn stage2_norm_8_point_reconstruction_matches_full_grid_and_round_messages() {
                             let norm_claim =
                                 stage2_norm_claim_from_full_grid(full_grid, corner_weights);
                             let omitted_corner = default_stage2_norm_omitted_corner(corner_weights);
-                            let compressed =
-                                OmittedCornerEvaluationGrid::from_full_grid(full_grid, omitted_corner);
+                            let compressed = OmittedCornerEvaluationGrid::from_full_grid(
+                                full_grid,
+                                omitted_corner,
+                            );
                             let recovered = recover_stage2_grid_from_corner_claim(
                                 &compressed,
                                 corner_weights,
@@ -1259,10 +1274,11 @@ fn stage2_relation_8_point_reconstruction_matches_full_grid_and_round_messages()
                                             full_grid,
                                             [F::one(); 4],
                                         );
-                                        let compressed = OmittedCornerEvaluationGrid::from_full_grid(
-                                            full_grid,
-                                            BooleanCorner::DEFAULT_STAGE2_RELATION,
-                                        );
+                                        let compressed =
+                                            OmittedCornerEvaluationGrid::from_full_grid(
+                                                full_grid,
+                                                BooleanCorner::DEFAULT_STAGE2_RELATION,
+                                            );
                                         let recovered = recover_stage2_relation_grid_from_claim(
                                             &compressed,
                                             relation_claim,

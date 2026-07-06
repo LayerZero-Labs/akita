@@ -191,8 +191,8 @@ pub(crate) const fn build_stage1_b4_prefix_lookup_table() -> [[i64; STAGE1_B4_PR
 pub(crate) static STAGE1_B4_PREFIX_LOOKUP_TABLE: [[i64; STAGE1_B4_PREFIX_EVAL_COUNT]; 16] =
     build_stage1_b4_prefix_lookup_table();
 
-pub(crate) const fn build_stage1_b8_prefix_lookup_table() -> [[i64; STAGE1_ROUND_BATCH_EVAL_COUNT]; 256]
-{
+pub(crate) const fn build_stage1_b8_prefix_lookup_table(
+) -> [[i64; STAGE1_ROUND_BATCH_EVAL_COUNT]; 256] {
     let mut table = [[0i64; STAGE1_ROUND_BATCH_EVAL_COUNT]; 256];
     let mut d0 = 0usize;
     while d0 < 4 {
@@ -586,14 +586,15 @@ pub(crate) fn interpolate_eq_factored_q_poly<E: FieldCore + FromPrimitiveInt>(
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 2]
-{
+pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>(
+) -> [RoundBatchPoint<E>; 2] {
     [RoundBatchPoint::Finite(E::one()), RoundBatchPoint::Infinity]
 }
 
 /// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 3] {
+pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 3]
+{
     [
         RoundBatchPoint::Finite(E::zero()),
         RoundBatchPoint::Finite(E::one()),

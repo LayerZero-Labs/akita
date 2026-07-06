@@ -70,10 +70,6 @@ pub use layout::{
     RelationRowFamilyLayout, RelationRowLayout, RingMatrixView, RingOpeningPoint, RingRole,
     MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
 };
-pub use relation_weight::{
-    bridge_relation_weight_from_split, PreparedRelationWeightPolynomial,
-    RelationWeightPolynomial, RelationWeightPolynomialError,
-};
 pub use ntt_cache::NttCacheKey;
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -89,13 +85,14 @@ pub use proof::{
     expand_segment_typed_to_i8_digits, folded_root_supports_opening_shape, generate_y,
     i8_digits_to_bytes, padded_scalar_batch_num_vars, padded_setup_prefix_len,
     prepare_opening_point, relation_claim_from_rows, relation_claim_from_rows_extension,
-    relation_claim_from_rows_extension_at_dims, relation_y_coeff_len, relation_y_row_count,
-    ring_relation_segment_lengths, ring_subfield_packed_extension_opening_point,
-    root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
-    segment_typed_witness_shape, segment_typed_witness_upper_bound_bytes,
-    segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_level_params,
-    setup_prefix_slot_id, should_reject_grouped_root, tail_golomb_rice_z_params,
-    tail_segment_layout, tail_segment_multiplicities_from_layout, terminal_e_hat_bytes_from_blocks,
+    relation_claim_from_rows_extension_at_dims, relation_weight_claim_from_rows_extension_at_dims,
+    relation_y_coeff_len, relation_y_row_count, ring_relation_segment_lengths,
+    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
+    sample_public_matrix_seed, sample_public_row_coefficients, segment_typed_witness_shape,
+    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
+    select_setup_prefix_slot, setup_prefix_level_params, setup_prefix_slot_id,
+    should_reject_grouped_root, tail_golomb_rice_z_params, tail_segment_layout,
+    tail_segment_multiplicities_from_layout, terminal_e_hat_bytes_from_blocks,
     terminal_golomb_grind_tail_t_vectors, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     validate_batched_inputs, validate_public_matrix_matches_seed,
@@ -120,6 +117,10 @@ pub use proof::{
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
+pub use relation_weight::{
+    bridge_relation_weight_from_split, PreparedRelationWeightPolynomial, RelationWeightPolynomial,
+    RelationWeightPolynomialError,
+};
 pub use schedule::{
     detect_field_modulus, grouped_root_commit_params, r_decomp_levels, root_current_w_len,
     root_direct_schedule, schedule_is_root_direct, schedule_num_fold_levels,
@@ -142,11 +143,11 @@ pub use tail_golomb_rice_low_bits::{
 };
 pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
-    eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
-    trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
-    trace_terms_root, trace_weight_layout_from_segment, TraceChunkLayout, TraceClaim,
-    TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,
-    TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
+    eval_trace_terms_closed, root_trace_block_opening, trace_public_weights_recursive,
+    trace_public_weights_root_terms, trace_terms_recursive, trace_terms_root,
+    trace_weight_layout_from_segment, TraceChunkLayout, TraceFieldBlockOpening,
+    TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable,
+    TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{

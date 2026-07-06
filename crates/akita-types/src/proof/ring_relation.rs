@@ -1,7 +1,10 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
 use super::OpeningClaimsLayout;
-use crate::layout::{CommitmentRingDims, LevelParams, MRowLayout, RelationRowLayout, RingRole};
+use crate::layout::{
+    CommitmentRingDims, LevelParams, MRowLayout, RelationQuotientLayout, RelationRowLayout,
+    RingRole,
+};
 use crate::validate_role_dispatch;
 use crate::witness::{WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
 use crate::FpExtEncoding;
@@ -426,10 +429,17 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 self.y.coeff_len()
             )));
         }
-        let y_rows = crate::proof::relation::relation_y_row_count(y_layout, num_groups);
-        let r_len_total = y_rows
-            .checked_mul(r_levels)
-            .ok_or_else(|| AkitaError::InvalidSetup("r-tail length overflow".to_string()))?;
+        let relation_row_layout = RelationRowLayout::for_scalar_level::<F>(
+            lp,
+            self.role_dims,
+            self.m_row_layout,
+            &self.opening_batch,
+            1,
+        )?;
+        let quotient_layout =
+            RelationQuotientLayout::from_row_layout(&relation_row_layout, r_levels);
+        quotient_layout.validate()?;
+        let r_len_total = quotient_layout.total_coeffs();
 
         // The single-chunk layout is the `num_chunks = 1` case of the chunked
         // construction below; only multi-chunk needs the extra well-formedness checks.
@@ -512,6 +522,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             blocks_per_chunk,
             chunks,
             chunk_lengths,
+            quotient_layout,
         };
 
         if let Some(witness_ring_len) = witness_ring_len {

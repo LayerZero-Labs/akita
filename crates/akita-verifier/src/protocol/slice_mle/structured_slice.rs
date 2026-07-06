@@ -4,6 +4,7 @@ use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_types::RelationQuotientLayout;
 
 /// Number of carry buckets per outer index produced by
 /// [`StructuredSliceMleEvaluator::compute_inner_sum`].
@@ -302,42 +303,20 @@ pub(crate) fn compute_r_contribution<F, E>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     offset_r: usize,
-    denom: E,
-    r_gadget: &[F],
+    quotient_layout: &RelationQuotientLayout,
+    alpha: E,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    let levels = r_gadget.len();
-    if levels.is_power_of_two() {
-        let _span = tracing::info_span!("r_structured").entered();
-        let r_gadget_ext: Vec<E> = r_gadget.iter().copied().map(E::lift_base).collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            offset_r,
-            -denom,
-            &[
-                &r_gadget_ext,
-                &prepared.eq_tau1[..prepared.setup_contribution_inputs.rows],
-            ],
-        )
-    } else {
-        let _span = tracing::info_span!("r_dense").entered();
-        let r_tail: Vec<E> = cfg_into_iter!(0..prepared.setup_contribution_inputs.rows * levels)
-            .map(|idx| {
-                let row_idx = idx / levels;
-                let level_idx = idx % levels;
-                -(prepared.eq_tau1[row_idx] * denom).mul_base(r_gadget[level_idx])
-            })
-            .collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            offset_r,
-            E::one(),
-            &[r_tail.as_slice()],
-        )
-    }
+    let r_tail = quotient_layout.materialize_tail_weights::<F, E>(&prepared.eq_tau1, alpha)?;
+    eval_offset_eq_tensor(
+        full_vec_randomness,
+        offset_r,
+        E::one(),
+        &[r_tail.as_slice()],
+    )
 }
 
 #[cfg(test)]
@@ -369,6 +348,7 @@ mod tests {
         offset_t: usize,
         offset_z: usize,
         offset_r: usize,
+        quotient_layout: akita_types::RelationQuotientLayout,
         g1_open: Vec<F>,
         g1_commit: Vec<F>,
         fold_gadget: Vec<F>,
@@ -465,12 +445,13 @@ mod tests {
         let chunk_layout =
             ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
                 .expect("witness segment layout");
+        let quotient_layout = chunk_layout.quotient_layout.clone();
         let chunk0 = chunk_layout.chunks[0];
         let offset_e = chunk0.offset_e;
         let offset_t = chunk0.offset_t;
         let offset_z = chunk0.offset_z;
         let offset_r = chunk0.offset_r.expect("single chunk carries r-tail");
-        let total_len = offset_r + rows * levels;
+        let total_len = offset_r + quotient_layout.total_coeffs();
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let opening_point = RingOpeningPoint {
@@ -531,6 +512,7 @@ mod tests {
             offset_t,
             offset_z,
             offset_r,
+            quotient_layout,
             g1_open,
             g1_commit,
             fold_gadget,
@@ -732,24 +714,23 @@ mod tests {
         let fx = fixture();
         let p = &fx.prepared;
         let alpha = f(7_000);
-        let alpha_pows = scalar_powers(alpha, D);
-        let denom = alpha_pows[D - 1] * alpha + F::one();
-        let r_len = p.setup_contribution_inputs.rows * fx.r_gadget.len();
+        let r_len = fx.quotient_layout.total_coeffs();
         let eq = eq_evals(fx.offset_r + r_len, &fx.full_vec_randomness);
 
         let got = compute_r_contribution::<F, F>(
             p,
             &fx.full_vec_randomness,
             fx.offset_r,
-            denom,
-            &fx.r_gadget,
+            &fx.quotient_layout,
+            alpha,
         )
         .unwrap();
+        let expected_tail = fx
+            .quotient_layout
+            .materialize_tail_weights::<F, F>(&p.eq_tau1, alpha)
+            .unwrap();
         let mut expected = F::zero();
-        for idx in 0..r_len {
-            let row_idx = idx / fx.r_gadget.len();
-            let level_idx = idx % fx.r_gadget.len();
-            let entry = -(p.eq_tau1[row_idx] * denom * fx.r_gadget[level_idx]);
+        for (idx, entry) in expected_tail.into_iter().enumerate() {
             expected += entry * eq[fx.offset_r + idx];
         }
         assert_eq!(got, expected);

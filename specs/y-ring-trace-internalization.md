@@ -4,8 +4,16 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao                      |
 | Created     | 2026-06-05                     |
-| Status      | in review                      |
+| Status      | superseded (trace mechanism)   |
 | PR          | #154                           |
+
+> **Superseded trace mechanism.** The `gamma^2` fused trace summand described
+> below is replaced by the `EvaluationTrace` relation row inside
+> [`relation-weight-polynomial.md`](relation-weight-polynomial.md). Stage 2 now
+> has two summands only (`RelationWeightPolynomial` + range virtual term); there
+> is no separate `trace_coeff`, no terminal `trace_gamma` squeeze, and no
+> third batching slot. The goal of this spec (drop on-wire `y_ring`, bind opening
+> through committed witness) is preserved; only the encoding changed.
 
 ## Summary
 
@@ -41,7 +49,12 @@ The trace `Tr_H(Y) = sum_{sigma in H} sigma(Y)` is a fixed `Z_q`-linear **projec
 It is not negacyclic multiplication by any fixed ring element, and it is not recoverable from `y_ring(alpha)` alone (it would need `y_ring(alpha^a)` for every conjugate `a in H`).
 Therefore the trace check cannot be expressed as one extra `M`-row evaluated at `alpha`; it must be a fused inner-product term against a fixed, `alpha`-independent public weighting derived from the opening point.
 
-### Design: the fused trace term
+### Design: the fused trace term (superseded encoding)
+
+> **Historical.** This section describes the `gamma^2 · W · TraceWeight` fused
+> addend. The implemented cutover uses an `EvaluationTrace` row of
+> `RelationWeightPolynomial` instead; see
+> [`relation-weight-polynomial.md`](relation-weight-polynomial.md).
 
 Replace roles (1) and (2) with a single fused stage-2 term, batched as the `γ²` addend of the existing stage-2 sum-check challenge `γ` (`CHALLENGE_SUMCHECK_BATCH`), that enforces
 
@@ -203,7 +216,12 @@ The only obligation carried into step 2 of Execution is the `K > 1` weighting de
 - **ZK.** The `y_ring` hiding masks (`zk_base_mask_lcs(y_rings.len() * D, …)`, `recursive.rs:316-317`) and the `relation_claim_mask` `y`-contribution are removed; the fused trace term gets its own deferred ZK relation analogous to the stage-2 final relation (`stage2.rs:464-533`). The hiding-witness cursor accounting must still close (`zk_hiding_cursor == hiding_witness.len()`).
 - **End-to-end roundtrip.** All batched / recursive / terminal / zero-fold e2e tests pass for every active profile (`fp128_d128`, the `fp32`/`fp64` extension profiles, dense + onehot, ZK and non-ZK).
 
-### Soundness derivation gate
+### Soundness derivation gate (superseded batching model)
+
+> **Historical.** The `gamma^2` degree-2 batching argument below applied to the
+> three-summand oracle. The `EvaluationTrace` row model folds the trace
+> obligation into `relation_weight_claim`; soundness is the ordinary row-batched
+> relation extraction plus stage-1 range binding.
 
 The old protocol proves two facts about the same folded opening:
 

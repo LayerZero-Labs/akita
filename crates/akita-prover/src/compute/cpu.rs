@@ -11,7 +11,7 @@ use crate::compute::plans::{
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap, NttSlotCache};
 use crate::kernels::linear::{
-    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
+    fused_relation_family_products_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
     selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
@@ -559,21 +559,22 @@ where
         F: HalvingField,
     {
         prepared.with_shared_ntt::<D, _>(|ntt| {
-            let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                ntt,
-                plan.n_d,
-                plan.n_b,
-                plan.n_a,
-                plan.e_hat,
-                plan.t_hat,
-                plan.z_segment,
-                plan.z_folded_centered_inf_norm,
-                plan.log_basis,
-            )?;
+            let (opening_cyclic_products, outer_cyclic_products, fold_consistency_quotients) =
+                fused_relation_family_products_prover_bounds(
+                    ntt,
+                    plan.n_d,
+                    plan.n_b,
+                    plan.n_a,
+                    plan.e_hat,
+                    plan.t_hat,
+                    plan.z_segment,
+                    plan.z_folded_centered_inf_norm,
+                    plan.log_basis,
+                )?;
             Ok(RingSwitchRelationRows {
-                d_cyclic,
-                b_cyclic,
-                a_quotients,
+                opening_cyclic_products,
+                outer_cyclic_products,
+                fold_consistency_quotients,
             })
         })
     }
@@ -587,18 +588,19 @@ where
         F: HalvingField,
     {
         prepared.with_shared_ntt::<D, _>(|ntt| {
-            let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                ntt,
-                0,
-                0,
-                plan.n_a,
-                &[][..],
-                &[][..],
-                plan.z_segment,
-                plan.z_folded_centered_inf_norm,
-                1,
-            )?;
-            Ok(a_quotients)
+            let (_opening_cyclic_products, _outer_cyclic_products, fold_consistency_quotients) =
+                fused_relation_family_products_prover_bounds(
+                    ntt,
+                    0,
+                    0,
+                    plan.n_a,
+                    &[][..],
+                    &[][..],
+                    plan.z_segment,
+                    plan.z_folded_centered_inf_norm,
+                    1,
+                )?;
+            Ok(fold_consistency_quotients)
         })
     }
 }
@@ -612,7 +614,7 @@ mod tests {
     };
     use crate::compute::plans::RingSwitchRelationRowsPlan;
     use crate::kernels::linear::{
-        fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+        fused_relation_family_products, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
     };
     use crate::validation::MAX_I8_LOG_BASIS;
     use crate::AkitaProverSetup;
@@ -809,14 +811,14 @@ mod tests {
             .expect("backend ring-switch relation rows");
         let direct = prepared
             .with_shared_ntt::<D, _>(|ntt| {
-                fused_split_eq_quotients(ntt, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3)
+                fused_relation_family_products(ntt, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3)
             })
             .expect("direct fused split-eq rows");
         assert_eq!(
             (
-                via_backend.d_cyclic,
-                via_backend.b_cyclic,
-                via_backend.a_quotients
+                via_backend.opening_cyclic_products,
+                via_backend.outer_cyclic_products,
+                via_backend.fold_consistency_quotients
             ),
             direct
         );

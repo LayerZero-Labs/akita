@@ -4,9 +4,11 @@
 //! per-family ring dimensions, and quotient witness slices.
 
 use super::{CommitmentRingDims, LevelParams, MRowLayout};
+use crate::gadget_row_scalars;
 use crate::proof::OpeningClaimsLayout;
 use crate::r_decomp_levels;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_algebra::ring::scalar_powers;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase};
 use std::fmt;
 
 /// Compression layer metadata for outer/opening consistency families.
@@ -51,7 +53,10 @@ impl fmt::Display for RelationRowFamily {
 /// One quotient-bearing slice inside the `r_hat` witness tail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RelationQuotientSlice {
+    /// Offset inside the flattened `r_hat` witness tail.
     pub witness_offset: usize,
+    /// First logical M-row index for this slice.
+    pub row_start: usize,
     pub row_count: usize,
     pub ring_dim: usize,
     pub digit_depth: usize,
@@ -69,27 +74,40 @@ impl RelationQuotientLayout {
     pub fn total_coeffs(&self) -> usize {
         self.slices
             .iter()
-            .map(|s| s.row_count.saturating_mul(s.digit_depth))
-            .sum()
+            .map(|s| {
+                s.witness_offset
+                    .saturating_add(s.row_count.saturating_mul(s.digit_depth))
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     /// Build quotient slices from quotient-bearing row families.
+    ///
+    /// `witness_offset` is `(row_start - 1) * digit_depth` so uniform schedules
+    /// keep the historical row-major `r_hat` byte layout: logical M-row `0`
+    /// ([`RelationRowFamily::EvaluationTrace`]) has no quotient block, and the
+    /// first quotient family (`FoldEvaluation` at row `1`) lands at witness
+    /// offset `0`.
     pub fn from_row_layout(layout: &RelationRowLayout, digit_depth: usize) -> Self {
-        let mut witness_offset = 0usize;
         let mut slices = Vec::new();
         for family in &layout.families {
             let Some(quotient) = family.quotient else {
                 continue;
             };
+            let witness_offset = family
+                .row_start
+                .saturating_sub(1)
+                .checked_mul(digit_depth)
+                .unwrap_or(usize::MAX);
             let slice = RelationQuotientSlice {
                 witness_offset,
+                row_start: family.row_start,
                 row_count: family.row_count,
                 ring_dim: quotient.ring_dim,
                 digit_depth,
                 log_basis: quotient.log_basis,
             };
-            witness_offset = witness_offset
-                .saturating_add(family.row_count.saturating_mul(digit_depth));
             slices.push(slice);
         }
         Self { slices }
@@ -97,29 +115,116 @@ impl RelationQuotientLayout {
 
     /// Validate non-overlapping, monotonic witness offsets.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        let mut expected_offset = 0usize;
         for slice in &self.slices {
             if slice.row_count == 0 || slice.digit_depth == 0 || slice.ring_dim == 0 {
                 return Err(AkitaError::InvalidSetup(
                     "quotient slice has zero row_count, digit_depth, or ring_dim".to_string(),
                 ));
             }
-            if slice.witness_offset != expected_offset {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "quotient slice witness_offset {} != expected {}",
-                    slice.witness_offset, expected_offset
-                )));
+            let slice_end =
+                slice
+                    .witness_offset
+                    .checked_add(slice.row_count.checked_mul(slice.digit_depth).ok_or_else(
+                        || AkitaError::InvalidSetup("quotient slice length overflow".into()),
+                    )?)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("quotient layout length overflow".into())
+                    })?;
+            if slice_end == 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "quotient slice end must be positive".to_string(),
+                ));
             }
-            let slice_len = slice
-                .row_count
-                .checked_mul(slice.digit_depth)
-                .ok_or_else(|| AkitaError::InvalidSetup("quotient slice length overflow".into()))?;
-            expected_offset = expected_offset
-                .checked_add(slice_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("quotient layout length overflow".into()))?;
         }
         Ok(())
     }
+
+    /// Materialize flattened `r_hat` MLE weights:
+    /// `-(alpha^{ring_dim} + 1) * eq_tau1[row] * gadget[level]` per slice.
+    pub fn materialize_tail_weights<F, E>(
+        &self,
+        eq_tau1: &[E],
+        alpha: E,
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F> + MulBase<F>,
+    {
+        let mut out = vec![E::zero(); self.total_coeffs()];
+        for slice in &self.slices {
+            let alpha_pows = scalar_powers(alpha, slice.ring_dim);
+            let denom = alpha_pows[slice.ring_dim - 1] * alpha + E::one();
+            let gadget: Vec<E> = gadget_row_scalars::<F>(slice.digit_depth, slice.log_basis)
+                .into_iter()
+                .map(E::lift_base)
+                .collect();
+            for local_row in 0..slice.row_count {
+                let legacy_row_idx = slice
+                    .witness_offset
+                    .checked_div(slice.digit_depth)
+                    .and_then(|base| base.checked_add(local_row))
+                    .unwrap_or(slice.row_start + local_row);
+                let eq = eq_tau1.get(legacy_row_idx).copied().unwrap_or(E::zero());
+                for (level_idx, gadget_weight) in gadget.iter().enumerate() {
+                    let idx = slice
+                        .witness_offset
+                        .checked_add(local_row.checked_mul(slice.digit_depth).ok_or_else(|| {
+                            AkitaError::InvalidSetup("quotient witness offset overflow".into())
+                        })?)
+                        .and_then(|base| base.checked_add(level_idx))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("quotient witness offset overflow".into())
+                        })?;
+                    out[idx] = -eq * denom * *gadget_weight;
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Quotient witness coefficient count for a scalar-level layout.
+///
+/// Grouped-root layouts fall back to `m_row_count * r_decomp_levels` until
+/// quotient-family layout is wired there.
+pub fn quotient_witness_coeff_count_for_scalar_level<F: FieldCore + CanonicalField>(
+    lp: &LevelParams,
+    m_row_layout: MRowLayout,
+    num_commitments: usize,
+) -> Result<usize, AkitaError> {
+    quotient_witness_coeff_count_for_scalar_level_bits(
+        lp,
+        m_row_layout,
+        num_commitments,
+        r_decomp_levels::<F>(lp.log_basis),
+    )
+}
+
+/// Non-generic variant using an explicit gadget digit depth.
+pub fn quotient_witness_coeff_count_for_scalar_level_bits(
+    lp: &LevelParams,
+    m_row_layout: MRowLayout,
+    num_commitments: usize,
+    digit_depth: usize,
+) -> Result<usize, AkitaError> {
+    if lp.has_precommitted_groups() {
+        let r_rows = lp.m_row_count_for(num_commitments, m_row_layout)?;
+        return r_rows
+            .checked_mul(digit_depth)
+            .ok_or_else(|| AkitaError::InvalidSetup("quotient witness width overflow".into()));
+    }
+    let opening_batch = OpeningClaimsLayout::new(8, num_commitments)?;
+    let row_layout = RelationRowLayout::for_scalar_level_with_digit_depth(
+        lp,
+        lp.role_dims(),
+        m_row_layout,
+        &opening_batch,
+        num_commitments,
+        digit_depth,
+    )?;
+    let quotient = RelationQuotientLayout::from_row_layout(&row_layout, digit_depth);
+    quotient.validate()?;
+    Ok(quotient.total_coeffs())
 }
 
 /// Per-family layout entry inside [`RelationRowLayout`].
@@ -166,6 +271,25 @@ impl RelationRowLayout {
         opening_batch: &OpeningClaimsLayout,
         num_commitments: usize,
     ) -> Result<Self, AkitaError> {
+        Self::for_scalar_level_with_digit_depth(
+            lp,
+            role_dims,
+            m_row_layout,
+            opening_batch,
+            num_commitments,
+            r_decomp_levels::<F>(lp.log_basis),
+        )
+    }
+
+    /// Build the uniform scalar-level layout with an explicit quotient digit depth.
+    pub fn for_scalar_level_with_digit_depth(
+        lp: &LevelParams,
+        role_dims: CommitmentRingDims,
+        m_row_layout: MRowLayout,
+        opening_batch: &OpeningClaimsLayout,
+        num_commitments: usize,
+        digit_depth: usize,
+    ) -> Result<Self, AkitaError> {
         if lp.has_precommitted_groups() {
             return Err(AkitaError::InvalidSetup(
                 "RelationRowLayout::for_scalar_level does not support grouped-root layouts yet"
@@ -185,7 +309,7 @@ impl RelationRowLayout {
             .checked_mul(num_commitments)
             .ok_or_else(|| AkitaError::InvalidSetup("B row count overflow".into()))?;
 
-        let digit_depth = r_decomp_levels::<F>(lp.log_basis);
+        let digit_depth = digit_depth;
         let log_basis = lp.log_basis;
 
         let mut row_start = 0usize;
@@ -204,6 +328,7 @@ impl RelationRowLayout {
                 ring_dim,
                 quotient: quotient_ring_dim.map(|ring_dim| RelationQuotientSlice {
                     witness_offset: 0,
+                    row_start: *row_start,
                     row_count,
                     ring_dim,
                     digit_depth,
@@ -374,7 +499,8 @@ mod tests {
             num_commitments,
         )
         .expect("layout");
-        let quotient = RelationQuotientLayout::from_row_layout(&layout, r_decomp_levels::<F>(lp.log_basis));
+        let quotient =
+            RelationQuotientLayout::from_row_layout(&layout, r_decomp_levels::<F>(lp.log_basis));
         quotient.validate().expect("valid quotient layout");
         let legacy_rows = lp
             .m_row_count_for(num_commitments, MRowLayout::WithDBlock)

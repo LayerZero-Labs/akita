@@ -1,18 +1,21 @@
-//! Verifier-side succinct relation-weight evaluator (filled in during Slice 4).
+//! Verifier-side succinct relation-weight evaluator shell.
+//!
+//! `eval_at_point` is implemented in `akita-verifier` where
+//! [`RingSwitchDeferredRowEval`] lives.
 
 use akita_field::{AkitaError, FieldCore};
 
 /// Verifier-side prepared evaluator for `RelationWeightPolynomial`.
 ///
-/// Slice 0 defines the shell; `eval_at_point` is implemented when the verifier
-/// cutover lands.
+/// The verifier crate constructs this from ring-switch replay output and
+/// EvaluationTrace row terms, then calls [`Self::eval_at_point`] during stage-2.
 #[derive(Debug, Clone)]
 pub struct PreparedRelationWeightPolynomial<E: FieldCore> {
     _marker: core::marker::PhantomData<E>,
 }
 
 impl<E: FieldCore> PreparedRelationWeightPolynomial<E> {
-    /// Placeholder constructor until verifier wiring provides row-family state.
+    /// Placeholder until the verifier wires ring-switch replay state.
     #[must_use]
     pub fn placeholder() -> Self {
         Self {
@@ -24,10 +27,11 @@ impl<E: FieldCore> PreparedRelationWeightPolynomial<E> {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] until Slice 4 implements the evaluator.
+    /// Returns [`AkitaError::InvalidSetup`] until the verifier attaches row state.
     pub fn eval_at_point(&self, _challenges: &[E]) -> Result<E, AkitaError> {
         Err(AkitaError::InvalidSetup(
-            "PreparedRelationWeightPolynomial::eval_at_point not yet wired".to_string(),
+            "PreparedRelationWeightPolynomial::eval_at_point is implemented in akita-verifier"
+                .to_string(),
         ))
     }
 }

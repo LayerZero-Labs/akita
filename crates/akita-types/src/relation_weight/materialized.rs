@@ -33,9 +33,9 @@ fn relation_weight_error(err: RelationWeightPolynomialError) -> AkitaError {
         RelationWeightPolynomialError::LengthMismatch { expected, actual } => {
             AkitaError::InvalidSize { expected, actual }
         }
-        RelationWeightPolynomialError::NonzeroPadding { index } => AkitaError::InvalidInput(format!(
-            "relation weight padding slot {index} is nonzero"
-        )),
+        RelationWeightPolynomialError::NonzeroPadding { index } => {
+            AkitaError::InvalidInput(format!("relation weight padding slot {index} is nonzero"))
+        }
     }
 }
 
@@ -62,22 +62,28 @@ impl<E: FieldCore> RelationWeightPolynomial<E> {
         witness_len: usize,
     ) -> Result<Self, AkitaError> {
         if y_len == 0 || live_x_cols == 0 {
-            return Err(relation_weight_error(RelationWeightPolynomialError::LengthMismatch {
-                expected: live_x_cols.saturating_mul(y_len),
-                actual: evals.len(),
-            }));
+            return Err(relation_weight_error(
+                RelationWeightPolynomialError::LengthMismatch {
+                    expected: live_x_cols.saturating_mul(y_len),
+                    actual: evals.len(),
+                },
+            ));
         }
         if witness_len > live_x_cols.saturating_mul(y_len) {
-            return Err(relation_weight_error(RelationWeightPolynomialError::LengthMismatch {
-                expected: witness_len,
-                actual: live_x_cols.saturating_mul(y_len),
-            }));
+            return Err(relation_weight_error(
+                RelationWeightPolynomialError::LengthMismatch {
+                    expected: witness_len,
+                    actual: live_x_cols.saturating_mul(y_len),
+                },
+            ));
         }
         if evals.len() != live_x_cols.saturating_mul(y_len) {
-            return Err(relation_weight_error(RelationWeightPolynomialError::LengthMismatch {
-                expected: live_x_cols.saturating_mul(y_len),
-                actual: evals.len(),
-            }));
+            return Err(relation_weight_error(
+                RelationWeightPolynomialError::LengthMismatch {
+                    expected: live_x_cols.saturating_mul(y_len),
+                    actual: evals.len(),
+                },
+            ));
         }
         for (idx, value) in evals.iter().enumerate().skip(witness_len) {
             if !value.is_zero() {
@@ -193,16 +199,15 @@ mod tests {
     fn bridge_matches_pointwise_formula() {
         let y_len = 4;
         let live_x_cols = 3;
-        let alpha: Vec<E> = (0..y_len)
-            .map(|i| E::from_u64(i as u64 + 1))
-            .collect();
+        let alpha: Vec<E> = (0..y_len).map(|i| E::from_u64(i as u64 + 1)).collect();
         let m: Vec<E> = (0..live_x_cols)
             .map(|i| E::from_u64((i + 1) as u64 * 10))
             .collect();
         let mut trace = vec![E::zero(); live_x_cols * y_len];
         trace[5] = E::from_u64(7);
         let bridged =
-            bridge_relation_weight_from_split(&alpha, &m, Some(&trace), y_len, live_x_cols).unwrap();
+            bridge_relation_weight_from_split(&alpha, &m, Some(&trace), y_len, live_x_cols)
+                .unwrap();
         for x in 0..live_x_cols {
             for y in 0..y_len {
                 let idx = x * y_len + y;

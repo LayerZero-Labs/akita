@@ -22,6 +22,14 @@ The verifier must validate `key.num_vars` against setup capacity before invoking
 3. Keep hot verifier arithmetic paths fast: do not add slow fallback evaluators, compatibility shims, or repeated defensive checks inside tight loops when the invariant can be enforced once at the boundary.
 4. Prover-only panics are acceptable for now if they are not reachable from verifier paths.
 
+## Stage-2 relation layout
+
+`RelationRowLayout` and `RelationQuotientLayout` (`akita-types`) size and
+validate quotient witness tails and per-family ring dimensions. Verifier paths
+that materialize relation weights or quotient contributions must reject layouts
+with zero row counts, overlapping witness offsets, or overflow in slice length
+arithmetic via `AkitaError::InvalidSetup` before indexing witness bytes.
+
 ## Evidence
 
 Historical audit checklist: [`docs/verifier-panic-audit.md`](verifier-panic-audit.md) (PR #81 snapshot; link, do not duplicate).

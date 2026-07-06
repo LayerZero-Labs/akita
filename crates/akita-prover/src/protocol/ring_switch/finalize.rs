@@ -1,13 +1,16 @@
 use super::*;
 
+/// Inputs for building the unified relation-weight handoff during finalize.
+pub struct RelationWeightFinalizeInputs<F: FieldCore, E: FieldCore> {
+    pub trace_eval_target: E,
+    pub trace: Option<super::evals::RelationWeightTraceBuild<F, E>>,
+}
+
 /// Complete the ring switch after the caller has bound the next witness.
 ///
 /// Samples challenges and builds the evaluation tables for the fused sumcheck.
 /// The caller must first absorb either the next-witness commitment or the
 /// terminal cleartext witness bytes into `transcript`.
-///
-/// Only the current level's `D` is needed for M-alpha expansion and
-/// `alpha_evals_y`.
 ///
 /// # Errors
 ///
@@ -24,10 +27,12 @@ pub fn ring_switch_finalize<F, E, T>(
     lp: &LevelParams,
     gamma: Option<&[E]>,
     m_row_layout: MRowLayout,
+    commitment: &RingVec<F>,
+    relation_weight: RelationWeightFinalizeInputs<F, E>,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + RandomSampling + Invertible,
+    E: FpExtEncoding<F> + FromPrimitiveInt + ExtField<F>,
     T: Transcript<F>,
 {
     let dims = instance.role_dims();
@@ -75,8 +80,6 @@ where
         let tau1: Vec<E> = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
             .collect();
-        let ring_alpha_evals_y = scalar_powers(alpha, D);
-        let alpha_evals_y = scalar_powers(alpha, D);
 
         let challenges = &instance.challenges;
         if gamma.len() != instance.opening_batch().num_total_polynomials() {
@@ -85,54 +88,69 @@ where
             ));
         }
 
+        let relation_weight_claim =
+            akita_types::relation_weight_claim_from_rows_extension_at_dims::<F, E>(
+                dims,
+                &tau1,
+                alpha,
+                lp.a_key.row_len(),
+                relation_weight.trace_eval_target,
+                instance.v(),
+                commitment,
+            )?;
+
         #[cfg(feature = "parallel")]
-        let (m_evals_x_result, w_result) = rayon::join(
+        let (relation_weight_evals_result, w_result) = rayon::join(
             || {
-                compute_m_evals_x::<F, E>(
+                super::evals::build_relation_weight_evals::<F, E>(
                     setup,
                     instance.opening_point(),
                     instance.ring_multiplier_point(),
                     challenges,
                     alpha,
-                    &ring_alpha_evals_y,
                     dims,
                     lp,
                     &tau1,
                     num_polys,
                     gamma,
                     m_row_layout,
+                    ring_bits,
+                    live_x_cols,
+                    relation_weight.trace,
                 )
             },
             || build_w_evals_compact(w.as_i8_digits(), D, 1),
         );
         #[cfg(not(feature = "parallel"))]
-        let (m_evals_x_result, w_result) = {
-            let m_evals_x = compute_m_evals_x::<F, E>(
+        let (relation_weight_evals_result, w_result) = {
+            let relation_weight_evals = super::evals::build_relation_weight_evals::<F, E>(
                 setup,
                 instance.opening_point(),
                 instance.ring_multiplier_point(),
                 challenges,
                 alpha,
-                &ring_alpha_evals_y,
                 dims,
                 lp,
                 &tau1,
                 num_polys,
                 gamma,
                 m_row_layout,
+                ring_bits,
+                live_x_cols,
+                relation_weight.trace,
             )?;
             let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
-            (Ok(m_evals_x), w_compact)
+            (Ok(relation_weight_evals), w_compact)
         };
 
-        let m_evals_x = m_evals_x_result?;
+        let relation_weight_evals = relation_weight_evals_result?;
         let (w_evals_compact, _, _) = w_result?;
 
         Ok(RingSwitchOutput {
             w_evals_compact,
             live_x_cols,
-            m_evals_x,
-            alpha_evals_y,
+            relation_weight_evals,
+            relation_weight_claim,
             col_bits,
             ring_bits,
             tau0,

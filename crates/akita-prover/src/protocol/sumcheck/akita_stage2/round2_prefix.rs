@@ -84,7 +84,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_compact_through_initial_batch")]
+    #[tracing::instrument(
+        skip_all,
+        name = "AkitaStage2Prover::fold_compact_through_initial_batch"
+    )]
     pub(super) fn fold_compact_through_initial_batch(
         w_compact: &[i8],
         live_x_cols: usize,
@@ -153,7 +156,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let y_len = self.relation_weight_y_len();
         debug_assert_eq!(w_compact.len(), self.live_x_cols * y_len);
         let next_y_len = y_len >> 2;
-        debug_assert_eq!(relation_round2.len(), self.relation_weight.live_x_cols() * next_y_len);
+        debug_assert_eq!(
+            relation_round2.len(),
+            self.relation_weight.live_x_cols() * next_y_len
+        );
 
         let current_y_half = next_y_len >> 1;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();

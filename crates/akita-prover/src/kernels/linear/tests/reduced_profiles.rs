@@ -1,7 +1,7 @@
 use super::{centered_i32_ring, cyclic_product, quotient_from_cyclic_and_negacyclic};
 use crate::kernels::crt_ntt::build_ntt_slot;
 use crate::kernels::linear::{
-    fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    fused_relation_family_products, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{
@@ -63,7 +63,7 @@ fn assert_fused_split_eq_zpre_chunks<
     let z_pre = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
+        fused_relation_family_products::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
             .expect("fused split-eq rows");
 
     let z = centered_i32_ring(&z_pre[0]);

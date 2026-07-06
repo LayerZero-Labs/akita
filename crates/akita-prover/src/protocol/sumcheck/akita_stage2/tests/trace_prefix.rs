@@ -281,8 +281,13 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(107);
 
-    let expected_w_full =
-        AkitaStage2Prover::<F>::fold_compact_through_initial_batch(&w_prefix, live_x_cols, y_len, r0, r1);
+    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_through_initial_batch(
+        &w_prefix,
+        live_x_cols,
+        y_len,
+        r0,
+        r1,
+    );
     let relation_x_cols = 1usize << col_bits;
     let expected_relation_round2 =
         AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
@@ -331,6 +336,9 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
             panic!("expected fused trace stage2 transition to materialize full table")
         }
     }
-    assert_eq!(prover.relation_weight.evals(), expected.relation_weight.evals());
+    assert_eq!(
+        prover.relation_weight.evals(),
+        expected.relation_weight.evals()
+    );
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }

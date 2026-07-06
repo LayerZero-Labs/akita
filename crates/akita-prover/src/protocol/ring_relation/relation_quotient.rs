@@ -393,15 +393,15 @@ where
             log_basis: shape.log_basis,
         },
     )?;
-    if relation_rows.d_cyclic.len() != n_d_active
-        || relation_rows.b_cyclic.len() != n_b
-        || relation_rows.a_quotients.len() != n_a
+    if relation_rows.opening_cyclic_products.len() != n_d_active
+        || relation_rows.outer_cyclic_products.len() != n_b
+        || relation_rows.fold_consistency_quotients.len() != n_a
     {
         return Err(AkitaError::InvalidProof);
     }
-    let mut a_quotients = relation_rows.a_quotients;
-    let b_cyclic = relation_rows.b_cyclic;
-    let d_cyclic = relation_rows.d_cyclic;
+    let mut fold_consistency_quotients = relation_rows.fold_consistency_quotients;
+    let outer_cyclic_products = relation_rows.outer_cyclic_products;
+    let opening_cyclic_products = relation_rows.opening_cyclic_products;
     for z_segment in z_segments {
         let segment_rows = RingSwitchQuotientKernel::quotient_rows(
             backend,
@@ -415,11 +415,14 @@ where
         if segment_rows.len() != n_a {
             return Err(AkitaError::InvalidProof);
         }
-        for (dst, src) in a_quotients.iter_mut().zip(segment_rows.into_iter()) {
+        for (dst, src) in fold_consistency_quotients
+            .iter_mut()
+            .zip(segment_rows.into_iter())
+        {
             *dst += src;
         }
     }
-    let commitment_cyclic_rows = b_cyclic;
+    let commitment_cyclic_rows = outer_cyclic_products;
     if commitment_cyclic_rows.len() != n_b {
         return Err(AkitaError::InvalidProof);
     }
@@ -469,7 +472,7 @@ where
                 recomposed_inner_rows[inner_idx].get(a_idx).copied()
             })?;
 
-            let a_q = a_quotients[a_idx].coefficients();
+            let a_q = fold_consistency_quotients[a_idx].coefficients();
             for k in 0..D {
                 quotient[k] -= a_q[k];
             }
@@ -485,7 +488,7 @@ where
         } else {
             // D-block: v = D·ê.
             result.push(quotient_from_cyclic_and_reduced(
-                &d_cyclic[row_idx - d_start],
+                &opening_cyclic_products[row_idx - d_start],
                 &y[row_idx],
             ));
         }

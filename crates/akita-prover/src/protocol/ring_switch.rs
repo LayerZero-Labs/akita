@@ -16,8 +16,8 @@ use akita_challenges::Challenges;
 use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
-    MulBase, RandomSampling,
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, Invertible,
+    LiftBase, MulBase, RandomSampling,
 };
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
@@ -40,8 +40,10 @@ mod tests;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
-pub use evals::{build_w_evals_compact, compute_m_evals_x};
-pub use finalize::ring_switch_finalize;
+pub use evals::{
+    build_relation_weight_evals, build_w_evals_compact, compute_m_evals_x, RelationWeightTraceBuild,
+};
+pub use finalize::{ring_switch_finalize, RelationWeightFinalizeInputs};
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
@@ -50,10 +52,10 @@ pub struct RingSwitchOutput<E: FieldCore> {
     pub w_evals_compact: Vec<i8>,
     /// Physical x width before zero-extension to the next power of two.
     pub live_x_cols: usize,
-    /// Evaluation table of M_alpha(x) (tau1-weighted).
-    pub m_evals_x: Vec<E>,
-    /// Evaluation table of alpha powers (y dimension).
-    pub alpha_evals_y: Vec<E>,
+    /// Materialized relation-weight polynomial evaluations for stage-2.
+    pub relation_weight_evals: Vec<E>,
+    /// Stage-2 relation claim `V_alpha` (includes EvaluationTrace row).
+    pub relation_weight_claim: E,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.

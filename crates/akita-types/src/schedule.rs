@@ -338,13 +338,13 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    let r_rows = lp.m_row_count_for(1, layout)?;
-    let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
-            field_bits,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
+    let digit_depth = crate::sis::compute_num_digits_full_field(field_bits, lp.log_basis);
+    let r_count = crate::layout::quotient_witness_coeff_count_for_scalar_level_bits(
+        lp,
+        layout,
+        1,
+        digit_depth,
+    )?;
 
     e_hat_count
         .checked_add(t_hat_count)
@@ -443,13 +443,13 @@ pub fn w_ring_element_count_for_chunks(
     // single-chunk layout); only the replicated ẑ grows. Pricing it with
     // `num_chunks` here would over-count the tail and break the prover's
     // `emitted == next_w_len` and the verifier's single-machine `r_len`.
-    let r_rows = lp.m_row_count_for(1, layout)?;
-    let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
-            field_bits,
-            lp.log_basis,
-        ))
-        .ok_or_else(overflow)?;
+    let digit_depth = crate::sis::compute_num_digits_full_field(field_bits, lp.log_basis);
+    let r_count = crate::layout::quotient_witness_coeff_count_for_scalar_level_bits(
+        lp,
+        layout,
+        1,
+        digit_depth,
+    )?;
 
     num_chunks
         .checked_mul(body)

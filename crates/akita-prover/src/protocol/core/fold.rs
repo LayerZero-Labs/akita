@@ -8,8 +8,9 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
-use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
-use akita_types::bridge_relation_weight_from_split;
+use crate::protocol::ring_switch::{
+    RelationWeightFinalizeInputs, RelationWeightTraceBuild, RingSwitchTerminalArtifacts,
+};
 use akita_types::build_segment_typed_witness;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::validate_segment_typed_z_payload;
@@ -513,6 +514,58 @@ where
     } else {
         MRowLayout::WithDBlock
     };
+    ensure_trace_stage2_supported(E::EXT_DEGREE)?;
+    let pre_col_bits = logical_w
+        .len()
+        .checked_div(ring_d)
+        .and_then(|cols| cols.checked_next_power_of_two())
+        .map(|p2| p2.trailing_zeros() as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?;
+    let pre_ring_bits = ring_d.trailing_zeros() as usize;
+    let trace_build = if let Some(row_coefficients) = prepared_fold.row_coefficients.clone() {
+        let num_trace_blocks = prepared_fold
+            .instance
+            .opening_batch()
+            .num_total_polynomials()
+            .checked_mul(lp.num_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+        let (_, layout) = trace_layout_for_instance(
+            lp,
+            &prepared_fold.instance,
+            pre_col_bits,
+            pre_ring_bits,
+            num_trace_blocks,
+        )?;
+        Some(RelationWeightTraceBuild::Root {
+            ring_d,
+            num_blocks: lp.num_blocks,
+            layout,
+            opening_batch: prepared_fold.instance.opening_batch().clone(),
+            prepared_point: prepared_fold
+                .trace_prepared_point
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?
+                .clone(),
+            row_coefficients,
+            trace_claim_scales: prepared_fold.trace_claim_scales.clone(),
+        })
+    } else if let Some(prepared) = prepared_fold.trace_prepared_point.as_ref() {
+        let (_, layout) = trace_layout_for_instance(
+            lp,
+            &prepared_fold.instance,
+            pre_col_bits,
+            pre_ring_bits,
+            lp.num_blocks,
+        )?;
+        Some(RelationWeightTraceBuild::Recursive {
+            ring_d,
+            layout,
+            prepared: prepared.clone(),
+            trace_scale: prepared_fold.trace_scale,
+        })
+    } else {
+        None
+    };
     let rs = ring_switch_finalize::<F, E, T>(
         &prepared_fold.instance,
         expanded.as_ref(),
@@ -521,15 +574,11 @@ where
         lp,
         prepared_fold.row_coefficients.as_deref(),
         m_row_layout,
-    )?;
-
-    let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
-        prepared_fold.instance.role_dims(),
-        &rs.tau1,
-        rs.alpha,
-        lp.a_key.row_len(),
-        prepared_fold.instance.v(),
         &prepared_fold.commitment,
+        RelationWeightFinalizeInputs {
+            trace_eval_target: prepared_fold.trace_eval_target,
+            trace: trace_build,
+        },
     )?;
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
         (None, vec![E::zero(); rs.col_bits + rs.ring_bits], E::zero())
@@ -543,78 +592,13 @@ where
     } else {
         sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
     };
-    let trace_coeff = {
-        let trace_gamma = if is_terminal_fold {
-            sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
-        } else {
-            batching_coeff
-        };
-        stage2_trace_coeff(batching_coeff, trace_gamma, is_terminal_fold)
-    };
-    let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
-    ensure_trace_stage2_supported(E::EXT_DEGREE)?;
-    let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
-        let num_trace_blocks = prepared_fold
-            .instance
-            .opening_batch()
-            .num_total_polynomials()
-            .checked_mul(lp.num_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
-        let (_, layout) = trace_layout_for_instance(
-            lp,
-            &prepared_fold.instance,
-            rs.col_bits,
-            rs.ring_bits,
-            num_trace_blocks,
-        )?;
-        Some(build_root_stage2_trace_table::<F, E>(
-            ring_d,
-            lp.num_blocks,
-            &layout,
-            prepared_fold.instance.opening_batch(),
-            prepared_fold
-                .trace_prepared_point
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?,
-            row_coefficients,
-            prepared_fold.trace_claim_scales.as_deref(),
-            trace_coeff,
-            rs.live_x_cols,
-        )?)
-    } else if let Some(prepared) = prepared_fold.trace_prepared_point.as_ref() {
-        let (_, layout) = trace_layout_for_instance(
-            lp,
-            &prepared_fold.instance,
-            rs.col_bits,
-            rs.ring_bits,
-            lp.num_blocks,
-        )?;
-        Some(build_recursive_stage2_trace_table::<F, E>(
-            ring_d,
-            &layout,
-            prepared,
-            prepared_fold.trace_scale,
-            trace_coeff,
-            rs.live_x_cols,
-        )?)
-    } else {
-        None
-    };
     let ring_bits = rs.ring_bits;
     let col_bits = rs.col_bits;
     let live_x_cols = rs.live_x_cols;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
-    let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
-        transcript,
-        batching_coeff,
-        rs,
-        &stage1_point,
-        s_claim,
-        relation_claim,
-        trace_compact,
-        trace_opening_claim,
-    )?;
+    let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) =
+        prove_stage2::<F, E, T>(transcript, batching_coeff, rs, &stage1_point, s_claim)?;
     if is_terminal_fold {
         let final_witness = final_witness.ok_or_else(|| {
             AkitaError::InvalidInput("terminal fold did not bind a final witness".to_string())
@@ -806,9 +790,6 @@ fn prove_stage2<F, E, T>(
     rs: RingSwitchOutput<E>,
     stage1_point: &[E],
     s_claim: E,
-    relation_claim: E,
-    trace_compact: Option<TraceTable<E>>,
-    trace_opening_claim: E,
 ) -> Result<Stage2ProveResult<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -816,41 +797,14 @@ where
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-    let y_len = 1usize
-        .checked_shl(rs.ring_bits as u32)
-        .ok_or(AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
-    let relation_x_cols = 1usize
-        .checked_shl(rs.col_bits as u32)
-        .ok_or(AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
-    let trace_dense = trace_compact.as_ref().map(|table| {
-        let live_dense = table.materialize_dense(rs.live_x_cols, y_len);
-        if rs.live_x_cols == relation_x_cols {
-            live_dense
-        } else {
-            let mut full = vec![E::zero(); relation_x_cols * y_len];
-            for x in 0..rs.live_x_cols {
-                let start = x * y_len;
-                full[start..start + y_len].copy_from_slice(&live_dense[start..start + y_len]);
-            }
-            full
-        }
-    });
-    let relation_weight_evals = bridge_relation_weight_from_split(
-        &rs.alpha_evals_y,
-        &rs.m_evals_x,
-        trace_dense.as_deref(),
-        y_len,
-        relation_x_cols,
-    )?;
-    let relation_weight_claim = relation_claim + trace_opening_claim;
     let mut stage2_prover = AkitaStage2Prover::new(
         batching_coeff,
         rs.w_evals_compact,
         stage1_point,
         s_claim,
         rs.b,
-        relation_weight_evals,
-        relation_weight_claim,
+        rs.relation_weight_evals,
+        rs.relation_weight_claim,
         rs.live_x_cols,
         rs.col_bits,
         rs.ring_bits,

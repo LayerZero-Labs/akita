@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
+fn fused_relation_family_products_uses_all_cyclic_role_rows() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
     let rows = 3;
@@ -38,7 +38,7 @@ fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
     let expected_b = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &t_hat, log_basis)
         .expect("expected B rows");
     let (d_rows, b_rows, _a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, &e_hat, &t_hat, &z_pre, 1)
+        fused_relation_family_products::<F, D>(&slot, rows, rows, 1, &e_hat, &t_hat, &z_pre, 1)
             .expect("fused split-eq rows");
 
     assert_eq!(d_rows, expected_d);
@@ -63,7 +63,7 @@ fn fused_split_eq_q128_quotient_chunks_before_crt_wrap() {
     let z_pre = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
+        fused_relation_family_products::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
             .expect("fused split-eq rows");
 
     let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, j| {
@@ -94,7 +94,7 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
     let z_pre = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
+        fused_relation_family_products::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
             .expect("fused split-eq rows");
 
     let z = centered_i32_ring(&z_pre[0]);
@@ -121,7 +121,7 @@ fn fused_split_eq_uses_actual_centered_bound_when_hint_is_underreported() {
     let z_pre = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 1)
+        fused_relation_family_products::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 1)
             .expect("fused split-eq rows");
 
     let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, j| {
@@ -153,7 +153,7 @@ fn fused_split_eq_q128_cyclic_i8_chunks_before_crt_wrap() {
     let e_hat = vec![[-32i8; D]; cols];
 
     let (d_rows, _b_rows, _a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 1, 0, 0, &e_hat, &[], &[], 0)
+        fused_relation_family_products::<F, D>(&slot, 1, 0, 0, &e_hat, &[], &[], 0)
             .expect("fused split-eq rows");
 
     let digit = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
@@ -166,7 +166,7 @@ fn fused_split_eq_q128_cyclic_i8_chunks_before_crt_wrap() {
 }
 
 #[test]
-fn fused_split_eq_quotients_uses_role_local_packed_widths() {
+fn fused_relation_family_products_uses_role_local_packed_widths() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
     let n_d = 2;
@@ -228,7 +228,7 @@ fn fused_split_eq_quotients_uses_role_local_packed_widths() {
         })
         .collect::<Vec<_>>();
     let (d_rows, b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, n_d, n_b, n_a, &e_hat, &t_hat, &z_pre, 3)
+        fused_relation_family_products::<F, D>(&slot, n_d, n_b, n_a, &e_hat, &t_hat, &z_pre, 3)
             .expect("fused split-eq rows");
 
     assert_eq!(d_rows, expected_d);

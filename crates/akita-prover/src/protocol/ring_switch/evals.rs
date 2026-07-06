@@ -1,7 +1,11 @@
 use super::*;
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use akita_algebra::ring::{eval_flat_ring_at_pows, scalar_powers};
-use akita_types::CommitmentRingDims;
+use akita_types::{
+    bridge_relation_weight_from_split, build_trace_table_scaled, trace_public_weights_recursive,
+    trace_public_weights_root_terms, BasisMode, CommitmentRingDims, OpeningClaimsLayout,
+    PreparedOpeningPoint, RelationQuotientLayout, RelationRowLayout, TraceTable, TraceWeightLayout,
+};
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
@@ -147,6 +151,12 @@ where
     };
     let rows = lp.m_row_count_for(1, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
+    let opening_batch = OpeningClaimsLayout::new(8, 1)?;
+    let row_layout =
+        RelationRowLayout::for_scalar_level::<F>(lp, role_dims, m_row_layout, &opening_batch, 1)?;
+    let quotient_layout = RelationQuotientLayout::from_row_layout(&row_layout, levels);
+    quotient_layout.validate()?;
+    let r_tail_len = quotient_layout.total_coeffs();
     // Chunked layout replicates the `z` segment once per window; `e`/`t` are
     // partitioned (their totals are unchanged). `num_chunks = 1` is the
     // single-chunk case.
@@ -158,7 +168,7 @@ where
     let total_cols = w_len
         .checked_add(t_len)
         .and_then(|cols| cols.checked_add(z_cols_total))
-        .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
+        .and_then(|cols| cols.checked_add(r_tail_len))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
 
     let eq_tau1 = EqPolynomial::evals(tau1)?;
@@ -178,10 +188,6 @@ where
         .map(E::lift_base)
         .collect();
     let fold_gadget: Vec<E> = gadget_row_scalars::<F>(depth_fold, log_basis)
-        .into_iter()
-        .map(E::lift_base)
-        .collect();
-    let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, log_basis)
         .into_iter()
         .map(E::lift_base)
         .collect();
@@ -320,16 +326,8 @@ where
         })
         .collect();
 
-    let alpha_pow_d = alpha_pows_d[d_d - 1] * alpha;
-    let denom = alpha_pow_d + E::one();
-    let r_tail_len = rows * levels;
-    let r_tail: Vec<E> = cfg_into_iter!(0..r_tail_len)
-        .map(|idx| {
-            let row_idx = idx / levels;
-            let level_idx = idx % levels;
-            -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
-        })
-        .collect();
+    let r_tail = quotient_layout.materialize_tail_weights::<F, E>(&eq_tau1, alpha)?;
+    debug_assert_eq!(r_tail.len(), r_tail_len);
 
     // Chunked column layout `[z|e_i|t_i]…[r]`: `z` is replicated per window
     // and `e`/`t` are partitioned by global block (same per-cell values as the
@@ -348,4 +346,144 @@ where
     out.extend(r_tail);
     out.resize(x_len, E::zero());
     Ok(out)
+}
+
+/// Trace segment inputs for unified relation-weight construction.
+pub enum RelationWeightTraceBuild<F: FieldCore, E: FieldCore> {
+    /// Root fold: batched public row coefficients and block openings.
+    Root {
+        ring_d: usize,
+        num_blocks: usize,
+        layout: TraceWeightLayout,
+        opening_batch: OpeningClaimsLayout,
+        prepared_point: PreparedOpeningPoint<F, E>,
+        row_coefficients: Vec<E>,
+        trace_claim_scales: Option<Vec<E>>,
+    },
+    /// Recursive suffix: singleton fold with scaled trace weights.
+    Recursive {
+        ring_d: usize,
+        layout: TraceWeightLayout,
+        prepared: PreparedOpeningPoint<F, E>,
+        trace_scale: E,
+    },
+}
+
+/// Build the materialized relation-weight evaluation table for stage-2 sumcheck.
+///
+/// Fuses `M_alpha` column evaluations with the [`EvaluationTrace`] row via
+/// `trace_weight` builders. Does not expose split `m_evals_x` / `alpha_evals_y`.
+///
+/// # Errors
+///
+/// Returns an error if matrix expansion, trace table construction, or the bridge
+/// layout check fails.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "build_relation_weight_evals")]
+pub fn build_relation_weight_evals<F, E>(
+    setup: &AkitaExpandedSetup<F>,
+    opening_point: &RingOpeningPoint<F>,
+    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
+    challenges: &Challenges,
+    alpha: E,
+    role_dims: CommitmentRingDims,
+    lp: &LevelParams,
+    tau1: &[E],
+    num_polys: usize,
+    gamma: &[E],
+    m_row_layout: MRowLayout,
+    ring_bits: usize,
+    live_x_cols: usize,
+    trace: Option<RelationWeightTraceBuild<F, E>>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + ExtField<F>,
+{
+    let d_a = role_dims.d_a();
+    let ring_alpha_evals_y = scalar_powers(alpha, d_a);
+    let alpha_evals_y = scalar_powers(alpha, 1usize << ring_bits);
+    let m_evals_x = compute_m_evals_x::<F, E>(
+        setup,
+        opening_point,
+        ring_multiplier_point,
+        challenges,
+        alpha,
+        &ring_alpha_evals_y,
+        role_dims,
+        lp,
+        tau1,
+        num_polys,
+        gamma,
+        m_row_layout,
+    )?;
+    let y_len = alpha_evals_y.len();
+    let relation_x_cols = m_evals_x.len();
+    let trace_row_weight = {
+        let eq_tau1 = EqPolynomial::evals(tau1)?;
+        eq_tau1.first().copied().unwrap_or(E::zero())
+    };
+    let trace_dense = if let Some(trace) = trace {
+        let table = match trace {
+            RelationWeightTraceBuild::Root {
+                ring_d,
+                num_blocks,
+                layout,
+                opening_batch,
+                prepared_point,
+                row_coefficients,
+                trace_claim_scales,
+            } => akita_types::dispatch_ring_dim_result!(ring_d, |D| {
+                let public_weights = trace_public_weights_root_terms::<F, E, D>(
+                    num_blocks,
+                    &opening_batch,
+                    &prepared_point,
+                    &row_coefficients,
+                    trace_claim_scales.as_deref(),
+                )?;
+                build_trace_table_scaled(&layout, &public_weights, live_x_cols, E::one())
+            })?,
+            RelationWeightTraceBuild::Recursive {
+                ring_d,
+                layout,
+                prepared,
+                trace_scale,
+            } => akita_types::dispatch_ring_dim_result!(ring_d, |D| {
+                let public_weights =
+                    trace_public_weights_recursive::<F, E, D>(&prepared, trace_scale)?;
+                build_trace_table_scaled(&layout, &public_weights, live_x_cols, E::one())
+            })?,
+        };
+        let live_dense = table.materialize_dense(live_x_cols, y_len);
+        if live_x_cols == relation_x_cols {
+            if trace_row_weight.is_zero() {
+                Some(live_dense)
+            } else {
+                Some(
+                    live_dense
+                        .into_iter()
+                        .map(|v| v * trace_row_weight)
+                        .collect(),
+                )
+            }
+        } else {
+            let mut full = vec![E::zero(); relation_x_cols * y_len];
+            for x in 0..live_x_cols {
+                let start = x * y_len;
+                for y in 0..y_len {
+                    full[start + y] = live_dense[start + y] * trace_row_weight;
+                }
+            }
+            Some(full)
+        }
+    } else {
+        None
+    };
+    bridge_relation_weight_from_split(
+        &alpha_evals_y,
+        &m_evals_x,
+        trace_dense.as_deref(),
+        y_len,
+        relation_x_cols,
+    )
 }

@@ -192,10 +192,10 @@ pub struct RingSwitchQuotientRowsPlan<'a, const D: usize> {
 /// Named ring-switch relation rows returned by a backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingSwitchRelationRows<F: FieldCore, const D: usize> {
-    /// D-side cyclic rows.
-    pub d_cyclic: Vec<CyclotomicRing<F, D>>,
-    /// B-side cyclic rows.
-    pub b_cyclic: Vec<CyclotomicRing<F, D>>,
-    /// A-side quotient rows.
-    pub a_quotients: Vec<CyclotomicRing<F, D>>,
+    /// Opening-side cyclic products.
+    pub opening_cyclic_products: Vec<CyclotomicRing<F, D>>,
+    /// Outer-consistency cyclic products.
+    pub outer_cyclic_products: Vec<CyclotomicRing<F, D>>,
+    /// Fold-consistency quotient rows.
+    pub fold_consistency_quotients: Vec<CyclotomicRing<F, D>>,
 }

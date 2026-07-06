@@ -269,6 +269,7 @@ mod tests {
                 u_len: None,
                 r_len: Some(0),
             }],
+            quotient_layout: crate::WitnessLayout::empty_quotient_layout(),
         }
     }
 

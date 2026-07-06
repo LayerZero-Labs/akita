@@ -219,6 +219,7 @@ impl SetupContributionFixture {
                     u_len: None,
                     r_len: Some(0),
                 }],
+                quotient_layout: WitnessLayout::empty_quotient_layout(),
             },
             setup_contribution_inputs,
         };

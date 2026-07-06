@@ -3,6 +3,7 @@
 use akita_field::AkitaError;
 
 pub(crate) mod core;
+pub(crate) mod relation_weight;
 pub(crate) mod ring_switch;
 mod slice_mle;
 

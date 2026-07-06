@@ -224,7 +224,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 } else {
                     Self::fold_compact_to_full(&w_compact, &fold_lut)
                 };
-                self.fold_relation_weight_for_round(r, folding_x_round, use_prefix_x_round, use_prefix_y_round, in_y_round);
+                self.fold_relation_weight_for_round(
+                    r,
+                    folding_x_round,
+                    use_prefix_x_round,
+                    use_prefix_y_round,
+                    in_y_round,
+                );
                 WTable::Full(w_full)
             }
             WTable::Full(w_full) => {
@@ -244,16 +250,34 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         WTable::Full(next_w_full)
                     } else {
                         let next_w_full = Self::fold_full_prefix_x(&w_full, live_x_cols, y_len, r);
-                        self.fold_relation_weight_for_round(r, folding_x_round, use_prefix_x_round, use_prefix_y_round, in_y_round);
+                        self.fold_relation_weight_for_round(
+                            r,
+                            folding_x_round,
+                            use_prefix_x_round,
+                            use_prefix_y_round,
+                            in_y_round,
+                        );
                         WTable::Full(next_w_full)
                     }
                 } else if in_y_round && use_prefix_y_round {
-                    self.fold_relation_weight_for_round(r, folding_x_round, use_prefix_x_round, use_prefix_y_round, in_y_round);
+                    self.fold_relation_weight_for_round(
+                        r,
+                        folding_x_round,
+                        use_prefix_x_round,
+                        use_prefix_y_round,
+                        in_y_round,
+                    );
                     WTable::Full(Self::fold_full_prefix_y(&w_full, live_x_cols, y_len, r))
                 } else {
                     let mut w_full = w_full;
                     fold_evals_in_place(&mut w_full, r);
-                    self.fold_relation_weight_for_round(r, folding_x_round, use_prefix_x_round, use_prefix_y_round, in_y_round);
+                    self.fold_relation_weight_for_round(
+                        r,
+                        folding_x_round,
+                        use_prefix_x_round,
+                        use_prefix_y_round,
+                        in_y_round,
+                    );
                     WTable::Full(w_full)
                 }
             }

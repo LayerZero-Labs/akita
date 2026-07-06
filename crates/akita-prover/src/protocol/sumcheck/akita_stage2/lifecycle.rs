@@ -235,7 +235,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let ring_bits = self.num_vars - self.col_bits;
             let w_compact = match &self.w_table {
                 WTable::Compact(w_compact) => w_compact,
-                WTable::Full(_) => panic!("initial round batch can only build from compact witness"),
+                WTable::Full(_) => {
+                    panic!("initial round batch can only build from compact witness")
+                }
             };
             let proof = build_stage2_initial_round_batch_grid(
                 w_compact,

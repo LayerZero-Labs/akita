@@ -256,7 +256,11 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
 
 /// Fused trace coefficient: `γ²` on terminal folds, otherwise `batching_coeff²`.
 #[inline]
-pub fn stage2_trace_coeff<E: FieldCore>(batching_coeff: E, trace_gamma: E, is_terminal: bool) -> E {
+pub(crate) fn stage2_trace_coeff<E: FieldCore>(
+    batching_coeff: E,
+    trace_gamma: E,
+    is_terminal: bool,
+) -> E {
     if is_terminal {
         trace_gamma * trace_gamma
     } else {

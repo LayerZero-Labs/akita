@@ -33,10 +33,8 @@ mod tests;
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
-    /// Prepared data for deferred ring-switch row MLE evaluation.
-    pub prepared_row_eval: RingSwitchDeferredRowEval<E>,
-    /// Evaluation table of alpha powers over the ring-coordinate dimension.
-    pub alpha_evals_y: Vec<E>,
+    /// Deferred row evaluation state for relation-weight and stage-3 setup.
+    pub deferred: RingSwitchDeferredRowEval<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.
@@ -52,8 +50,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 }
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
-    prepared_row_eval: RingSwitchDeferredRowEval<E>,
-    alpha_evals_y: Vec<E>,
+    deferred: RingSwitchDeferredRowEval<E>,
     col_bits: usize,
     ring_bits: usize,
     tau0: Option<Vec<E>>,
@@ -66,8 +63,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
     fn into_intermediate(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
-            prepared_row_eval: self.prepared_row_eval,
-            alpha_evals_y: self.alpha_evals_y,
+            deferred: self.deferred,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0,
@@ -82,8 +78,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
             return Err(AkitaError::InvalidProof);
         }
         Ok(RingSwitchVerifyOutput {
-            prepared_row_eval: self.prepared_row_eval,
-            alpha_evals_y: self.alpha_evals_y,
+            deferred: self.deferred,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0: Vec::new(),
@@ -254,7 +249,6 @@ where
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();
-    let alpha_evals_y = scalar_powers(alpha, D);
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -262,8 +256,7 @@ where
         prepare_ring_switch_row_eval::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
 
     Ok(RingSwitchVerifyCoreOutput {
-        prepared_row_eval,
-        alpha_evals_y,
+        deferred: prepared_row_eval,
         col_bits,
         ring_bits,
         tau0,
@@ -646,11 +639,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
         // ----- r-tail (single shared quotient on the last chunk) -------------
         let r_contribution = {
-            let r_gadget =
-                gadget_row_scalars::<F>(r_decomp_levels::<F>(self.log_basis), self.log_basis);
-            let denom = alpha_pows[D - 1] * alpha + E::one();
             let offset_r = layout.r_offset()?;
-            compute_r_contribution(self, x_challenges, offset_r, denom, &r_gadget)?
+            compute_r_contribution(self, x_challenges, offset_r, &layout.quotient_layout, alpha)?
         };
 
         let total = e_structured_contribution

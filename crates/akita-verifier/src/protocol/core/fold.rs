@@ -316,7 +316,7 @@ fn verify_stage2<F, E, T>(
     physical_w_len: usize,
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
-    relation_claim: E,
+    relation_weight_claim: E,
     lp: &LevelParams,
     num_segments: usize,
     setup_claim: Option<E>,
@@ -345,90 +345,85 @@ where
             stage2,
             stage1,
             rs,
-            relation_claim,
+            relation_weight_claim,
             witness_oracle,
             setup_claim,
             ring_opening_point,
             ring_multiplier_point,
-            trace.map(|wire| wire.into_claim::<D>()).transpose()?,
+            trace,
         )
     })
 }
 
 enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
     Recursive {
-        lp: &'a LevelParams,
         layout: akita_types::TraceWeightLayout,
-        trace_coeff: E,
-        trace_opening_claim: E,
         prepared_point: PreparedOpeningPoint<F, E>,
         trace_basis: BasisMode,
         trace_eval_scale: E,
+        lp: &'a LevelParams,
     },
     Root {
-        lp: &'a LevelParams,
         layout: akita_types::TraceWeightLayout,
         prepared_point: PreparedOpeningPoint<F, E>,
         trace_block_opening: Vec<E>,
         trace_basis: BasisMode,
         row_coefficients: Vec<E>,
-        trace_coeff: E,
-        trace_eval_target: E,
         trace_claim_scales: Option<Vec<E>>,
         opening_batch: OpeningClaimsLayout,
+        lp: &'a LevelParams,
     },
 }
 
 impl<'a, F, E> TraceWireAtRoleA<'a, F, E>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
-    fn into_claim<const D: usize>(self) -> Result<TraceClaim<F, E, D>, AkitaError> {
-        match self {
+    fn attach_to<const D: usize>(
+        self,
+        prepared: crate::protocol::relation_weight::PreparedRelationWeightPolynomial<F, E, D>,
+    ) -> Result<
+        crate::protocol::relation_weight::PreparedRelationWeightPolynomial<F, E, D>,
+        AkitaError,
+    >
+    where
+        E: ExtField<F>,
+    {
+        let prepared = match self {
             Self::Recursive {
-                lp,
                 layout,
-                trace_coeff,
-                trace_opening_claim,
                 prepared_point,
                 trace_basis,
                 trace_eval_scale,
-            } => Ok(TraceClaim {
-                layout,
-                trace_coeff,
-                trace_opening_claim,
-                trace_terms: trace_terms_recursive(
-                    &prepared_point,
-                    lp,
-                    trace_basis,
-                    trace_eval_scale,
-                )?,
-            }),
-            Self::Root {
                 lp,
+            } => prepared.with_evaluation_trace(
+                layout,
+                trace_terms_recursive(&prepared_point, lp, trace_basis, trace_eval_scale)?,
+            ),
+            Self::Root {
                 layout,
                 prepared_point,
                 trace_block_opening,
                 trace_basis,
                 row_coefficients,
-                trace_coeff,
-                trace_eval_target,
                 trace_claim_scales,
                 opening_batch,
-            } => build_trace_claim_root::<F, E, D>(
-                layout,
                 lp,
-                &opening_batch,
-                &prepared_point,
-                &trace_block_opening,
-                trace_basis,
-                &row_coefficients,
-                trace_coeff,
-                trace_eval_target,
-                trace_claim_scales.as_deref(),
+            } => prepared.with_evaluation_trace(
+                layout,
+                trace_terms_root(
+                    lp,
+                    &opening_batch,
+                    &prepared_point,
+                    &trace_block_opening,
+                    trace_basis,
+                    &row_coefficients,
+                    trace_claim_scales.as_deref(),
+                )?,
             ),
-        }
+        };
+        Ok(prepared)
     }
 }
 
@@ -439,34 +434,39 @@ fn verify_stage2_kernel<F, E, T, const D: usize>(
     stage2: &AkitaStage2Proof<F, E>,
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
-    relation_claim: E,
+    relation_weight_claim: E,
     witness_oracle: Stage2WitnessOracle<'_, F, E>,
     setup_claim: Option<E>,
     ring_opening_point: &RingOpeningPoint<F>,
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
-    trace: Option<TraceClaim<F, E, D>>,
+    trace: Option<TraceWireAtRoleA<'_, F, E>>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    let mut prepared_relation_weight =
+        crate::protocol::relation_weight::PreparedRelationWeightPolynomial::<F, E, D>::from_ring_switch(
+            rs.deferred.clone(),
+            rs.alpha,
+            rs.col_bits,
+            rs.ring_bits,
+        );
+    if let Some(trace) = trace {
+        prepared_relation_weight = trace.attach_to(prepared_relation_weight)?;
+    }
     let stage2_verifier = AkitaStage2Verifier::new(
         stage1.batching_coeff,
         stage1.s_claim,
         witness_oracle,
         stage1.stage1_point,
-        rs.alpha_evals_y.clone(),
-        rs.prepared_row_eval.clone(),
+        prepared_relation_weight,
+        relation_weight_claim,
         setup_claim,
         &setup.expanded,
         ring_opening_point,
         ring_multiplier_point,
-        relation_claim,
-        rs.alpha,
-        rs.col_bits,
-        rs.ring_bits,
-        trace,
     )?;
 
     let sumcheck_challenges = {
@@ -510,11 +510,8 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
         let rho_w = dispatch_ring_dim_result!(role_d_a, |D| {
-            let verifier = SetupSumcheckVerifier::new::<F, D>(
-                &rs.prepared_row_eval,
-                setup_x_challenges,
-                rs.alpha,
-            )?;
+            let verifier =
+                SetupSumcheckVerifier::new::<F, D>(&rs.deferred, setup_x_challenges, rs.alpha)?;
             let rho_w = verifier.verify_batched_stage3::<F, T>(
                 setup,
                 next_fold_level_params,
@@ -645,26 +642,16 @@ where
             )
         }
     })?;
-    let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
+    let relation_weight_claim = relation_weight_claim_from_rows_extension_at_dims::<F, E>(
         relation_instance.role_dims(),
         &rs.tau1,
         rs.alpha,
         prepared.lp.a_key.row_len(),
+        prepared.trace_eval_target,
         relation_instance.v(),
         commitment,
     )?;
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
-    let is_terminal_stage2 = matches!(prepared.stage2, AkitaStage2Proof::Terminal(_));
-    let trace_gamma = if is_terminal_stage2 {
-        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
-    } else {
-        stage1_replay.batching_coeff
-    };
-    let trace_coeff = stage2_trace_coeff(
-        stage1_replay.batching_coeff,
-        trace_gamma,
-        is_terminal_stage2,
-    );
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
     let trace_wire = if prepared.trace_prepared_point.is_none() {
         None
@@ -682,13 +669,11 @@ where
             .as_ref()
             .ok_or(AkitaError::InvalidProof)?;
         Some(TraceWireAtRoleA::Recursive {
-            lp: prepared.lp,
             layout,
-            trace_coeff,
-            trace_opening_claim: trace_coeff * prepared.trace_eval_target,
             prepared_point: prepared_point.clone(),
             trace_basis: prepared.trace_basis,
             trace_eval_scale: prepared.trace_eval_scale,
+            lp: prepared.lp,
         })
     } else {
         let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
@@ -705,7 +690,6 @@ where
             num_trace_blocks,
         )?;
         Some(TraceWireAtRoleA::Root {
-            lp: prepared.lp,
             layout,
             prepared_point: prepared
                 .trace_prepared_point
@@ -719,10 +703,9 @@ where
                 .clone(),
             trace_basis: prepared.trace_basis,
             row_coefficients: prepared.row_coefficients.clone(),
-            trace_coeff,
-            trace_eval_target: prepared.trace_eval_target,
             trace_claim_scales: prepared.trace_claim_scales.clone(),
             opening_batch: relation_instance.opening_batch().clone(),
+            lp: prepared.lp,
         })
     };
     let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
@@ -733,7 +716,7 @@ where
         prepared.w_len,
         stage1_replay,
         &rs,
-        relation_claim,
+        relation_weight_claim,
         prepared.lp,
         1,
         setup_claim,

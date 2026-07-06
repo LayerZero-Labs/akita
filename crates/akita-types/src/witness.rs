@@ -13,6 +13,8 @@
 
 use akita_field::AkitaError;
 
+use crate::layout::RelationQuotientLayout;
+
 /// Per-chunk witness segment ring-column counts (emission order `z ‖ e ‖ t ‖ u ‖ r`).
 ///
 /// `z_len` is **replicated** (the same in every chunk); `e_len`/`t_len` are
@@ -73,9 +75,20 @@ pub struct WitnessLayout {
     pub chunks: Vec<WitnessChunkLayout>,
     /// Per-chunk lengths; parallel to [`Self::chunks`].
     pub chunk_lengths: Vec<WitnessChunkLengths>,
+    /// Derived quotient-tail layout for the shared `r_hat` segment.
+    pub quotient_layout: RelationQuotientLayout,
 }
 
 impl WitnessLayout {
+    /// Empty quotient layout for tests and placeholder layouts.
+    pub fn empty_quotient_layout() -> RelationQuotientLayout {
+        RelationQuotientLayout { slices: Vec::new() }
+    }
+
+    /// Total witness coefficients in the shared quotient tail.
+    pub fn quotient_tail_len(&self) -> usize {
+        self.quotient_layout.total_coeffs()
+    }
     /// Number of resolved chunks (`1` for the single-chunk layout).
     pub fn num_chunks(&self) -> usize {
         self.chunks.len()

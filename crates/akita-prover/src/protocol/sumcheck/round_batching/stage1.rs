@@ -9,7 +9,8 @@ use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly};
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage1_round_batch_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 4] {
+pub(crate) fn stage1_round_batch_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 4]
+{
     [
         RoundBatchPoint::Finite(E::one()),
         RoundBatchPoint::Finite(E::zero() - E::one()),
@@ -20,7 +21,8 @@ pub(crate) fn stage1_round_batch_points<E: FieldCore + FromPrimitiveInt>() -> [R
 
 /// Safe full stage-1 fallback domain `{0, 1, -1, 2, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 5] {
+pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 5]
+{
     [
         RoundBatchPoint::Finite(E::zero()),
         RoundBatchPoint::Finite(E::one()),
@@ -138,14 +140,7 @@ pub(crate) fn build_stage1_initial_round_batch_grid_from_w_compact<
             (w * (w + 1)) as i16
         })
         .collect::<Vec<_>>();
-    build_stage1_initial_round_batch_grid(
-        &s_compact,
-        tau0,
-        b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
-    )
+    build_stage1_initial_round_batch_grid(&s_compact, tau0, b, live_x_cols, col_bits, ring_bits)
 }
 
 /// Build the stage-1 first-two-round bivariate-skip payload from the compact

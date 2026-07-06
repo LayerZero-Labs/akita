@@ -10,7 +10,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         w_compact: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_y_round());
-        debug_assert_eq!(w_compact.len(), self.live_x_cols * self.relation_weight_y_len());
+        debug_assert_eq!(
+            w_compact.len(),
+            self.live_x_cols * self.relation_weight_y_len()
+        );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -58,17 +61,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let (p0, p1) = self.relation_weight.pair_flat(
-                                column_start + left,
-                                column_start + left + 1,
-                            );
-                            accumulate_relation_coeffs_signed(
-                                &mut rel,
-                                w0_i64,
-                                dw_i64,
-                                p0,
-                                p1,
-                            );
+                            let (p0, p1) = self
+                                .relation_weight
+                                .pair_flat(column_start + left, column_start + left + 1);
+                            accumulate_relation_coeffs_signed(&mut rel, w0_i64, dw_i64, p0, p1);
                         }
 
                         let reduced_inner: [E; 2] = reduce_compact_virt_skip_linear(inner_virt);
@@ -138,17 +134,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let (p0, p1) = self.relation_weight.pair_flat(
-                                column_start + left,
-                                column_start + left + 1,
-                            );
-                            accumulate_relation_coeffs_signed(
-                                &mut rel,
-                                w0_i64,
-                                dw_i64,
-                                p0,
-                                p1,
-                            );
+                            let (p0, p1) = self
+                                .relation_weight
+                                .pair_flat(column_start + left, column_start + left + 1);
+                            accumulate_relation_coeffs_signed(&mut rel, w0_i64, dw_i64, p0, p1);
                         }
 
                         let reduced_inner: [E; 3] = reduce_compact_virt(inner_virt);
@@ -188,7 +177,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         w_full: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_y_round());
-        debug_assert_eq!(w_full.len(), self.live_x_cols * self.relation_weight_y_len());
+        debug_assert_eq!(
+            w_full.len(),
+            self.live_x_cols * self.relation_weight_y_len()
+        );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -228,10 +220,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let (p0, p1) = self.relation_weight.pair_flat(
-                                column_start + left,
-                                column_start + left + 1,
-                            );
+                            let (p0, p1) = self
+                                .relation_weight
+                                .pair_flat(column_start + left, column_start + left + 1);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -289,10 +280,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let (p0, p1) = self.relation_weight.pair_flat(
-                                column_start + left,
-                                column_start + left + 1,
-                            );
+                            let (p0, p1) = self
+                                .relation_weight
+                                .pair_flat(column_start + left, column_start + left + 1);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
