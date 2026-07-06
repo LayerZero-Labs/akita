@@ -5,10 +5,11 @@
 //! describes one recursion level.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField};
 
 use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
+use crate::opening_claims::OpeningClaimsLayout;
 use crate::schedule::PrecommittedGroupParams;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
@@ -39,7 +40,7 @@ pub enum MRowLayout {
 /// These fields mirror the group-local pieces of [`LevelParams`]. Widths are
 /// derived from the Ajtai keys and block geometry rather than stored twice.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GroupRootParams {
+pub struct PrecommittedLevelParams {
     /// Frozen standalone group layout bound into the grouped root key.
     pub layout: PrecommittedGroupParams,
     /// Inner Ajtai matrix (A) used by this group.
@@ -58,7 +59,7 @@ pub struct GroupRootParams {
     pub num_digits_fold_one: usize,
 }
 
-impl GroupRootParams {
+impl PrecommittedLevelParams {
     /// Width of this group's A matrix.
     #[inline]
     pub fn inner_width(&self) -> usize {
@@ -166,9 +167,92 @@ pub struct LevelParams {
     /// levels; when non-empty, the top-level fields describe the final/new
     /// group and `d_key` describes the shared D matrix over all group `w_hat`
     /// segments.
-    pub precommitted_groups: Vec<GroupRootParams>,
+    pub precommitted_groups: Vec<PrecommittedLevelParams>,
     /// Per-role ring dimensions at this level (`d_a`, `d_b`, `d_d`).
     pub role_dims: CommitmentRingDims,
+}
+
+/// Common view over full and precommitted level parameters.
+///
+/// Use this trait when code only needs the shared commitment geometry carried
+/// by both [`LevelParams`] and [`PrecommittedLevelParams`].
+pub trait LevelParamsLike {
+    fn a_rows_len(&self) -> usize;
+    fn a_col_len(&self) -> usize;
+    fn b_rows_len(&self) -> usize;
+    fn num_blocks(&self) -> usize;
+    fn block_len(&self) -> usize;
+    fn num_digits_commit(&self) -> usize;
+    fn num_digits_open(&self) -> usize;
+    fn log_basis(&self) -> u32;
+}
+
+impl LevelParamsLike for LevelParams {
+    fn a_rows_len(&self) -> usize {
+        self.a_key.row_len()
+    }
+
+    fn a_col_len(&self) -> usize {
+        self.a_key.col_len()
+    }
+
+    fn b_rows_len(&self) -> usize {
+        self.b_key.row_len()
+    }
+
+    fn num_blocks(&self) -> usize {
+        self.num_blocks
+    }
+
+    fn block_len(&self) -> usize {
+        self.block_len
+    }
+
+    fn num_digits_commit(&self) -> usize {
+        self.num_digits_commit
+    }
+
+    fn num_digits_open(&self) -> usize {
+        self.num_digits_open
+    }
+
+    fn log_basis(&self) -> u32 {
+        self.log_basis
+    }
+}
+
+impl LevelParamsLike for PrecommittedLevelParams {
+    fn a_rows_len(&self) -> usize {
+        self.a_key.row_len()
+    }
+
+    fn a_col_len(&self) -> usize {
+        self.a_key.col_len()
+    }
+
+    fn b_rows_len(&self) -> usize {
+        self.b_key.row_len()
+    }
+
+    fn num_blocks(&self) -> usize {
+        self.num_blocks
+    }
+
+    fn block_len(&self) -> usize {
+        self.block_len
+    }
+
+    fn num_digits_commit(&self) -> usize {
+        self.num_digits_commit
+    }
+
+    fn num_digits_open(&self) -> usize {
+        self.num_digits_open
+    }
+
+    fn log_basis(&self) -> u32 {
+        self.layout.log_basis
+    }
 }
 
 impl LevelParams {
@@ -316,10 +400,10 @@ impl LevelParams {
     }
 
     /// Reject grouped-root params at scalar-only call sites.
-    pub fn reject_grouped_root(&self, context: &str) -> Result<(), AkitaError> {
+    pub fn require_scalar_level(&self, context: &str) -> Result<(), AkitaError> {
         if self.has_precommitted_groups() {
             return Err(AkitaError::InvalidSetup(format!(
-                "{context} does not support grouped root params yet"
+                "{context} requires scalar root level params"
             )));
         }
         Ok(())
@@ -761,10 +845,272 @@ impl LevelParams {
             .ok_or_else(Self::m_row_overflow)
     }
 
+    fn root_group_count(&self) -> usize {
+        self.precommitted_groups.len() + 1
+    }
+
+    pub fn validate_root_opening_batch(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        opening_batch.check()?;
+        if opening_batch.num_groups() != self.root_group_count() {
+            return Err(AkitaError::InvalidSetup(
+                "root opening group count does not match level params".to_string(),
+            ));
+        }
+        for (group_index, group_params) in self.precommitted_groups.iter().enumerate() {
+            let group_layout = opening_batch.group_layout(group_index)?;
+            if *group_layout != group_params.layout.group {
+                return Err(AkitaError::InvalidSetup(
+                    "precommitted root group layout does not match level params".to_string(),
+                ));
+            }
+        }
+        opening_batch.root_final_group_index()
+    }
+
+    /// Sent commitment row count for one root commitment group.
+    pub fn root_group_commitment_rows(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<usize, AkitaError> {
+        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        if group_index == final_group_index {
+            return Ok(self.b_key.row_len());
+        }
+        self.precommitted_groups
+            .get(group_index)
+            .map(|group| group.b_key.row_len())
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    fn grouped_m_row_count_for(
+        &self,
+        num_commitments: usize,
+        layout: MRowLayout,
+    ) -> Result<usize, AkitaError> {
+        if num_commitments != self.root_group_count() {
+            return Err(AkitaError::InvalidSetup(
+                "grouped root M rows require the real root group count".to_string(),
+            ));
+        }
+
+        let mut rows = self
+            .a_start()
+            .checked_add(self.a_key.row_len())
+            .and_then(|n| n.checked_add(self.b_key.row_len()))
+            .ok_or_else(Self::m_row_overflow)?;
+        for group in &self.precommitted_groups {
+            rows = rows
+                .checked_add(group.a_key.row_len())
+                .and_then(|n| n.checked_add(group.b_key.row_len()))
+                .ok_or_else(Self::m_row_overflow)?;
+        }
+        rows.checked_add(self.n_d_active_for(layout))
+            .ok_or_else(Self::m_row_overflow)
+    }
+
+    /// Absolute start row of one group's A block in the grouped root layout
+    /// (`consistency | A_final | B_final | A_pre* | B_pre* | D`).
+    fn group_a_start(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<usize, AkitaError> {
+        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        if group_index > final_group_index {
+            return Err(AkitaError::InvalidProof);
+        }
+        if group_index == final_group_index {
+            return Ok(self.a_start());
+        }
+
+        let mut start = self
+            .b_start()?
+            .checked_add(self.b_key.row_len())
+            .ok_or_else(Self::m_row_overflow)?;
+        for prior in &self.precommitted_groups[..group_index] {
+            start = start
+                .checked_add(prior.a_key.row_len())
+                .and_then(|n| n.checked_add(prior.b_key.row_len()))
+                .ok_or_else(Self::m_row_overflow)?;
+        }
+        Ok(start)
+    }
+
+    fn group_a_rows(
+        &self,
+        group_index: usize,
+        final_group_index: usize,
+    ) -> Result<usize, AkitaError> {
+        if group_index == final_group_index {
+            Ok(self.a_key.row_len())
+        } else {
+            Ok(self
+                .precommitted_groups
+                .get(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+                .a_key
+                .row_len())
+        }
+    }
+
+    fn group_b_rows(
+        &self,
+        group_index: usize,
+        final_group_index: usize,
+    ) -> Result<usize, AkitaError> {
+        if group_index == final_group_index {
+            Ok(self.b_key.row_len())
+        } else {
+            Ok(self
+                .precommitted_groups
+                .get(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+                .b_key
+                .row_len())
+        }
+    }
+
+    /// M-row range for one root commitment group.
+    pub fn root_commitment_row_range(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+        layout: MRowLayout,
+    ) -> Result<std::ops::Range<usize>, AkitaError> {
+        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let a_start = self.group_a_start(opening_batch, group_index)?;
+        let n_a = self.group_a_rows(group_index, final_group_index)?;
+        let n_b = self.group_b_rows(group_index, final_group_index)?;
+        let start = a_start.checked_add(n_a).ok_or_else(Self::m_row_overflow)?;
+        let end = start.checked_add(n_b).ok_or_else(Self::m_row_overflow)?;
+        let _ = layout;
+        Ok(start..end)
+    }
+
+    /// M-row range for one root A block.
+    pub fn root_a_row_range(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+        layout: MRowLayout,
+    ) -> Result<std::ops::Range<usize>, AkitaError> {
+        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let start = self.group_a_start(opening_batch, group_index)?;
+        let rows = self.group_a_rows(group_index, final_group_index)?;
+        let end = start.checked_add(rows).ok_or_else(Self::m_row_overflow)?;
+        let _ = layout;
+        Ok(start..end)
+    }
+
+    fn root_segment_rings(
+        num_polys: usize,
+        num_blocks: usize,
+        block_len: usize,
+        n_a: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        num_digits_fold: usize,
+    ) -> Result<usize, AkitaError> {
+        let e_hat = num_blocks
+            .checked_mul(num_digits_open)
+            .ok_or_else(|| AkitaError::InvalidSetup("root e-hat witness overflow".to_string()))?;
+        let t_hat = num_polys
+            .checked_mul(num_blocks)
+            .and_then(|n| n.checked_mul(n_a))
+            .and_then(|n| n.checked_mul(num_digits_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("root t-hat witness overflow".to_string()))?;
+        let z_hat = block_len
+            .checked_mul(num_digits_commit)
+            .and_then(|n| n.checked_mul(num_digits_fold))
+            .ok_or_else(|| AkitaError::InvalidSetup("root z-hat witness overflow".to_string()))?;
+
+        e_hat
+            .checked_add(t_hat)
+            .and_then(|n| n.checked_add(z_hat))
+            .ok_or_else(|| AkitaError::InvalidSetup("root witness segment overflow".to_string()))
+    }
+
+    /// Root next-witness length in field elements for scalar or grouped roots.
+    pub fn root_next_w_len<F: CanonicalField>(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        layout: MRowLayout,
+    ) -> Result<usize, AkitaError> {
+        opening_batch.check()?;
+        let modulus = crate::schedule::detect_field_modulus::<F>();
+        let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
+        if !self.has_precommitted_groups() {
+            if opening_batch.num_groups() != 1 {
+                return Err(AkitaError::InvalidSetup(
+                    "scalar root params require a single opening group".to_string(),
+                ));
+            }
+            return crate::schedule::w_ring_element_count_for_chunks(
+                field_bits,
+                self,
+                opening_batch.num_total_polynomials(),
+                layout,
+                self.witness_chunk.num_chunks,
+            )?
+            .checked_mul(self.ring_dimension)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("root next witness length overflow".to_string())
+            });
+        }
+
+        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let final_group = opening_batch.group_layout(final_group_index)?;
+        let mut total = Self::root_segment_rings(
+            final_group.num_polynomials(),
+            self.num_blocks,
+            self.block_len,
+            self.a_key.row_len(),
+            self.num_digits_commit,
+            self.num_digits_open,
+            self.num_digits_fold(final_group.num_polynomials(), field_bits)?,
+        )?;
+        for group in &self.precommitted_groups {
+            let group_rings = Self::root_segment_rings(
+                group.layout.group.num_polynomials(),
+                group.num_blocks,
+                group.block_len,
+                group.a_key.row_len(),
+                group.num_digits_commit,
+                group.num_digits_open,
+                group.num_digits_fold_one,
+            )?;
+            total = total
+                .checked_add(group_rings)
+                .ok_or_else(|| AkitaError::InvalidSetup("root witness overflow".to_string()))?;
+        }
+
+        let r_rows = self.m_row_count_for(opening_batch.num_groups(), layout)?;
+        let r_count = r_rows
+            .checked_mul(crate::sis::compute_num_digits_full_field(
+                field_bits,
+                self.log_basis,
+            ))
+            .ok_or_else(|| AkitaError::InvalidSetup("root r-tail witness overflow".to_string()))?;
+        total = total
+            .checked_add(r_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("root witness overflow".to_string()))?;
+
+        total.checked_mul(self.ring_dimension).ok_or_else(|| {
+            AkitaError::InvalidSetup("root next witness length overflow".to_string())
+        })
+    }
+
     /// Row count for an explicit M-row layout.
     ///
-    /// Row layout: consistency (1) | A (n_a) | B (n_b · num_commitments)
-    /// | optional D (n_d). Public openings bind through the fused trace term,
+    /// Scalar layout: `consistency (1) | A (n_a) | B (n_b · num_commitments)
+    /// | optional D (n_d)`.
+    ///
+    /// Grouped-root layout: `consistency (1) | A_final | B_final | A_pre* |
+    /// B_pre* | optional D`. Public openings bind through the fused trace term,
     /// not M rows.
     ///
     /// At the terminal fold the cleartext witness is shipped on the wire and
@@ -775,7 +1121,10 @@ impl LevelParams {
         num_commitments: usize,
         layout: MRowLayout,
     ) -> Result<usize, AkitaError> {
-        self.reject_grouped_root("m_row_count_for")?;
+        if self.has_precommitted_groups() {
+            return self.grouped_m_row_count_for(num_commitments, layout);
+        }
+        self.require_scalar_level("m_row_count_for")?;
         self.d_start(num_commitments)?
             .checked_add(self.n_d_active_for(layout))
             .ok_or_else(Self::m_row_overflow)
@@ -993,6 +1342,7 @@ fn append_tensor_challenge_shape_descriptor_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PolynomialGroupLayout;
 
     fn sample_params_only() -> LevelParams {
         LevelParams::params_only(
@@ -1121,4 +1471,7 @@ mod tests {
             }
         }
     }
+
+    #[path = "params_grouped_tests.rs"]
+    mod grouped_tests;
 }

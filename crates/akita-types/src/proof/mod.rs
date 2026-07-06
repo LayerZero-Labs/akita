@@ -31,7 +31,6 @@ pub use crate::opening_claims::{
     sample_public_row_coefficients, should_reject_grouped_root, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
     GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
