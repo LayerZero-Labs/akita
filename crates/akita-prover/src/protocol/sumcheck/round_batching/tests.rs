@@ -47,6 +47,7 @@ fn stage2_relation_weight_evals(
     .unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_stage2_grid_from_split(
     w_compact: &[i8],
     alpha_evals_y: &[F],
@@ -77,6 +78,7 @@ fn build_stage2_grid_from_split(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_stage2_grid_from_split_reference(
     w_compact: &[i8],
     alpha_evals_y: &[F],

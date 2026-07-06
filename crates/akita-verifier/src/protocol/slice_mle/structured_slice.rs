@@ -325,12 +325,11 @@ mod tests {
 
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_algebra::offset_eq::{eq_eval_at_index, summarize_pow2_block_carries};
-    use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningClaimsLayout,
+        gadget_row_scalars, LevelParams, MRowLayout, OpeningClaimsLayout,
         RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
         SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
     };
@@ -352,7 +351,6 @@ mod tests {
         g1_open: Vec<F>,
         g1_commit: Vec<F>,
         fold_gadget: Vec<F>,
-        r_gadget: Vec<F>,
     }
 
     fn f(value: u128) -> F {
@@ -440,7 +438,6 @@ mod tests {
         let rows = 1 + n_a + n_b * num_points + n_d;
         let inner_width = block_len * depth_commit;
 
-        let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
         let chunk_layout =
             ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
@@ -502,7 +499,6 @@ mod tests {
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
         let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-        let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
 
         StructuredFixture {
             prepared,
@@ -516,7 +512,6 @@ mod tests {
             g1_open,
             g1_commit,
             fold_gadget,
-            r_gadget,
         }
     }
 

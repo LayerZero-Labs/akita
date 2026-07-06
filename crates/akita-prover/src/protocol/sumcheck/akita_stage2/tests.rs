@@ -744,7 +744,6 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
         WTable::Full(w_full) => w_full.clone(),
         WTable::Compact(_) => panic!("expected later prefix state to be full"),
     };
-    let live_x_cols = expected.live_x_cols;
     let current_y_len = expected.relation_weight_y_len();
     let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_prefix_x(
         &current_w_full,
