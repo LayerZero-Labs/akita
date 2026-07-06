@@ -2,9 +2,10 @@ use super::*;
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use akita_algebra::ring::{eval_flat_ring_at_pows, scalar_powers};
 use akita_types::{
-    bridge_relation_weight_from_split, build_trace_table_scaled, trace_public_weights_recursive,
-    trace_public_weights_root_terms, CommitmentRingDims, OpeningClaimsLayout, PreparedOpeningPoint,
-    RelationQuotientLayout, RelationRowLayout, TraceWeightLayout,
+    build_trace_table_scaled, trace_public_weights_recursive, trace_public_weights_root_terms,
+    CommitmentRingDims, ConsistencyLayer, OpeningClaimsLayout, PreparedOpeningPoint,
+    RelationQuotientLayout, RelationRowFamily, RelationRowLayout, TraceWeightLayout,
+    FOLD_CONSISTENCY_ROW,
 };
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
@@ -57,8 +58,8 @@ pub fn build_w_evals_compact(
 /// Returns an error if the batch shape, opening-point layout, challenge count,
 /// or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
-pub fn compute_m_evals_x<F, E>(
+#[tracing::instrument(skip_all, name = "compute_relation_column_weights")]
+pub fn compute_relation_column_weights<F, E>(
     setup: &AkitaExpandedSetup<F>,
     opening_point: &RingOpeningPoint<F>,
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
@@ -149,11 +150,19 @@ where
         MRowLayout::WithDBlock => n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    let rows = lp.m_row_count_for(1, m_row_layout)?;
+    let rows = lp
+        .m_row_count_for(num_claims, m_row_layout)?
+        .checked_add(1)
+        .ok_or_else(|| AkitaError::InvalidSetup("relation tau1 row count overflow".to_string()))?;
     let levels = r_decomp_levels::<F>(log_basis);
-    let opening_batch = OpeningClaimsLayout::new(8, 1)?;
-    let row_layout =
-        RelationRowLayout::for_scalar_level::<F>(lp, role_dims, m_row_layout, &opening_batch, 1)?;
+    let opening_batch = OpeningClaimsLayout::new(8, num_claims)?;
+    let row_layout = RelationRowLayout::for_scalar_level::<F>(
+        lp,
+        role_dims,
+        m_row_layout,
+        &opening_batch,
+        num_claims,
+    )?;
     let quotient_layout = RelationQuotientLayout::from_row_layout(&row_layout, levels);
     quotient_layout.validate()?;
     let r_tail_len = quotient_layout.total_coeffs();
@@ -230,12 +239,31 @@ where
         .map(|r| a_view.row_flat(r))
         .collect::<Result<_, _>>()?;
 
-    // Canonical row layout: consistency (1) | A | B | D.
-    let a_start = lp.a_start();
-    let b_start = lp.b_start()?;
-    let d_start = lp.d_start(1)?;
+    // Canonical row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
+    let fold_evaluation_row = row_layout
+        .family(RelationRowFamily::FoldEvaluation)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("relation row layout missing FoldEvaluation".to_string())
+        })?
+        .row_start;
+    let a_start = FOLD_CONSISTENCY_ROW;
+    let outer = row_layout
+        .family(RelationRowFamily::OuterConsistency {
+            layer: ConsistencyLayer::Base,
+        })
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("relation row layout missing OuterConsistency".to_string())
+        })?;
+    let b_start = outer.row_start;
+    let outer_row_count = outer.row_count;
+    let d_start = row_layout
+        .family(RelationRowFamily::OpeningConsistency {
+            layer: ConsistencyLayer::Base,
+        })
+        .map(|family| family.row_start)
+        .unwrap_or(rows);
     let a_weights = &eq_tau1[a_start..(a_start + n_a)];
-    let consistency_weight = eq_tau1[0];
+    let consistency_weight = eq_tau1[fold_evaluation_row];
     let t_compound_per_block = n_a * depth_open;
 
     let w_segment: Vec<E> = cfg_into_iter!(0..w_len)
@@ -279,12 +307,13 @@ where
                 block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
             let local_col = t_vector_idx * t_cols_per_vector + phys_claim_offset;
             let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g1_open[digit_idx];
-            let commitment_weights = &eq_tau1[b_start..(b_start + n_b)];
-            for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
+            let commitment_weights = &eq_tau1[b_start..(b_start + outer_row_count)];
+            for (outer_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
+                    let matrix_row = outer_idx % n_b;
                     acc += *eq_i
                         * eval_flat_ring_at_pows(
-                            &b_rows[row_idx][local_col * d_b..(local_col + 1) * d_b],
+                            &b_rows[matrix_row][local_col * d_b..(local_col + 1) * d_b],
                             &alpha_pows_b,
                         );
                 }
@@ -377,8 +406,8 @@ pub enum RelationWeightTraceBuild<F: FieldCore, E: FieldCore> {
 ///
 /// # Errors
 ///
-/// Returns an error if matrix expansion, trace table construction, or the bridge
-/// layout check fails.
+/// Returns an error if matrix expansion, trace table construction, or the live
+/// witness layout check fails.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "build_relation_weight_evals")]
 pub fn build_relation_weight_evals<F, E>(
@@ -404,7 +433,7 @@ where
     let d_a = role_dims.d_a();
     let ring_alpha_evals_y = scalar_powers(alpha, d_a);
     let alpha_evals_y = scalar_powers(alpha, 1usize << ring_bits);
-    let m_evals_x = compute_m_evals_x::<F, E>(
+    let relation_column_weights = compute_relation_column_weights::<F, E>(
         setup,
         opening_point,
         ring_multiplier_point,
@@ -419,7 +448,12 @@ where
         m_row_layout,
     )?;
     let y_len = alpha_evals_y.len();
-    let relation_x_cols = m_evals_x.len();
+    if relation_column_weights.len() < live_x_cols {
+        return Err(AkitaError::InvalidSize {
+            expected: live_x_cols,
+            actual: relation_column_weights.len(),
+        });
+    }
     let trace_row_weight = {
         let eq_tau1 = EqPolynomial::evals(tau1)?;
         eq_tau1.first().copied().unwrap_or(E::zero())
@@ -455,36 +489,29 @@ where
                 build_trace_table_scaled(&layout, &public_weights, live_x_cols, E::one())
             })?,
         };
-        let live_dense = table.materialize_dense(live_x_cols, y_len);
-        if live_x_cols == relation_x_cols {
-            if trace_row_weight.is_zero() {
-                Some(live_dense)
-            } else {
-                Some(
-                    live_dense
-                        .into_iter()
-                        .map(|v| v * trace_row_weight)
-                        .collect(),
-                )
-            }
-        } else {
-            let mut full = vec![E::zero(); relation_x_cols * y_len];
-            for x in 0..live_x_cols {
-                let start = x * y_len;
-                for y in 0..y_len {
-                    full[start + y] = live_dense[start + y] * trace_row_weight;
-                }
-            }
-            Some(full)
-        }
+        Some(
+            table
+                .materialize_dense(live_x_cols, y_len)
+                .into_iter()
+                .map(|v| v * trace_row_weight)
+                .collect::<Vec<_>>(),
+        )
     } else {
         None
     };
-    bridge_relation_weight_from_split(
-        &alpha_evals_y,
-        &m_evals_x,
-        trace_dense.as_deref(),
-        y_len,
-        relation_x_cols,
-    )
+    let trace_dense = trace_dense.as_deref();
+    let mut out = Vec::with_capacity(live_x_cols * y_len);
+    for (x, column_weight) in relation_column_weights
+        .iter()
+        .copied()
+        .enumerate()
+        .take(live_x_cols)
+    {
+        let trace_column = trace_dense.map(|trace| &trace[x * y_len..(x + 1) * y_len]);
+        for (y, alpha_y) in alpha_evals_y.iter().copied().enumerate() {
+            let trace = trace_column.map(|column| column[y]).unwrap_or(E::zero());
+            out.push(alpha_y * column_weight + trace);
+        }
+    }
+    Ok(out)
 }

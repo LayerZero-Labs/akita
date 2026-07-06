@@ -84,7 +84,10 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
                 "B-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let rows = lp.m_row_count_for(1, m_row_layout)?;
+        let rows = lp
+            .m_row_count_for(num_polynomials, m_row_layout)?
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation tau1 row count overflow".into()))?;
         Ok(Self {
             eq_tau1: Vec::new(),
             num_t_vectors: num_polynomials,
@@ -1006,7 +1009,7 @@ mod tests {
             .collect::<Vec<_>>();
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
         let inputs = SetupContributionPlanInputs {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            eq_tau1: vec![test_scalar(11), test_scalar(12), test_scalar(13)],
             num_t_vectors: 0,
             num_blocks: 4,
             num_claims: 1,
@@ -1020,7 +1023,7 @@ mod tests {
             m_row_layout: MRowLayout::WithoutDBlock,
             n_b: 0,
             num_segments: num_points,
-            rows: 2,
+            rows: 3,
             num_polys_per_segment: vec![0],
         };
 

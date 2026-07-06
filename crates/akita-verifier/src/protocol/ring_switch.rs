@@ -15,6 +15,7 @@ use akita_types::{
     gadget_row_scalars, validate_role_dispatch, AkitaExpandedSetup, FpExtEncoding, LevelParams,
     MRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingRole,
     RingVec, SetupContributionPlanInputs, TerminalWitnessTranscriptParts, WitnessLayout,
+    FOLD_CONSISTENCY_ROW, FOLD_EVALUATION_ROW,
 };
 
 use super::slice_mle::{
@@ -231,7 +232,8 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
-    let m_rows = lp.m_row_count_for(1, m_row_layout)?;
+    let row_layout = relation.relation_row_layout(lp)?;
+    let m_rows = row_layout.total_row_count();
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
@@ -293,7 +295,8 @@ where
     let opening_batch = relation.opening_batch();
     let num_polys = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polys, F::modulus_bits())?;
-    let rows = lp.m_row_count_for(1, relation.m_row_layout())?;
+    let row_layout = relation.relation_row_layout(lp)?;
+    let rows = row_layout.total_row_count();
     prepare_ring_switch_row_eval_inner::<F, E, D>(
         &relation.challenges,
         alpha,
@@ -505,8 +508,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             }
         }
 
-        // Canonical A-block start: consistency (1) | A | B | D.
-        let a_start = 1usize;
+        // EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
+        let fold_evaluation_row = FOLD_EVALUATION_ROW;
+        let a_start = FOLD_CONSISTENCY_ROW;
         let a_row_count = self.n_a;
 
         // ----- E-hat / T-hat / Z structured: fold over chunks ----------------
@@ -542,7 +546,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 e_structured_contribution += EStructuredSlicesEvaluator {
                     gadget_vector: &g1_open,
                     challenge_block_summaries: &summaries,
-                    challenge_weight: self.eq_tau1[0],
+                    challenge_weight: self.eq_tau1[fold_evaluation_row],
                     high_eq_table: &eq_hi_e_table,
                 }
                 .evaluate();
@@ -582,7 +586,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         g1_commit: &g1_commit,
                         fold_gadget: &fold_gadget,
                         a_block_summary: &a_block_summary,
-                        consistency_weight: self.eq_tau1[0],
+                        consistency_weight: self.eq_tau1[fold_evaluation_row],
                         high_eq_table: &eq_hi_z_table,
                     }
                     .evaluate();
@@ -598,7 +602,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     z_structured_contribution += ZDenseSlicesEvaluator {
                         g1_commit: &g1_commit,
                         fold_gadget: &fold_gadget,
-                        consistency_weight: self.eq_tau1[0],
+                        consistency_weight: self.eq_tau1[fold_evaluation_row],
                         a_evals_by_point: &a_evals_by_point,
                         full_vec_randomness: x_challenges,
                         offset_z: chunk.offset_z,

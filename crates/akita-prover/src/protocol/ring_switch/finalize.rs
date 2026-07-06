@@ -64,7 +64,8 @@ where
             })?
             .trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
-        let m_rows = lp.m_row_count_for(1, m_row_layout)?;
+        let row_layout = instance.relation_row_layout(lp)?;
+        let m_rows = row_layout.total_row_count();
         let num_sc_vars = col_bits + ring_bits;
         let num_i = m_rows
             .checked_next_power_of_two()

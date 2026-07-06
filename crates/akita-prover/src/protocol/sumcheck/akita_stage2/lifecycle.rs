@@ -43,7 +43,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let witness_len = live_x_cols
             .checked_mul(y_len)
             .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
-        let relation_x_cols = x_len;
         if w_evals_compact.len() != witness_len {
             return Err(AkitaError::InvalidSize {
                 expected: witness_len,
@@ -56,12 +55,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: stage1_point.len(),
             });
         }
-        let relation_weight = RelationWeightPolynomial::from_evals(
-            relation_weight_evals,
-            y_len,
-            relation_x_cols,
-            relation_x_cols * y_len,
-        )?;
+        let relation_weight =
+            RelationWeightPolynomial::from_live_evals(relation_weight_evals, witness_len)?;
 
         let input_claim = batching_coeff * s_claim + relation_weight_claim;
 
@@ -74,6 +69,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             relation_weight,
             live_x_cols,
+            relation_y_len: y_len,
             col_bits,
             num_vars,
             prev_norm_claim: batching_coeff * s_claim,

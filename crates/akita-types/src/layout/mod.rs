@@ -33,9 +33,10 @@ pub use proof_size::{
     proof_ring_vec_bytes, sumcheck_rounds,
 };
 pub use relation_rows::{
-    quotient_witness_coeff_count_for_scalar_level,
+    outer_consistency_row_start, quotient_witness_coeff_count_for_scalar_level,
     quotient_witness_coeff_count_for_scalar_level_bits, ConsistencyLayer, RelationQuotientLayout,
     RelationQuotientSlice, RelationRowFamily, RelationRowFamilyLayout, RelationRowLayout,
+    FOLD_CONSISTENCY_ROW, FOLD_EVALUATION_ROW,
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,

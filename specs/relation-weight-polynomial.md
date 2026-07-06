@@ -167,9 +167,9 @@ today; the cutover folds it into `RelationWeightPolynomial` as the
 
 ### Ring-Switch Prover
 
-`compute_m_evals_x` is already partway to mixed role dimensions: it computes
-separate alpha-power vectors for `d_a`, `d_b`, and `d_d`, and it views the
-shared setup matrix with per-role dimensions.
+The current private relation-column accumulator is already partway to mixed role
+dimensions: it computes separate alpha-power vectors for `d_a`, `d_b`, and
+`d_d`, and it views the shared setup matrix with per-role dimensions.
 
 The remaining problem is that it returns only the x-column factor. Stage 2 then
 reintroduces one global `alpha_evals_y` factor. This prevents the relation
@@ -204,9 +204,87 @@ Let the next witness be the multilinear polynomial
 w : {0,1}^{mu'} -> E
 ```
 
-where the Boolean address covers the full flat witness coefficient stream. The
-address is still decoded as `(x, y)` internally while current schedules use
-a uniform ring dimension, but that is an implementation detail.
+where the Boolean address covers the live flat next-witness coefficient stream,
+zero-extended to the next power-of-two Boolean domain.
+
+The prover stores only the live coefficient range and the polynomial object has
+exactly one length:
+
+```text
+RelationWeightPolynomial.evals.len() = w_evals_compact.len()
+RelationWeightPolynomial.live_len    = RelationWeightPolynomial.evals.len()
+```
+
+Both `w` and `RelationWeightPolynomial` are interpreted as zero outside that
+live range. Sumcheck pair scans may visit local fold pairs whose flat address
+lands outside `0..live_len`; those accesses must return zero for both witness
+and relation weight. They must not materialize arbitrary relation-weight values
+in padded witness slots.
+
+Formally, let `N = live_len`, let `mu' = ceil_log2(N)`, and let
+`idx : {0,1}^{mu'} -> {0, ..., 2^{mu'} - 1}` be the Boolean-index map used by
+the transcript bind order. Given live vectors `w_live, R_live in E^N`, define
+their zero-extended Boolean tables:
+
+```text
+w~(b) = w_live[idx(b)] if idx(b) < N, else 0
+R~(b) = R_live[idx(b)] if idx(b) < N, else 0
+```
+
+and extend those tables multilinearly to all points in `E^{mu'}`. The relation
+claim is therefore:
+
+```text
+V_alpha = sum_{b in {0,1}^{mu'}} w~(b) * R~(b)
+        = sum_{a=0}^{N-1} w_live[a] * R_live[a].
+```
+
+So the Boolean sum is still over the full power-of-two hypercube, but only live
+flat addresses contribute. There is no second hidden sum over padded weights.
+The padded entries are fixed public zeroes, not prover-chosen values.
+
+This zero-extension convention is soundness-critical, not a storage detail.
+Completeness requires the prover kernel and verifier closed-form evaluator to
+use the same `w~` and `R~`. If one side treats a padded address as absent and the
+other evaluates a nonzero relation there, the final
+`expected_output_claim(r)` is for a different multilinear polynomial.
+
+Soundness requires the padded entries to be fixed to zero because sumcheck binds
+the multilinear extension, not only the initial Boolean sum. Even if
+`w_pad = 0` makes a padded Boolean contribution vanish at round zero, a
+nonzero `R_pad` changes folded line evaluations:
+
+```text
+(w0 + t * (0 - w0)) * (R0 + t * (R_pad - R0)).
+```
+
+Those changed round polynomials can give the prover extra degrees of freedom
+outside the committed live witness and outside the intended relation. The
+accepted statement would become an ambiguous padded relation rather than the
+inner product over the live next-witness stream.
+
+Current scalar-level schedules often decode a flat live index as
+`column * ring_len + coeff`. This is a storage coordinate only. It is not the
+protocol abstraction and must not leak into row-family APIs. Mixed role
+dimensions already mean that `FoldConsistency`, `OuterConsistency`, and
+`OpeningConsistency` can price setup rows at different ring dimensions; future
+heterogeneous witness layouts may not have one global coefficient axis at all.
+Public APIs should talk about flat live addresses, segment layouts, and row
+families, not `x` and `y`.
+
+For mixed ring dimensions, each row family may still use local coordinates such
+as `(local column, local coefficient)` while evaluating that family's ring
+expression. That local coordinate is immediately embedded into the single flat
+next-witness address space:
+
+```text
+embed_family : local row-family address -> optional flat address in 0..N
+```
+
+If `embed_family` returns no flat address, or returns an address outside
+`0..N`, the contribution is zero. All row-family contributions add into the
+same flat `RelationWeightPolynomial` vector. There is no global `x/y` split,
+global `ring_len`, or global ring dimension in the Stage-2 protocol contract.
 
 The relation construction produces one multilinear polynomial:
 
@@ -410,16 +488,18 @@ relation_weight: RelationWeightPolynomial<E>
 ```
 
 `RelationWeightPolynomial<E>` lives in `akita-types` as the shared protocol
-concept. The prover representation stores a materialized `Vec<E>` of
-evaluations in the same flat order as `w_evals_compact`:
+concept. The prover representation stores a materialized `Vec<E>` of live
+evaluations and no global geometry:
 
 ```text
-relation_weight[a] where a = x * y_len + y
+relation_weight[a] where a is a live flat witness address
 ```
 
-That is exactly what the sumcheck prover needs. The existing code already folds
-`alpha_compact`, `m_compact`, and `trace_table` alongside the witness; this
-becomes one fold of `relation_weight`.
+That is exactly what the sumcheck prover needs. Padded Boolean-domain addresses
+above `w_evals_compact.len()` are implicit zeroes and are not stored. A current
+uniform prover kernel may keep local `relation_y_len` / live-column state to
+drive an optimized scan, but that state belongs to the kernel, not to
+`RelationWeightPolynomial`.
 
 The relation round contribution becomes uniformly:
 
@@ -485,10 +565,11 @@ rather than:
 w(x, y) * alpha(y) * m(x) + w(x, y) * TraceWeight(x, y)
 ```
 
-The round-batched grid stores and reconstructs the relation
-inner-product contribution and the range-binding contribution as two ordinary
-summands over the same witness grid. It must not reintroduce
-`alpha_evals_y`, `m_evals_x`, or trace-side tables.
+The round-batched grid stores and reconstructs the relation inner-product
+contribution and the range-binding contribution as two ordinary summands over
+the same live witness grid. Padded columns are implicit zeroes. The builder must
+not require a full `2^col_bits * ring_len` relation table and must not
+reintroduce `alpha_evals_y`, `m_evals_x`, or trace-side tables.
 
 ### 2. Constructor Contract
 
@@ -512,11 +593,12 @@ from the Stage-2 constructor.
 
 The constructor validates:
 
-- `relation_weight_evals.len() == w_evals_compact.len()` after both vectors are
-  represented over the same padded hypercube;
+- `relation_weight_evals.len() == w_evals_compact.len()` over the live flat
+  witness stream;
 - `stage1_point.len() == col_bits + ring_bits`;
 - `live_x_cols` is nonzero and fits the x-domain;
-- any padding entries in `relation_weight_evals` are zero.
+- padded hypercube entries are implicit zeroes and are not represented in
+  `relation_weight_evals`.
 
 The input claim becomes:
 
@@ -558,17 +640,19 @@ relation_weight_claim =
 `EvaluationTrace` contributes the scalar opening target through this same row
 target mechanism. There is no separate `trace_opening_claim` passed to Stage 2.
 
-Build `relation_weight_evals` by walking the witness segments and relation row
-families:
+Build `relation_weight_evals` directly by walking the witness segments and
+relation row families:
 
 ```text
 for family in relation_row_layout:
   add eq(tau1, family.rows) * family_weight_to_witness_segment
 ```
 
-The builder must not return or store `m_evals_x` or `alpha_evals_y` as Stage-2
-handoff objects. Existing arithmetic routines are reused only as private
-implementation details after being renamed and reshaped; the canonical output is the flat
+The builder must not return or store `m_evals_x` plus `alpha_evals_y` as
+Stage-2 handoff objects. There is no bridge helper in production. Current
+uniform scalar code may use a private relation-column accumulator internally,
+but that routine is not a Stage-2 API and must remain subordinate to direct
+live relation-weight materialization. The canonical output is the live flat
 relation-weight polynomial.
 
 ### 4. Verifier-Side PreparedRelationWeightPolynomial
@@ -861,17 +945,14 @@ Land layout and polynomial shells without changing prover/verifier behavior.
 1. Add `layout/relation_rows.rs`: `RelationRowFamily`, `ConsistencyLayer`,
    `RelationRowFamilyLayout`, `RelationRowLayout`, `RelationQuotientSlice`,
    `RelationQuotientLayout`, `from_level_params` builder, validation.
-2. Add `relation_weight/` module: `RelationWeightPolynomial<E>` (materialized
-   evals, fold helpers, padding-zero validation).
+2. Add `relation_weight/` module: `RelationWeightPolynomial<E>` (live
+   materialized evals only; one length; out-of-range pair accesses are zero).
 3. Add `RingRelationInstance::relation_row_layout()` (additive; `segment_layout`
    unchanged for now).
 4. Unit tests: uniform quotient length equals current `m_row_count_for *
    r_decomp_levels`; `EvaluationTrace` has `ring_dim = None`, `quotient = None`;
-   bridge formula on fixtures:
-
-   ```text
-   relation_weight[a] == alpha_evals_y[y] * m_evals_x[x] + trace[x,y]
-   ```
+   materialized relation weights match direct row-family accumulation on live
+   fixture addresses and are not stored for padded addresses.
 
 **Tests:** `cargo test -p akita-types`
 
@@ -884,8 +965,8 @@ Depends on Slice 0.
 2. `input_claim = batching_coeff * s_claim + relation_weight_claim`.
 3. Round kernels use `accumulate_relation_coeffs(_signed)` with paired relation
    weights only; delete `alpha_compact`, `m_compact`, `trace_table` folds.
-4. Update `akita_stage2/tests*.rs` to build `relation_weight_evals` via bridge
-   formula (synthetic until Slice 3).
+4. Update `akita_stage2/tests*.rs` to build live `relation_weight_evals`
+   directly in fixtures. Do not add or use a split-to-relation bridge.
 
 **Tests:** `cargo test -p akita-prover akita_stage2`
 
@@ -906,7 +987,8 @@ Depends on Slices 0–1. **Protocol/transcript change lands here.**
 
 1. Segment-wise `build_relation_weight_evals` in `ring_switch/evals.rs`; fold
    `EvaluationTrace` into relation weight (reuse `trace_weight/` as private
-   builder).
+   builder). The emitted vector has length equal to the live next-witness
+   coefficient count.
 2. `relation_weight_claim = sum_row eq(tau1, row) * row_target(row)` including
    opening scalar on `EvaluationTrace` row.
 3. `RingSwitchOutput` → `{ relation_weight_evals, relation_weight_claim, … }`;
@@ -972,6 +1054,8 @@ via `SetupContributionPlanInputs`, not the relation-weight summand shape.
 ## Invariants
 
 - Stage 2 has exactly one relation-weight claim.
+- Stage 2 relation-weight storage is live only; padded Boolean-domain entries
+  are implicit zeroes.
 - Trace/evaluation is part of the relation weight.
 - No Stage-2 round kernel multiplies `alpha(y) * m(x)`.
 - No Stage-2 round kernel branches on trace presence.
@@ -1052,7 +1136,8 @@ via `SetupContributionPlanInputs`, not the relation-weight summand shape.
 ### Negative Tests
 
 - Malformed relation-weight length is rejected.
-- Nonzero relation-weight padding is rejected if padding is materialized.
+- Malformed relation-weight length is rejected; padded relation-weight slots are
+  not materialized.
 - Missing trace row on a path with an opening claim is rejected.
 - Invalid quotient-family layout with overlapping or out-of-order slices is
   rejected.
@@ -1061,8 +1146,8 @@ via `SetupContributionPlanInputs`, not the relation-weight summand shape.
 
 ## Performance Notes
 
-The prover materializes `relation_weight_evals` of length equal to the
-next-witness hypercube in this cutover. This is no worse asymptotically than the
+The prover materializes `relation_weight_evals` of length equal to the live
+next-witness stream in this cutover. This is no worse asymptotically than the
 current prover state, because the prover already scans/folds `w`, `alpha`, `m`,
 and trace data. The implementation deletes the old split vectors in the same
 cutover to keep memory neutral.
@@ -1097,8 +1182,9 @@ That segment builder is the landing point for mixed role dimensions.
 - **Verifier offloading coupling.** Setup-product sumcheck code depends on the
   row-evaluation plan. The new prepared relation-weight evaluator must keep the
   setup contribution plan available for Stage 3.
-- **Padding bugs.** A materialized relation-weight vector over a padded
-  hypercube must zero every padded slot, or the sumcheck statement changes.
+- **Padding bugs.** Padded Boolean-domain entries must be implicit zeroes for
+  both witness and relation weight. Materializing or evaluating nonzero padded
+  slots changes the multilinear polynomial proved by sumcheck.
 
 ## Design Decisions
 

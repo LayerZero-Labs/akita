@@ -138,7 +138,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 let y_len = self.relation_weight_y_len();
                 let relation_round2 = Self::fold_relation_weight_through_initial_batch(
                     self.relation_weight.evals(),
-                    self.relation_weight.live_x_cols(),
+                    self.live_x_cols,
                     y_len,
                     r0,
                     r,
@@ -171,13 +171,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                     }
                 };
                 let next_y_len = y_len >> 2;
-                self.relation_weight = RelationWeightPolynomial::from_evals(
+                self.relation_weight = RelationWeightPolynomial::from_live_evals(
                     relation_round2,
-                    next_y_len,
-                    self.relation_weight.live_x_cols(),
-                    self.relation_weight.live_x_cols() * next_y_len,
+                    self.live_x_cols * next_y_len,
                 )
                 .expect("relation weight round-2 fold preserves shape");
+                self.relation_y_len = next_y_len;
                 self.initial_round_batch = None;
                 self.prefix_r_stage1 = None;
                 if let Some((virt_terms, rel_coeffs)) = round2_terms {

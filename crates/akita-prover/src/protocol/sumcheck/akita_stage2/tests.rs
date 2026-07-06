@@ -4,7 +4,7 @@ use super::*;
 use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;
 use akita_field::Prime128Offset275;
 use akita_sumcheck::multilinear_eval;
-use akita_types::{bridge_relation_weight_from_split, TraceSparseColumn, TraceTable};
+use akita_types::{TraceSparseColumn, TraceTable};
 
 type F = Prime128Offset275;
 
@@ -24,27 +24,23 @@ fn build_relation_weight_evals(
     params: &Stage2Params<'_>,
 ) -> Vec<F> {
     let y_len = 1usize << params.ring_bits;
-    let relation_x_cols = 1usize << params.col_bits;
-    let trace_dense = trace.map(|trace| {
-        if trace.len() == relation_x_cols * y_len {
-            trace.to_vec()
-        } else {
-            let mut full = vec![F::zero(); relation_x_cols * y_len];
-            for x in 0..params.live_x_cols {
-                let start = x * y_len;
-                full[start..start + y_len].copy_from_slice(&trace[start..start + y_len]);
-            }
-            full
+    let mut out = Vec::with_capacity(params.live_x_cols * y_len);
+    for (x, m_eval_x) in m_evals_x
+        .iter()
+        .copied()
+        .enumerate()
+        .take(params.live_x_cols)
+    {
+        for (y, alpha) in alpha_evals_y.iter().copied().enumerate().take(y_len) {
+            let idx = x * y_len + y;
+            let trace = trace
+                .and_then(|trace| trace.get(idx))
+                .copied()
+                .unwrap_or(F::zero());
+            out.push(alpha * m_eval_x + trace);
         }
-    });
-    bridge_relation_weight_from_split(
-        alpha_evals_y,
-        m_evals_x,
-        trace_dense.as_deref(),
-        y_len,
-        relation_x_cols,
-    )
-    .unwrap()
+    }
+    out
 }
 
 fn relation_weight_claim_from_split(
@@ -114,6 +110,14 @@ fn trace_claim_from_compact_rows(
         }
     }
     claim
+}
+
+fn zero_padded_m_evals(m_evals_x: &[F], live_x_cols: usize) -> Vec<F> {
+    let mut padded = m_evals_x.to_vec();
+    for value in padded.iter_mut().skip(live_x_cols) {
+        *value = F::zero();
+    }
+    padded
 }
 
 fn new_stage2_test_prover(
@@ -392,6 +396,7 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
             let m_evals_x: Vec<F> = (0..x_len)
                 .map(|i| F::from_u64((11 * i as u64) + 13))
                 .collect();
+            let m_evals_x_padded = zero_padded_m_evals(&m_evals_x, live_x_cols);
 
             let mut prefix_prover = new_stage2_test_prover(
                 F::from_u64(17),
@@ -410,7 +415,7 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
                 F::from_u64(17),
                 w_padded.clone(),
                 alpha_evals_y.clone(),
-                m_evals_x.clone(),
+                m_evals_x_padded,
                 Stage2Params {
                     stage1_point: &stage1_point,
                     b,
@@ -530,7 +535,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         r0,
         r1,
     );
-    let relation_x_cols = 1usize << col_bits;
+    let relation_x_cols = live_x_cols;
     let expected_relation_round2 =
         AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
             prover.relation_weight.evals(),
@@ -559,13 +564,12 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
-    expected.relation_weight = RelationWeightPolynomial::from_evals(
+    expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
-        y_len >> 2,
-        relation_x_cols,
         relation_x_cols * (y_len >> 2),
     )
     .unwrap();
+    expected.relation_y_len = y_len >> 2;
     expected.rounds_completed = 2;
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
@@ -636,7 +640,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         r0,
         r1,
     );
-    let relation_x_cols = 1usize << col_bits;
+    let relation_x_cols = live_x_cols;
     let expected_relation_round2 =
         AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
             prover.relation_weight.evals(),
@@ -660,13 +664,12 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
-    expected.relation_weight = RelationWeightPolynomial::from_evals(
+    expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
-        y_len >> 2,
-        relation_x_cols,
         relation_x_cols * (y_len >> 2),
     )
     .unwrap();
+    expected.relation_y_len = y_len >> 2;
     expected.rounds_completed = 2;
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
@@ -751,7 +754,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
         current_y_len,
         r2,
     );
-    let relation_x_cols = expected.relation_weight.live_x_cols();
+    let relation_x_cols = expected.live_x_cols;
     let expected_next_relation = AkitaStage2Prover::<F>::fold_relation_weight_x_column_major(
         expected.relation_weight.evals(),
         relation_x_cols,
@@ -767,10 +770,8 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     expected.live_x_cols = expected.live_x_cols.div_ceil(2);
     expected.rounds_completed += 1;
     let next_relation_x_cols = relation_x_cols.div_ceil(2);
-    expected.relation_weight = RelationWeightPolynomial::from_evals(
+    expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_next_relation.clone(),
-        current_y_len,
-        next_relation_x_cols,
         next_relation_x_cols * current_y_len,
     )
     .unwrap();
@@ -871,6 +872,7 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
     let m_evals_x: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((7 * i as u64) + 229))
         .collect();
+    let m_evals_x_padded = zero_padded_m_evals(&m_evals_x, live_x_cols);
 
     let mut prefix_prover = new_stage2_test_prover(
         F::from_u64(233),
@@ -889,7 +891,7 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
         F::from_u64(233),
         w_padded,
         alpha_evals_y,
-        m_evals_x,
+        m_evals_x_padded,
         Stage2Params {
             stage1_point: &stage1_point,
             b,
@@ -1013,6 +1015,7 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
     let m_evals_x: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((41 * i as u64) + 281))
         .collect();
+    let m_evals_x_padded = zero_padded_m_evals(&m_evals_x, live_x_cols);
 
     let mut prefix_prover = new_stage2_test_prover(
         F::from_u64(283),
@@ -1031,7 +1034,7 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
         F::from_u64(283),
         w_padded,
         alpha_evals_y,
-        m_evals_x,
+        m_evals_x_padded,
         Stage2Params {
             stage1_point: &stage1_point,
             b,

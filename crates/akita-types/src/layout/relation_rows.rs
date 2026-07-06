@@ -7,6 +7,19 @@ use super::{CommitmentRingDims, LevelParams, MRowLayout};
 use crate::gadget_row_scalars;
 use crate::proof::OpeningClaimsLayout;
 use crate::r_decomp_levels;
+
+/// Logical row index of [`RelationRowFamily::FoldEvaluation`] (historical consistency row).
+pub const FOLD_EVALUATION_ROW: usize = 1;
+
+/// First logical row index of [`RelationRowFamily::FoldConsistency`] (A-role rows).
+pub const FOLD_CONSISTENCY_ROW: usize = 2;
+
+/// First logical row index of [`RelationRowFamily::OuterConsistency`] B/`u` rows.
+#[inline]
+#[must_use]
+pub fn outer_consistency_row_start(n_a: usize) -> usize {
+    FOLD_CONSISTENCY_ROW.saturating_add(n_a)
+}
 use akita_algebra::ring::scalar_powers;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase};
 use std::fmt;

@@ -187,6 +187,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
 
     relation_weight: RelationWeightPolynomial<E>,
     live_x_cols: usize,
+    relation_y_len: usize,
     col_bits: usize,
     num_vars: usize,
     prev_norm_claim: E,
@@ -210,20 +211,15 @@ mod y_prefix;
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[inline]
     pub(super) fn relation_weight_y_len(&self) -> usize {
-        self.relation_weight.y_len()
+        self.relation_y_len
     }
 
     #[inline]
     fn relation_weight_pair_columns(&self, x0: usize, x1: usize, y: usize) -> (E, E) {
         let y_len = self.relation_weight_y_len();
-        let live_x_cols = self.relation_weight.live_x_cols();
         let evals = self.relation_weight.evals();
-        let p0 = evals[x0 * y_len + y];
-        let p1 = if x1 < live_x_cols {
-            evals[x1 * y_len + y]
-        } else {
-            E::zero()
-        };
+        let p0 = evals.get(x0 * y_len + y).copied().unwrap_or_else(E::zero);
+        let p1 = evals.get(x1 * y_len + y).copied().unwrap_or_else(E::zero);
         (p0, p1)
     }
 }
@@ -235,10 +231,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
         relation_x_cols: usize,
         y_len: usize,
     ) {
-        let witness_len = relation_x_cols * y_len;
-        self.relation_weight =
-            RelationWeightPolynomial::from_evals(evals, y_len, relation_x_cols, witness_len)
-                .expect("relation weight fold preserves shape");
+        let live_len = relation_x_cols * y_len;
+        self.relation_weight = RelationWeightPolynomial::from_live_evals(evals, live_len)
+            .expect("relation weight fold preserves shape");
+        self.relation_y_len = y_len;
     }
 
     pub(super) fn fold_relation_weight_for_round(
@@ -250,7 +246,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
         in_y_round: bool,
     ) {
         let y_len = self.relation_weight_y_len();
-        let relation_x_cols = self.relation_weight.live_x_cols();
+        let relation_x_cols = self.live_x_cols;
         let (evals, next_relation_x_cols, next_y_len) = if folding_x_round {
             if use_prefix_x_round {
                 (

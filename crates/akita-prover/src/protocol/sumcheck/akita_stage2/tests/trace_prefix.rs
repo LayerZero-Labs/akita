@@ -184,6 +184,7 @@ fn stage2_trace_round_batching_matches_padded_reference() {
     let m_evals_x: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((19 * i as u64) + 67))
         .collect();
+    let m_evals_x_padded = zero_padded_m_evals(&m_evals_x, live_x_cols);
 
     let mut prefix_prover = new_stage2_test_prover_with_trace(
         F::from_u64(71),
@@ -203,7 +204,7 @@ fn stage2_trace_round_batching_matches_padded_reference() {
         F::from_u64(71),
         w_padded,
         alpha_evals_y,
-        m_evals_x,
+        m_evals_x_padded,
         trace_padded,
         Stage2Params {
             stage1_point: &stage1_point,
@@ -288,7 +289,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         r0,
         r1,
     );
-    let relation_x_cols = 1usize << col_bits;
+    let relation_x_cols = live_x_cols;
     let expected_relation_round2 =
         AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
             prover.relation_weight.evals(),
@@ -318,13 +319,12 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
-    expected.relation_weight = RelationWeightPolynomial::from_evals(
+    expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
-        y_len >> 2,
-        relation_x_cols,
         relation_x_cols * (y_len >> 2),
     )
     .unwrap();
+    expected.relation_y_len = y_len >> 2;
     expected.rounds_completed = 2;
     let expected_round2 = expected.compute_current_round_poly_from_state();
 

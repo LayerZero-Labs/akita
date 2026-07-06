@@ -1,7 +1,7 @@
 //! Shared protocol relation helpers.
 
 use crate::dispatch_ring_dim_result;
-use crate::layout::CommitmentRingDims;
+use crate::layout::{outer_consistency_row_start, CommitmentRingDims};
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows, scalar_powers};
@@ -233,7 +233,7 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
 ) -> Result<F, AkitaError> {
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let mut acc = F::zero();
-    let mut row_idx = 1usize + n_a;
+    let mut row_idx = outer_consistency_row_start(n_a);
 
     for r in u {
         if row_idx >= eq_tau1.len() {
@@ -271,7 +271,7 @@ where
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
-    let mut row_idx = 1usize + n_a;
+    let mut row_idx = outer_consistency_row_start(n_a);
 
     for r in u {
         if row_idx >= eq_tau1.len() {
@@ -321,7 +321,7 @@ where
     }
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let mut acc = E::zero();
-    let mut row_idx = 1usize + n_a;
+    let mut row_idx = outer_consistency_row_start(n_a);
     dispatch_ring_dim_result!(dims.d_b(), |D_B| {
         let u_typed = u.as_ring_slice::<D_B>()?;
         accumulate_extension_rows::<F, E, D_B>(&eq_tau1, alpha, u_typed, &mut row_idx, &mut acc)
@@ -338,7 +338,7 @@ where
 ///
 /// Adds `eq(tau1, EvaluationTrace) * trace_eval_target` at row 0, then accumulates
 /// opening-consistency rows from `u` and `v` at the same indices as
-/// [`relation_claim_from_rows_extension_at_dims`] (`1 + n_a` for uniform layouts).
+/// [`relation_claim_from_rows_extension_at_dims`] (`2 + n_a` for uniform layouts).
 ///
 /// # Errors
 ///
@@ -360,9 +360,7 @@ where
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let trace_row_weight = eq_tau1.first().copied().unwrap_or(E::zero());
     let mut acc = trace_row_weight * trace_eval_target;
-    let mut row_idx = 1usize
-        .checked_add(n_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("relation row index overflow".to_string()))?;
+    let mut row_idx = outer_consistency_row_start(n_a);
     if !v.can_decode_vec(dims.d_d()) {
         return Err(AkitaError::InvalidSize {
             expected: dims.d_d(),

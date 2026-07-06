@@ -7,9 +7,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
-use akita_types::{
-    bridge_relation_weight_from_split, range_check_eval_from_s, reorder_stage1_coords,
-};
+use akita_types::{range_check_eval_from_s, reorder_stage1_coords};
 use akita_types::{TraceSparseColumn, TraceTable};
 use std::collections::HashMap;
 
@@ -19,32 +17,23 @@ fn stage2_relation_weight_evals(
     alpha_evals_y: &[F],
     m_evals_x: &[F],
     trace: Option<&[F]>,
-    col_bits: usize,
+    _col_bits: usize,
     ring_bits: usize,
     live_x_cols: usize,
 ) -> Vec<F> {
     let y_len = 1usize << ring_bits;
-    let relation_x_cols = 1usize << col_bits;
-    let trace_dense = trace.map(|trace| {
-        if trace.len() == relation_x_cols * y_len {
-            trace.to_vec()
-        } else {
-            let mut full = vec![F::zero(); relation_x_cols * y_len];
-            for x in 0..live_x_cols {
-                let start = x * y_len;
-                full[start..start + y_len].copy_from_slice(&trace[start..start + y_len]);
-            }
-            full
+    let mut out = Vec::with_capacity(live_x_cols * y_len);
+    for (x, m_eval_x) in m_evals_x.iter().copied().enumerate().take(live_x_cols) {
+        for (y, alpha) in alpha_evals_y.iter().copied().enumerate().take(y_len) {
+            let idx = x * y_len + y;
+            let trace = trace
+                .and_then(|trace| trace.get(idx))
+                .copied()
+                .unwrap_or(F::zero());
+            out.push(alpha * m_eval_x + trace);
         }
-    });
-    bridge_relation_weight_from_split(
-        alpha_evals_y,
-        m_evals_x,
-        trace_dense.as_deref(),
-        y_len,
-        relation_x_cols,
-    )
-    .unwrap()
+    }
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -331,7 +320,7 @@ fn build_stage2_initial_round_batch_grid_reference(
     stage1_point: &[F],
     b: usize,
     live_x_cols: usize,
-    col_bits: usize,
+    _col_bits: usize,
     ring_bits: usize,
 ) -> Option<Stage2RoundBatchGrid<F>> {
     if !can_use_stage2_initial_round_batch(ring_bits, b) {
@@ -339,8 +328,7 @@ fn build_stage2_initial_round_batch_grid_reference(
     }
 
     let y_len = 1usize << ring_bits;
-    let relation_x_cols = 1usize << col_bits;
-    assert_eq!(relation_weight_evals.len(), relation_x_cols * y_len);
+    assert_eq!(relation_weight_evals.len(), live_x_cols * y_len);
     let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
         .expect("stage-2 reference two-round prefix dimensions are prevalidated");
     let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])

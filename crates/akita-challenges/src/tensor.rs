@@ -252,7 +252,7 @@ impl Challenges {
 
     /// Evaluate every logical challenge at the precomputed `alpha`-powers,
     /// in claim-major flat order. This is the boundary used by both prover
-    /// `compute_m_evals_x` and verifier `prepare_ring_switch_row_eval`.
+    /// relation-column weighting and verifier `prepare_ring_switch_row_eval`.
     ///
     /// For the sparse variant this is the canonical per-block evaluation
     /// loop; for the tensor variant it uses the factored aggregate

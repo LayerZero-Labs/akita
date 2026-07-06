@@ -158,10 +158,11 @@ Reject and do not revive without a new spec:
                              │
 ┌────────────────────────────▼────────────────────────────────┐
 │ Hypercube geometry (per fold level, immutable for instance)  │
-│   μ′ = col_bits + ring_bits                                  │
-│   live witness length = live_x_cols * y_len                  │
-│   flat index: idx = x * y_len + y (column-major)             │
-│   bind order: ring variables first, then column variables    │
+│   μ′ = Boolean width of zero-extended live witness stream     │
+│   live witness length = actual emitted coefficient count      │
+│   flat index: idx in 0..live_len                              │
+│   optional local views: segment-specific col/coeff coordinates│
+│   bind order: schedule-defined over flat Boolean addresses    │
 └────────────────────────────┬────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────┐
@@ -172,10 +173,21 @@ Reject and do not revive without a new spec:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-`x` and `y` are **geometry labels** inside `HypercubeGeom`, not module names.
-Mixed ring dimension per level changes `(col_bits, ring_bits, live_x_cols)` at
-each fold; it does not require new `x_prefix` / `y_prefix` modules when indexing
-is expressed as bind-order over flat `μ′`.
+`x` and `y` are not protocol concepts. They are temporary storage labels for
+the current uniform scalar-level next-witness stream. Mixed role dimensions
+already invalidate `y` as a row-family abstraction, and future heterogeneous
+witness layouts may invalidate one global `ring_len` entirely. The kernel API
+must be phrased in terms of flat live ranges, segment geometry, bind axes, and
+row-family evaluators. Any current `x_prefix` / `y_prefix` name is legacy prover
+plumbing to be deleted during this cutover.
+
+For the current uniform implementation, a local scan may still view a segment as
+`idx = local_col * local_ring_len + local_coeff`. That view is an optimization
+input, not the global protocol shape. The iterator must map every visited local
+point to a flat address and read zero when the address is outside the live
+range. This is the mixed-dimension landing zone: different row families may have
+different local ring dimensions, but they all embed into one flat
+`RelationWeightPolynomial` / witness vector.
 
 ### Stage 2 mathematics (canonical)
 
@@ -216,6 +228,9 @@ rel[2] += dw * (p1 - p0);
 | `Field(E)` | After compact→full transition | field arithmetic |
 
 **Relation weight** is always field `E` at `pair_flat(idx0, idx1)`.
+If either `idx0` or `idx1` lies outside the live range, both the witness and
+relation weight at that address are implicit zero. The kernel must not require
+relation-weight storage for padded Boolean-domain slots.
 
 ### Pair iterators (replace prefix modules)
 
@@ -224,8 +239,8 @@ One `PairIterator` implementation per **visit pattern**, not per stage half:
 | Iterator | Replaces | When selected |
 |----------|----------|---------------|
 | `SplitEqBlockedPairs` | `dense_terms` | Full active width; Gruen `e_first` × `e_second` blocking |
-| `LiveColumnPairs` | `y_prefix`, stage-1 `sparse_y` (y-phase) | `live_x_cols < current_x_len`, binding ring axis |
-| `LiveRowPairs` | `x_prefix` (x-phase) | Same sparsity, binding column axis |
+| `LiveColumnPairs` | `y_prefix`, stage-1 `sparse_y` (current coefficient-axis phase) | Live range is shorter than the padded domain while binding the current inner storage axis |
+| `LiveRowPairs` | `x_prefix` (current column-axis phase) | Same sparsity while binding the current outer storage axis |
 
 All iterators call the same `accumulate_pair(step, w0, w1, p0, p1, …)`.
 
@@ -274,13 +289,14 @@ It must not be a third parallel module tree.
 
 `crates/akita-prover/src/protocol/sumcheck/round_batching/` stays.
 
-It is **prover-only**: builds a transient bivariate grid for the first two
-**ring-axis** binds when `ring_bits >= 2` and `b ∈ {4, 8}`, then reconstructs
-ordinary round messages.
+It is **prover-only**: builds a transient bivariate grid for the first two binds
+of the current inner storage axis when that axis has at least two variables and
+`b ∈ {4, 8}`, then reconstructs ordinary round messages.
 
 Wire format unchanged (`SumcheckProof` / `EqFactoredSumcheckProof`).
 
-Stage 2 grid uses `relation_weight_evals` directly (no split `alpha × m`).
+Stage 2 grid uses live `relation_weight_evals` directly (no split `alpha × m`).
+It scans only `0..live_len`; padded columns are implicit zeroes.
 
 See [`relation-weight-polynomial.md`](relation-weight-polynomial.md) §1a for
 naming and grid contracts.
@@ -397,8 +413,8 @@ depends on it.
 1. Delete empty modules (`dense_terms`, `y_prefix`, `x_prefix` when fully migrated).
 2. Split `round_batching/tests.rs` and `akita_stage2/tests.rs` below 1k lines;
    delete reference grid builders that duplicate `reconstruct_round0/1`.
-3. Remove `bridge_relation_weight_from_split` from production
-   (`ring_switch/evals.rs`); materialize directly.
+3. Keep `bridge_relation_weight_from_split` deleted from production and shared
+   types; `ring_switch/evals.rs` materializes relation weights directly.
 4. Delete `akita-types::PreparedRelationWeightPolynomial` stub (verifier owns
    real type).
 
@@ -426,6 +442,9 @@ Slice 1 (stage2 pair_scan)
 ### Acceptance criteria
 
 - [ ] Stage 2 round computation uses one `pair_scan` entry point (batching excepted).
+- [ ] `RelationWeightPolynomial` stores exactly one length, the live
+  coefficient range, and treats padded Boolean-domain entries as implicit
+  zeroes.
 - [ ] `dense_terms.rs`, `y_prefix.rs` deleted or reduced to thin re-exports
   during migration only (gone by Slice 4).
 - [ ] `fold_relation_weight_for_round` and separate x/y fold helpers deleted.

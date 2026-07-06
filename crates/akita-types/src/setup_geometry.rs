@@ -6,7 +6,7 @@
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::MRowLayout;
+use crate::layout::{outer_consistency_row_start, MRowLayout, FOLD_CONSISTENCY_ROW};
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;
@@ -81,9 +81,9 @@ pub fn compute_setup_layout<E: FieldCore>(
         MRowLayout::WithDBlock => inputs.n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    // Canonical row layout: consistency (1) | A | B | D.
-    let a_start = 1usize;
-    let b_start = checked_add(a_start, inputs.n_a, "B row start")?;
+    // Canonical row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
+    let a_start = FOLD_CONSISTENCY_ROW;
+    let b_start = outer_consistency_row_start(inputs.n_a);
     let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
     let d_start = checked_add(b_start, b_rows_total, "D row start")?;
     let a_end = checked_add(d_start, n_d_active, "D row end")?;
@@ -286,7 +286,7 @@ mod tests {
             .collect::<Vec<_>>();
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            eq_tau1: vec![test_scalar(11), test_scalar(12), test_scalar(13)],
             num_t_vectors: 0,
             num_blocks: 4,
             num_claims: 1,
@@ -300,7 +300,7 @@ mod tests {
             m_row_layout: MRowLayout::WithoutDBlock,
             n_b: 0,
             num_segments: num_points,
-            rows: 2,
+            rows: 3,
             num_polys_per_segment: vec![0],
         };
         let layout = compute_setup_layout(&inputs).expect("layout");
@@ -324,7 +324,7 @@ mod tests {
         let depth_fold = 2;
         let z_range = block_len * depth_commit;
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            eq_tau1: vec![test_scalar(11), test_scalar(12), test_scalar(13)],
             num_t_vectors: 2,
             num_blocks: 4,
             num_claims: 1,
@@ -338,7 +338,7 @@ mod tests {
             m_row_layout: MRowLayout::WithoutDBlock,
             n_b: 0,
             num_segments: 1,
-            rows: 2,
+            rows: 3,
             num_polys_per_segment: vec![2],
         };
         let required = setup_required_for_inputs(&inputs).expect("required");

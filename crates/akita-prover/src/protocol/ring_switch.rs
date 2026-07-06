@@ -40,7 +40,8 @@ pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
 pub use evals::{
-    build_relation_weight_evals, build_w_evals_compact, compute_m_evals_x, RelationWeightTraceBuild,
+    build_relation_weight_evals, build_w_evals_compact, compute_relation_column_weights,
+    RelationWeightTraceBuild,
 };
 pub use finalize::{ring_switch_finalize, RelationWeightFinalizeInputs};
 

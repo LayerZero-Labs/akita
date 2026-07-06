@@ -227,8 +227,7 @@ pub(crate) fn build_stage2_initial_round_batch_grid<
     }
 
     let y_len = 1usize << ring_bits;
-    let relation_x_cols = 1usize << col_bits;
-    assert_eq!(relation_weight_evals.len(), relation_x_cols * y_len);
+    assert_eq!(relation_weight_evals.len(), live_x_cols * y_len);
     assert_eq!(w_compact.len(), live_x_cols * y_len);
     assert_eq!(stage1_point.len(), col_bits + ring_bits);
 
