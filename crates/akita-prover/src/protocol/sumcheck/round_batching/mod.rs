@@ -45,10 +45,10 @@ pub(crate) use common::{
     stage2_b8_w_digit,
 };
 pub(crate) use stage1::{
-    build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
-    Stage1BivariateSkipState,
+    build_stage1_initial_round_batch_grid, can_use_stage1_initial_round_batch,
+    Stage1RoundBatchState,
 };
 pub(crate) use stage2::{
-    build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
-    Stage2BivariateSkipState,
+    build_stage2_initial_round_batch_grid, can_use_stage2_initial_round_batch,
+    Stage2RoundBatchState,
 };

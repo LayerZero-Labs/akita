@@ -2,13 +2,13 @@ use super::*;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     pub(super) fn compute_current_round_eq_poly_from_state(&mut self) -> EqFactoredUniPoly<E> {
-        let use_two_round_prefix = self.using_two_round_prefix();
-        let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
-        let use_sparse_x_y_round = !use_two_round_prefix && self.use_sparse_x_y_round();
+        let use_round_batching = self.using_initial_round_batch();
+        let use_prefix_x_round = !use_round_batching && self.use_prefix_x_round();
+        let use_sparse_x_y_round = !use_round_batching && self.use_sparse_x_y_round();
         let t_round = Instant::now();
         let rounds_completed = self.rounds_completed;
-        let poly = if use_two_round_prefix {
-            let prefix = self.ensure_two_round_prefix();
+        let poly = if use_round_batching {
+            let prefix = self.ensure_initial_round_batch();
             if rounds_completed == 0 {
                 prefix.skip_state.reconstruct_round0_eq_poly()
             } else {
@@ -50,7 +50,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             }
         };
 
-        if use_two_round_prefix || use_prefix_x_round {
+        if use_round_batching || use_prefix_x_round {
             self.prefix_time_total += t_round.elapsed().as_secs_f64();
         } else {
             self.dense_time_total += t_round.elapsed().as_secs_f64();
@@ -100,14 +100,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
         let _span = tracing::info_span!("AkitaStage1Prover::fold_round").entered();
-        if self.using_two_round_prefix() {
+        if self.using_initial_round_batch() {
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
             if rounds_completed == 0 {
-                self.ensure_two_round_prefix().first_challenge = Some(r);
+                self.ensure_initial_round_batch().first_challenge = Some(r);
             } else {
                 let r0 = {
-                    let prefix = self.ensure_two_round_prefix();
+                    let prefix = self.ensure_initial_round_batch();
                     prefix
                         .first_challenge
                         .expect("round 1 ingest requires the round 0 challenge")

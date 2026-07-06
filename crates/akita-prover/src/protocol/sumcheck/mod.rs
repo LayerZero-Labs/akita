@@ -8,7 +8,7 @@ pub mod akita_stage1;
 pub mod akita_stage1_tree;
 pub mod akita_stage2;
 pub mod akita_stage3;
-pub mod two_round_prefix;
+pub mod round_batching;
 
 pub use akita_stage1_tree::AkitaStage1Prover;
 pub use akita_stage2::AkitaStage2Prover;

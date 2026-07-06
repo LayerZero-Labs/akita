@@ -10,14 +10,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         stage1_point: &[E],
         s_claim: E,
         b: usize,
-        alpha_evals_y: Vec<E>,
-        m_evals_x: Vec<E>,
+        relation_weight_evals: Vec<E>,
+        relation_weight_claim: E,
         live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
-        relation_claim: E,
-        trace_table: Option<TraceTable<E>>,
-        trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
@@ -46,6 +43,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let witness_len = live_x_cols
             .checked_mul(y_len)
             .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
+        let relation_x_cols = x_len;
         if w_evals_compact.len() != witness_len {
             return Err(AkitaError::InvalidSize {
                 expected: witness_len,
@@ -58,24 +56,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: stage1_point.len(),
             });
         }
-        if alpha_evals_y.len() != y_len {
-            return Err(AkitaError::InvalidSize {
-                expected: y_len,
-                actual: alpha_evals_y.len(),
-            });
-        }
-        if m_evals_x.len() != x_len {
-            return Err(AkitaError::InvalidSize {
-                expected: x_len,
-                actual: m_evals_x.len(),
-            });
-        }
-        if let Some(trace) = &trace_table {
-            trace.validate_len(witness_len)?;
-        }
+        let relation_weight = RelationWeightPolynomial::from_evals(
+            relation_weight_evals,
+            y_len,
+            relation_x_cols,
+            relation_x_cols * y_len,
+        )?;
 
-        let relation_trace_claim = relation_claim + trace_opening_claim;
-        let input_claim = batching_coeff * s_claim + relation_trace_claim;
+        let input_claim = batching_coeff * s_claim + relation_weight_claim;
 
         Ok(Self {
             w_table: WTable::Compact(w_evals_compact),
@@ -84,18 +72,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             s_claim,
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
-            alpha_compact: alpha_evals_y,
-            m_compact: m_evals_x,
-            trace_table,
+            relation_weight,
             live_x_cols,
             col_bits,
             num_vars,
-            relation_trace_claim,
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
+            prefix_r_stage1: can_use_stage2_initial_round_batch(ring_bits, b)
                 .then(|| stage1_point.to_vec()),
-            two_round_prefix: None,
+            initial_round_batch: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
             fold_time_total: 0.0,
@@ -174,13 +159,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    pub(crate) fn can_use_two_round_prefix(&self) -> bool {
+    pub(crate) fn can_use_stage2_initial_round_batch(&self) -> bool {
         self.prefix_r_stage1.is_some()
     }
 
     #[inline]
-    pub(super) fn using_two_round_prefix(&self) -> bool {
-        self.rounds_completed < 2 && self.can_use_two_round_prefix()
+    pub(super) fn using_initial_round_batch(&self) -> bool {
+        self.rounds_completed < 2 && self.can_use_stage2_initial_round_batch()
     }
 
     #[inline]
@@ -241,44 +226,43 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         combined
     }
 
-    pub(super) fn ensure_two_round_prefix(&mut self) -> &mut Stage2TwoRoundPrefix<E> {
-        if self.two_round_prefix.is_none() {
+    pub(super) fn ensure_initial_round_batch(&mut self) -> &mut Stage2InitialRoundBatch<E> {
+        if self.initial_round_batch.is_none() {
             let stage1_point = self
                 .prefix_r_stage1
                 .clone()
-                .expect("two-round prefix requested without cached stage-1 challenges");
+                .expect("initial round batch requested without cached stage-1 challenges");
             let ring_bits = self.num_vars - self.col_bits;
             let w_compact = match &self.w_table {
                 WTable::Compact(w_compact) => w_compact,
-                WTable::Full(_) => panic!("two-round prefix can only build from compact witness"),
+                WTable::Full(_) => panic!("initial round batch can only build from compact witness"),
             };
-            let proof = build_stage2_bivariate_skip_proof_from_compact(
+            let proof = build_stage2_initial_round_batch_grid(
                 w_compact,
-                &self.alpha_compact,
-                &self.m_compact,
-                self.trace_table.as_ref(),
+                self.relation_weight.evals(),
                 &stage1_point,
                 self.b,
                 self.live_x_cols,
                 self.col_bits,
                 ring_bits,
             )
-            .expect("two-round prefix should be available");
-            let skip_state = Stage2BivariateSkipState::new(
+            .expect("initial round batch should be available");
+            let relation_weight_claim = self.input_claim - self.batching_coeff * self.s_claim;
+            let skip_state = Stage2RoundBatchState::new(
                 &proof,
                 &stage1_point,
                 self.s_claim,
-                self.relation_trace_claim,
+                relation_weight_claim,
                 self.batching_coeff,
             )
-            .expect("valid bivariate-skip state");
-            self.two_round_prefix = Some(Stage2TwoRoundPrefix {
+            .expect("valid round-batch state");
+            self.initial_round_batch = Some(Stage2InitialRoundBatch {
                 skip_state,
                 first_challenge: None,
             });
         }
-        self.two_round_prefix
+        self.initial_round_batch
             .as_mut()
-            .expect("two-round prefix should be initialized")
+            .expect("initial round batch should be initialized")
     }
 }

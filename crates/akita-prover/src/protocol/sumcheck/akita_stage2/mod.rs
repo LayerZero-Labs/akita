@@ -62,11 +62,11 @@
 //! scan so the witness-side work is shared between all three.
 
 use super::fold_full_prefix_pair;
-use super::two_round_prefix::{
-    build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
-    Stage2BivariateSkipState,
+use super::round_batching::{
+    build_stage2_initial_round_batch_grid, can_use_stage2_initial_round_batch,
+    Stage2RoundBatchState,
 };
-use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
+use super::round_batching::{stage2_b4_w_digit, stage2_b8_w_digit};
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
@@ -75,7 +75,7 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
-use akita_types::TraceTable;
+use akita_types::RelationWeightPolynomial;
 use std::mem;
 use std::time::Instant;
 
@@ -84,8 +84,8 @@ enum WTable<E: FieldCore> {
     Full(Vec<E>),
 }
 
-struct Stage2TwoRoundPrefix<E: FieldCore> {
-    skip_state: Stage2BivariateSkipState<E>,
+struct Stage2InitialRoundBatch<E: FieldCore> {
+    skip_state: Stage2RoundBatchState<E>,
     first_challenge: Option<E>,
 }
 
@@ -212,17 +212,14 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
-    alpha_compact: Vec<E>,
-    m_compact: Vec<E>,
-    trace_table: Option<TraceTable<E>>,
+    relation_weight: RelationWeightPolynomial<E>,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
-    relation_trace_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
     prefix_r_stage1: Option<Vec<E>>,
-    two_round_prefix: Option<Stage2TwoRoundPrefix<E>>,
+    initial_round_batch: Option<Stage2InitialRoundBatch<E>>,
     cached_round_poly: Option<UniPoly<E>>,
 
     scan_time_total: f64,
@@ -238,57 +235,92 @@ mod x_prefix;
 mod y_prefix;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
-    // Fused relation (`alpha * m`) + optional trace-weight addend for one witness
-    // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
-    // (column-major: `col * y_len + ring_slot`). Y-round kernels pass `2*j` and
-    // `2*j+1`; x-prefix fusion passes column-relative indices directly.
-
     #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_fused_relation_trace(
-        &self,
-        rel: &mut [E; 3],
-        w0: E,
-        dw: E,
-        witness_idx0: usize,
-        witness_idx1: usize,
-        p0: E,
-        p1: E,
-    ) {
-        accumulate_relation_coeffs(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
-            let y_len = self.alpha_compact.len();
-            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
-            accumulate_relation_coeffs(rel, w0, dw, t0, t1);
-        }
+    pub(super) fn relation_weight_y_len(&self) -> usize {
+        self.relation_weight.y_len()
     }
 
     #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_fused_relation_trace_signed(
+    fn relation_weight_pair_columns(
         &self,
-        rel: &mut [E::MulU64Accum; 6],
-        w0: i64,
-        dw: i64,
-        witness_idx0: usize,
-        witness_idx1: usize,
-        p0: E,
-        p1: E,
+        x0: usize,
+        x1: usize,
+        y: usize,
+    ) -> (E, E) {
+        let y_len = self.relation_weight_y_len();
+        let live_x_cols = self.relation_weight.live_x_cols();
+        let evals = self.relation_weight.evals();
+        let p0 = evals[x0 * y_len + y];
+        let p1 = if x1 < live_x_cols {
+            evals[x1 * y_len + y]
+        } else {
+            E::zero()
+        };
+        (p0, p1)
+    }
+}
+
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> AkitaStage2Prover<E> {
+    pub(super) fn set_relation_weight_evals(
+        &mut self,
+        evals: Vec<E>,
+        relation_x_cols: usize,
+        y_len: usize,
     ) {
-        accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
-            let y_len = self.alpha_compact.len();
-            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
-            accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
-        }
+        let witness_len = relation_x_cols * y_len;
+        self.relation_weight = RelationWeightPolynomial::from_evals(
+            evals,
+            y_len,
+            relation_x_cols,
+            witness_len,
+        )
+        .expect("relation weight fold preserves shape");
     }
 
-    #[inline]
-    pub(super) fn fold_trace_for_round(&mut self, r: E, folding_x_round: bool) {
-        if let Some(trace) = self.trace_table.as_mut() {
-            let y_len = self.alpha_compact.len();
-            trace.fold_for_w_update(self.live_x_cols, y_len, r, folding_x_round);
-        }
+    pub(super) fn fold_relation_weight_for_round(
+        &mut self,
+        r: E,
+        folding_x_round: bool,
+        use_prefix_x_round: bool,
+        use_prefix_y_round: bool,
+        in_y_round: bool,
+    ) {
+        let y_len = self.relation_weight_y_len();
+        let relation_x_cols = self.relation_weight.live_x_cols();
+        let (evals, next_relation_x_cols, next_y_len) = if folding_x_round {
+            if use_prefix_x_round {
+                (
+                    Self::fold_relation_weight_x_column_major(
+                        self.relation_weight.evals(),
+                        relation_x_cols,
+                        y_len,
+                        r,
+                    ),
+                    relation_x_cols.div_ceil(2),
+                    y_len,
+                )
+            } else {
+                let mut evals = self.relation_weight.evals().to_vec();
+                fold_evals_in_place(&mut evals, r);
+                (evals, relation_x_cols.div_ceil(2), y_len)
+            }
+        } else if in_y_round && use_prefix_y_round {
+            (
+                Self::fold_relation_weight_prefix_y(
+                    self.relation_weight.evals(),
+                    relation_x_cols,
+                    y_len,
+                    r,
+                ),
+                relation_x_cols,
+                y_len / 2,
+            )
+        } else {
+            let mut evals = self.relation_weight.evals().to_vec();
+            fold_evals_in_place(&mut evals, r);
+            (evals, relation_x_cols, y_len / 2)
+        };
+        self.set_relation_weight_evals(evals, next_relation_x_cols, next_y_len);
     }
 }
 

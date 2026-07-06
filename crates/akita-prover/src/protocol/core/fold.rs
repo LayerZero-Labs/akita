@@ -9,6 +9,7 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
+use akita_types::bridge_relation_weight_from_split;
 use akita_types::build_segment_typed_witness;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::validate_segment_typed_z_payload;
@@ -815,20 +816,44 @@ where
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+    let y_len = 1usize
+        .checked_shl(rs.ring_bits as u32)
+        .ok_or(AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
+    let relation_x_cols = 1usize
+        .checked_shl(rs.col_bits as u32)
+        .ok_or(AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
+    let trace_dense = trace_compact.as_ref().map(|table| {
+        let live_dense = table.materialize_dense(rs.live_x_cols, y_len);
+        if rs.live_x_cols == relation_x_cols {
+            live_dense
+        } else {
+            let mut full = vec![E::zero(); relation_x_cols * y_len];
+            for x in 0..rs.live_x_cols {
+                let start = x * y_len;
+                full[start..start + y_len].copy_from_slice(&live_dense[start..start + y_len]);
+            }
+            full
+        }
+    });
+    let relation_weight_evals = bridge_relation_weight_from_split(
+        &rs.alpha_evals_y,
+        &rs.m_evals_x,
+        trace_dense.as_deref(),
+        y_len,
+        relation_x_cols,
+    )?;
+    let relation_weight_claim = relation_claim + trace_opening_claim;
     let mut stage2_prover = AkitaStage2Prover::new(
         batching_coeff,
         rs.w_evals_compact,
         stage1_point,
         s_claim,
         rs.b,
-        rs.alpha_evals_y,
-        rs.m_evals_x,
+        relation_weight_evals,
+        relation_weight_claim,
         rs.live_x_cols,
         rs.col_bits,
         rs.ring_bits,
-        relation_claim,
-        trace_compact.clone(),
-        trace_opening_claim,
     )?;
     let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
         .prove::<F, T, _>(transcript, |tr| {

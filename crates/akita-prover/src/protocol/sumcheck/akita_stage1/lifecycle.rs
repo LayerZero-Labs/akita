@@ -58,8 +58,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             col_bits,
             num_vars,
             b,
-            prefix_tau: can_use_stage1_two_round_prefix(ring_bits, b).then(|| tau0.to_vec()),
-            two_round_prefix: None,
+            prefix_tau: can_use_stage1_initial_round_batch(ring_bits, b).then(|| tau0.to_vec()),
+            initial_round_batch: None,
             cached_round_poly: None,
             prefix_time_total: 0.0,
             dense_time_total: 0.0,
@@ -123,13 +123,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[inline]
-    pub(crate) fn can_use_two_round_prefix(&self) -> bool {
+    pub(crate) fn can_use_stage2_initial_round_batch(&self) -> bool {
         self.prefix_tau.is_some()
     }
 
     #[inline]
-    pub(super) fn using_two_round_prefix(&self) -> bool {
-        self.rounds_completed < 2 && self.can_use_two_round_prefix()
+    pub(super) fn using_initial_round_batch(&self) -> bool {
+        self.rounds_completed < 2 && self.can_use_stage2_initial_round_batch()
     }
 
     #[inline]
@@ -144,8 +144,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         CompactPairFoldLut::from_allowed_values(&valid_s, r)
     }
 
-    pub(super) fn ensure_two_round_prefix(&mut self) -> &mut Stage1TwoRoundPrefix<E> {
-        if self.two_round_prefix.is_none() {
+    pub(super) fn ensure_initial_round_batch(&mut self) -> &mut Stage1InitialRoundBatch<E> {
+        if self.initial_round_batch.is_none() {
             let tau0 = self
                 .prefix_tau
                 .clone()
@@ -155,7 +155,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 STable::Compact(s_compact) => s_compact,
                 STable::Full(_) => panic!("two-round prefix can only build from compact table"),
             };
-            let proof = build_stage1_bivariate_skip_proof_from_s_compact(
+            let proof = build_stage1_initial_round_batch_grid(
                 s_compact,
                 &tau0,
                 self.b,
@@ -164,14 +164,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 ring_bits,
             )
             .expect("two-round prefix should be available");
-            let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, self.b)
+            let skip_state = Stage1RoundBatchState::new(&proof, &tau0, self.b)
                 .expect("valid bivariate-skip state");
-            self.two_round_prefix = Some(Stage1TwoRoundPrefix {
+            self.initial_round_batch = Some(Stage1InitialRoundBatch {
                 skip_state,
                 first_challenge: None,
             });
         }
-        self.two_round_prefix
+        self.initial_round_batch
             .as_mut()
             .expect("two-round prefix should be initialized")
     }

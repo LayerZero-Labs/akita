@@ -9,24 +9,24 @@ use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly};
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage1_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 4] {
+pub(crate) fn stage1_round_batch_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 4] {
     [
-        PrefixPoint::Finite(E::one()),
-        PrefixPoint::Finite(E::zero() - E::one()),
-        PrefixPoint::Finite(E::from_u64(2)),
-        PrefixPoint::Infinity,
+        RoundBatchPoint::Finite(E::one()),
+        RoundBatchPoint::Finite(E::zero() - E::one()),
+        RoundBatchPoint::Finite(E::from_u64(2)),
+        RoundBatchPoint::Infinity,
     ]
 }
 
 /// Safe full stage-1 fallback domain `{0, 1, -1, 2, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 5] {
+pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 5] {
     [
-        PrefixPoint::Finite(E::zero()),
-        PrefixPoint::Finite(E::one()),
-        PrefixPoint::Finite(E::zero() - E::one()),
-        PrefixPoint::Finite(E::from_u64(2)),
-        PrefixPoint::Infinity,
+        RoundBatchPoint::Finite(E::zero()),
+        RoundBatchPoint::Finite(E::one()),
+        RoundBatchPoint::Finite(E::zero() - E::one()),
+        RoundBatchPoint::Finite(E::from_u64(2)),
+        RoundBatchPoint::Infinity,
     ]
 }
 
@@ -35,7 +35,7 @@ pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [P
 /// This is built and consumed inside the prover to reconstruct ordinary
 /// eq-factored sumcheck round messages; it is not serialized in the Akita proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage1BivariateSkipProof<E: FieldCore> {
+pub(crate) struct Stage1RoundBatchGrid<E: FieldCore> {
     pub evals_except_boolean_core: Vec<E>,
 }
 
@@ -106,7 +106,7 @@ pub(crate) fn eval_stage1_biquartic_from_full_grid<E: FieldCore + FromPrimitiveI
 
 /// Whether stage 1 has enough leading y-rounds to use the 2-round prefix path.
 #[inline]
-pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> bool {
+pub(crate) fn can_use_stage1_initial_round_batch(ring_bits: usize, b: usize) -> bool {
     ring_bits >= 2 && matches!(b, 4 | 8)
 }
 
@@ -116,10 +116,10 @@ pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> boo
 /// Returns `None` when there are fewer than two leading y-rounds to batch.
 #[tracing::instrument(
     skip_all,
-    name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_compact"
+    name = "round_batching::build_stage1_initial_round_batch_grid"
 )]
 #[cfg(test)]
-pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
+pub(crate) fn build_stage1_initial_round_batch_grid_from_w_compact<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     w_compact: &[i8],
@@ -128,7 +128,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
-) -> Option<Stage1BivariateSkipProof<E>> {
+) -> Option<Stage1RoundBatchGrid<E>> {
     let y_len = 1usize << ring_bits;
     assert_eq!(w_compact.len(), live_x_cols * y_len);
     let s_compact = w_compact
@@ -138,7 +138,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
             (w * (w + 1)) as i16
         })
         .collect::<Vec<_>>();
-    build_stage1_bivariate_skip_proof_from_s_compact(
+    build_stage1_initial_round_batch_grid(
         &s_compact,
         tau0,
         b,
@@ -152,9 +152,9 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
 /// `s = w(w+1)` table already materialized by the prover.
 #[tracing::instrument(
     skip_all,
-    name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_s_compact"
+    name = "round_batching::build_stage1_initial_round_batch_grid"
 )]
-pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
+pub(crate) fn build_stage1_initial_round_batch_grid<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     s_compact: &[i16],
@@ -163,8 +163,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
-) -> Option<Stage1BivariateSkipProof<E>> {
-    if !can_use_stage1_two_round_prefix(ring_bits, b) {
+) -> Option<Stage1RoundBatchGrid<E>> {
+    if !can_use_stage1_initial_round_batch(ring_bits, b) {
         return None;
     }
 
@@ -230,8 +230,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                 0..live_x_cols,
                 || {
                     (
-                        [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT],
-                        [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT],
+                        [E::MulU64Accum::zero(); STAGE1_ROUND_BATCH_EVAL_COUNT],
+                        [E::MulU64Accum::zero(); STAGE1_ROUND_BATCH_EVAL_COUNT],
                     )
                 },
                 |(mut pos, mut neg), x_col| {
@@ -265,14 +265,14 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                     (pos_a, neg_a)
                 }
             );
-            (0..STAGE1_PREFIX_EVAL_COUNT)
+            (0..STAGE1_ROUND_BATCH_EVAL_COUNT)
                 .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
                 .collect()
         }
         _ => unreachable!("unsupported stage-1 two-round prefix basis"),
     };
 
-    Some(Stage1BivariateSkipProof {
+    Some(Stage1RoundBatchGrid {
         evals_except_boolean_core,
     })
 }
@@ -283,7 +283,7 @@ pub(crate) fn stage1_storage_vector_from_quad<E: FieldCore + FromPrimitiveInt>(
     b: usize,
 ) -> Vec<E> {
     let points = stage1_full_prefix_points::<E>();
-    let mut out = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
+    let mut out = Vec::with_capacity(STAGE1_ROUND_BATCH_EVAL_COUNT);
     for x_idx in 0..5 {
         for y_idx in 0..5 {
             if stage1_is_boolean_corner(x_idx, y_idx) {
@@ -317,13 +317,13 @@ pub(crate) struct Stage1B8BivariateSkipState<E: FieldCore> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Stage1BivariateSkipState<E: FieldCore> {
+pub(crate) enum Stage1RoundBatchState<E: FieldCore> {
     B4(Stage1B4BivariateSkipState<E>),
     B8(Stage1B8BivariateSkipState<E>),
 }
 
-impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
-    pub(crate) fn new(proof: &Stage1BivariateSkipProof<E>, tau0: &[E], b: usize) -> Option<Self> {
+impl<E: FieldCore + FromPrimitiveInt> Stage1RoundBatchState<E> {
+    pub(crate) fn new(proof: &Stage1RoundBatchGrid<E>, tau0: &[E], b: usize) -> Option<Self> {
         if tau0.len() < 2 {
             return None;
         }
@@ -352,7 +352,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
                 }))
             }
             8 => {
-                if proof.evals_except_boolean_core.len() != STAGE1_PREFIX_EVAL_COUNT {
+                if proof.evals_except_boolean_core.len() != STAGE1_ROUND_BATCH_EVAL_COUNT {
                     return None;
                 }
 

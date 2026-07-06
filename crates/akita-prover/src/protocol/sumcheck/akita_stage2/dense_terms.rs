@@ -12,13 +12,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
-        let folding_y_round = self.in_y_round();
-        let current_x_width = self.current_x_width();
-        let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
-        let current_y_width = self.current_y_width();
-        let current_y_mask = (1usize << current_y_width).wrapping_sub(1);
-        let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
         debug_assert_eq!(w_compact.len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
@@ -46,32 +39,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
                         }
 
-                        let (a0, a1, m0, m1) = if folding_y_round {
-                            (
-                                alpha_compact[(2 * j) & current_y_mask],
-                                alpha_compact[(2 * j + 1) & current_y_mask],
-                                m_compact[(2 * j) >> current_y_width],
-                                m_compact[(2 * j + 1) >> current_y_width],
-                            )
-                        } else {
-                            (
-                                alpha_compact[(2 * j) >> current_x_width],
-                                alpha_compact[(2 * j + 1) >> current_x_width],
-                                m_compact[(2 * j) & current_x_mask],
-                                m_compact[(2 * j + 1) & current_x_mask],
-                            )
-                        };
-                        let p0 = a0 * m0;
-                        let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace_signed(
-                            &mut rel,
-                            w0_i64,
-                            dw_i64,
-                            2 * j,
-                            2 * j + 1,
-                            p0,
-                            p1,
-                        );
+                        let (p0, p1) = self.relation_weight.pair_flat(2 * j, 2 * j + 1);
+                        accumulate_relation_coeffs_signed(&mut rel, w0_i64, dw_i64, p0, p1);
                     }
 
                     let reduced_inner: [E; 2] = reduce_compact_virt_skip_linear(inner_virt);
@@ -123,32 +92,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
                         }
 
-                        let (a0, a1, m0, m1) = if folding_y_round {
-                            (
-                                alpha_compact[(2 * j) & current_y_mask],
-                                alpha_compact[(2 * j + 1) & current_y_mask],
-                                m_compact[(2 * j) >> current_y_width],
-                                m_compact[(2 * j + 1) >> current_y_width],
-                            )
-                        } else {
-                            (
-                                alpha_compact[(2 * j) >> current_x_width],
-                                alpha_compact[(2 * j + 1) >> current_x_width],
-                                m_compact[(2 * j) & current_x_mask],
-                                m_compact[(2 * j + 1) & current_x_mask],
-                            )
-                        };
-                        let p0 = a0 * m0;
-                        let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace_signed(
-                            &mut rel,
-                            w0_i64,
-                            dw_i64,
-                            2 * j,
-                            2 * j + 1,
-                            p0,
-                            p1,
-                        );
+                        let (p0, p1) = self.relation_weight.pair_flat(2 * j, 2 * j + 1);
+                        accumulate_relation_coeffs_signed(&mut rel, w0_i64, dw_i64, p0, p1);
                     }
 
                     let reduced_inner: [E; 3] = reduce_compact_virt(inner_virt);
@@ -185,13 +130,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
-        let folding_y_round = self.in_y_round();
-        let current_x_width = self.current_x_width();
-        let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
-        let current_y_width = self.current_y_width();
-        let current_y_mask = (1usize << current_y_width).wrapping_sub(1);
-        let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
         debug_assert_eq!(w_full.len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
@@ -211,32 +149,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                         inner_virt[1] += e_in * (dw * dw);
 
-                        let (a0, a1, m0, m1) = if folding_y_round {
-                            (
-                                alpha_compact[(2 * j) & current_y_mask],
-                                alpha_compact[(2 * j + 1) & current_y_mask],
-                                m_compact[(2 * j) >> current_y_width],
-                                m_compact[(2 * j + 1) >> current_y_width],
-                            )
-                        } else {
-                            (
-                                alpha_compact[(2 * j) >> current_x_width],
-                                alpha_compact[(2 * j + 1) >> current_x_width],
-                                m_compact[(2 * j) & current_x_mask],
-                                m_compact[(2 * j + 1) & current_x_mask],
-                            )
-                        };
-                        let p0 = a0 * m0;
-                        let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace(
-                            &mut rel,
-                            w0,
-                            dw,
-                            2 * j,
-                            2 * j + 1,
-                            p0,
-                            p1,
-                        );
+                        let (p0, p1) = self.relation_weight.pair_flat(2 * j, 2 * j + 1);
+                        accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                     }
 
                     let e_out = e_second[j_high];
@@ -275,32 +189,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         inner_virt[1] += e_in * (dw * two_w0_plus_one);
                         inner_virt[2] += e_in * (dw * dw);
 
-                        let (a0, a1, m0, m1) = if folding_y_round {
-                            (
-                                alpha_compact[(2 * j) & current_y_mask],
-                                alpha_compact[(2 * j + 1) & current_y_mask],
-                                m_compact[(2 * j) >> current_y_width],
-                                m_compact[(2 * j + 1) >> current_y_width],
-                            )
-                        } else {
-                            (
-                                alpha_compact[(2 * j) >> current_x_width],
-                                alpha_compact[(2 * j + 1) >> current_x_width],
-                                m_compact[(2 * j) & current_x_mask],
-                                m_compact[(2 * j + 1) & current_x_mask],
-                            )
-                        };
-                        let p0 = a0 * m0;
-                        let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace(
-                            &mut rel,
-                            w0,
-                            dw,
-                            2 * j,
-                            2 * j + 1,
-                            p0,
-                            p1,
-                        );
+                        let (p0, p1) = self.relation_weight.pair_flat(2 * j, 2 * j + 1);
+                        accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                     }
 
                     let e_out = e_second[j_high];

@@ -10,25 +10,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         w_compact: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_y_round());
-        debug_assert_eq!(w_compact.len(), self.live_x_cols * self.alpha_compact.len());
+        debug_assert_eq!(w_compact.len(), self.live_x_cols * self.relation_weight_y_len());
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
         let current_y_half = 1usize << (self.current_y_width() - 1);
         let block_size = num_first.min(current_y_half);
-        let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
-        debug_assert_eq!(m_compact.len(), self.current_x_len());
-
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_x_cols,
                 || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), x| {
-                    let column_start = x * alpha_compact.len();
-                    let column = &w_compact[column_start..column_start + alpha_compact.len()];
-                    let m = m_compact[x];
+                    let y_len = self.relation_weight_y_len();
+                    let column_start = x * y_len;
+                    let column = &w_compact[column_start..column_start + y_len];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -62,14 +58,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let p0 = alpha_compact[left] * m;
-                            let p1 = alpha_compact[left + 1] * m;
-                            self.accumulate_fused_relation_trace_signed(
+                            let (p0, p1) = self.relation_weight.pair_flat(
+                                column_start + left,
+                                column_start + left + 1,
+                            );
+                            accumulate_relation_coeffs_signed(
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
-                                column_start + left,
-                                column_start + left + 1,
                                 p0,
                                 p1,
                             );
@@ -104,9 +100,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 0..self.live_x_cols,
                 || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), x| {
-                    let column_start = x * alpha_compact.len();
-                    let column = &w_compact[column_start..column_start + alpha_compact.len()];
-                    let m = m_compact[x];
+                    let y_len = self.relation_weight_y_len();
+                    let column_start = x * y_len;
+                    let column = &w_compact[column_start..column_start + y_len];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -142,14 +138,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let p0 = alpha_compact[left] * m;
-                            let p1 = alpha_compact[left + 1] * m;
-                            self.accumulate_fused_relation_trace_signed(
+                            let (p0, p1) = self.relation_weight.pair_flat(
+                                column_start + left,
+                                column_start + left + 1,
+                            );
+                            accumulate_relation_coeffs_signed(
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
-                                column_start + left,
-                                column_start + left + 1,
                                 p0,
                                 p1,
                             );
@@ -192,25 +188,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         w_full: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_y_round());
-        debug_assert_eq!(w_full.len(), self.live_x_cols * self.alpha_compact.len());
+        debug_assert_eq!(w_full.len(), self.live_x_cols * self.relation_weight_y_len());
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
         let current_y_half = 1usize << (self.current_y_width() - 1);
         let block_size = num_first.min(current_y_half);
-        let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
-        debug_assert_eq!(m_compact.len(), self.current_x_len());
-
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
                 0..self.live_x_cols,
                 || ([E::zero(); 2], [E::zero(); 3]),
                 |(mut virt, mut rel), x| {
-                    let column_start = x * alpha_compact.len();
-                    let column = &w_full[column_start..column_start + alpha_compact.len()];
-                    let m = m_compact[x];
+                    let y_len = self.relation_weight_y_len();
+                    let column_start = x * y_len;
+                    let column = &w_full[column_start..column_start + y_len];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -236,17 +228,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let p0 = alpha_compact[left] * m;
-                            let p1 = alpha_compact[left + 1] * m;
-                            self.accumulate_fused_relation_trace(
-                                &mut rel,
-                                w0,
-                                dw,
+                            let (p0, p1) = self.relation_weight.pair_flat(
                                 column_start + left,
                                 column_start + left + 1,
-                                p0,
-                                p1,
                             );
+                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -273,9 +259,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 0..self.live_x_cols,
                 || ([E::zero(); 3], [E::zero(); 3]),
                 |(mut virt, mut rel), x| {
-                    let column_start = x * alpha_compact.len();
-                    let column = &w_full[column_start..column_start + alpha_compact.len()];
-                    let m = m_compact[x];
+                    let y_len = self.relation_weight_y_len();
+                    let column_start = x * y_len;
+                    let column = &w_full[column_start..column_start + y_len];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -303,17 +289,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let p0 = alpha_compact[left] * m;
-                            let p1 = alpha_compact[left + 1] * m;
-                            self.accumulate_fused_relation_trace(
-                                &mut rel,
-                                w0,
-                                dw,
+                            let (p0, p1) = self.relation_weight.pair_flat(
                                 column_start + left,
                                 column_start + left + 1,
-                                p0,
-                                p1,
                             );
+                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];

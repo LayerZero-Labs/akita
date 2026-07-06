@@ -11,7 +11,7 @@
 
 Akita's sumchecks are hard to read, hard to audit, and hard to extend.
 The per-stage math is hand-inlined separately on the prover and verifier, the prover fuses several sumchecks over one witness inside a bespoke inner loop, and every new sumcheck (the y-ring trace term, the setup-offloading product sumcheck) is added by editing a monolithic stage driver.
-The result is a cartesian product of modes (`two_round_prefix` x prefix-x x prefix-y x sparse x compact/full x fuse-next-round) interleaved with fold logic, three different batching implementations, and a real correctness/perf hazard: adding the trace term disables the `two_round_prefix` prover optimization wholesale (`crates/akita-prover/src/protocol/sumcheck/akita_stage2/lifecycle.rs` in the y-ring worktree).
+The result is a cartesian product of modes (`round_batching` x prefix-x x prefix-y x sparse x compact/full x fuse-next-round) interleaved with fold logic, three different batching implementations, and a real correctness/perf hazard: adding the trace term disables the `round_batching` prover optimization wholesale (`crates/akita-prover/src/protocol/sumcheck/akita_stage2/lifecycle.rs` in the y-ring worktree).
 
 This spec unifies Akita's sumchecks behind one declarative descriptor that both the prover and verifier consume, modeled on the idealized modular Jolt design.
 A sumcheck instance becomes a sum-of-products expression over typed sources (openings, challenges, publics).
@@ -38,7 +38,7 @@ Each names the test, benchmark, or protocol relation that protects it.
   Protected by: existing `logging-transcript` event-stream equality tests (`crates/akita-transcript`, `LoggingTranscript`), extended to the stage-2 pilot.
 
 - Byte-identical fast paths.
-  Every prover compute optimization (the generic kernel, the compact-integer scan, Gruen split-eq, `two_round_prefix`, streaming) computes the identical round polynomials for a given instance.
+  Every prover compute optimization (the generic kernel, the compact-integer scan, Gruen split-eq, `round_batching`, streaming) computes the identical round polynomials for a given instance.
   A fast path is an alternative computation of the same declared message, never a different message.
   Protected by: a new equivalence test that runs each fast path and the generic Tier-A kernel on representative instances and asserts equal round polynomials every round (new test, `akita-prover` or `akita-sumcheck`).
 
@@ -249,7 +249,7 @@ Three orthogonal axes must not be conflated; the current code blurs them and tha
   An eq-factored instance cannot be batched while keeping its format.
   When the protocol plan places an eq-factored instance in a batch, the engine emits it in the regular compressed format and drops the proof-size win.
 
-- Prover-compute axis: Gruen split-eq, the compact-integer scan, `two_round_prefix`, and streaming.
+- Prover-compute axis: Gruen split-eq, the compact-integer scan, `round_batching`, and streaming.
   These are alternative prover computations of the identical declared round polynomials.
   They are protocol-invariant and never change the proof bytes.
 
@@ -310,9 +310,9 @@ The driver selects a matching fast path or falls back to Tier A.
 The hard contract: for any instance a fast path claims to match, its per-round polynomials equal the Tier-A kernel's, enforced by the equivalence test.
 
 Prover compute optimizations are exactly the Tier-B fast paths and are protocol-invariant.
-This is the corrected model for `two_round_prefix`: it is not a protocol change (the verifier sees identical round polynomials, domain, and proof bytes; the optimization is reconstructed prover-side and never serialized).
+This is the corrected model for `round_batching`: it is not a protocol change (the verifier sees identical round polynomials, domain, and proof bytes; the optimization is reconstructed prover-side and never serialized).
 It is a fast-path computation of the same declared messages, in the same category as the compact-integer scan and Gruen split-eq.
-Consequence: a fast path that does not yet compose with an added summand (the current trace-disables-`two_round_prefix` situation) falls back to Tier A, which is slower but produces identical bytes, and is a perf item to generalize, never a protocol fork.
+Consequence: a fast path that does not yet compose with an added summand (the current trace-disables-`round_batching` situation) falls back to Tier A, which is slower but produces identical bytes, and is a perf item to generalize, never a protocol fork.
 
 The per-round loop and transcript interaction live behind a proof-sink abstraction (the Akita analog of Jolt's `Stage6ProofSink`, `crates/jolt-prover/src/stages/stage6/prove.rs:715`): absorb input claims, per round append the round polynomial and squeeze the challenge, finish by absorbing output claims.
 Clear and ZK (committed-round) sinks share the loop.
@@ -376,7 +376,7 @@ The plan is the single place gamma-power batching is allocated, so trace and off
   Calls into `akita-sumcheck` for every struct/trait/helper; holds no generic engine code.
   Depended on by `akita-prover` and `akita-verifier`. Verifier-reachable, so panic-free.
 - `akita-types` (existing, slimmed): pure types and shared helpers (layouts, proof structs, SIS tables); stage equations move out to `akita-protocol`.
-- `akita-prover`: Tier-A kernel instantiation plus Tier-B fast paths (compact scan, Gruen split-eq, `two_round_prefix`).
+- `akita-prover`: Tier-A kernel instantiation plus Tier-B fast paths (compact scan, Gruen split-eq, `round_batching`).
 - `akita-verifier`: descriptor evaluation for `expected_output_claim`, opening discharge.
 
 Mapping of current pieces to new homes:
@@ -389,7 +389,7 @@ Mapping of current pieces to new homes:
 | `akita-verifier/stages/stage2.rs` `expected_output_claim` equation | stage-2 descriptor evaluation against the shared descriptor |
 | stage-1 tree interstage batching, stage-2 coeff-addition fusion | `BatchingScheme` in the protocol plan (`akita-protocol`) |
 | eq-factored proof-size optimization (`EqFactoredUniPoly`) | eq-factored wire format in `akita-sumcheck`, selected by the plan's batching decision |
-| `two_round_prefix/` | Tier-B fast path (`akita-prover`), protocol-invariant |
+| `round_batching/` | Tier-B fast path (`akita-prover`), protocol-invariant |
 
 #### 7. Relationship to the polyops cutover (`specs/akita-polyops-cutover.md`, PR #109)
 

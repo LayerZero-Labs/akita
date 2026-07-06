@@ -34,9 +34,9 @@
 //! degree 4, so round polynomials have degree 5.
 
 use super::fold_full_prefix_pair;
-use super::two_round_prefix::{
-    build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
-    stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
+use super::round_batching::{
+    build_stage1_initial_round_batch_grid, can_use_stage1_initial_round_batch,
+    stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1RoundBatchState,
 };
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
@@ -622,8 +622,8 @@ fn build_compact_s_table(w_evals_compact: &[i8]) -> Vec<i16> {
         .collect()
 }
 
-struct Stage1TwoRoundPrefix<E: FieldCore> {
-    skip_state: Stage1BivariateSkipState<E>,
+struct Stage1InitialRoundBatch<E: FieldCore> {
+    skip_state: Stage1RoundBatchState<E>,
     first_challenge: Option<E>,
 }
 
@@ -637,7 +637,7 @@ pub struct AkitaStage1Prover<E: FieldCore> {
     num_vars: usize,
     b: usize,
     prefix_tau: Option<Vec<E>>,
-    two_round_prefix: Option<Stage1TwoRoundPrefix<E>>,
+    initial_round_batch: Option<Stage1InitialRoundBatch<E>>,
     cached_round_poly: Option<EqFactoredUniPoly<E>>,
     prefix_time_total: f64,
     dense_time_total: f64,

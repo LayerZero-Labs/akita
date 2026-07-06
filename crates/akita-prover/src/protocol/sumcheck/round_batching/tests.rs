@@ -7,11 +7,93 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
-use akita_types::{range_check_eval_from_s, reorder_stage1_coords};
+use akita_types::{bridge_relation_weight_from_split, range_check_eval_from_s, reorder_stage1_coords};
 use akita_types::{TraceSparseColumn, TraceTable};
 use std::collections::HashMap;
 
 type F = Prime128Offset275;
+
+fn stage2_relation_weight_evals(
+    alpha_evals_y: &[F],
+    m_evals_x: &[F],
+    trace: Option<&[F]>,
+    col_bits: usize,
+    ring_bits: usize,
+    live_x_cols: usize,
+) -> Vec<F> {
+    let y_len = 1usize << ring_bits;
+    let relation_x_cols = 1usize << col_bits;
+    let trace_dense = trace.map(|trace| {
+        if trace.len() == relation_x_cols * y_len {
+            trace.to_vec()
+        } else {
+            let mut full = vec![F::zero(); relation_x_cols * y_len];
+            for x in 0..live_x_cols {
+                let start = x * y_len;
+                full[start..start + y_len].copy_from_slice(&trace[start..start + y_len]);
+            }
+            full
+        }
+    });
+    bridge_relation_weight_from_split(
+        alpha_evals_y,
+        m_evals_x,
+        trace_dense.as_deref(),
+        y_len,
+        relation_x_cols,
+    )
+    .unwrap()
+}
+
+fn build_stage2_grid_from_split(
+    w_compact: &[i8],
+    alpha_evals_y: &[F],
+    m_evals_x: &[F],
+    trace: Option<&[F]>,
+    stage1_point: &[F],
+    b: usize,
+    live_x_cols: usize,
+    col_bits: usize,
+    ring_bits: usize,
+) -> Option<Stage2RoundBatchGrid<F>> {
+    let relation_weight_evals =
+        stage2_relation_weight_evals(alpha_evals_y, m_evals_x, trace, col_bits, ring_bits, live_x_cols);
+    build_stage2_initial_round_batch_grid(
+        w_compact,
+        &relation_weight_evals,
+        stage1_point,
+        b,
+        live_x_cols,
+        col_bits,
+        ring_bits,
+    )
+}
+
+fn build_stage2_grid_from_split_reference(
+    w_compact: &[i8],
+    alpha_evals_y: &[F],
+    m_evals_x: &[F],
+    trace: Option<&[F]>,
+    stage1_point: &[F],
+    b: usize,
+    live_x_cols: usize,
+    col_bits: usize,
+    ring_bits: usize,
+) -> Option<Stage2RoundBatchGrid<F>> {
+    let relation_weight_evals =
+        stage2_relation_weight_evals(alpha_evals_y, m_evals_x, trace, col_bits, ring_bits, live_x_cols);
+    build_stage2_initial_round_batch_grid_reference(
+        w_compact,
+        &relation_weight_evals,
+        stage1_point,
+        b,
+        live_x_cols,
+        col_bits,
+        ring_bits,
+    )
+}
+
+
 
 fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {
     rows.retain(|row| row.iter().any(|x| !x.is_zero()));
@@ -96,26 +178,26 @@ fn stage2_norm_claim_from_full_grid(full_grid: [F; 9], corner_weights: [F; 4]) -
 }
 
 fn stage2_norm_round_values_from_full_grid(full_grid: [F; 9], tau0: F, tau1: F, r0: F) -> Vec<F> {
-    let l0_at = |x: PrefixPoint<F>| match x {
-        PrefixPoint::Finite(x) => tau0 * x + (F::one() - tau0) * (F::one() - x),
-        PrefixPoint::Infinity => tau0,
+    let l0_at = |x: RoundBatchPoint<F>| match x {
+        RoundBatchPoint::Finite(x) => tau0 * x + (F::one() - tau0) * (F::one() - x),
+        RoundBatchPoint::Infinity => tau0,
     };
     let l1_0 = F::one() - tau1;
     let l1_1 = tau1;
     let mut out = Vec::new();
     for x in [F::zero(), F::one(), F::from_u64(2), F::from_u64(3)] {
-        let x_point = PrefixPoint::Finite(x);
+        let x_point = RoundBatchPoint::Finite(x);
         let q_x0 =
-            eval_biquadratic_from_full_grid(full_grid, x_point, PrefixPoint::Finite(F::zero()));
+            eval_biquadratic_from_full_grid(full_grid, x_point, RoundBatchPoint::Finite(F::zero()));
         let q_x1 =
-            eval_biquadratic_from_full_grid(full_grid, x_point, PrefixPoint::Finite(F::one()));
+            eval_biquadratic_from_full_grid(full_grid, x_point, RoundBatchPoint::Finite(F::one()));
         out.push(l0_at(x_point) * (l1_0 * q_x0 + l1_1 * q_x1));
     }
     for y in [F::zero(), F::one(), F::from_u64(2), F::from_u64(3)] {
-        let y_point = PrefixPoint::Finite(y);
-        let q_r0_y = eval_biquadratic_from_full_grid(full_grid, PrefixPoint::Finite(r0), y_point);
+        let y_point = RoundBatchPoint::Finite(y);
+        let q_r0_y = eval_biquadratic_from_full_grid(full_grid, RoundBatchPoint::Finite(r0), y_point);
         let l1_y = tau1 * y + (F::one() - tau1) * (F::one() - y);
-        out.push(l1_y * l0_at(PrefixPoint::Finite(r0)) * q_r0_y);
+        out.push(l1_y * l0_at(RoundBatchPoint::Finite(r0)) * q_r0_y);
     }
     out
 }
@@ -125,30 +207,30 @@ fn stage2_relation_round_values_from_full_grid(full_grid: [F; 9], r0: F) -> Vec<
     for x in [F::zero(), F::one(), F::from_u64(2)] {
         let q_x0 = eval_biquadratic_from_full_grid(
             full_grid,
-            PrefixPoint::Finite(x),
-            PrefixPoint::Finite(F::zero()),
+            RoundBatchPoint::Finite(x),
+            RoundBatchPoint::Finite(F::zero()),
         );
         let q_x1 = eval_biquadratic_from_full_grid(
             full_grid,
-            PrefixPoint::Finite(x),
-            PrefixPoint::Finite(F::one()),
+            RoundBatchPoint::Finite(x),
+            RoundBatchPoint::Finite(F::one()),
         );
         out.push(q_x0 + q_x1);
     }
     for y in [F::zero(), F::one(), F::from_u64(2)] {
         out.push(eval_biquadratic_from_full_grid(
             full_grid,
-            PrefixPoint::Finite(r0),
-            PrefixPoint::Finite(y),
+            RoundBatchPoint::Finite(r0),
+            RoundBatchPoint::Finite(y),
         ));
     }
     out
 }
 
 fn tensor_values<E: FieldCore, const NX: usize, const NY: usize>(
-    xs: [PrefixPoint<E>; NX],
-    ys: [PrefixPoint<E>; NY],
-    mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
+    xs: [RoundBatchPoint<E>; NX],
+    ys: [RoundBatchPoint<E>; NY],
+    mut eval: impl FnMut(RoundBatchPoint<E>, RoundBatchPoint<E>) -> E,
 ) -> Vec<E> {
     let mut out = Vec::with_capacity(NX * NY);
     for &x in &xs {
@@ -176,15 +258,15 @@ fn stage1_norm_round_values(s_quad: [F; 4], tau0: F, tau1: F, r0: F, b: usize) -
     out
 }
 
-fn build_stage1_bivariate_skip_proof_from_compact_reference(
+fn build_stage1_initial_round_batch_grid_reference(
     w_compact: &[i8],
     tau0: &[F],
     b: usize,
     live_x_cols: usize,
     _col_bits: usize,
     ring_bits: usize,
-) -> Option<Stage1BivariateSkipProof<F>> {
-    if !can_use_stage1_two_round_prefix(ring_bits, b) {
+) -> Option<Stage1RoundBatchGrid<F>> {
+    if !can_use_stage1_initial_round_batch(ring_bits, b) {
         return None;
     }
 
@@ -195,7 +277,7 @@ fn build_stage1_bivariate_skip_proof_from_compact_reference(
         .expect("stage-1 reference x-prefix dimensions are prevalidated");
     let points = stage1_full_prefix_points::<F>();
     let y_quads = y_len / 4;
-    let mut evals_except_boolean_core = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
+    let mut evals_except_boolean_core = Vec::with_capacity(STAGE1_ROUND_BATCH_EVAL_COUNT);
 
     for x_idx in 0..5 {
         for y_idx in 0..5 {
@@ -222,32 +304,28 @@ fn build_stage1_bivariate_skip_proof_from_compact_reference(
         }
     }
 
-    Some(Stage1BivariateSkipProof {
+    Some(Stage1RoundBatchGrid {
         evals_except_boolean_core,
     })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_stage2_bivariate_skip_proof_from_compact_reference(
+fn build_stage2_initial_round_batch_grid_reference(
     w_compact: &[i8],
-    alpha_evals_y: &[F],
-    m_evals_x: &[F],
-    trace_compact: Option<&[F]>,
+    relation_weight_evals: &[F],
     stage1_point: &[F],
     b: usize,
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
-) -> Option<Stage2BivariateSkipProof<F>> {
-    if !can_use_stage2_two_round_prefix(ring_bits, b) {
+) -> Option<Stage2RoundBatchGrid<F>> {
+    if !can_use_stage2_initial_round_batch(ring_bits, b) {
         return None;
     }
 
     let y_len = 1usize << ring_bits;
-    assert_eq!(m_evals_x.len(), 1usize << col_bits);
-    if let Some(trace) = trace_compact {
-        assert_eq!(trace.len(), live_x_cols * y_len);
-    }
+    let relation_x_cols = 1usize << col_bits;
+    assert_eq!(relation_weight_evals.len(), relation_x_cols * y_len);
     let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
         .expect("stage-2 reference two-round prefix dimensions are prevalidated");
     let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
@@ -259,25 +337,19 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
 
     for x_idx in 0..live_x_cols {
         let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
-        let trace_column = trace_compact.map(|trace| &trace[x_idx * y_len..(x_idx + 1) * y_len]);
-        let row_val = m_evals_x[x_idx];
         let eq_x_weight = eq_x[x_idx];
         for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate().take(y_quads) {
             let base = 4 * y_quad;
             let w_quad = std::array::from_fn(|offset| F::from_i64(column[base + offset] as i64));
-            let alpha_quad = std::array::from_fn(|offset| alpha_evals_y[base + offset]);
-            let trace_quad = trace_column
-                .map(|trace_column| std::array::from_fn(|offset| trace_column[base + offset]));
+            let weight_quad = std::array::from_fn(|offset| {
+                relation_weight_evals[x_idx * y_len + base + offset]
+            });
             let norm_weight = eq_y_weight * eq_x_weight;
             for idx in 0..9 {
                 let x = points[idx / 3];
                 let y = points[idx % 3];
                 norm_full[idx] += norm_weight * stage2_local_norm_raw_eval(w_quad, x, y);
-                relation_full[idx] += stage2_local_relation_eval(w_quad, alpha_quad, row_val, x, y);
-                if let Some(trace_quad) = trace_quad {
-                    relation_full[idx] +=
-                        stage2_local_relation_eval(w_quad, trace_quad, F::one(), x, y);
-                }
+                relation_full[idx] += stage2_local_relation_eval(w_quad, weight_quad, F::one(), x, y);
             }
         }
     }
@@ -285,9 +357,9 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
     let norm_omitted_corner = default_stage2_norm_omitted_corner(
         stage2_norm_corner_weights_from_taus(stage1_point[0], stage1_point[1]),
     );
-    Some(Stage2BivariateSkipProof {
-        norm: Stage2CompressedGrid::from_full_grid(norm_full, norm_omitted_corner),
-        relation: Stage2CompressedGrid::from_full_grid(
+    Some(Stage2RoundBatchGrid {
+        norm: OmittedCornerEvaluationGrid::from_full_grid(norm_full, norm_omitted_corner),
+        relation: OmittedCornerEvaluationGrid::from_full_grid(
             relation_full,
             BooleanCorner::DEFAULT_STAGE2_RELATION,
         ),
@@ -412,10 +484,10 @@ fn stage1_bivariate_skip_proof_builder_matches_reference() {
     ];
     let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
     assert_eq!(
-        build_stage1_bivariate_skip_proof_from_compact(
+        build_stage1_initial_round_batch_grid_from_w_compact(
             &w_compact, &tau0, 8, 5, col_bits, ring_bits
         ),
-        build_stage1_bivariate_skip_proof_from_compact_reference(
+        build_stage1_initial_round_batch_grid_reference(
             &w_compact, &tau0, 8, 5, col_bits, ring_bits,
         ),
     );
@@ -442,7 +514,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
         F::from_u64(11),
     ];
     assert_eq!(
-        build_stage2_bivariate_skip_proof_from_compact(
+        build_stage2_grid_from_split(
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
@@ -453,7 +525,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
             3,
             1,
         ),
-        build_stage2_bivariate_skip_proof_from_compact_reference(
+        build_stage2_grid_from_split_reference(
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
@@ -491,12 +563,11 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
 
     assert_eq!(
         {
-            let trace_table = TraceTable::ring_dense(trace_compact.clone());
-            build_stage2_bivariate_skip_proof_from_compact(
+            build_stage2_grid_from_split(
                 &w_compact,
                 &alpha_evals_y,
                 &m_evals_x,
-                Some(&trace_table),
+                Some(&trace_compact),
                 &stage1_point,
                 8,
                 live_x_cols,
@@ -504,7 +575,7 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
                 ring_bits,
             )
         },
-        build_stage2_bivariate_skip_proof_from_compact_reference(
+        build_stage2_grid_from_split_reference(
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
@@ -540,6 +611,7 @@ fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
         live_x_cols,
         y_len,
     );
+    let sparse_dense = sparse_trace.materialize_dense(live_x_cols, y_len);
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((17 * i as u64) + 19))
         .collect();
@@ -550,18 +622,18 @@ fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
         .map(|i| F::from_u64((31 * i as u64) + 37))
         .collect();
     assert_eq!(
-        build_stage2_bivariate_skip_proof_from_compact(
+        build_stage2_grid_from_split(
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
-            Some(&sparse_trace),
+            Some(&sparse_dense),
             &stage1_point,
             8,
             live_x_cols,
             col_bits,
             ring_bits,
         ),
-        build_stage2_bivariate_skip_proof_from_compact_reference(
+        build_stage2_grid_from_split_reference(
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
@@ -612,7 +684,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
         })
         .collect();
     assert_eq!(
-        build_stage2_bivariate_skip_proof_from_compact(
+        build_stage2_grid_from_split(
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
@@ -623,7 +695,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             col_bits,
             ring_bits,
         ),
-        build_stage2_bivariate_skip_proof_from_compact_reference(
+        build_stage2_grid_from_split_reference(
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
@@ -639,7 +711,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
 
 #[test]
 fn stage1_candidate_omits_11_via_zero_check() {
-    let points = stage1_prefix_points::<F>();
+    let points = stage1_round_batch_points::<F>();
     let one = points[0];
     let valid_s = [0i64, 2, 6, 12];
     for &s00 in &valid_s {
@@ -665,7 +737,7 @@ fn stage1_candidate_omits_11_via_zero_check() {
 
 #[test]
 fn stage1_candidate_storage_family_has_rank_15() {
-    let [one, neg_one, two, inf] = stage1_prefix_points::<F>();
+    let [one, neg_one, two, inf] = stage1_round_batch_points::<F>();
     let storage_points = [
         (one, neg_one),
         (one, two),
@@ -790,10 +862,10 @@ fn stage1_storage_domain_matches_local_round_messages() {
                         F::from_i64(s01),
                         F::from_i64(s11),
                     ];
-                    let proof = Stage1BivariateSkipProof {
+                    let proof = Stage1RoundBatchGrid {
                         evals_except_boolean_core: stage1_storage_vector_from_quad(quad, 8),
                     };
-                    let skip_state = Stage1BivariateSkipState::new(&proof, &[tau0, tau1], 8)
+                    let skip_state = Stage1RoundBatchState::new(&proof, &[tau0, tau1], 8)
                         .expect("stage1 bivariate-skip state should build");
                     let round_values = stage1_norm_round_values(quad, tau0, tau1, r0, 8);
                     assert_eq!(
@@ -828,7 +900,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
     ];
     let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
 
-    let proof = build_stage1_bivariate_skip_proof_from_compact(
+    let proof = build_stage1_initial_round_batch_grid_from_w_compact(
         &w_compact,
         &tau0,
         b,
@@ -837,7 +909,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
         ring_bits,
     )
     .expect("stage1 bivariate-skip payload should be available");
-    let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, b)
+    let skip_state = Stage1RoundBatchState::new(&proof, &tau0, b)
         .expect("stage1 bivariate-skip state should build");
 
     let mut prover =
@@ -1097,7 +1169,7 @@ fn stage2_norm_8_point_reconstruction_matches_full_grid_and_round_messages() {
                                 stage2_norm_claim_from_full_grid(full_grid, corner_weights);
                             let omitted_corner = default_stage2_norm_omitted_corner(corner_weights);
                             let compressed =
-                                Stage2CompressedGrid::from_full_grid(full_grid, omitted_corner);
+                                OmittedCornerEvaluationGrid::from_full_grid(full_grid, omitted_corner);
                             let recovered = recover_stage2_grid_from_corner_claim(
                                 &compressed,
                                 corner_weights,
@@ -1187,7 +1259,7 @@ fn stage2_relation_8_point_reconstruction_matches_full_grid_and_round_messages()
                                             full_grid,
                                             [F::one(); 4],
                                         );
-                                        let compressed = Stage2CompressedGrid::from_full_grid(
+                                        let compressed = OmittedCornerEvaluationGrid::from_full_grid(
                                             full_grid,
                                             BooleanCorner::DEFAULT_STAGE2_RELATION,
                                         );

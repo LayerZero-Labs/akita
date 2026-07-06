@@ -4,7 +4,7 @@ use super::*;
 use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;
 use akita_field::Prime128Offset275;
 use akita_sumcheck::multilinear_eval;
-use akita_types::{TraceSparseColumn, TraceTable};
+use akita_types::{bridge_relation_weight_from_split, TraceSparseColumn, TraceTable};
 
 type F = Prime128Offset275;
 
@@ -15,6 +15,49 @@ pub(super) struct Stage2Params<'a> {
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
+}
+
+
+fn build_relation_weight_evals(
+    alpha_evals_y: &[F],
+    m_evals_x: &[F],
+    trace: Option<&[F]>,
+    params: &Stage2Params<'_>,
+) -> Vec<F> {
+    let y_len = 1usize << params.ring_bits;
+    let relation_x_cols = 1usize << params.col_bits;
+    let trace_dense = trace.map(|trace| {
+        if trace.len() == relation_x_cols * y_len {
+            trace.to_vec()
+        } else {
+            let mut full = vec![F::zero(); relation_x_cols * y_len];
+            for x in 0..params.live_x_cols {
+                let start = x * y_len;
+                full[start..start + y_len].copy_from_slice(&trace[start..start + y_len]);
+            }
+            full
+        }
+    });
+    bridge_relation_weight_from_split(
+        alpha_evals_y,
+        m_evals_x,
+        trace_dense.as_deref(),
+        y_len,
+        relation_x_cols,
+    )
+    .unwrap()
+}
+
+fn relation_weight_claim_from_split(
+    w_compact: &[i8],
+    alpha_evals_y: &[F],
+    m_evals_x: &[F],
+    trace: Option<&[F]>,
+    params: &Stage2Params<'_>,
+) -> F {
+    relation_claim_from_compact_rows(w_compact, alpha_evals_y, m_evals_x, params)
+        + trace.map(|trace| trace_claim_from_compact_rows(w_compact, trace, params))
+            .unwrap_or(F::zero())
 }
 
 fn s_claim_from_compact_rows(w_compact: &[i8], params: &Stage2Params<'_>) -> F {
@@ -81,22 +124,21 @@ fn new_stage2_test_prover(
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
     let s_claim = s_claim_from_compact_rows(&w_compact, &params);
-    let relation_claim =
-        relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
+    let relation_weight_evals =
+        build_relation_weight_evals(&alpha_evals_y, &m_evals_x, None, &params);
+    let relation_weight_claim =
+        relation_weight_claim_from_split(&w_compact, &alpha_evals_y, &m_evals_x, None, &params);
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,
         params.stage1_point,
         s_claim,
         params.b,
-        alpha_evals_y,
-        m_evals_x,
+        relation_weight_evals,
+        relation_weight_claim,
         params.live_x_cols,
         params.col_bits,
         params.ring_bits,
-        relation_claim,
-        None,
-        F::zero(),
     )
     .unwrap()
 }
@@ -110,23 +152,32 @@ pub(super) fn new_stage2_test_prover_with_trace(
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
     let s_claim = s_claim_from_compact_rows(&w_compact, &params);
-    let relation_claim =
+    let _relation_claim =
         relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
-    let trace_opening_claim = trace_claim_from_compact_rows(&w_compact, &trace_compact, &params);
+    let relation_weight_evals = build_relation_weight_evals(
+        &alpha_evals_y,
+        &m_evals_x,
+        Some(&trace_compact),
+        &params,
+    );
+    let relation_weight_claim = relation_weight_claim_from_split(
+        &w_compact,
+        &alpha_evals_y,
+        &m_evals_x,
+        Some(&trace_compact),
+        &params,
+    );
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,
         params.stage1_point,
         s_claim,
         params.b,
-        alpha_evals_y,
-        m_evals_x,
+        relation_weight_evals,
+        relation_weight_claim,
         params.live_x_cols,
         params.col_bits,
         params.ring_bits,
-        relation_claim,
-        Some(TraceTable::ring_dense(trace_compact)),
-        trace_opening_claim,
     )
     .unwrap()
 }
@@ -141,23 +192,33 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
     let s_claim = s_claim_from_compact_rows(&w_compact, &params);
-    let relation_claim =
+    let _relation_claim =
         relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
-    let trace_opening_claim = trace_claim_from_compact_rows(&w_compact, trace_claim_table, &params);
+    let trace_dense = trace_table.materialize_dense(params.live_x_cols, 1usize << params.ring_bits);
+    let relation_weight_evals = build_relation_weight_evals(
+        &alpha_evals_y,
+        &m_evals_x,
+        Some(&trace_dense),
+        &params,
+    );
+    let relation_weight_claim = relation_weight_claim_from_split(
+        &w_compact,
+        &alpha_evals_y,
+        &m_evals_x,
+        Some(trace_claim_table),
+        &params,
+    );
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,
         params.stage1_point,
         s_claim,
         params.b,
-        alpha_evals_y,
-        m_evals_x,
+        relation_weight_evals,
+        relation_weight_claim,
         params.live_x_cols,
         params.col_bits,
         params.ring_bits,
-        relation_claim,
-        Some(trace_table),
-        trace_opening_claim,
     )
     .unwrap()
 }
@@ -182,26 +243,20 @@ pub(super) fn pad_trace_compact(
 
 fn relation_round_reference(
     w_compact: &[i8],
-    alpha_compact: &[F],
-    m_compact: &[F],
-    ring_bits: usize,
+    relation_evals: &[F],
 ) -> UniPoly<F> {
     let half = w_compact.len() / 2;
-    let current_y_mask = (1usize << ring_bits).wrapping_sub(1);
     let mut evals = [F::zero(); 3];
     for j in 0..half {
         let w_0 = F::from_i64(w_compact[2 * j] as i64);
         let w_1 = F::from_i64(w_compact[2 * j + 1] as i64);
-        let a_0 = alpha_compact[(2 * j) & current_y_mask];
-        let a_1 = alpha_compact[(2 * j + 1) & current_y_mask];
-        let m_0 = m_compact[(2 * j) >> ring_bits];
-        let m_1 = m_compact[(2 * j + 1) >> ring_bits];
-        evals[0] += w_0 * a_0 * m_0;
-        evals[1] += w_1 * a_1 * m_1;
+        let p_0 = relation_evals[2 * j];
+        let p_1 = relation_evals[2 * j + 1];
+        evals[0] += w_0 * p_0;
+        evals[1] += w_1 * p_1;
         let w_2 = w_1 + w_1 - w_0;
-        let a_2 = a_1 + a_1 - a_0;
-        let m_2 = m_1 + m_1 - m_0;
-        evals[2] += w_2 * a_2 * m_2;
+        let p_2 = p_1 + p_1 - p_0;
+        evals[2] += w_2 * p_2;
     }
     UniPoly::from_evals(&evals)
 }
@@ -314,7 +369,7 @@ fn stage2_compact_round0_matches_unfused_reference() {
         let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&w_compact);
         let virt_ref = virtual_round_reference(&prover.split_eq, &w_compact);
         let relation_ref =
-            relation_round_reference(&w_compact, &alpha_evals_y, &m_evals_x, ring_bits);
+            relation_round_reference(&w_compact, prover.relation_weight.evals());
 
         assert_eq!(
             virt_poly, virt_ref,
@@ -435,7 +490,7 @@ fn stage2_zero_gated_round0_matches_reference() {
     );
     assert_eq!(
         relation_poly,
-        relation_round_reference(&w_compact, &alpha_evals_y, &m_evals_x, ring_bits)
+        relation_round_reference(&w_compact, prover.relation_weight.evals())
     );
 }
 
@@ -481,10 +536,15 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let r1 = F::from_u64(97);
 
     let expected_w_full =
-        AkitaStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
-    let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
-    let expected_m_compact = prover.m_compact.clone();
+        AkitaStage2Prover::<F>::fold_compact_through_initial_batch(&w_prefix, live_x_cols, y_len, r0, r1);
+    let relation_x_cols = 1usize << col_bits;
+    let expected_relation_round2 = AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
+        prover.relation_weight.evals(),
+        relation_x_cols,
+        y_len,
+        r0,
+        r1,
+    );
 
     let mut expected = new_stage2_test_prover(
         F::from_u64(83),
@@ -505,9 +565,14 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
-    expected.alpha_compact = expected_alpha_round2.clone();
+    expected.relation_weight = RelationWeightPolynomial::from_evals(
+        expected_relation_round2.clone(),
+        y_len >> 2,
+        relation_x_cols,
+        relation_x_cols * (y_len >> 2),
+    )
+    .unwrap();
     expected.rounds_completed = 2;
-    expected.m_compact = expected_m_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
     prover.ingest_challenge(1, r1);
@@ -518,12 +583,11 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
             panic!("expected fused stage2 transition to materialize full table")
         }
     }
-    assert_eq!(prover.alpha_compact, expected_alpha_round2);
-    assert_eq!(prover.m_compact, expected_m_compact);
-    assert!(!prover.can_use_two_round_prefix());
-    assert!(!prover.using_two_round_prefix());
+    assert_eq!(prover.relation_weight.evals(), expected.relation_weight.evals());
+    assert!(!prover.can_use_stage2_initial_round_batch());
+    assert!(!prover.using_initial_round_batch());
     assert!(prover.prefix_r_stage1.is_none());
-    assert!(prover.two_round_prefix.is_none());
+    assert!(prover.initial_round_batch.is_none());
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }
 
@@ -569,10 +633,15 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let r1 = F::from_u64(127);
 
     let expected_w_full =
-        AkitaStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
-    let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
-    let expected_m_compact = prover.m_compact.clone();
+        AkitaStage2Prover::<F>::fold_compact_through_initial_batch(&w_prefix, live_x_cols, y_len, r0, r1);
+    let relation_x_cols = 1usize << col_bits;
+    let expected_relation_round2 = AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
+        prover.relation_weight.evals(),
+        relation_x_cols,
+        y_len,
+        r0,
+        r1,
+    );
 
     let mut expected =
         new_stage2_test_prover(F::from_u64(109), w_prefix, alpha_evals_y, m_evals_x, params);
@@ -588,9 +657,14 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
-    expected.alpha_compact = expected_alpha_round2.clone();
+    expected.relation_weight = RelationWeightPolynomial::from_evals(
+        expected_relation_round2.clone(),
+        y_len >> 2,
+        relation_x_cols,
+        relation_x_cols * (y_len >> 2),
+    )
+    .unwrap();
     expected.rounds_completed = 2;
-    expected.m_compact = expected_m_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
     prover.ingest_challenge(1, r1);
@@ -601,8 +675,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
             panic!("expected fused stage2 transition to materialize full table")
         }
     }
-    assert_eq!(prover.alpha_compact, expected_alpha_round2);
-    assert_eq!(prover.m_compact, expected_m_compact);
+    assert_eq!(prover.relation_weight.evals(), expected.relation_weight.evals());
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }
 
@@ -665,15 +738,21 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
         WTable::Full(w_full) => w_full.clone(),
         WTable::Compact(_) => panic!("expected later prefix state to be full"),
     };
-    let current_m_compact = expected.m_compact.clone();
-    let current_y_len = expected.alpha_compact.len();
+    let live_x_cols = expected.live_x_cols;
+    let current_y_len = expected.relation_weight_y_len();
     let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_prefix_x(
         &current_w_full,
         expected.live_x_cols,
         current_y_len,
         r2,
     );
-    let expected_next_m_compact = AkitaStage2Prover::<F>::fold_m_prefix(&current_m_compact, r2);
+    let relation_x_cols = expected.relation_weight.live_x_cols();
+    let expected_next_relation = AkitaStage2Prover::<F>::fold_relation_weight_x_column_major(
+        expected.relation_weight.evals(),
+        relation_x_cols,
+        current_y_len,
+        r2,
+    );
     expected.prev_norm_claim = expected
         .prev_norm_poly
         .as_ref()
@@ -682,7 +761,14 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     expected.split_eq.bind(r2);
     expected.live_x_cols = expected.live_x_cols.div_ceil(2);
     expected.rounds_completed += 1;
-    expected.m_compact = expected_next_m_compact.clone();
+    let next_relation_x_cols = relation_x_cols.div_ceil(2);
+    expected.relation_weight = RelationWeightPolynomial::from_evals(
+        expected_next_relation.clone(),
+        current_y_len,
+        next_relation_x_cols,
+        next_relation_x_cols * current_y_len,
+    )
+    .unwrap();
     let (virt_terms, rel_coeffs) =
         expected.compute_round_full_prefix_x_terms(&expected_next_w_full);
     let expected_round3 = expected.combine_terms(virt_terms, rel_coeffs);
@@ -693,12 +779,12 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
         WTable::Full(w_full) => assert_eq!(w_full, &expected_next_w_full),
         WTable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
     }
-    assert_eq!(prover.m_compact, expected_next_m_compact);
+    assert_eq!(prover.relation_weight.evals(), expected.relation_weight.evals());
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
 }
 
 #[test]
-fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
+fn stage2_large_odd_sparse_boolean_round_batching_matches_direct_path() {
     let col_bits = 16usize;
     let ring_bits = 6usize;
     let live_x_cols = 34_519usize;
@@ -828,7 +914,7 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
 }
 
 #[test]
-fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
+fn stage2_large_odd_dense_round_batching_matches_direct_path() {
     let col_bits = 16usize;
     let ring_bits = 6usize;
     let live_x_cols = 34_519usize;

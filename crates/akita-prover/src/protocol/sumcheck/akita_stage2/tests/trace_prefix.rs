@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn stage2_trace_two_round_prefix_matches_direct_path() {
+fn stage2_trace_round_batching_matches_direct_path() {
     let col_bits = 5usize;
     let ring_bits = 4usize;
     let live_x_cols = 19usize;
@@ -39,7 +39,7 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
         trace_compact.clone(),
         params,
     );
-    assert!(prover.can_use_two_round_prefix());
+    assert!(prover.can_use_stage2_initial_round_batch());
     let mut direct = new_stage2_test_prover_with_trace(
         F::from_u64(43),
         w_prefix,
@@ -49,7 +49,7 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
         params,
     );
     direct.prefix_r_stage1 = None;
-    assert!(!direct.can_use_two_round_prefix());
+    assert!(!direct.can_use_stage2_initial_round_batch());
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -160,7 +160,7 @@ fn stage2_sparse_trace_table_matches_dense_trace_table() {
 }
 
 #[test]
-fn stage2_trace_two_round_prefix_matches_padded_reference() {
+fn stage2_trace_round_batching_matches_padded_reference() {
     let col_bits = 5usize;
     let ring_bits = 4usize;
     let live_x_cols = 19usize;
@@ -282,15 +282,16 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let r1 = F::from_u64(107);
 
     let expected_w_full =
-        AkitaStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
-    let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
-    let mut expected_trace = TraceTable::ring_dense(trace_compact.clone());
-    expected_trace.fold_y2(live_x_cols, y_len, r0, r1);
-    let TraceTable::RingDense(expected_trace_round2) = expected_trace else {
-        panic!("expected ring-dense trace table");
-    };
-    let expected_m_compact = prover.m_compact.clone();
+        AkitaStage2Prover::<F>::fold_compact_through_initial_batch(&w_prefix, live_x_cols, y_len, r0, r1);
+    let relation_x_cols = 1usize << col_bits;
+    let expected_relation_round2 =
+        AkitaStage2Prover::<F>::fold_relation_weight_through_initial_batch(
+            prover.relation_weight.evals(),
+            relation_x_cols,
+            y_len,
+            r0,
+            r1,
+        );
 
     let mut expected = new_stage2_test_prover_with_trace(
         F::from_u64(101),
@@ -312,10 +313,14 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
-    expected.alpha_compact = expected_alpha_round2.clone();
-    expected.trace_table = Some(TraceTable::ring_dense(expected_trace_round2.clone()));
+    expected.relation_weight = RelationWeightPolynomial::from_evals(
+        expected_relation_round2.clone(),
+        y_len >> 2,
+        relation_x_cols,
+        relation_x_cols * (y_len >> 2),
+    )
+    .unwrap();
     expected.rounds_completed = 2;
-    expected.m_compact = expected_m_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
     prover.ingest_challenge(1, r1);
@@ -326,12 +331,6 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
             panic!("expected fused trace stage2 transition to materialize full table")
         }
     }
-    assert_eq!(prover.alpha_compact, expected_alpha_round2);
-    assert_eq!(
-        prover.trace_table.as_ref(),
-        Some(&TraceTable::ring_dense(expected_trace_round2)),
-        "two-round handoff must preserve the folded trace table"
-    );
-    assert_eq!(prover.m_compact, expected_m_compact);
+    assert_eq!(prover.relation_weight.evals(), expected.relation_weight.evals());
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }

@@ -6,7 +6,7 @@ use akita_types::range_check_eval_from_s;
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PrefixPoint<E: FieldCore> {
+pub(crate) enum RoundBatchPoint<E: FieldCore> {
     Finite(E),
     Infinity,
 }
@@ -20,7 +20,7 @@ pub(crate) const STAGE1_B4_NONBOOLEAN_GRID_INDICES: [usize; STAGE1_B4_PREFIX_EVA
 
 /// Number of cached evaluations in the stage-1 `b = 8` two-round-prefix grid
 /// after omitting the four Boolean corners from `{0,1,-1,2,Infinity}^2`.
-pub(crate) const STAGE1_PREFIX_EVAL_COUNT: usize = 21;
+pub(crate) const STAGE1_ROUND_BATCH_EVAL_COUNT: usize = 21;
 pub(crate) const STAGE1_B8_Q_POLY_DEGREE: usize = 4;
 
 pub(crate) const LOOKUP_PREFIX_INF: i64 = i64::MIN;
@@ -121,9 +121,9 @@ pub(crate) const STAGE1_B4_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE1_B4_PREF
     (LOOKUP_PREFIX_INF, LOOKUP_PREFIX_INF),
 ];
 
-pub(crate) const fn stage1_lookup_points_i64() -> [(i64, i64); STAGE1_PREFIX_EVAL_COUNT] {
+pub(crate) const fn stage1_lookup_points_i64() -> [(i64, i64); STAGE1_ROUND_BATCH_EVAL_COUNT] {
     let coords = [0i64, 1, -1, 2, LOOKUP_PREFIX_INF];
-    let mut out = [(0i64, 0i64); STAGE1_PREFIX_EVAL_COUNT];
+    let mut out = [(0i64, 0i64); STAGE1_ROUND_BATCH_EVAL_COUNT];
     let mut out_idx = 0usize;
     let mut x_idx = 0usize;
     while x_idx < 5 {
@@ -140,7 +140,7 @@ pub(crate) const fn stage1_lookup_points_i64() -> [(i64, i64); STAGE1_PREFIX_EVA
     out
 }
 
-pub(crate) const STAGE1_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE1_PREFIX_EVAL_COUNT] =
+pub(crate) const STAGE1_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE1_ROUND_BATCH_EVAL_COUNT] =
     stage1_lookup_points_i64();
 
 #[inline(always)]
@@ -191,9 +191,9 @@ pub(crate) const fn build_stage1_b4_prefix_lookup_table() -> [[i64; STAGE1_B4_PR
 pub(crate) static STAGE1_B4_PREFIX_LOOKUP_TABLE: [[i64; STAGE1_B4_PREFIX_EVAL_COUNT]; 16] =
     build_stage1_b4_prefix_lookup_table();
 
-pub(crate) const fn build_stage1_b8_prefix_lookup_table() -> [[i64; STAGE1_PREFIX_EVAL_COUNT]; 256]
+pub(crate) const fn build_stage1_b8_prefix_lookup_table() -> [[i64; STAGE1_ROUND_BATCH_EVAL_COUNT]; 256]
 {
-    let mut table = [[0i64; STAGE1_PREFIX_EVAL_COUNT]; 256];
+    let mut table = [[0i64; STAGE1_ROUND_BATCH_EVAL_COUNT]; 256];
     let mut d0 = 0usize;
     while d0 < 4 {
         let mut d1 = 0usize;
@@ -210,7 +210,7 @@ pub(crate) const fn build_stage1_b8_prefix_lookup_table() -> [[i64; STAGE1_PREFI
                     ];
                     let table_idx = stage1_b8_lookup_index_from_digits([d0, d1, d2, d3]);
                     let mut point_idx = 0usize;
-                    while point_idx < STAGE1_PREFIX_EVAL_COUNT {
+                    while point_idx < STAGE1_ROUND_BATCH_EVAL_COUNT {
                         let (x, y) = STAGE1_PREFIX_LOOKUP_POINTS_I64[point_idx];
                         table[table_idx][point_idx] = stage1_b8_local_norm_raw_eval_i64(quad, x, y);
                         point_idx += 1;
@@ -226,7 +226,7 @@ pub(crate) const fn build_stage1_b8_prefix_lookup_table() -> [[i64; STAGE1_PREFI
     table
 }
 
-pub(crate) static STAGE1_B8_PREFIX_LOOKUP_TABLE: [[i64; STAGE1_PREFIX_EVAL_COUNT]; 256] =
+pub(crate) static STAGE1_B8_PREFIX_LOOKUP_TABLE: [[i64; STAGE1_ROUND_BATCH_EVAL_COUNT]; 256] =
     build_stage1_b8_prefix_lookup_table();
 
 pub(crate) const STAGE2_PREFIX_LOOKUP_POINTS_I64: [(i64, i64); STAGE2_PREFIX_POINT_COUNT] = [
@@ -586,18 +586,18 @@ pub(crate) fn interpolate_eq_factored_q_poly<E: FieldCore + FromPrimitiveInt>(
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 2]
+pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 2]
 {
-    [PrefixPoint::Finite(E::one()), PrefixPoint::Infinity]
+    [RoundBatchPoint::Finite(E::one()), RoundBatchPoint::Infinity]
 }
 
 /// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 3] {
+pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 3] {
     [
-        PrefixPoint::Finite(E::zero()),
-        PrefixPoint::Finite(E::one()),
-        PrefixPoint::Infinity,
+        RoundBatchPoint::Finite(E::zero()),
+        RoundBatchPoint::Finite(E::one()),
+        RoundBatchPoint::Infinity,
     ]
 }
 
@@ -624,15 +624,15 @@ pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
 #[cfg(test)]
 pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
     quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
+    x: RoundBatchPoint<E>,
+    y: RoundBatchPoint<E>,
 ) -> E {
     let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
     match (x, y) {
-        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => a + x * (b + y * d) + y * c,
-        (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => b + y * d,
-        (PrefixPoint::Finite(x), PrefixPoint::Infinity) => c + x * d,
-        (PrefixPoint::Infinity, PrefixPoint::Infinity) => d,
+        (RoundBatchPoint::Finite(x), RoundBatchPoint::Finite(y)) => a + x * (b + y * d) + y * c,
+        (RoundBatchPoint::Infinity, RoundBatchPoint::Finite(y)) => b + y * d,
+        (RoundBatchPoint::Finite(x), RoundBatchPoint::Infinity) => c + x * d,
+        (RoundBatchPoint::Infinity, RoundBatchPoint::Infinity) => d,
     }
 }
 
@@ -642,8 +642,8 @@ pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
 #[cfg(test)]
 pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
     s_quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
+    x: RoundBatchPoint<E>,
+    y: RoundBatchPoint<E>,
     b: usize,
 ) -> E {
     let s_eval = bilinear_eval_on_prefix_points(s_quad, x, y);
@@ -660,8 +660,8 @@ pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
 #[cfg(test)]
 pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
     s_quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
+    x: RoundBatchPoint<E>,
+    y: RoundBatchPoint<E>,
     b: usize,
 ) -> E {
     let [_, bx, cy, dxy] = bilinear_coeffs_from_quad(s_quad);
@@ -675,12 +675,12 @@ pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
     };
 
     match (x, y) {
-        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => {
+        (RoundBatchPoint::Finite(x), RoundBatchPoint::Finite(y)) => {
             range_check_eval_from_s(bilinear_eval(s_quad, x, y), b)
         }
-        (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => pow(bx + y * dxy),
-        (PrefixPoint::Finite(x), PrefixPoint::Infinity) => pow(cy + x * dxy),
-        (PrefixPoint::Infinity, PrefixPoint::Infinity) => pow(dxy),
+        (RoundBatchPoint::Infinity, RoundBatchPoint::Finite(y)) => pow(bx + y * dxy),
+        (RoundBatchPoint::Finite(x), RoundBatchPoint::Infinity) => pow(cy + x * dxy),
+        (RoundBatchPoint::Infinity, RoundBatchPoint::Infinity) => pow(dxy),
     }
 }
 
@@ -691,8 +691,8 @@ pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
 #[cfg(test)]
 pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
     w_quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
+    x: RoundBatchPoint<E>,
+    y: RoundBatchPoint<E>,
 ) -> E {
     let w_eval = bilinear_eval_on_prefix_points(w_quad, x, y);
     w_eval * (w_eval + E::one())
@@ -707,12 +707,12 @@ pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
 #[cfg(test)]
 pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
     w_quad: [E; 4],
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
+    x: RoundBatchPoint<E>,
+    y: RoundBatchPoint<E>,
 ) -> E {
     let w_eval = bilinear_eval_on_prefix_points(w_quad, x, y);
     match (x, y) {
-        (PrefixPoint::Finite(_), PrefixPoint::Finite(_)) => w_eval * (w_eval + E::one()),
+        (RoundBatchPoint::Finite(_), RoundBatchPoint::Finite(_)) => w_eval * (w_eval + E::one()),
         _ => w_eval * w_eval,
     }
 }
@@ -725,8 +725,8 @@ pub(crate) fn stage2_local_relation_eval<E: FieldCore>(
     w_quad: [E; 4],
     local_factor_quad: [E; 4],
     fixed_factor: E,
-    x: PrefixPoint<E>,
-    y: PrefixPoint<E>,
+    x: RoundBatchPoint<E>,
+    y: RoundBatchPoint<E>,
 ) -> E {
     fixed_factor
         * bilinear_eval_on_prefix_points(w_quad, x, y)
@@ -740,11 +740,11 @@ pub(crate) fn eval_quadratic_from_01_inf<E: FieldCore>(
     at_zero: E,
     at_one: E,
     at_inf: E,
-    x: PrefixPoint<E>,
+    x: RoundBatchPoint<E>,
 ) -> E {
     match x {
-        PrefixPoint::Infinity => at_inf,
-        PrefixPoint::Finite(x) => {
+        RoundBatchPoint::Infinity => at_inf,
+        RoundBatchPoint::Finite(x) => {
             let linear = at_one - at_zero - at_inf;
             at_zero + x * (linear + x * at_inf)
         }

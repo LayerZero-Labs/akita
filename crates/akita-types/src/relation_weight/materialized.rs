@@ -149,7 +149,7 @@ pub fn bridge_relation_weight_from_split<E: FieldCore>(
             actual: alpha_evals_y.len(),
         });
     }
-    if m_evals_x.len() != live_x_cols {
+    if m_evals_x.len() < live_x_cols {
         return Err(AkitaError::InvalidSize {
             expected: live_x_cols,
             actual: m_evals_x.len(),
