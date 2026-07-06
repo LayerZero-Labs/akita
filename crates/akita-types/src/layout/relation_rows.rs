@@ -158,12 +158,10 @@ impl RelationQuotientLayout {
                 .map(E::lift_base)
                 .collect();
             for local_row in 0..slice.row_count {
-                let legacy_row_idx = slice
-                    .witness_offset
-                    .checked_div(slice.digit_depth)
-                    .and_then(|base| base.checked_add(local_row))
-                    .unwrap_or(slice.row_start + local_row);
-                let eq = eq_tau1.get(legacy_row_idx).copied().unwrap_or(E::zero());
+                let row_idx = slice.row_start.checked_add(local_row).ok_or_else(|| {
+                    AkitaError::InvalidSetup("quotient row index overflow".into())
+                })?;
+                let eq = eq_tau1.get(row_idx).copied().unwrap_or(E::zero());
                 for (level_idx, gadget_weight) in gadget.iter().enumerate() {
                     let idx = slice
                         .witness_offset
@@ -481,6 +479,44 @@ mod tests {
         assert_eq!(trace.row_count, 1);
         assert!(trace.ring_dim.is_none());
         assert!(trace.quotient.is_none());
+    }
+
+    #[test]
+    fn quotient_tail_weights_use_logical_row_tau1_index() {
+        let lp = test_level_params();
+        let opening = OpeningClaimsLayout::new(4, 1).expect("opening layout");
+        let layout = RelationRowLayout::for_scalar_level::<F>(
+            &lp,
+            CommitmentRingDims::uniform(4),
+            MRowLayout::WithDBlock,
+            &opening,
+            1,
+        )
+        .expect("layout");
+        let quotient =
+            RelationQuotientLayout::from_row_layout(&layout, r_decomp_levels::<F>(lp.log_basis));
+        let fold_eval = layout
+            .family(RelationRowFamily::FoldEvaluation)
+            .expect("fold evaluation row");
+        assert_eq!(fold_eval.row_start, 1);
+
+        let mut eq_tau1 = vec![F::zero(); layout.total_row_count()];
+        for (idx, weight) in eq_tau1.iter_mut().enumerate() {
+            *weight = F::from_u64((idx + 1) as u64);
+        }
+        let alpha = F::from_u64(2);
+        let weights = quotient
+            .materialize_tail_weights::<F, F>(&eq_tau1, alpha)
+            .expect("quotient weights");
+        assert!(!weights.is_empty());
+
+        let slice = &quotient.slices[0];
+        let alpha_pows = scalar_powers(alpha, slice.ring_dim);
+        let denom = alpha_pows[slice.ring_dim - 1] * alpha + F::one();
+        let gadget0 = gadget_row_scalars::<F>(slice.digit_depth, slice.log_basis)[0];
+        let expected0 = -eq_tau1[1] * denom * gadget0;
+        assert_eq!(weights[0], expected0);
+        assert_ne!(weights[0], -eq_tau1[0] * denom * gadget0);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 | Status        | active |
 | PR            | |
 | Supersedes    | `specs/akita-sumcheck-unification.md` (deleted) |
-| Book-chapter  | `book/src/how/proving/sumcheck-stages.md` |
+| Book-chapter  | how/proving/sumcheck-stages.md |
 
 ## Summary
 
