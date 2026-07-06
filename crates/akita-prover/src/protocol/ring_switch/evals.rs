@@ -371,7 +371,8 @@ pub enum RelationWeightTraceBuild<F: FieldCore, E: FieldCore> {
 
 /// Build the materialized relation-weight evaluation table for stage-2 sumcheck.
 ///
-/// Fuses `M_alpha` column evaluations with the [`EvaluationTrace`] row via
+/// Fuses `M_alpha` column evaluations with the
+/// [`EvaluationTrace`](akita_types::RelationRowFamily::EvaluationTrace) row via
 /// `trace_weight` builders. Does not expose split `m_evals_x` / `alpha_evals_y`.
 ///
 /// # Errors

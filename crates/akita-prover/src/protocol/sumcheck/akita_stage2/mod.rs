@@ -6,7 +6,7 @@
 //! `D = 2^{ring_bits}`-dimensional ring element.
 //!
 //! The relation side is a single multilinear
-//! [`RelationWeightPolynomial`](akita_types::RelationWeightPolynomial) over the
+//! [`RelationWeightPolynomial`] over the
 //! witness hypercube. Its evaluations are the field-level, `tau1`-batched
 //! relation weights: every row of the ring-switched matrix, including the
 //! [`EvaluationTrace`](akita_types::RelationRowFamily::EvaluationTrace) row

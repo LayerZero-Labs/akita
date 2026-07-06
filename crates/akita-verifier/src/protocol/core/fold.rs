@@ -510,7 +510,8 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
         let rho_w = dispatch_ring_dim_result!(role_d_a, |D| {
-            let verifier =                 SetupSumcheckVerifier::new::<F, D>(&rs.deferred, setup_x_challenges, rs.alpha)?;
+            let verifier =
+                SetupSumcheckVerifier::new::<F, D>(&rs.deferred, setup_x_challenges, rs.alpha)?;
             let rho_w = verifier.verify_batched_stage3::<F, T>(
                 setup,
                 next_fold_level_params,
