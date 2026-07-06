@@ -27,7 +27,6 @@ use super::ring_relation::{
 };
 use crate::DecomposeFoldWitness;
 use akita_types::dispatch_for_field;
-use akita_types::{ProtocolDispatchSlot, RingRole};
 
 /// Preview-only transcript access for prover-side fold grinding.
 ///
@@ -412,7 +411,7 @@ where
     let fold_challenge_shape = lp.fold_challenge_shape;
 
     dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
         ring_d,
         |D| {

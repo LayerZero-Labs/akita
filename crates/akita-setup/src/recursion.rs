@@ -12,7 +12,7 @@ use akita_serialization::Valid;
 use akita_types::{
     active_setup_field_len, digest_level_params, dispatch_for_field, padded_setup_prefix_len,
     setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams,
-    OpeningClaimsLayout, ProtocolDispatchSlot, RingRole, SETUP_OFFLOAD_D_SETUP,
+    OpeningClaimsLayout, SETUP_OFFLOAD_D_SETUP,
 };
 
 fn commit_setup_prefix_for_level<F, B>(
@@ -48,7 +48,7 @@ where
     // Setup-offload prefix commitments are pinned to `SETUP_OFFLOAD_D_SETUP`;
     // dispatch on that (constant) dimension at this single kernel entry.
     let slot = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
         d_setup,
         |D| {

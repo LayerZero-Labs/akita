@@ -15,11 +15,11 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    dispatch_for_field, should_reject_grouped_root, validate_schedule_ring_dims, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
-    CleartextWitnessProof, Commitment, FpExtEncoding, LevelParams, LevelParamsLike, OpeningClaims,
-    OpeningClaimsLayout, ProtocolDispatchSlot, RingCommitment, RingDimPlan, RingRole, RingVec,
-    RingView, Schedule, SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    dispatch_for_field, should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
+    Commitment, FpExtEncoding, LevelParams, LevelParamsLike, OpeningClaims, OpeningClaimsLayout,
+    RingCommitment, RingDimPlan, RingVec, RingView, Schedule, SetupContributionMode, Step,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -359,29 +359,30 @@ where
 
         let group_layout = opening_batch.group_layout(group_index)?;
         let recomputed_matches = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Outer),
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
             F,
             ring_dim,
             |D| {
-            let geom = if group_index == final_group {
-                DirectRecommitGeometry::from_level(params, setup.expanded.seed())
-            } else {
-                let group_params = params
-                    .precommitted_groups
-                    .get(group_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                DirectRecommitGeometry::from_level(group_params, setup.expanded.seed())
-            };
-            let group_witnesses = &witnesses[range.clone()];
-            validate_direct_group_shape::<F>(
-                group_witnesses,
-                &geom,
-                group_layout.num_vars(),
-                ring_dim,
-            )?;
-            let recomputed = recommit_direct_witness_group::<F, D>(group_witnesses, setup, &geom)?;
-            let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
-            Ok(recomputed_vec.coeffs() == commitment_view.coeffs())
+                let geom = if group_index == final_group {
+                    DirectRecommitGeometry::from_level(params, setup.expanded.seed())
+                } else {
+                    let group_params = params
+                        .precommitted_groups
+                        .get(group_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    DirectRecommitGeometry::from_level(group_params, setup.expanded.seed())
+                };
+                let group_witnesses = &witnesses[range.clone()];
+                validate_direct_group_shape::<F>(
+                    group_witnesses,
+                    &geom,
+                    group_layout.num_vars(),
+                    ring_dim,
+                )?;
+                let recomputed =
+                    recommit_direct_witness_group::<F, D>(group_witnesses, setup, &geom)?;
+                let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
+                Ok(recomputed_vec.coeffs() == commitment_view.coeffs())
             }
         )?;
         if !recomputed_matches {
@@ -465,7 +466,7 @@ where
     // the prover binds for uniform-D presets. Dispatch on the runtime value so
     // the verifier entry stays D-free; the descriptor bytes are unchanged.
     dispatch_for_field!(
-        ProtocolDispatchSlot::Envelope,
+        akita_types::ProtocolDispatchSlot::Envelope,
         Cfg::Field,
         setup.expanded.seed().gen_ring_dim,
         |D| {
