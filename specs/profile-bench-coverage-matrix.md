@@ -309,9 +309,7 @@ benchmark matrix at nv=26 in its own group (`2-fp128-tensor`), not nv=32: under
 the 138-bit L-infinity SIS floors the tensor root split is top-heavy, so the
 public setup matrix grows ~4x per +2 nv (~1 GiB at nv=26, ~72 GiB at nv=32,
 which OOM-aborts the runner). nv=26 keeps its footprint on par with the flat
-`onehot_fp128_d64` nv=32 cell. The group benchmarks merge-base like the other
-matrix groups now that real tensor schedules are on `main`. The mode remains
-excluded from `AKITA_MODE=all`.
+`onehot_fp128_d64` nv=32 cell. The mode remains excluded from `AKITA_MODE=all`.
 
 ### Benchmark Runner And Artifacts
 
@@ -353,8 +351,9 @@ runner so the batched profile emits planned-level output too.
 
 ### Workflow Behavior
 
-`profile-bench.yml` builds the profile example once and runs the configured
-matrix with `AKITA_BENCH_RUNS=3`.
+`profile-bench.yml` builds the profile example once per matrix group. On pull
+requests every group also builds the merge-base profile binary and benchmarks PR
+head interleaved with merge-base so Main baseline deltas are always available.
 
 The workflow:
 
