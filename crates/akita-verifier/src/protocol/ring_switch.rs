@@ -581,14 +581,14 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             if self.block_len.is_power_of_two() {
                 for chunk in &layout.chunks {
                     let z_offset_low = chunk.offset_z & (self.block_len - 1);
-                    let a_block_summary = vec![summarize_pow2_multiplier_block_carries(
+                    let a_block_summary = summarize_pow2_multiplier_block_carries(
                         &z_block_low_eq,
                         z_offset_low,
                         self.block_len,
                         |idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows),
-                    )?];
+                    )?;
                     let z_offset_high = chunk.offset_z >> z_offset_low_bits;
-                    let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
+                    let z_hi_len = fold_gadget.len() * g1_commit.len();
                     let eq_hi_z_table =
                         high_eq_window(&x_challenges[z_offset_low_bits..], z_offset_high, z_hi_len);
                     z_structured_contribution += {
@@ -596,7 +596,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         ZStructuredPow2SlicesEvaluator {
                             g1_commit: &g1_commit,
                             fold_gadget: &fold_gadget,
-                            a_block_summary: &a_block_summary,
+                            a_block_summary,
                             consistency_weight: self.eq_tau1[0],
                             high_eq_table: &eq_hi_z_table,
                         }
@@ -604,12 +604,12 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     };
                 }
             } else {
-                // `a_evals_by_point` is chunk-independent (a[blk] is global), so
-                // the dense `z` segment is identical in every chunk; only the
+                // `a_evals` is chunk-independent (a[blk] is global), so the
+                // dense `z` segment is identical in every chunk; only the
                 // offset shifts.
-                let a_evals_by_point = vec![(0..self.block_len)
+                let a_evals = (0..self.block_len)
                     .map(|idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows))
-                    .collect::<Result<Vec<_>, _>>()?];
+                    .collect::<Result<Vec<_>, _>>()?;
                 for chunk in &layout.chunks {
                     z_structured_contribution += {
                         let _span = tracing::info_span!("z_structured").entered();
@@ -617,7 +617,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                             g1_commit: &g1_commit,
                             fold_gadget: &fold_gadget,
                             consistency_weight: self.eq_tau1[0],
-                            a_evals_by_point: &a_evals_by_point,
+                            a_evals: &a_evals,
                             full_vec_randomness: x_challenges,
                             offset_z: chunk.offset_z,
                             block_len: self.block_len,
