@@ -1,13 +1,13 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
 use super::OpeningClaimsLayout;
-use crate::layout::{CommitmentRingDims, RingRole};
+use crate::layout::{CommitmentRingDims, LevelParams, MRowLayout, RelationRowLayout, RingRole};
 use crate::validate_role_dispatch;
 use crate::witness::{WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
 use crate::FpExtEncoding;
 use crate::{
-    embed_ring_subfield_scalar, r_decomp_levels, LevelParams, MRowLayout,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingVec,
+    embed_ring_subfield_scalar, r_decomp_levels, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingVec,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
@@ -218,6 +218,21 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
     pub fn m_row_layout(&self) -> MRowLayout {
         self.m_row_layout
+    }
+
+    /// Canonical semantic row layout for this relation statement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for grouped-root layouts or malformed parameters.
+    pub fn relation_row_layout(&self, lp: &LevelParams) -> Result<RelationRowLayout, AkitaError> {
+        RelationRowLayout::for_scalar_level::<F>(
+            lp,
+            self.role_dims,
+            self.m_row_layout,
+            &self.opening_batch,
+            self.opening_batch.num_total_polynomials(),
+        )
     }
 
     pub fn opening_batch(&self) -> &OpeningClaimsLayout {

@@ -12,6 +12,7 @@ pub mod flat_matrix;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
+pub mod relation_rows;
 pub mod ring_dims;
 
 pub use digit_math::gadget_row_scalars;
@@ -24,6 +25,10 @@ pub use opening_point::{
 pub use params::{
     AjtaiKeyParams, LevelParams, LevelParamsLike, MRowLayout, PrecommittedLevelParams,
     SisModulusFamily,
+};
+pub use relation_rows::{
+    ConsistencyLayer, RelationQuotientLayout, RelationQuotientSlice, RelationRowFamily,
+    RelationRowFamilyLayout, RelationRowLayout,
 };
 pub use proof_size::{
     direct_witness_bytes, extension_opening_reduction_level_bytes,

@@ -18,6 +18,7 @@ pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
+pub mod relation_weight;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod setup_geometry;
@@ -64,9 +65,14 @@ pub use layout::{
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
-    CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, MRowLayout,
-    PrecommittedLevelParams, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
-    SUPPORTED_RING_DIMS,
+    CommitmentRingDims, ConsistencyLayer, FlatMatrix, LevelParams, LevelParamsLike, MRowLayout,
+    PrecommittedLevelParams, RelationQuotientLayout, RelationQuotientSlice, RelationRowFamily,
+    RelationRowFamilyLayout, RelationRowLayout, RingMatrixView, RingOpeningPoint, RingRole,
+    MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
+};
+pub use relation_weight::{
+    bridge_relation_weight_from_split, PreparedRelationWeightPolynomial,
+    RelationWeightPolynomial, RelationWeightPolynomialError,
 };
 pub use ntt_cache::NttCacheKey;
 pub use proof::{
