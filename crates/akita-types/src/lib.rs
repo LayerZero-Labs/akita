@@ -63,9 +63,9 @@ pub use layout::{
     gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, validate_role_dims, BasisMode, BlockOrder, CommitmentRingDims, FlatMatrix,
-    GroupRootParams, LevelParams, MRowLayout, RingDimPlan, RingMatrixView, RingOpeningPoint,
-    RingRole, MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
+    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
+    CommitmentRingDims, FlatMatrix, GroupRootParams, LevelParams, MRowLayout, RingMatrixView,
+    RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::NttCacheKey;
 pub use proof::{

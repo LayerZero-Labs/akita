@@ -1,8 +1,7 @@
 //! Pure fold kernels and operation adapters for the prover core.
 //!
 //! Everything here passes the spec's kernel discriminator: no function reads a
-//! schedule type (`ExecutionSchedule`, `LevelParams`, `RingDimPlan`,
-//! `RingDimPlan`). Const-D functions receive extracted numbers and typed
+//! schedule type (`ExecutionSchedule`, `LevelParams`). Const-D functions receive extracted numbers and typed
 //! buffers; the D-free functions are operation adapters that dispatch exactly
 //! once on a schedule-derived ring dimension supplied by the caller.
 

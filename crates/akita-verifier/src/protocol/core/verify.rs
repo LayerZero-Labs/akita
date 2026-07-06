@@ -16,10 +16,11 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    should_reject_grouped_root, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof, Commitment,
-    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, RingDimPlan, RingVec, RingView,
-    Schedule, SetupContributionMode, Step, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    should_reject_grouped_root, validate_schedule_ring_dims, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
+    CleartextWitnessProof, Commitment, FpExtEncoding, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, RingVec, RingView, Schedule, SetupContributionMode, Step,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 use std::array::from_fn;
 
@@ -416,7 +417,7 @@ where
     reject_unsupported_grouped_root(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
-    let ring_plan = RingDimPlan::from_schedule(&schedule, setup.expanded.seed())?;
+    validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
     // The transcript instance descriptor binds the setup-wide root ring
@@ -439,7 +440,6 @@ where
         transcript,
         claims,
         &schedule,
-        &ring_plan,
         basis,
         setup_contribution_mode,
     )
@@ -465,7 +465,6 @@ pub(crate) fn verify<Cfg, T>(
     transcript: &mut T,
     claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     schedule: &Schedule,
-    ring_plan: &RingDimPlan,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
@@ -500,7 +499,6 @@ where
                 claims,
                 basis,
                 schedule,
-                ring_plan,
                 setup_contribution_mode,
             )?;
         }
@@ -528,7 +526,6 @@ pub(crate) fn verify_folded_batched_proof<F, E, T>(
     claims: OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     schedule: &Schedule,
-    ring_plan: &RingDimPlan,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
@@ -540,7 +537,7 @@ where
         return Err(AkitaError::InvalidProof);
     };
     let root_lp = &root_step.params;
-    let total_fold_levels = ring_plan.num_folds();
+    let total_fold_levels = schedule.num_fold_levels();
     let terminal_direct = schedule
         .steps
         .last()

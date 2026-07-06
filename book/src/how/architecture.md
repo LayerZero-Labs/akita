@@ -56,7 +56,7 @@ claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`,
 `SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`). Per-level
 `CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `LevelParams::role_dims`) is
 the operation authority for how those vectors are interpreted; levels may
-differ. [`RingDimPlan`] validates every level
+differ. [`validate_schedule_ring_dims`] checks every level
 dimension against the setup's generation dimension.
 
 Every function on the prove/verify path has one of two roles:
@@ -90,7 +90,7 @@ Mixed-dimension execution is exercised end-to-end by
 | `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
 | `AkitaProverSetup<F>` | Prover setup wrapper; `gen_ring_dim` is runtime shape metadata |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
-| `CommitmentRingDims`, `RingDimPlan` | Per-role ring dimensions and schedule authority |
+| `CommitmentRingDims`, `validate_schedule_ring_dims` | Per-role ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, SIS family, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
 | `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
 | `PlanPolicy` | Value-typed inputs to `akita_types::schedule_plan_from_table` |

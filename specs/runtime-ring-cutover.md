@@ -149,7 +149,7 @@ implicit):
 Every function on the prove/verify path belongs to exactly one of two roles.
 
 - **Orchestration**: reads schedule types (`ExecutionSchedule`, `LevelParams`,
-  `ValidatedScheduleContext`, `RingDimPlan`), drives transcript flow between
+  `ValidatedScheduleContext`, `validate_schedule_ring_dims`), drives transcript flow between
   operations, moves D-free storage (`RingVec<F>`, `Commitment<F>`, flat digit
   blocks). Orchestration functions MUST NOT have `const D` in their signature
   or trait bounds.
@@ -265,7 +265,7 @@ Mixed-D:
 | B (`d_b`, `outer`) | commitment | sent commitment rows, COMMIT segment of `y`, `commit_w`, next-witness commitment decode |
 | D (`d_d`, `opening`) | opening digits | `e_hat`, `v = D·e_hat`, D-block segment of `y`, D-matrix matvec |
 
-Orchestration obtains `CommitmentRingDims` from `RingDimPlan::dims_at(level)` /
+Orchestration obtains `CommitmentRingDims` from `LevelParams::role_dims` /
 `RingLevelContext::role_dims` at each fold entry. **Role-specific buffers use
 `dims.d_a()`, `dims.d_b()`, or `dims.d_d()` — not bare
 `LevelParams::ring_dimension`.** Witness-borrow paths that still call
@@ -424,7 +424,7 @@ public PCS API
           |
           v
 schedule-bound protocol context
-  ValidatedScheduleContext / RingDimPlan
+  ValidatedScheduleContext / validate_schedule_ring_dims
   RingLevelContext.role_dims per fold level
   validates level shapes
   maps proof vectors to role-local ring dimensions (d_a, d_b, d_d)
@@ -582,7 +582,7 @@ into `RingCommitment<F, D>`.
 
 Replace top-level `batched_prove::<..., D>` with D-free orchestration that:
 
-1. resolves the runtime schedule and `RingDimPlan`,
+1. resolves the runtime schedule and validates ring dimensions via `validate_schedule_ring_dims`,
 2. validates setup compatibility,
 3. validates root commitment/prover claim shape,
 4. absorbs D-free claims,
@@ -594,7 +594,7 @@ Replace top-level `batched_prove::<..., D>` with D-free orchestration that:
 
 Replace top-level `batched_verify::<..., D>` with D-free replay that:
 
-1. resolves or receives the same runtime schedule and `RingDimPlan`,
+1. resolves or receives the same runtime schedule and validates ring dimensions via `validate_schedule_ring_dims`,
 2. validates proof shape before interpreting buffers,
 3. absorbs D-free claims,
 4. at each fold level, runs D-free orchestration (`verify_fold`, `prepare_fold_replay`,
