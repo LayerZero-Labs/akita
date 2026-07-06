@@ -101,17 +101,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> AkitaStage2Prover<E> {
     pub(super) fn fold_witness_field_flat(evals: Vec<E>, challenge: E) -> Vec<E> {
-        if evals.len() <= 1 {
-            return evals;
-        }
         fold_live_evals_zero_padded(&evals, challenge)
     }
 
-    pub(super) fn fold_witness_through_two_challenges(
-        w_compact: &[i8],
-        r0: E,
-        r1: E,
-    ) -> Vec<E> {
+    pub(super) fn fold_witness_through_two_challenges(w_compact: &[i8], r0: E, r1: E) -> Vec<E> {
         let lut0 = Self::build_compact_w_fold_lut(w_compact, r0);
         let after_r0 = Self::fold_witness_flat_compact(w_compact, &lut0);
         Self::fold_witness_field_flat(after_r0, r1)
@@ -126,15 +119,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
         self.live_segments = 1;
     }
 
-    pub(super) fn fold_relation_weight_through_two_challenges(
-        evals: &[E],
-        r0: E,
-        r1: E,
-    ) -> Vec<E> {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn fold_relation_weight_through_two_challenges(evals: &[E], r0: E, r1: E) -> Vec<E> {
         let after_r0 = fold_live_evals_zero_padded(evals, r0);
         fold_live_evals_zero_padded(&after_r0, r1)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn fold_witness_compact_to_field(
         w_compact: &[i8],
         fold_lut: &CompactPairFoldLut<E>,
@@ -142,6 +133,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
         Self::fold_witness_flat_compact(w_compact, fold_lut)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn fold_relation_field_flat(evals: &[E], challenge: E) -> Vec<E> {
         fold_live_evals_zero_padded(evals, challenge)
     }
@@ -190,20 +182,23 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
             ),
             (
                 WitnessFoldInput::Full {
-                    evals,
-                    challenge,
-                    ..
+                    evals, challenge, ..
                 },
                 FoldRoundKind::EmbeddedSegmentAxis,
-            ) => Self::fold_witness_embedded_segment_full(evals, live_segments, coeff_len, challenge),
+            ) => {
+                Self::fold_witness_embedded_segment_full(evals, live_segments, coeff_len, challenge)
+            }
             (
                 WitnessFoldInput::Full {
-                    evals,
-                    challenge,
-                    ..
+                    evals, challenge, ..
                 },
                 FoldRoundKind::EmbeddedCoefficientAxis,
-            ) => Self::fold_witness_embedded_coefficient_full(evals, live_segments, coeff_len, challenge),
+            ) => Self::fold_witness_embedded_coefficient_full(
+                evals,
+                live_segments,
+                coeff_len,
+                challenge,
+            ),
             (WitnessFoldInput::Compact { digits, fold_lut }, FoldRoundKind::FlatPair) => {
                 Self::fold_witness_flat_compact(digits, fold_lut)
             }
@@ -223,10 +218,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
                     fold_live_evals_zero_padded(evals, challenge)
                 }
             }
-            (
-                WitnessFoldInput::Compact { .. },
-                FoldRoundKind::EmbeddedCoefficientAxis,
-            ) => unreachable!("coefficient-axis fold expects full witness storage"),
+            (WitnessFoldInput::Compact { .. }, FoldRoundKind::EmbeddedCoefficientAxis) => {
+                unreachable!("coefficient-axis fold expects full witness storage")
+            }
         }
     }
 

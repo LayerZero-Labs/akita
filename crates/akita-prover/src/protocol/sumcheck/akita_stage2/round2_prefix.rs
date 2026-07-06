@@ -1,5 +1,5 @@
-use crate::protocol::sumcheck::round_batching::{stage2_b4_w_digit, stage2_b8_w_digit};
 use super::*;
+use crate::protocol::sumcheck::round_batching::{stage2_b4_w_digit, stage2_b8_w_digit};
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[inline]
@@ -85,47 +85,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             .collect()
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "AkitaStage2Prover::fold_witness_initial_batch"
-    )]
-    pub(super) fn fold_witness_initial_batch(
-        w_compact: &[i8],
-        live_segments: usize,
-        coeff_len: usize,
-        r0: E,
-        r1: E,
-    ) -> Vec<E> {
-        debug_assert!(coeff_len.is_power_of_two());
-        debug_assert!(coeff_len >= 4);
-        let next_coeff_len = coeff_len >> 2;
-        let mut out = vec![E::zero(); live_segments * next_coeff_len];
-        for x in 0..live_segments {
-            let src_start = x * coeff_len;
-            let dst_start = x * next_coeff_len;
-            let column = &w_compact[src_start..src_start + coeff_len];
-            for (quad_y, dst) in out[dst_start..dst_start + next_coeff_len]
-                .iter_mut()
-                .enumerate()
-            {
-                let base = 4 * quad_y;
-                *dst = Self::direct_fold_w_quad_to_round2(
-                    column[base],
-                    column[base + 1],
-                    column[base + 2],
-                    column[base + 3],
-                    r0,
-                    r1,
-                );
-            }
-        }
-        out
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "AkitaStage2Prover::fused_fold_scan_initial_round2"
-    )]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fused_fold_scan_initial_round2")]
     pub(super) fn fused_fold_scan_initial_round2(
         &self,
         w_compact: &[i8],

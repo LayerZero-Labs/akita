@@ -34,7 +34,8 @@
 
 use super::fold_full_prefix_pair;
 use super::round_batching::{
-    build_stage2_initial_round_batch_grid, can_use_stage2_initial_round_batch, Stage2RoundBatchState,
+    build_stage2_initial_round_batch_grid, can_use_stage2_initial_round_batch,
+    Stage2RoundBatchState,
 };
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
@@ -114,6 +115,7 @@ impl Stage2Geometry {
     }
 
     /// Attach a scalar-level local embedding for tests and fast-path planning.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn with_scalar_local_view(
         mut self,
         live_tiles: usize,

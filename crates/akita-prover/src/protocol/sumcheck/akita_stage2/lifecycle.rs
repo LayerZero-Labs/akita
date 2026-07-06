@@ -105,17 +105,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    pub(super) fn coefficient_rounds_completed(&self) -> usize {
-        self.rounds_completed.min(self.coeff_bits())
-    }
-
-    #[inline]
-    pub(super) fn current_coefficient_width(&self) -> usize {
-        self.coeff_bits()
-            .saturating_sub(self.coefficient_rounds_completed())
-    }
-
-    #[inline]
     pub(super) fn current_segment_capacity(&self) -> usize {
         1usize << self.current_segment_width()
     }

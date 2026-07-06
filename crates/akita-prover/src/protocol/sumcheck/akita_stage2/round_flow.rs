@@ -93,14 +93,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                     match mem::replace(&mut self.witness_table, WitnessTable::Full(Vec::new())) {
                         WitnessTable::Compact(w_compact) => {
                             if self.coeff_bits() > 2 {
-                                let (w_full, virt_terms, rel_coeffs) = self.run_fused_fold_scan(
-                                    FusedFoldScan::InitialRound2 {
+                                let (w_full, virt_terms, rel_coeffs) =
+                                    self.run_fused_fold_scan(FusedFoldScan::InitialRound2 {
                                         w_compact: &w_compact,
                                         relation_round2: &relation_round2,
                                         r0,
                                         r1: r,
-                                    },
-                                );
+                                    });
                                 round2_terms = Some((virt_terms, rel_coeffs));
                                 WitnessTable::Full(w_full)
                             } else {
@@ -155,10 +154,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                     WitnessTable::Compact(w_compact) => {
                         let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
                         self.fold_relation_weight_flat(r);
-                        WitnessTable::Full(Self::fold_witness_flat_compact(
-                            &w_compact,
-                            &fold_lut,
-                        ))
+                        WitnessTable::Full(Self::fold_witness_flat_compact(&w_compact, &fold_lut))
                     }
                     WitnessTable::Full(w_full) => {
                         self.fold_relation_weight_flat(r);
@@ -168,9 +164,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         } else {
             let folding_segment_round = !self.in_coefficient_round();
             let fold_kind = self.fold_round_kind(folding_segment_round);
-            let fuse_next_segment_axis_round =
-                fold_kind == FoldRoundKind::EmbeddedSegmentAxis
-                    && self.next_use_segment_prefix_round_after_current();
+            let fuse_next_segment_axis_round = fold_kind == FoldRoundKind::EmbeddedSegmentAxis
+                && self.next_use_segment_prefix_round_after_current();
             let coeff_len = self.relation_weight_coeff_len();
             let live_segments = self.live_segments;
 
@@ -196,12 +191,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                             && fuse_next_segment_axis_round
                         {
                             self.fold_relation_weight(r, fold_kind);
-                            let (next_w_full, virt_terms, rel_coeffs) = self.run_fused_fold_scan(
-                                FusedFoldScan::SegmentAxis {
+                            let (next_w_full, virt_terms, rel_coeffs) =
+                                self.run_fused_fold_scan(FusedFoldScan::SegmentAxis {
                                     w_full: &w_full,
                                     challenge: r,
-                                },
-                            );
+                                });
                             self.cached_round_poly =
                                 Some(self.combine_terms(virt_terms, rel_coeffs));
                             WitnessTable::Full(next_w_full)

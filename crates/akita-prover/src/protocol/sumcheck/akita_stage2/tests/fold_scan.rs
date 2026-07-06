@@ -37,8 +37,7 @@ fn fold_witness_compact_odd_length_zero_pads_tail() {
     let r = F::from_u64(71);
     let w_compact = vec![1i8, 2, 3];
     let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_compact, r);
-    let folded =
-        AkitaStage2Prover::<F>::fold_witness_compact_to_field(&w_compact, &fold_lut);
+    let folded = AkitaStage2Prover::<F>::fold_witness_compact_to_field(&w_compact, &fold_lut);
     assert_eq!(folded.len(), 2);
     assert_eq!(folded, fold_compact_flat_reference(&w_compact, r));
 }
@@ -95,5 +94,15 @@ fn fold_through_two_challenges_matches_sequential_flat_fold() {
             AkitaStage2Prover::<F>::fold_witness_field_flat(relation, r0),
             r1,
         ),
+    );
+}
+
+#[test]
+fn fold_witness_field_flat_folds_singleton_against_zero() {
+    let r = F::from_u64(41);
+    let evals = vec![F::from_u64(7)];
+    assert_eq!(
+        AkitaStage2Prover::<F>::fold_witness_field_flat(evals.clone(), r),
+        AkitaStage2Prover::<F>::fold_relation_field_flat(&evals, r),
     );
 }
