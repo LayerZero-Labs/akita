@@ -13,9 +13,8 @@ use akita_types::sis::{
     min_secure_rank, rounded_up_collision_linf_t, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
 };
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily,
-    Step,
+    AjtaiKeyParams, AkitaScheduleInputs, DecompositionParams, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 use std::marker::PhantomData;
 
@@ -69,8 +68,12 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         Cfg::schedule_catalog()
     }
 
+    fn supports_grouped_final_commit() -> bool {
+        false
+    }
+
     fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-        let key = AkitaScheduleLookupKey::from_layout(opening_batch)?.final_group;
+        let key = opening_batch.root_final_group_layout()?;
         conservative_commit_schedule::<Cfg>(&key)
     }
 

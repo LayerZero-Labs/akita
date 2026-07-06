@@ -90,7 +90,7 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout
     for &num_polys in family.num_polys {
         for nv in family.min_num_vars..=family.max_num_vars {
             let opening_batch = OpeningClaimsLayout::new(nv, num_polys)?;
-            keys.push(AkitaScheduleLookupKey::from_layout(&opening_batch)?.final_group);
+            keys.push(opening_batch.root_final_group_layout()?);
         }
     }
     Ok(keys)

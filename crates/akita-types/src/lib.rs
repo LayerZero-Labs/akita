@@ -70,8 +70,9 @@ pub use layout::{
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
-    CommitmentRingDims, FlatMatrix, GroupRootParams, LevelParams, MRowLayout, RingMatrixView,
-    RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, SUPPORTED_RING_DIMS,
+    CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, MRowLayout,
+    PrecommittedLevelParams, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
+    SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::NttCacheKey;
 pub use proof::{
@@ -116,8 +117,7 @@ pub use proof::{
     SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
     GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    GROUPED_ROOT_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -126,12 +126,14 @@ pub use schedule::{
     schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, Step,
+    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
+    ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use setup_geometry::{
-    ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, stage3_offload_natural_field_len,
+    compute_setup_layout, ensure_setup_envelope, setup_active_ring_elems_at,
+    setup_active_ring_elems_for_fold, setup_required_for_inputs, stage3_offload_natural_field_len,
+    SetupLayoutFootprint,
 };
 pub use sis::{AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS};
 pub use tail_golomb_rice_low_bits::{

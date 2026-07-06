@@ -52,7 +52,7 @@ where
             &setup.expanded,
             backend,
             prepared,
-            &prefix_params,
+            akita_prover::SetupPrefixCommitShape::from_level(&prefix_params),
             level_params_digest,
             seed_digest,
             n_prefix,
