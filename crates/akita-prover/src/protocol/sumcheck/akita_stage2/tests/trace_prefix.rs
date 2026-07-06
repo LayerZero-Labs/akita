@@ -283,19 +283,12 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(107);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_witness_initial_batch(
-        &w_prefix,
-        live_segments,
-        coeff_len,
-        r0,
-        r1,
-    );
-    let relation_segments = live_segments;
+    let expected_w_full =
+        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_prefix, r0, r1);
+    let initial_relation = prover.relation_weight.evals().to_vec();
     let expected_relation_round2 =
-        AkitaStage2Prover::<F>::fold_relation_weight_initial_batch(
-            prover.relation_weight.evals(),
-            relation_segments,
-            coeff_len,
+        AkitaStage2Prover::<F>::fold_relation_weight_through_two_challenges(
+            &initial_relation,
             r0,
             r1,
         );
@@ -322,10 +315,11 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     expected.witness_table = WitnessTable::Full(expected_w_full.clone());
     expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
-        relation_segments * (coeff_len >> 2),
+        expected_relation_round2.len(),
     )
     .unwrap();
-    expected.relation_coeff_len = coeff_len >> 2;
+    expected.relation_coeff_len = expected_relation_round2.len();
+    expected.live_segments = 1;
     expected.rounds_completed = 2;
     let expected_round2 = expected.compute_current_round_poly_from_state();
 

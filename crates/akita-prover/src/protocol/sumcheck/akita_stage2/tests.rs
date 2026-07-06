@@ -319,36 +319,15 @@ fn virtual_round_reference(split_eq: &GruenSplitEq<F>, w_compact: &[i8]) -> UniP
     split_eq.gruen_mul(&UniPoly::from_evals(&evals))
 }
 
-fn fold_compact_segment_prefix_reference(
-    w_compact: &[i8],
-    live_segments: usize,
-    coeff_len: usize,
-    r: F,
-) -> Vec<F> {
-    let next_live_segments = live_segments.div_ceil(2);
-    let mut out = vec![F::zero(); coeff_len * next_live_segments];
-    for (y, row_out) in out.chunks_mut(next_live_segments).enumerate() {
-        let row_start = y * live_segments;
-        let row = &w_compact[row_start..row_start + live_segments];
-        for (pair_segment, dst) in row_out.iter_mut().enumerate() {
-            let left = 2 * pair_segment;
-            let w_0 = F::from_i64(row[left] as i64);
-            let w_1 = if left + 1 < live_segments {
-                F::from_i64(row[left + 1] as i64)
-            } else {
-                F::zero()
-            };
-            *dst = w_0 + r * (w_1 - w_0);
-        }
-    }
-    out
-}
-
-fn fold_compact_to_full_reference(w_compact: &[i8], r: F) -> Vec<F> {
-    (0..w_compact.len() / 2)
+fn fold_compact_flat_reference(w_compact: &[i8], r: F) -> Vec<F> {
+    (0..w_compact.len().div_ceil(2))
         .map(|j| {
             let w_0 = F::from_i64(w_compact[2 * j] as i64);
-            let w_1 = F::from_i64(w_compact[2 * j + 1] as i64);
+            let w_1 = w_compact
+                .get(2 * j + 1)
+                .copied()
+                .map(|w| F::from_i64(w as i64))
+                .unwrap_or(F::zero());
             w_0 + r * (w_1 - w_0)
         })
         .collect()
@@ -361,15 +340,15 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
     let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
     let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::fold_witness_embedded_segment_compact(&w_prefix, 5, 2, &fold_lut),
-        fold_compact_segment_prefix_reference(&w_prefix, 5, 2, r)
+        AkitaStage2Prover::<F>::fold_witness_compact_to_field(&w_prefix, &fold_lut),
+        fold_compact_flat_reference(&w_prefix, r)
     );
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
     let dense_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_dense, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::fold_compact_to_full(&w_dense, &dense_lut),
-        fold_compact_to_full_reference(&w_dense, r)
+        AkitaStage2Prover::<F>::fold_witness_compact_to_field(&w_dense, &dense_lut),
+        fold_compact_flat_reference(&w_dense, r)
     );
 }
 
@@ -573,19 +552,12 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(97);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_witness_initial_batch(
-        &w_prefix,
-        live_segments,
-        coeff_len,
-        r0,
-        r1,
-    );
-    let relation_segments = live_segments;
+    let expected_w_full =
+        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_prefix, r0, r1);
+    let initial_relation = prover.relation_weight.evals().to_vec();
     let expected_relation_round2 =
-        AkitaStage2Prover::<F>::fold_relation_weight_initial_batch(
-            prover.relation_weight.evals(),
-            relation_segments,
-            coeff_len,
+        AkitaStage2Prover::<F>::fold_relation_weight_through_two_challenges(
+            &initial_relation,
             r0,
             r1,
         );
@@ -611,10 +583,11 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     expected.witness_table = WitnessTable::Full(expected_w_full.clone());
     expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
-        relation_segments * (coeff_len >> 2),
+        expected_relation_round2.len(),
     )
     .unwrap();
-    expected.relation_coeff_len = coeff_len >> 2;
+    expected.relation_coeff_len = expected_relation_round2.len();
+    expected.live_segments = 1;
     expected.rounds_completed = 2;
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
@@ -678,19 +651,12 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(127);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_witness_initial_batch(
-        &w_prefix,
-        live_segments,
-        coeff_len,
-        r0,
-        r1,
-    );
-    let relation_segments = live_segments;
+    let expected_w_full =
+        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_prefix, r0, r1);
+    let initial_relation = prover.relation_weight.evals().to_vec();
     let expected_relation_round2 =
-        AkitaStage2Prover::<F>::fold_relation_weight_initial_batch(
-            prover.relation_weight.evals(),
-            relation_segments,
-            coeff_len,
+        AkitaStage2Prover::<F>::fold_relation_weight_through_two_challenges(
+            &initial_relation,
             r0,
             r1,
         );
@@ -716,10 +682,11 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     expected.witness_table = WitnessTable::Full(expected_w_full.clone());
     expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_relation_round2.clone(),
-        relation_segments * (coeff_len >> 2),
+        expected_relation_round2.len(),
     )
     .unwrap();
-    expected.relation_coeff_len = coeff_len >> 2;
+    expected.relation_coeff_len = expected_relation_round2.len();
+    expected.live_segments = 1;
     expected.rounds_completed = 2;
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
@@ -800,36 +767,26 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
 
     let current_w_full = match &expected.witness_table {
         WitnessTable::Full(w_full) => w_full.clone(),
-        WitnessTable::Compact(_) => panic!("expected later prefix state to be full"),
+        WitnessTable::Compact(_) => panic!("expected later state to be full"),
     };
-    let current_y_len = expected.relation_weight_coeff_len();
-    let expected_next_w_full = AkitaStage2Prover::<F>::fold_witness_embedded_segment_full(
-        &current_w_full,
-        expected.live_segments,
-        current_y_len,
-        r2,
-    );
-    let relation_segments = expected.live_segments;
-    let expected_next_relation = AkitaStage2Prover::<F>::fold_relation_weight_embedded_segment(
-        expected.relation_weight.evals(),
-        relation_segments,
-        current_y_len,
-        r2,
-    );
+    let expected_next_w_full = AkitaStage2Prover::<F>::fold_witness_field_flat(current_w_full, r2);
+    let expected_next_relation =
+        AkitaStage2Prover::<F>::fold_relation_field_flat(expected.relation_weight.evals(), r2);
     expected.prev_norm_claim = expected
         .prev_norm_poly
         .as_ref()
         .expect("round2 norm poly should be cached")
         .evaluate(&r2);
     expected.split_eq.bind(r2);
-    expected.live_segments = expected.live_segments.div_ceil(2);
+    expected.live_segments = 1;
     expected.rounds_completed += 1;
-    let next_relation_segments = relation_segments.div_ceil(2);
     expected.relation_weight = RelationWeightPolynomial::from_live_evals(
         expected_next_relation.clone(),
-        next_relation_segments * current_y_len,
+        expected_next_relation.len(),
     )
     .unwrap();
+    expected.relation_coeff_len = expected_next_relation.len();
+    expected.witness_table = WitnessTable::Full(expected_next_w_full.clone());
     let (virt_terms, rel_coeffs) =
         expected.scan_round(WitnessPolynomial::FieldEvals(&expected_next_w_full));
     let expected_round3 = expected.combine_terms(virt_terms, rel_coeffs);
