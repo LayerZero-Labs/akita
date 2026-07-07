@@ -118,9 +118,7 @@ pub use proof::{
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
-pub use relation_weight::{
-    PreparedRelationWeightPolynomial, RelationWeightPolynomial, RelationWeightPolynomialError,
-};
+pub use relation_weight::{RelationWeightPolynomial, RelationWeightPolynomialError};
 pub use schedule::{
     detect_field_modulus, grouped_root_commit_params, r_decomp_levels, root_current_w_len,
     root_direct_schedule, schedule_is_root_direct, schedule_num_fold_levels,

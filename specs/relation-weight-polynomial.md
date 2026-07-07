@@ -45,10 +45,11 @@ sum_x [
 ]
 ```
 
-This spec does not implement compressed commitments and does not enable
-non-uniform `d_a/d_b/d_d` schedules. It prepares the code for both by removing
-the current Stage-2 split and by making the ring-switch quotient layout
-row-family typed.
+This spec does not implement compressed commitments. It does complete the
+Stage-2 and relation-weight cutover needed for mixed `d_a/d_b/d_d` schedules:
+the Stage-2 kernel is flat-vector only, and any role-specific ring dimension is
+confined to row-family evaluators and quotient-slice builders before being
+embedded into the flat relation-weight polynomial.
 
 This is a full cutover spec. The implementation must update the canonical
 Stage-2 and ring-switch APIs in one pass, delete the old split relation API, and
@@ -1105,10 +1106,12 @@ via `SetupContributionPlanInputs`, not the relation-weight summand shape.
 
 ### Unit Tests
 
-- Bridge test (pre-cutover equivalence only; delete after Slice 3):
+- Historical bridge test (pre-cutover equivalence only; delete after the split
+  builder is gone from live code):
 
   ```text
-  relation_weight[x,y] == alpha_evals_y[y] * m_evals_x[x] + trace[x,y]
+  relation_weight[old grid address] ==
+      old coefficient-factor * old column-factor + old trace addend
   ```
 
   After Slice 3, trace enters only through the `EvaluationTrace` row inside

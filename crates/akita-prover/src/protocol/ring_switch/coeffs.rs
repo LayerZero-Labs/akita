@@ -1,6 +1,8 @@
 use super::*;
 use crate::compute::{OperationCtx, RuntimeRingSwitchProveBackend};
+use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
+use crate::protocol::ring_relation::RelationQuotientOutput;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
@@ -23,11 +25,11 @@ pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
 
 impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
     /// Construct from typed ring-switch output at a kernel boundary.
-    pub fn from_parts<const D: usize>(
+    fn from_parts<const D: usize>(
         e_folded: Vec<CyclotomicRing<F, D>>,
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
         z_folded_centered: Vec<[i32; D]>,
-        r: Vec<CyclotomicRing<F, D>>,
+        r: RelationQuotientOutput<F>,
         u_concat_planes: usize,
     ) -> Self {
         Self {
@@ -40,7 +42,7 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
                 .iter()
                 .flat_map(|row| row.iter().copied())
                 .collect(),
-            r: RingVec::from_ring_elems(&r),
+            r: r.into_ring_vec(),
             u_concat_planes,
             ring_dim: D,
         }
@@ -169,7 +171,6 @@ where
     let dims = instance.role_dims();
     dispatch_ring_dim_result!(dims.d_a(), |D| {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-        witness.ensure_role_dim::<D>(RingRole::Opening)?;
         witness.ensure_role_dim::<D>(RingRole::Inner)?;
         let num_claims = instance.opening_batch().num_total_polynomials();
         let RingRelationWitness {
@@ -181,14 +182,7 @@ where
             hint,
             ..
         } = witness;
-        e_hat.ensure_stride::<D>()?;
         validate_chunked_witness_cfg(lp)?;
-        if dims.d_d() != D {
-            return Err(AkitaError::InvalidSetup(format!(
-                "mixed-role ring switch build requires d_d={} to match d_a={D} until nested views land",
-                dims.d_d()
-            )));
-        }
         let e_folded = e_folded.as_ring_slice_trusted::<D>();
         let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
             &hint,
@@ -199,7 +193,7 @@ where
         decomposed_inner_rows.ensure_stride::<D>()?;
         let opening_batch = instance.opening_batch();
 
-        instance.ensure_ring_dim::<D>()?;
+        instance.ring_multiplier_point().ensure_ring_dim::<D>()?;
         let z_folded_centered_per_chunk: Vec<Vec<[i32; D]>> = z_folded_centered_per_chunk
             .iter()
             .map(|chunk| {
@@ -220,7 +214,8 @@ where
             ring_switch_ctx,
             lp,
             &instance.challenges,
-            e_hat.typed_planes::<D>()?,
+            dims,
+            &e_hat,
             &decomposed_inner_rows,
             &recomposed_inner_rows,
             e_folded,
@@ -228,7 +223,7 @@ where
             instance.row_coefficient_rings_trusted::<D>()?,
             z_folded_rings.centered_coeffs_trusted::<D>(),
             z_folded_rings.centered_inf_norm,
-            instance.y_trusted::<D>()?,
+            instance.y(),
             opening_batch.num_total_polynomials(),
             opening_batch.num_groups(),
             lp.num_blocks,
@@ -299,28 +294,32 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
 /// digit-major with the block index innermost, restricted to the global block
 /// window `[block_lo, block_lo + blocks_per_chunk)`.
 ///
-/// `flat` is indexed `flat[(outer · num_blocks + block) · planes_per_block +
+/// `digits` is indexed `(outer · num_blocks + block) · planes_per_block +
 /// compound_dig]`, where `outer` is the claim (for `ê`) or `t`-vector (for `t̂`)
 /// axis. With `block_lo = 0` and `blocks_per_chunk = num_blocks` (the
 /// single-chunk case) this reproduces [`akita_types::emit_witness_planes_block_inner`]
-/// exactly.
-fn emit_witness_planes_block_window<const D: usize>(
+/// exactly for any digit stride.
+fn emit_witness_planes_block_window(
     out: &mut Vec<i8>,
-    flat: &[[i8; D]],
+    digits: &DigitBlocks,
     num_outer: usize,
     num_blocks: usize,
     planes_per_block: usize,
     block_lo: usize,
     blocks_per_chunk: usize,
-) {
+) -> Result<(), AkitaError> {
     for compound_dig in 0..planes_per_block {
         for outer in 0..num_outer {
             for bl in 0..blocks_per_chunk {
                 let blk = outer * num_blocks + (block_lo + bl);
-                out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
+                let plane = digits
+                    .plane(blk * planes_per_block + compound_dig)
+                    .ok_or(AkitaError::InvalidProof)?;
+                out.extend_from_slice(plane);
             }
         }
     }
+    Ok(())
 }
 
 /// Decompose centered `z` fold response coeffs and emit digit-major planes.
@@ -381,11 +380,11 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// Panics if the caller supplies digit blocks whose plane counts do not match
 /// the fold layout in `lp`.
 #[allow(clippy::too_many_arguments)]
-pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
+pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
     e_hat: &DigitBlocks,
     t_hat: &DigitBlocks,
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],
-    r: &[CyclotomicRing<F, D>],
+    r: &RelationQuotientOutput<F>,
     lp: &LevelParams,
     num_claims: usize,
 ) -> Result<RecursiveWitnessFlat, AkitaError> {
@@ -402,27 +401,40 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let num_chunks = lp.witness_chunk.num_chunks;
     let blocks_per_chunk = num_blocks / num_chunks;
 
-    let e_hat_planes = e_hat.typed_planes::<D>()?.len();
-    let t_hat_planes = t_hat.typed_planes::<D>()?.len();
+    let e_hat_planes = e_hat.total_planes();
+    let e_hat_digits = e_hat.digits().len();
+    let t_hat_planes = t_hat.total_planes();
+    let t_hat_digits = t_hat.digits().len();
     let z_planes_total: usize = z_folded_centered_per_chunk
         .iter()
         .map(|z| z.len() * num_digits_fold)
         .sum();
-    let z_count = e_hat_planes + t_hat_planes + z_planes_total;
-    let r_hat_count = r.len() * levels;
+    let z_digits = z_planes_total
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("z digit length overflow".to_string()))?;
+    let r_hat_digits = r
+        .flat_coeffs()
+        .len()
+        .checked_mul(levels)
+        .ok_or_else(|| AkitaError::InvalidSetup("r_hat digit length overflow".to_string()))?;
     tracing::debug!(
         num_chunks,
         e_hat_planes,
         t_hat_planes,
         z_folded_planes = z_planes_total,
-        r_elems = r.len(),
-        r_planes = r_hat_count,
-        total_ring = z_count + r_hat_count,
-        total_field = (z_count + r_hat_count) * D,
+        r_coeffs = r.flat_coeffs().len(),
+        r_digits = r_hat_digits,
+        z_digits,
+        e_hat_digits,
+        t_hat_digits,
+        total_field = z_digits + e_hat_digits + t_hat_digits + r_hat_digits,
         "build_w_coeffs"
     );
-    let total_planes = z_count + r_hat_count;
-    let total_elems = total_planes * D;
+    let total_elems = z_digits
+        .checked_add(e_hat_digits)
+        .and_then(|len| len.checked_add(t_hat_digits))
+        .and_then(|len| len.checked_add(r_hat_digits))
+        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".to_string()))?;
 
     let mut out = Vec::with_capacity(total_elems);
 
@@ -467,33 +479,24 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         let block_lo = chunk * blocks_per_chunk;
         emit_witness_planes_block_window(
             &mut out,
-            e_hat.typed_planes::<D>()?,
+            e_hat,
             e_num_outer,
             num_blocks,
             depth_open,
             block_lo,
             blocks_per_chunk,
-        );
+        )?;
         emit_witness_planes_block_window(
             &mut out,
-            t_hat.typed_planes::<D>()?,
+            t_hat,
             t_num_outer,
             num_blocks,
             t_planes_per_block,
             block_lo,
             blocks_per_chunk,
-        );
+        )?;
     }
 
-    let mut r_planes = vec![[0i8; D]; levels];
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
-    for ri in r {
-        r_planes.fill([0i8; D]);
-        ri.balanced_decompose_pow2_i8_into_with_params(&mut r_planes, &decompose_params);
-        for plane in &r_planes {
-            out.extend_from_slice(plane);
-        }
-    }
+    r.append_decomposed_i8(&mut out, levels, log_basis)?;
     Ok(RecursiveWitnessFlat::from_i8_digits(out))
 }

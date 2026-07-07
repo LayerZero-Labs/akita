@@ -94,31 +94,6 @@ impl<F: FieldCore> RingRelationWitness<F> {
         Ok(())
     }
 
-    /// Validate that all role carriers match a single uniform dimension `D`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if roles diverge or any carrier does not match `D`.
-    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        let uniform = self.role_dims.uniform_dim()?;
-        if uniform != D {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring relation witness uniform dim {uniform} does not match requested D={D}"
-            )));
-        }
-        self.ensure_role_dim::<D>(RingRole::Inner)?;
-        self.ensure_role_dim::<D>(RingRole::Opening)?;
-        self.ensure_role_dim::<D>(RingRole::Outer)?;
-        Ok(())
-    }
-
-    /// Rebuild typed `e_hat` digit planes after [`Self::ensure_role_dim`].
-    pub fn e_hat_trusted<const D: usize>(&self) -> Result<&DigitBlocks, AkitaError> {
-        self.ensure_role_dim::<D>(RingRole::Opening)?;
-        self.e_hat.ensure_stride::<D>()?;
-        Ok(&self.e_hat)
-    }
-
     /// Borrow folded `e` rows after [`Self::ensure_role_dim`].
     pub fn e_folded_trusted<const D: usize>(
         &self,

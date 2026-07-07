@@ -15,12 +15,17 @@ pub(crate) struct EvaluationTraceRowEval<F: FieldCore, E: FieldCore, const D: us
     pub terms: Vec<TraceTerm<F, E, D>>,
 }
 
+struct FlatRelationWeightPoint<'a, E: FieldCore> {
+    coefficient_challenges: &'a [E],
+    segment_challenges: &'a [E],
+}
+
 /// Verifier-side prepared evaluator for the unified relation-weight polynomial.
 pub(crate) struct PreparedRelationWeightPolynomial<F: FieldCore, E: FieldCore, const D: usize> {
     pub(crate) deferred: RingSwitchDeferredRowEval<E>,
     alpha: E,
-    pub(crate) col_bits: usize,
-    pub(crate) ring_bits: usize,
+    pub(crate) num_vars: usize,
+    witness_coeff_bits: usize,
     witness_live_len: usize,
     evaluation_trace: Option<EvaluationTraceRowEval<F, E, D>>,
 }
@@ -33,15 +38,15 @@ where
     pub(crate) fn from_ring_switch(
         deferred: RingSwitchDeferredRowEval<E>,
         alpha: E,
-        col_bits: usize,
-        ring_bits: usize,
+        num_vars: usize,
+        witness_coeff_bits: usize,
         witness_live_len: usize,
     ) -> Self {
         Self {
             deferred,
             alpha,
-            ring_bits,
-            col_bits,
+            num_vars,
+            witness_coeff_bits,
             witness_live_len,
             evaluation_trace: None,
         }
@@ -63,11 +68,11 @@ where
     fn validate_flat_point<'a>(
         &self,
         challenges: &'a [E],
-    ) -> Result<(&'a [E], &'a [E]), AkitaError> {
+    ) -> Result<FlatRelationWeightPoint<'a, E>, AkitaError> {
         let witness_coeff_len = D;
         if witness_coeff_len == 0
             || !witness_coeff_len.is_power_of_two()
-            || self.ring_bits != witness_coeff_len.trailing_zeros() as usize
+            || self.witness_coeff_bits != witness_coeff_len.trailing_zeros() as usize
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -77,50 +82,49 @@ where
                 actual: self.witness_live_len,
             });
         }
-        let num_rounds = self
-            .col_bits
-            .checked_add(self.ring_bits)
-            .ok_or(AkitaError::InvalidProof)?;
-        if challenges.len() != num_rounds {
+        if challenges.len() != self.num_vars {
             return Err(AkitaError::InvalidSize {
-                expected: num_rounds,
+                expected: self.num_vars,
                 actual: challenges.len(),
             });
         }
-        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        Ok((y_challenges, x_challenges))
+        let (coefficient_challenges, segment_challenges) =
+            challenges.split_at(self.witness_coeff_bits);
+        Ok(FlatRelationWeightPoint {
+            coefficient_challenges,
+            segment_challenges,
+        })
     }
 
     /// Quotient-bearing row families via the deferred setup scan (A/B/D rows and
-    /// `r_hat` tail), scaled by the witness coefficient axis `alpha^coeff`.
+    /// `r_hat` tail), embedded into the flat witness coefficient slots.
     fn eval_quotient_row_families_at_point(
         &self,
-        y_challenges: &[E],
-        x_challenges: &[E],
+        point: &FlatRelationWeightPoint<'_, E>,
         setup: &AkitaExpandedSetup<F>,
         opening_point: &RingOpeningPoint<F>,
         ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
         setup_claim: Option<E>,
     ) -> Result<E, AkitaError> {
-        let alpha_evals_y = akita_algebra::ring::scalar_powers(self.alpha, D);
-        let witness_axis_weight = multilinear_eval(&alpha_evals_y, y_challenges)?;
+        let witness_coeff_powers = akita_algebra::ring::scalar_powers(self.alpha, D);
+        let coefficient_embedding_weight =
+            multilinear_eval(&witness_coeff_powers, point.coefficient_challenges)?;
         let row_family_sum = self.deferred.eval_at_point::<F, D>(
-            x_challenges,
+            point.segment_challenges,
             setup,
             opening_point,
             ring_multiplier_point,
             self.alpha,
             setup_claim,
         )?;
-        Ok(witness_axis_weight * row_family_sum)
+        Ok(coefficient_embedding_weight * row_family_sum)
     }
 
     /// [`EvaluationTrace`](akita_types::RelationRowFamily::EvaluationTrace) row
     /// contribution, weighted by `eq(tau1, EvaluationTrace)`.
     fn eval_evaluation_trace_row_at_point(
         &self,
-        y_challenges: &[E],
-        x_challenges: &[E],
+        point: &FlatRelationWeightPoint<'_, E>,
     ) -> Result<E, AkitaError> {
         let Some(trace) = &self.evaluation_trace else {
             return Ok(E::zero());
@@ -133,16 +137,17 @@ where
             .unwrap_or(E::zero());
         Ok(eval_trace_terms_closed::<F, E, D>(
             &trace.layout,
-            y_challenges,
-            x_challenges,
+            point.coefficient_challenges,
+            point.segment_challenges,
             &trace.terms,
         )? * eq_trace)
     }
 
     /// Evaluate the prepared relation-weight polynomial at a flat stage-2 point.
     ///
-    /// `challenges` has length `col_bits + ring_bits` and indexes the live flat
-    /// witness hypercube. Coordinate splitting is internal to this evaluator.
+    /// `challenges` indexes the live flat witness hypercube. The local
+    /// coefficient embedding used by the current row-family evaluator is
+    /// internal to this method.
     pub(crate) fn eval_at_point(
         &self,
         challenges: &[E],
@@ -151,17 +156,15 @@ where
         ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
         setup_claim: Option<E>,
     ) -> Result<E, AkitaError> {
-        let (y_challenges, x_challenges) = self.validate_flat_point(challenges)?;
+        let point = self.validate_flat_point(challenges)?;
         let quotient_rows = self.eval_quotient_row_families_at_point(
-            y_challenges,
-            x_challenges,
+            &point,
             setup,
             opening_point,
             ring_multiplier_point,
             setup_claim,
         )?;
-        let evaluation_trace =
-            self.eval_evaluation_trace_row_at_point(y_challenges, x_challenges)?;
+        let evaluation_trace = self.eval_evaluation_trace_row_at_point(&point)?;
         Ok(quotient_rows + evaluation_trace)
     }
 }

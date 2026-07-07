@@ -2,14 +2,12 @@
 use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
-use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
 use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
 };
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_config::CommitmentConfig;
@@ -37,7 +35,7 @@ mod finalize;
 mod tests;
 
 pub use coeffs::RingSwitchTerminalArtifacts;
-pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
+pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
 pub use evals::{
     build_relation_weight_evals, build_w_evals_compact, compute_relation_column_weights,

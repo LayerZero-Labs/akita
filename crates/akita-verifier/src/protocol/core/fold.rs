@@ -450,7 +450,9 @@ where
         crate::protocol::relation_weight::PreparedRelationWeightPolynomial::<F, E, D>::from_ring_switch(
             rs.deferred.clone(),
             rs.alpha,
-            rs.col_bits,
+            rs.col_bits.checked_add(rs.ring_bits).ok_or_else(|| {
+                AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
+            })?,
             rs.ring_bits,
             rs.witness_live_len,
         );

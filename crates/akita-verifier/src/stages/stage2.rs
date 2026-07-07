@@ -192,17 +192,17 @@ where
         opening_point: &'a RingOpeningPoint<F>,
         ring_multiplier_point: &'a RingMultiplierOpeningPoint<F>,
     ) -> Result<Self, AkitaError> {
-        let col_bits = prepared_relation_weight.col_bits;
-        let ring_bits = prepared_relation_weight.ring_bits;
-        let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
-            AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
-        })?;
+        let num_rounds = prepared_relation_weight.num_vars;
         if stage1_point.len() != num_rounds {
             return Err(AkitaError::InvalidSize {
                 expected: num_rounds,
                 actual: stage1_point.len(),
             });
         }
+        let ring_bits = D.trailing_zeros() as usize;
+        let col_bits = num_rounds
+            .checked_sub(ring_bits)
+            .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
             batching_coeff,
             s_claim,

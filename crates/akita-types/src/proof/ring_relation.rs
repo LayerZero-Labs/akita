@@ -84,9 +84,9 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
 ///
-/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
-/// closures borrow typed ring rows via [`Self::y_trusted`], [`Self::v_trusted`],
-/// and [`Self::row_coefficient_rings_trusted`].
+/// Per-role ring dimensions are stored at runtime. Protocol handoff code keeps
+/// mixed-role rows in flat storage and borrows typed rows only at the specific
+/// role dimension it is currently evaluating.
 #[derive(Debug, Clone)]
 pub struct RingRelationInstance<F: FieldCore> {
     m_row_layout: MRowLayout,
@@ -269,39 +269,9 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         &self.row_coefficient_rings
     }
 
-    /// Validate that all role carriers match a single uniform dimension `D`.
-    ///
-    /// Required by fused ring-switch paths that borrow the full `y` vector as
-    /// typed rings at one dimension (Slice 1 splits this).
-    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        let uniform = self.role_dims.uniform_dim()?;
-        if uniform != D {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring relation uniform dim {uniform} does not match requested D={D}"
-            )));
-        }
-        validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
-        if !self.row_coefficient_rings.can_decode_vec(D)
-            || !self.y.can_decode_vec(D)
-            || !self.v.can_decode_vec(D)
-        {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.y.coeff_len(),
-            });
-        }
-        self.ring_multiplier_point.ensure_ring_dim::<D>()
-    }
-
     /// Validate one role carrier against dispatch `D`.
     pub fn ensure_role_dim<const D: usize>(&self, role: RingRole) -> Result<(), AkitaError> {
         validate_role_dispatch::<D>(self.role_dims, role).map(|_| ())
-    }
-
-    /// Borrow `y` rows when all roles share one dimension.
-    pub fn y_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_ring_dim::<D>()?;
-        self.y.as_ring_slice::<D>()
     }
 
     /// Borrow `v` rows at the D-role dimension (`d_d`).
