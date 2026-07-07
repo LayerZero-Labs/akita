@@ -19,8 +19,6 @@ mod common;
 
 #[path = "integration_tests/akita_e2e.rs"]
 mod akita_e2e;
-#[path = "integration_tests/algebra/mod.rs"]
-mod algebra;
 #[path = "integration_tests/batched_aggregated_e2e.rs"]
 mod batched_aggregated_e2e;
 #[path = "integration_tests/commitment_contract.rs"]
