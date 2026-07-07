@@ -1,3 +1,13 @@
+// See the matching comment in `modes.rs`: under `profile-ci-registry`,
+// whether generic pipeline helpers here (e.g. `run_dense_for`, `run_onehot`,
+// `run_batched_onehot`) and their small supporting helpers are reachable
+// depends entirely on which `mode-*` Cargo features a given build enables,
+// since `modes.rs`'s per-mode wrapper functions are their only call sites.
+// `-D warnings` promotes that feature-combination-dependent `dead_code` warn
+// into a hard error. Allow it file-wide rather than annotate each affected
+// item; this is example-only tooling, not library code.
+#![allow(dead_code)]
+
 use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,

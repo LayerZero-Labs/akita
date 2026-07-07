@@ -1,3 +1,22 @@
+// Under `profile-ci-registry`, `profile_modes()` only pushes a mode's wrapper
+// function into the registry when that mode's own `mode-*` Cargo feature is
+// enabled (see the per-`#[cfg(feature = "mode-*")]` pushes below). CI builds
+// each matrix group with only the `mode-*` features its own bench cases need
+// (`.github/workflows/profile-bench.yml`'s `pcs_mode_features`), so in any
+// given narrow build most of the per-mode wrapper functions here — plus the
+// per-field-type dispatch helpers and title/formatting helpers they alone
+// call — have zero call sites and are genuinely (and correctly) dead for that
+// specific feature combination, while remaining live for others. `-D
+// warnings` (set globally in profile-bench.yml) promotes the warn-by-default
+// `dead_code` lint to a hard error for exactly this reachability, which is a
+// property of the *feature selection*, not of the code being actually
+// unused. Allow it file-wide here rather than annotate each of the many
+// affected items individually; this file is example-only tooling, not
+// library code, and the umbrella `profile-ci` build (which enables every
+// `mode-*` feature and therefore populates the registry fully) still exposes
+// any items that are dead for reasons unrelated to this feature-gating.
+#![allow(dead_code)]
+
 use crate::report::print_layout;
 use crate::workload::{onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
