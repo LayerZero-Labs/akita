@@ -452,6 +452,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
+            rs.witness_live_len,
         );
     if let Some(trace) = trace {
         prepared_relation_weight = trace.attach_to(prepared_relation_weight)?;

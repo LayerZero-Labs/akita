@@ -38,6 +38,18 @@ fn per_role_dispatch_rejects_wrong_stack_d() {
     validate_role_dispatch::<32>(dims, RingRole::Opening).expect("D-role at 32");
 }
 
+#[test]
+fn nested_role_dims_witness_coeff_axis_matches_d_a() {
+    let dims = CommitmentRingDims {
+        inner: 128,
+        outer: 64,
+        opening: 32,
+    };
+    assert!(dims.nests());
+    assert_eq!(dims.d_a().trailing_zeros() as usize, 7);
+    assert_eq!(1usize << 7, dims.d_a());
+}
+
 fn test_seed(gen_ring_dim: usize) -> AkitaSetupSeed {
     AkitaSetupSeed {
         max_num_vars: NUM_VARS,

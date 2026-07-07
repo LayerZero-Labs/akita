@@ -36,6 +36,8 @@ mod tests;
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Deferred row evaluation state for relation-weight and stage-3 setup.
     pub deferred: RingSwitchDeferredRowEval<E>,
+    /// Live flat witness coefficient count (`segments * d_a`).
+    pub witness_live_len: usize,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.
@@ -52,6 +54,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     deferred: RingSwitchDeferredRowEval<E>,
+    witness_live_len: usize,
     col_bits: usize,
     ring_bits: usize,
     tau0: Option<Vec<E>>,
@@ -65,6 +68,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             deferred: self.deferred,
+            witness_live_len: self.witness_live_len,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0,
@@ -80,6 +84,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         }
         Ok(RingSwitchVerifyOutput {
             deferred: self.deferred,
+            witness_live_len: self.witness_live_len,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0: Vec::new(),
@@ -259,6 +264,7 @@ where
 
     Ok(RingSwitchVerifyCoreOutput {
         deferred: prepared_row_eval,
+        witness_live_len: w_len,
         col_bits,
         ring_bits,
         tau0,
