@@ -1098,7 +1098,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         &z_block_low_eq,
                         z_offset_low,
                         group.block_len,
-                        |idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows),
+                        |idx| {
+                            group
+                                .a_evals
+                                .get(idx)
+                                .copied()
+                                .ok_or(AkitaError::InvalidProof)
+                        },
                     )?];
                     let z_offset_high = chunk.offset_z >> z_offset_low_bits;
                     let z_hi_len = a_block_summary.len() * fold_gadget.len() * g1_commit.len();
@@ -1117,9 +1123,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 // `a_evals_by_point` is chunk-independent (a[blk] is global), so
                 // the dense `z` segment is identical in every chunk; only the
                 // offset shifts.
-                let a_evals_by_point = vec![(0..group.block_len)
-                    .map(|idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows))
-                    .collect::<Result<Vec<_>, _>>()?];
+                let a_evals_by_point = vec![group.a_evals.clone()];
                 for chunk in &layout.chunks {
                     z_structured_contribution += ZDenseSlicesEvaluator {
                         g1_commit: &g1_commit,
