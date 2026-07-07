@@ -1,10 +1,6 @@
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
-#[allow(dead_code)]
-#[path = "common/mod.rs"]
-mod common;
-
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{
@@ -14,7 +10,7 @@ use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, NextWitnessBinding, RingVec, TerminalResponse,
     TerminalResponseShape,
 };
-use common::*;
+use crate::common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 

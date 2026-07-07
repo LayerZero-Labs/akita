@@ -1,4 +1,3 @@
-
 use akita_field::Fp64;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
 

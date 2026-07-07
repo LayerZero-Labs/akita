@@ -1,4 +1,3 @@
-
 use akita_field::{ExtField, Fp32, Fp64, FpExt2, FpExt4, NegOneNr};
 use akita_transcript::{
     append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,

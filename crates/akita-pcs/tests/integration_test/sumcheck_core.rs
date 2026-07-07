@@ -1,4 +1,3 @@
-
 use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;

@@ -30,10 +30,7 @@ use rand::{Rng, SeedableRng};
 use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 
-#[allow(dead_code)]
-#[path = "common/mod.rs"]
-mod common;
-use common::opening_from_poly_for_layout;
+use crate::common::opening_from_poly_for_layout;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;

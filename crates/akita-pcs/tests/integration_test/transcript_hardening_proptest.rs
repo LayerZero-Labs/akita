@@ -1,13 +1,8 @@
-
-#[allow(dead_code)]
-#[path = "common/mod.rs"]
-mod common;
-
+use crate::common::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
 use akita_types::OpeningClaimsLayout;
-use common::*;
 use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DenseCfg>;

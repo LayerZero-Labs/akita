@@ -11,11 +11,7 @@
 //!
 //! `cargo test --release -p akita-pcs --test recursive_setup_e2e --features profile-ci -- --ignored`
 
-#[allow(dead_code)]
-#[path = "common/mod.rs"]
-mod common;
-
-use common::*;
+use crate::common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"recursive_setup_e2e/generated_onehot";
 

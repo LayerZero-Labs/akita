@@ -1,8 +1,4 @@
-
-#[allow(dead_code)]
-#[path = "common/mod.rs"]
-mod common;
-
+use crate::common::*;
 use akita_field::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
@@ -11,7 +7,6 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup,
 };
-use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
