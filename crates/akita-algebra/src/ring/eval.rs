@@ -69,28 +69,33 @@ where
         })
 }
 
-/// Deferred-reduction form of [`eval_flat_ring_at_pows`].
+/// Fast (deferred-reduction) counterpart of [`eval_ring_at_pows`].
 ///
-/// Accumulates all `E × F` products into a single
-/// [`HasUnreducedOps::ProductAccum`] and reduces **once** at the end, instead of
-/// reducing after every coefficient. On a 128-bit prime the modular reduction is
-/// a large fraction of each multiply, so this turns ~`len` reductions into one.
+/// Same signature and result as [`eval_ring_at_pows`], but accumulates all `D`
+/// widening `E × F` products into a single [`HasUnreducedOps::ProductAccum`] and
+/// reduces **once** instead of reducing after every coefficient. On a 128-bit
+/// prime the modular reduction is a large fraction of each multiply, so this
+/// turns ~`D` reductions into one.
 ///
-/// The result is bit-identical to [`eval_flat_ring_at_pows`] as long as the
-/// running product-sum stays within the accumulator's carry headroom. For
-/// `Fp128` each `u128` accumulator limb holds a 64-bit product word, so the sum
-/// of up to ~`2^64` products is exact — the `D ≈ 64` setup entries are trivially
-/// within bounds (validated by `deferred_matches_per_term_fp128_d64`). This is
-/// why callers can use it even though `Fp128` keeps `DELAYED_PRODUCT_SUM_IS_EXACT`
-/// at its conservative `false` default.
+/// Bit-identical to [`eval_ring_at_pows`] as long as the running product-sum
+/// stays within the accumulator's carry headroom. For `Fp128` each `u128`
+/// accumulator limb holds a 64-bit product word, so the sum of up to ~`2^64`
+/// products is exact — `D ≈ 64` is trivially within bounds (validated by
+/// `deferred_matches_per_term_fp128_d64`). This is why callers can use it even
+/// though `Fp128` keeps `DELAYED_PRODUCT_SUM_IS_EXACT` at its conservative
+/// `false` default.
+///
+/// # Panics
+///
+/// Panics in debug builds if `alpha_pows.len() != D`.
 #[inline]
-pub fn eval_flat_ring_at_pows_fast<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
+pub fn eval_ring_at_pows_fast<F, E, const D: usize>(r: &CyclotomicRing<F, D>, alpha_pows: &[E]) -> E
 where
     F: FieldCore,
     E: MulBaseUnreduced<F>,
 {
-    debug_assert_eq!(alpha_pows.len(), coeffs.len());
-    let accum = coeffs.iter().zip(alpha_pows.iter()).fold(
+    debug_assert_eq!(alpha_pows.len(), D);
+    let accum = r.coefficients().iter().zip(alpha_pows.iter()).fold(
         <E as HasUnreducedOps>::ProductAccum::zero(),
         |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_to_product_accum(*coeff),
     );
@@ -132,7 +137,7 @@ mod tests {
             }
             assert_eq!(
                 eval_ring_at_pows(&ring, &pows),
-                eval_flat_ring_at_pows_fast(ring.coefficients(), &pows),
+                eval_ring_at_pows_fast(&ring, &pows),
                 "deferred reduction diverged from per-term at seed {seed}"
             );
         }

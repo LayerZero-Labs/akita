@@ -6,7 +6,7 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::eval_flat_ring_at_pows_fast;
+use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, ExtField, FieldCore, MulBase, MulBaseUnreduced};
@@ -702,8 +702,7 @@ where
                 weight += a_weight * z_eq[lambda - a_start];
             }
             if !weight.is_zero() {
-                acc += eval_flat_ring_at_pows_fast(setup_flat[lambda].coefficients(), alpha_pows)
-                    * weight;
+                acc += eval_ring_at_pows_fast(&setup_flat[lambda], alpha_pows) * weight;
             }
             acc
         },
