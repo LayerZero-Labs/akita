@@ -5,7 +5,7 @@
 | --------- | ---------------------------------- |
 | Author(s) |                                    |
 | Created   | 2026-06-17                         |
-| Status    | scheduler/final commit implemented |
+| Status    | folded grouped roots implemented; chunking guarded |
 | PR        |                                    |
 | Book      | configuration chapter              |
 
@@ -114,10 +114,11 @@ commit_final_group(group_{G-1}, [key_0, ..., key_{G-2}])
 ```
 
 For `G = 1`, schedule lookup already normalizes to the scalar path through
-`AkitaScheduleLookupKey::single`. The current public grouped commitment API is
-final-commit-only; grouped opening proofs remain unimplemented. When grouped
-proofs land, they must preserve scalar normalization rather than adding a
-parallel singleton proof path.
+`AkitaScheduleLookupKey::single`. The public grouped commitment API is
+final-commit-only for assembling commitment groups, and grouped opening proofs
+support the degree-one one-hot `SetupContributionMode::Direct` root shape. The
+grouped path preserves scalar normalization rather than adding a parallel
+singleton proof path.
 
 ## Terminology
 
@@ -180,21 +181,31 @@ Implemented now:
   reconstructs precommitted `PrecommittedGroupParams` values from
   `PolynomialGroupLayout`s under `ConservativeCommitmentConfig<Cfg>`,
   resolves grouped params through `Cfg::get_params_for_grouped_batched_commitment`,
-  and emits the final commitment plus hint. Grouped final commits disable tensor
-  root projection (`G > 1` always root-directs from raw polynomials).
-- `batched_prove` / `batched_verify` support `G > 1` root-direct (`ZeroFold`)
-  one-hot openings when `SetupContributionMode::Direct`. Schedule resolution
-  goes through `akita_config::effective_batched_schedule`.
+  and emits the final commitment plus hint.
+- `batched_prove` / `batched_verify` support `G > 1` folded grouped-root one-hot
+  openings when `SetupContributionMode::Direct`, the opening field has extension
+  degree one, and the root can hand off to a singleton recursive suffix. The
+  grouped root carries per-group `z_hat`, `e_hat`, and `t_hat` sections followed
+  by one shared quotient tail.
+- `akita_config::effective_batched_schedule` still root-directs unsupported
+  grouped folded-root shapes, including grouped extension-field openings.
+- The grouped root relation quotient, verifier ring-switch replay, setup
+  contribution, grouped M-eval table, and grouped stage-2 trace table are
+  implemented for the supported folded root shape.
 - Setup-envelope sizing includes conservative commitments for eligible
   proof-optimized one-hot configs.
 
 Still future / guarded:
 
-- Folded grouped root openings (relation quotient with per-group `z_hat` blocks).
-- Grouped root relation quotient, verifier ring-switch replay, and setup
-  contribution remain future work. Folded grouped roots are planned only when the
-  root can hand off to a singleton recursive suffix; immediately terminal
-  grouped root folds remain guarded.
+- Multi-chunk / distributed grouped witnesses. Today, multi-chunk witness layout
+  combined with precommitted groups is rejected; the distributed design should
+  decide whether all groups must share the same chunk count.
+- Dense polynomial grouped roots, recursive setup contribution, and tiered
+  grouped commitments remain guarded.
+- Folded grouped roots over extension-field openings remain guarded by a
+  root-direct fallback until the grouped trace/output contribution supports them.
+- Immediately terminal grouped root folds and EOR-bearing grouped roots remain
+  guarded.
 - There is no separate descriptor `CommitSection`, and the design should not add
   one for this flow. The current descriptor binds call shape through
   `CallSection.opening_batch_digest` and binds the materialized grouped schedule
@@ -203,8 +214,8 @@ Still future / guarded:
   materialized. `commit_final_group` itself returns only the final commitment and
   hint.
 
-This spec records the implemented scheduler/final-commit behavior and the
-remaining grouped opening work.
+This spec records the implemented grouped final-commit and folded grouped-root
+behavior, plus the remaining unsupported matrix.
 
 ## Opening Claims Shape
 
