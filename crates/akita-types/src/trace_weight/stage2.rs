@@ -584,6 +584,9 @@ where
             "grouped root trace table currently requires degree-one openings".to_string(),
         ));
     }
+    if live_x_cols == 0 {
+        return Err(AkitaError::InvalidProof);
+    }
     if prepared_points.len() != opening_batch.num_groups()
         || row_coefficients.len() != opening_batch.num_total_polynomials()
     {
@@ -637,7 +640,10 @@ where
                     .ok_or_else(overflow)?;
             }
 
-            let mut table = vec![E::zero(); live_x_cols * ring_len];
+            let table_len = live_x_cols.checked_mul(ring_len).ok_or_else(|| {
+                AkitaError::InvalidSetup("grouped trace table length overflow".to_string())
+            })?;
+            let mut table = vec![E::zero(); table_len];
             let mut claim_offset = 0usize;
             for group_index in 0..opening_batch.num_groups() {
                 let group_lp = lp.root_group_params(opening_batch, group_index)?;
@@ -664,19 +670,52 @@ where
                             .ok_or(AkitaError::InvalidProof)?;
                         let block_weight = E::lift_base(block_weight);
                         for (plane, gadget_scalar) in gadget.iter().enumerate() {
+                            let group_block_cols = group_layout
+                                .num_polynomials()
+                                .checked_mul(group_lp.num_blocks())
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "grouped trace block width overflow".to_string(),
+                                    )
+                                })?;
+                            let plane_offset =
+                                plane.checked_mul(group_block_cols).ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "grouped trace plane offset overflow".to_string(),
+                                    )
+                                })?;
+                            let claim_offset = local_claim
+                                .checked_mul(group_lp.num_blocks())
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "grouped trace claim offset overflow".to_string(),
+                                    )
+                                })?;
                             let col = e_offsets[group_index]
-                                + plane * (group_layout.num_polynomials() * group_lp.num_blocks())
-                                + local_claim * group_lp.num_blocks()
-                                + block;
+                                .checked_add(plane_offset)
+                                .and_then(|n| n.checked_add(claim_offset))
+                                .and_then(|n| n.checked_add(block))
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "grouped trace column overflow".to_string(),
+                                    )
+                                })?;
                             if col >= live_x_cols {
                                 continue;
                             }
-                            let dst_base = col * ring_len;
+                            let dst_base = col.checked_mul(ring_len).ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "grouped trace row offset overflow".to_string(),
+                                )
+                            })?;
+                            let dst_end = dst_base.checked_add(ring_len).ok_or_else(|| {
+                                AkitaError::InvalidSetup("grouped trace row overflow".to_string())
+                            })?;
                             let factor = coefficient * block_weight * E::lift_base(*gadget_scalar);
-                            for (dst, coeff) in table[dst_base..dst_base + ring_len]
-                                .iter_mut()
-                                .zip(inner_coeffs.iter())
-                            {
+                            let dst_row = table
+                                .get_mut(dst_base..dst_end)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            for (dst, coeff) in dst_row.iter_mut().zip(inner_coeffs.iter()) {
                                 *dst += factor * E::lift_base(*coeff);
                             }
                         }
