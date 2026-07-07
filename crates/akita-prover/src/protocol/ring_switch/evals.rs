@@ -10,7 +10,7 @@ use akita_types::{
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
-/// The compact witness stays in the raw flat [`build_w_coeffs`] order.
+/// The compact witness stays in the raw flat `build_w_coeffs` order.
 ///
 /// # Errors
 ///
