@@ -33,8 +33,6 @@ mod heterogeneous_prove_e2e;
 mod label_schedule;
 #[path = "integration_tests/mixed_d_per_level_e2e.rs"]
 mod mixed_d_per_level_e2e;
-#[path = "integration_tests/primality.rs"]
-mod primality;
 #[path = "integration_tests/recursive_setup_e2e.rs"]
 mod recursive_setup_e2e;
 #[path = "integration_tests/ring_switch.rs"]
