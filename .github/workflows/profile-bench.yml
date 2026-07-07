@@ -47,6 +47,13 @@ jobs:
   # Cases are split across parallel jobs. Merge-base baseline policy lives in
   # `scripts/profile_bench_merge_base_policy.py`: mode-name check, optional smoke
   # run, then interleaved benchmark only when merge-base can complete every case.
+  # Each job also compiles only the profile-ci modes its own cases need (via
+  # `pcs_mode_features`), so the split doubles as the compile-time boundary:
+  # fp128 dense/tensor root-fold tracking gets its own job each, flat one-hot
+  # coverage gets one job per field type (fp32/fp64/fp128) since each field
+  # type pays its own fixed monomorphization cost regardless of mode count,
+  # and distributed multi-chunk coverage gets a final parallel group.
+  # `report` then concatenates per-job summaries.
   bench:
     name: Bench (${{ matrix.group.name }})
     runs-on: GitHubRunner-Large-Public
