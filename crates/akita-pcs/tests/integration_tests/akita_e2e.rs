@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;
@@ -33,8 +31,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 use std::time::Instant;
 
-mod common;
-use common::opening_from_poly;
+use crate::common::opening_from_poly;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;

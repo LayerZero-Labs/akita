@@ -6,8 +6,6 @@
 //! [`RootCommitKernel`] for a local commit view (orphan-rule-safe: the backend
 //! type is local to this test crate).
 
-#![allow(missing_docs)]
-
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;

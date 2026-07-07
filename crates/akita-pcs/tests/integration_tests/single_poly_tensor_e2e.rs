@@ -1,9 +1,6 @@
 //! End-to-end tests for the tensor-shaped root fold path.
 
-#![allow(missing_docs)]
-
-mod common;
-
+use crate::common::*;
 use akita_config::tensor_verifier::fp128::D64OneHotTensor;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
@@ -11,7 +8,6 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
-use common::*;
 
 const TENSOR_D: usize = D64OneHotTensor::D;
 const TENSOR_K: usize = TENSOR_D;

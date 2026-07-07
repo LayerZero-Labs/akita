@@ -13,12 +13,10 @@
 //! schedule (the same hook shipped presets use for their catalogs). No
 //! test-only typed path is involved.
 
-#![allow(missing_docs)]
-
-mod common;
 #[path = "mixed_d_per_level/fixture.rs"]
 mod mixed_d_per_level_fixture;
 
+use crate::common::*;
 use akita_config::proof_optimized::fp128;
 use akita_field::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
@@ -30,7 +28,6 @@ use akita_types::{
     AkitaStage2Proof, CleartextWitnessProof, OpeningClaimsLayout, RingVec, Schedule,
     SetupContributionMode, Step,
 };
-use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
 
 /// Envelope preset: root levels at `D = 128`, generation ring dimension 128.
