@@ -321,7 +321,12 @@ fn verify_grouped_root_inner<F, E, T>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + akita_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     // Grouped roots are degree-one one-hot same-point folds: extension-opening
