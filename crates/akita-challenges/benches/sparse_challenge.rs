@@ -1,16 +1,10 @@
-//! Microbenchmarks for sparse stage-1 challenge sampling at `D=32`.
+//! Microbenchmarks for ring fold challenge sampling at `D=64`.
 //!
-//! These benchmarks compare the fp128 `D=32` family
-//! `Uniform { weight: 32, nonzero_coeffs: ±[1..8] }` against the current
-//! preset `BoundedL1Norm` (`M=8, B=121`) from
-//! `specs/bounded-l1-sparse-challenge.md`.
+//! Compares production signed-sparse `(31, 10)` against pm1-only `{23, 0}` at
+//! the same ring degree to bracket position-shuffle vs sign-decode cost.
 //!
 //! Each `batch_<N>` case measures one `sample_sparse_challenges(N)` call:
 //! one transcript absorb, one XOF seeding, and `N` per-challenge decodes.
-//! Reads the steady-state per-challenge cost; the `BoundedL1Norm`
-//! suffix-count table is precomputed at compile time so the gap between
-//! `Uniform` and `BoundedL1Norm` here reflects the streaming
-//! rank-unranking decode cost.
 //!
 //! Run with:
 //!
@@ -20,47 +14,43 @@
 
 #![allow(missing_docs)]
 
-use akita_challenges::{sample_sparse_challenges, SparseChallengeConfig};
+use akita_challenges::{
+    sample_sparse_challenges, SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT,
+    D64_PRODUCTION_PM2_COUNT,
+};
 use akita_field::Prime128OffsetA7F7;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{AkitaTranscript, Transcript};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-// 128-bit base field used by the production stage-1 path; matches the field
-// used by the broader e2e benches in `akita-pcs`.
 type F = Prime128OffsetA7F7;
 
-const D: usize = 32;
+const D: usize = 64;
 
-/// Batch counts that bracket the realistic stage-1 fan-out for `D=32`
-/// presets. Smaller counts emphasize per-call (transcript absorb) overhead;
-/// larger counts emphasize the amortized per-challenge decode cost.
 const BATCH_SIZES: &[usize] = &[1, 1 << 6, 1 << 12, 1 << 15];
 
 fn fresh_transcript() -> AkitaTranscript<F> {
     let mut t = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-    // Seed once with a non-empty transcript so we are not measuring the
-    // empty-transcript fast path.
     t.append_field(b"bench-seed", &F::from_u64(0xC0FFEE));
     t
 }
 
-fn cfg_uniform_d32_legacy() -> SparseChallengeConfig {
-    SparseChallengeConfig::Uniform {
-        weight: 32,
-        nonzero_coeffs: (-8..=8).filter(|&c| c != 0).collect(),
+fn cfg_signed_sparse_production() -> SparseChallengeConfig {
+    SparseChallengeConfig {
+        count_pm1: D64_PRODUCTION_PM1_COUNT,
+        count_pm2: D64_PRODUCTION_PM2_COUNT,
     }
 }
 
-fn cfg_bounded_l1_d32() -> SparseChallengeConfig {
-    SparseChallengeConfig::BoundedL1Norm
+fn cfg_pm1_only_d64() -> SparseChallengeConfig {
+    SparseChallengeConfig::pm1_only(23)
 }
 
 fn bench_batch(c: &mut Criterion) {
-    let mut group = c.benchmark_group("sparse_challenge_d32_batch");
+    let mut group = c.benchmark_group("sparse_challenge_d64_batch");
     let cases: &[(&str, SparseChallengeConfig)] = &[
-        ("uniform_w32_alpha8", cfg_uniform_d32_legacy()),
-        ("bounded_l1_m8_b121", cfg_bounded_l1_d32()),
+        ("signed_sparse_production", cfg_signed_sparse_production()),
+        ("pm1_only_w23", cfg_pm1_only_d64()),
     ];
     for &n in BATCH_SIZES {
         group.throughput(Throughput::Elements(n as u64));

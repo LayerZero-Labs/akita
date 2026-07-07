@@ -197,7 +197,7 @@ pub fn rounded_up_norm_s(
     sis_family: SisModulusFamily,
     d: usize,
     decomposition: DecompositionParams,
-    stage1_config: &SparseChallengeConfig,
+    fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
     is_root: bool,
     onehot_chunk_size: usize,
@@ -215,7 +215,7 @@ pub fn rounded_up_norm_w(sis_family: SisModulusFamily, d: usize, log_basis: u32)
 /// feeds the next-level fold digit count in `decomposition_digits`.
 pub fn rounded_up_norm_z(
     decomposition: DecompositionParams,
-    stage1_config: &SparseChallengeConfig,
+    fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
     r_vars: usize,
     num_claims: usize,

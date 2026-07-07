@@ -82,12 +82,12 @@ pub struct FoldChallengeNorms {
 #[inline]
 #[must_use]
 pub fn fold_challenge_norms(
-    stage1_config: &SparseChallengeConfig,
+    fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
 ) -> FoldChallengeNorms {
     FoldChallengeNorms {
-        infinity_norm: fold_shape.effective_infinity_norm(stage1_config) as u128,
-        l1_norm: fold_shape.effective_l1_mass(stage1_config) as u128,
+        infinity_norm: fold_shape.effective_infinity_norm(fold_challenge_config) as u128,
+        l1_norm: fold_shape.effective_l1_mass(fold_challenge_config) as u128,
     }
 }
 
@@ -360,7 +360,7 @@ pub fn committed_fold_a_role_rank(
     sis_family: SisModulusFamily,
     d: usize,
     decomposition: DecompositionParams,
-    stage1_config: &SparseChallengeConfig,
+    fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
     is_root: bool,
     onehot_chunk_size: usize,
@@ -369,15 +369,15 @@ pub fn committed_fold_a_role_rank(
     num_claims: usize,
     inner_width: u64,
 ) -> Option<(u128, usize)> {
-    let challenge_l1_mass = fold_shape.effective_l1_mass(stage1_config) as u128;
+    let challenge_l1_mass = fold_shape.effective_l1_mass(fold_challenge_config) as u128;
     if challenge_l1_mass == 0 {
         return None;
     }
     let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
     let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    let challenge = fold_challenge_norms(stage1_config, fold_shape);
+    let challenge = fold_challenge_norms(fold_challenge_config, fold_shape);
     let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-        stage1_config,
+        fold_challenge_config,
         fold_shape,
         d,
         inner_width as usize,
@@ -419,7 +419,7 @@ pub fn fold_level_witness_scoring_cost(
     num_claims: usize,
     inner_width: usize,
     decomposition: DecompositionParams,
-    stage1_config: &SparseChallengeConfig,
+    fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
     ring_dimension: usize,
     fold_challenge: FoldChallengeNorms,
@@ -437,12 +437,13 @@ pub fn fold_level_witness_scoring_cost(
     }
     let num_blocks = 1u64.checked_shl(r_vars as u32)?;
     let m_eff = block_len as u64;
-    let cap_policy = fold_witness_linf_cap_policy(stage1_config, fold_shape, ring_dimension);
+    let cap_policy =
+        fold_witness_linf_cap_policy(fold_challenge_config, fold_shape, ring_dimension);
     let binding = crate::FoldLinfProtocolBinding::CURRENT;
     let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
     let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
         cap_policy,
-        stage1_config,
+        fold_challenge_config,
         fold_shape,
         ring_dimension,
         inner_width,
@@ -644,16 +645,16 @@ mod tests {
     fn committed_fold_collision_prices_digit_envelope_not_honest_cap() {
         use crate::DecompositionParams;
         use akita_challenges::{
-            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_EXACT_SHELL_MAG1,
-            D64_PRODUCTION_EXACT_SHELL_MAG2,
+            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_PM1_COUNT,
+            D64_PRODUCTION_PM2_COUNT,
         };
 
-        let stage1_config = SparseChallengeConfig::ExactShell {
-            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
-            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+        let fold_challenge_config = SparseChallengeConfig {
+            count_pm1: D64_PRODUCTION_PM1_COUNT,
+            count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
         let fold_shape = TensorChallengeShape::Flat;
-        let challenge = fold_challenge_norms(&stage1_config, fold_shape);
+        let challenge = fold_challenge_norms(&fold_challenge_config, fold_shape);
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
         let decomposition = DecompositionParams {
             log_basis: 3,
@@ -661,7 +662,8 @@ mod tests {
             log_open_bound: None,
         };
         let cap_config =
-            FoldWitnessLinfCapConfig::for_fold_level(&stage1_config, fold_shape, 64, 2).unwrap();
+            FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
+                .unwrap();
         let honest_cap = fold_witness_honest_prover_linf_cap(
             challenge,
             witness,
@@ -745,16 +747,16 @@ mod tests {
     fn fold_linf_digit_plan_applies_snap_for_tail_bound_levels() {
         use crate::DecompositionParams;
         use akita_challenges::{
-            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_EXACT_SHELL_MAG1,
-            D64_PRODUCTION_EXACT_SHELL_MAG2,
+            SparseChallengeConfig, TensorChallengeShape, D64_PRODUCTION_PM1_COUNT,
+            D64_PRODUCTION_PM2_COUNT,
         };
 
-        let stage1_config = SparseChallengeConfig::ExactShell {
-            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
-            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+        let fold_challenge_config = SparseChallengeConfig {
+            count_pm1: D64_PRODUCTION_PM1_COUNT,
+            count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
         let fold_shape = TensorChallengeShape::Flat;
-        let challenge = fold_challenge_norms(&stage1_config, fold_shape);
+        let challenge = fold_challenge_norms(&fold_challenge_config, fold_shape);
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
         let decomposition = DecompositionParams {
             log_basis: 3,
@@ -762,7 +764,8 @@ mod tests {
             log_open_bound: None,
         };
         let cap_config =
-            FoldWitnessLinfCapConfig::for_fold_level(&stage1_config, fold_shape, 64, 2).unwrap();
+            FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
+                .unwrap();
         let plan = fold_witness_linf_digit_plan(
             5,
             1,

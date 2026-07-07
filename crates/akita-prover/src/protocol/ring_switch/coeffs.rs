@@ -5,7 +5,9 @@ use crate::protocol::ring_relation_witness::{RingRelationGroupWitness, RingRelat
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
-use akita_types::{LevelParamsLike, RingRole, GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED};
+use akita_types::{
+    dispatch_for_field, LevelParamsLike, RingRole, GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED,
+};
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
 ///
@@ -266,151 +268,156 @@ where
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let dims = instance.role_dims();
-    dispatch_ring_dim_result!(dims.d_a(), |D| {
-        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-        witness.ensure_role_dim::<D>(RingRole::Opening)?;
-        witness.ensure_role_dim::<D>(RingRole::Inner)?;
-        let RingRelationWitness {
-            groups,
-            fold_grind_nonce: _,
-        } = witness;
-        let opening_batch = instance.opening_batch();
-        let is_multi_group = groups.len() > 1;
-        if groups.len() != opening_batch.num_groups() {
-            return Err(AkitaError::InvalidInput(
-                "ring-switch witness count does not match opening batch".to_string(),
-            ));
-        }
-        let final_group_index = lp.validate_root_opening_batch(opening_batch)?;
-        let order = opening_batch.root_group_order()?;
-        let mut owned = Vec::with_capacity(groups.len());
-        for (group_index, group) in groups.into_iter().enumerate() {
-            group.ensure_role_dim::<D>(RingRole::Opening)?;
-            group.ensure_role_dim::<D>(RingRole::Inner)?;
-            let group_lp = lp.root_group_params(opening_batch, group_index)?;
-            let RingRelationGroupWitness {
-                z_folded_rings,
-                z_folded_centered_per_chunk,
-                e_hat,
-                e_folded,
-                hint,
-                ..
-            } = group;
-            e_hat.ensure_stride::<D>()?;
-            let e_folded = e_folded.as_ring_slice_trusted::<D>().to_vec();
-            let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
-                &hint,
-                group_lp.num_digits_open(),
-                group_lp.log_basis(),
-            )?;
-            let t_hat = hint.into_flat_parts()?;
-            t_hat.ensure_stride::<D>()?;
-            let z_folded_centered_per_chunk =
-                typed_z_folded_centered_per_chunk::<D>(&z_folded_centered_per_chunk)?;
-            owned.push(PreparedRingSwitchGroup {
-                params: group_lp,
-                e_hat,
-                t_hat,
-                recomposed_inner_rows,
-                e_folded,
-                z_centered: z_folded_rings.centered_coeffs_owned::<D>(),
-                z_inf: z_folded_rings.centered_inf_norm,
-                z_folded_centered_per_chunk,
-            });
-        }
-        let has_multi_chunk_witness = lp.witness_chunk.num_chunks > 1
-            || owned
-                .iter()
-                .any(|group| group.z_folded_centered_per_chunk.len() > 1);
-        if is_multi_group && has_multi_chunk_witness {
-            return Err(AkitaError::InvalidSetup(
-                GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
-            ));
-        }
-        // Only the singleton suffix retains terminal artifacts; multi-group folds
-        // are never terminal.
-        if is_multi_group && retain_terminal_artifacts {
-            return Err(AkitaError::InvalidInput(
-                "grouped root ring-switch does not produce terminal artifacts".to_string(),
-            ));
-        }
-        validate_chunked_witness_cfg(lp)?;
-        if dims.d_d() != D {
-            return Err(AkitaError::InvalidSetup(format!(
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        dims.d_a(),
+        |D| {
+            validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+            witness.ensure_role_dim::<D>(RingRole::Opening)?;
+            witness.ensure_role_dim::<D>(RingRole::Inner)?;
+            let RingRelationWitness {
+                groups,
+                fold_grind_nonce: _,
+            } = witness;
+            let opening_batch = instance.opening_batch();
+            let is_multi_group = groups.len() > 1;
+            if groups.len() != opening_batch.num_groups() {
+                return Err(AkitaError::InvalidInput(
+                    "ring-switch witness count does not match opening batch".to_string(),
+                ));
+            }
+            let final_group_index = lp.validate_root_opening_batch(opening_batch)?;
+            let order = opening_batch.root_group_order()?;
+            let mut owned = Vec::with_capacity(groups.len());
+            for (group_index, group) in groups.into_iter().enumerate() {
+                group.ensure_role_dim::<D>(RingRole::Opening)?;
+                group.ensure_role_dim::<D>(RingRole::Inner)?;
+                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let RingRelationGroupWitness {
+                    z_folded_rings,
+                    z_folded_centered_per_chunk,
+                    e_hat,
+                    e_folded,
+                    hint,
+                    ..
+                } = group;
+                e_hat.ensure_stride::<D>()?;
+                let e_folded = e_folded.as_ring_slice_trusted::<D>().to_vec();
+                let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
+                    &hint,
+                    group_lp.num_digits_open(),
+                    group_lp.log_basis(),
+                )?;
+                let t_hat = hint.into_flat_parts()?;
+                t_hat.ensure_stride::<D>()?;
+                let z_folded_centered_per_chunk =
+                    typed_z_folded_centered_per_chunk::<D>(&z_folded_centered_per_chunk)?;
+                owned.push(PreparedRingSwitchGroup {
+                    params: group_lp,
+                    e_hat,
+                    t_hat,
+                    recomposed_inner_rows,
+                    e_folded,
+                    z_centered: z_folded_rings.centered_coeffs_owned::<D>(),
+                    z_inf: z_folded_rings.centered_inf_norm,
+                    z_folded_centered_per_chunk,
+                });
+            }
+            let has_multi_chunk_witness = lp.witness_chunk.num_chunks > 1
+                || owned
+                    .iter()
+                    .any(|group| group.z_folded_centered_per_chunk.len() > 1);
+            if is_multi_group && has_multi_chunk_witness {
+                return Err(AkitaError::InvalidSetup(
+                    GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
+                ));
+            }
+            // Only the singleton suffix retains terminal artifacts; multi-group folds
+            // are never terminal.
+            if is_multi_group && retain_terminal_artifacts {
+                return Err(AkitaError::InvalidInput(
+                    "grouped root ring-switch does not produce terminal artifacts".to_string(),
+                ));
+            }
+            validate_chunked_witness_cfg(lp)?;
+            if dims.d_d() != D {
+                return Err(AkitaError::InvalidSetup(format!(
                 "mixed-role ring switch build requires d_d={} to match d_a={D} until nested views land",
                 dims.d_d()
             )));
-        }
-        instance.ensure_ring_dim::<D>()?;
+            }
+            instance.ensure_ring_dim::<D>()?;
 
-        // Shared relation quotient `r`: its consistency row (summed over all
-        // groups) and D rows span every group, so a single trailing block owns
-        // it. `groups.len() == 1` reproduces the scalar layout byte-for-byte.
-        let e_hat_blocks = order
-            .iter()
-            .map(|&group_index| owned[group_index].e_hat.clone())
-            .collect::<Vec<_>>();
-        let e_hat_concat = concat_digit_blocks(&e_hat_blocks)?;
-        let ring_multiplier_points = owned
-            .iter()
-            .enumerate()
-            .map(|(group_index, _)| instance.group_ring_multiplier_point(group_index))
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        let r = compute_grouped_relation_quotient::<F, B, D>(
-            ring_switch_ctx,
-            lp,
-            opening_batch,
-            &owned,
-            &ring_multiplier_points,
-            instance.group_challenges(),
-            e_hat_concat.typed_planes::<D>()?,
-            instance.y_trusted::<D>()?,
-            instance.m_row_layout(),
-        )?;
-
-        // Group-major witness: emit each group's contiguous `[z_g ‖ e_g ‖ t_g]`
-        // stride in `root_group_order()`, then the single shared `r` tail.
-        let mut out = Vec::new();
-        for &group_index in &order {
-            let group_layout = opening_batch.group_layout(group_index)?;
-            append_group_witness_segments::<F, D>(
-                &mut out,
-                &owned[group_index],
+            // Shared relation quotient `r`: its consistency row (summed over all
+            // groups) and D rows span every group, so a single trailing block owns
+            // it. `groups.len() == 1` reproduces the scalar layout byte-for-byte.
+            let e_hat_blocks = order
+                .iter()
+                .map(|&group_index| owned[group_index].e_hat.clone())
+                .collect::<Vec<_>>();
+            let e_hat_concat = concat_digit_blocks(&e_hat_blocks)?;
+            let ring_multiplier_points = owned
+                .iter()
+                .enumerate()
+                .map(|(group_index, _)| instance.group_ring_multiplier_point(group_index))
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let r = compute_grouped_relation_quotient::<F, B, D>(
+                ring_switch_ctx,
                 lp,
-                group_layout.num_polynomials(),
+                opening_batch,
+                &owned,
+                &ring_multiplier_points,
+                instance.group_challenges(),
+                e_hat_concat.typed_planes::<D>()?,
+                instance.y_trusted::<D>()?,
+                instance.m_row_layout(),
             )?;
-        }
-        let levels = r_decomp_levels::<F>(lp.log_basis);
-        emit_r_decomposition_tail::<F, D>(&mut out, &r, levels, lp.log_basis);
-        let expected = lp.root_next_w_len::<F>(opening_batch, instance.m_row_layout())?;
-        if out.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: out.len(),
-            });
-        }
 
-        // Terminal artifacts are produced only for the singleton suffix, whose
-        // sole group is the final group.
-        let terminal_artifacts = if retain_terminal_artifacts {
-            let group = owned
-                .get(final_group_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            Some(RingSwitchTerminalArtifacts::from_parts::<D>(
-                group.e_folded.clone(),
-                group.recomposed_inner_rows.clone(),
-                group.z_centered.clone(),
-                r,
-                0,
-            ))
-        } else {
-            None
-        };
-        Ok(RingSwitchBuildOutput {
-            w: RecursiveWitnessFlat::from_i8_digits(out),
-            terminal_artifacts,
-        })
-    })
+            // Group-major witness: emit each group's contiguous `[z_g ‖ e_g ‖ t_g]`
+            // stride in `root_group_order()`, then the single shared `r` tail.
+            let mut out = Vec::new();
+            for &group_index in &order {
+                let group_layout = opening_batch.group_layout(group_index)?;
+                append_group_witness_segments::<F, D>(
+                    &mut out,
+                    &owned[group_index],
+                    lp,
+                    group_layout.num_polynomials(),
+                )?;
+            }
+            let levels = r_decomp_levels::<F>(lp.log_basis);
+            emit_r_decomposition_tail::<F, D>(&mut out, &r, levels, lp.log_basis);
+            let expected = lp.root_next_w_len::<F>(opening_batch, instance.m_row_layout())?;
+            if out.len() != expected {
+                return Err(AkitaError::InvalidSize {
+                    expected,
+                    actual: out.len(),
+                });
+            }
+
+            // Terminal artifacts are produced only for the singleton suffix, whose
+            // sole group is the final group.
+            let terminal_artifacts = if retain_terminal_artifacts {
+                let group = owned
+                    .get(final_group_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                Some(RingSwitchTerminalArtifacts::from_parts::<D>(
+                    group.e_folded.clone(),
+                    group.recomposed_inner_rows.clone(),
+                    group.z_centered.clone(),
+                    r,
+                    0,
+                ))
+            } else {
+                None
+            };
+            Ok(RingSwitchBuildOutput {
+                w: RecursiveWitnessFlat::from_i8_digits(out),
+                terminal_artifacts,
+            })
+        }
+    )
 }
 
 pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(

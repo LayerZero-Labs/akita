@@ -4,10 +4,11 @@
 //! `F_{q^k}` to `R_q` reduction. They are intentionally standalone so the
 //! mathematical contract can be tested independently of the prover API.
 
+use crate::dispatch_for_field;
 use akita_algebra::CyclotomicRing;
 use akita_field::{
-    AkitaError, Ext2, ExtField, FieldCore, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend,
-    FromPrimitiveInt, Invertible,
+    AkitaError, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FpExt4MulBackend, FpExt8,
+    FpExt8MulBackend, FromPrimitiveInt, Invertible,
 };
 use akita_serialization::Valid;
 use std::array::from_fn;
@@ -368,13 +369,18 @@ pub fn embed_ring_subfield_scalar_flat<F, E>(
     error: AkitaError,
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: FieldCore + FromPrimitiveInt + CanonicalField,
     E: FpExtEncoding<F>,
 {
-    crate::dispatch_ring_dim_result!(ring_d, |D| {
-        embed_ring_subfield_scalar::<F, E, D>(value, error.clone())
-            .map(|ring| ring.coefficients().to_vec())
-    })
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        ring_d,
+        |D| {
+            embed_ring_subfield_scalar::<F, E, D>(value, error.clone())
+                .map(|ring| ring.coefficients().to_vec())
+        }
+    )
 }
 
 /// Pack a base-field digit evaluation table into the canonical tensor

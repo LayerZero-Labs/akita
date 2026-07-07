@@ -134,12 +134,12 @@ private Akita write-up and are not reproduced here.
 
 This branch also ships a second, independent soundness fix that this spec does
 not own: a real ≥128-bit ring-challenge policy for 64-bit-and-lower fields. The
-historical small-field challenge was the toy `Uniform { weight: 8, [−1, 1] }`,
+historical small-field challenge was the toy `pm1-only { weight: 8, [−1, 1] }`,
 which has only ~31 bits of Fiat-Shamir support at `D = 32`, far below 128-bit
 soundness. It is replaced by the shared, dimension-keyed family specified in
 [`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md)
 ("Current Proof-Optimized Policy"): `D=32` `BoundedL1Norm` (`||c||_1 = 121`,
-`||c||_inf = 8`), `D=64` `ExactShell{30,12}` (`54, 2`), `D=128` `Uniform{31}`
+`||c||_inf = 8`), `D=64` `signed-sparse{30,12}` (`54, 2`), `D=128` `Uniform{31}`
 (`31, 1`), `D=256` `Uniform{23}` (`23, 1`).
 
 The two fixes are coupled in the regenerated tables: those `(||c||_1, ||c||_inf)`

@@ -164,7 +164,7 @@ $$
 
 where $g_{\text{open}}[\text{dig}]$ is the open-side gadget weight (e.g.
 $\text{base}^{\text{dig}}$) and $c_{\alpha}[\text{claim}, \text{block}]$ is the
-$\alpha$-evaluation of the stage-1 sparse challenge for the pair
+$\alpha$-evaluation of the ring fold sparse challenge for the pair
 $(\text{claim}, \text{block})$. The feature that drives the evaluation is that
 $c_{\alpha}$ **couples the claim and the block together** — it is *not* a product
 of a separate per-claim factor and a per-block factor.
@@ -308,7 +308,7 @@ $$
 with the whole slice weighted by `row_weight[a_row]`, the equality weight of that
 `A`-row. As before, $g_{\text{open}}[\text{dig}]$ is the open-side gadget weight
 and $c_{\alpha}[\text{claim}, \text{block}]$ is the $\alpha$-evaluation of the
-stage-1 sparse challenge for $(\text{claim}, \text{block})$ — the same
+ring fold sparse challenge for $(\text{claim}, \text{block})$ — the same
 claim-and-block-coupled quantity that appears in the `e_hat` consistency
 component.
 

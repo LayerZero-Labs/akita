@@ -302,7 +302,7 @@ p = p_grind
 mu = 1 - p
 ```
 
-For the current tensor preset, the two factors use the same exact-shell family,
+For the current tensor preset, the two factors use the same signed-sparse family,
 so `s2_L = s2_R = 71` and `k_L = k_R = 41`. The formula below is written for
 possibly different factor families so the API does not bake in that equality.
 
@@ -425,9 +425,9 @@ Concrete challenge-family constants:
 
 | ring dimension | family | `omega = l1` | `s2 = max ||factor||_2^2` | `k = support max` | deterministic tensor `max ||L*R||_2^2` bound | tensor-chaos multiplier before `B * s_inf^2 * lambdas` |
 |----------------|--------|--------------|----------------------------|-------------------|-----------------------------------------------|---------------------------------------------------------|
-| D64 | `ExactShell { count_mag1: 31, count_mag2: 10 }` | 51 | 71 | 41 | `51^2 * 71 = 184671` | `4 * 71^2 = 20164` |
-| D128 | `Uniform { weight: 31, nonzero_coeffs: [-1, 1] }` | 31 | 31 | 31 | `31^3 = 29791` | `4 * 31^2 = 3844` |
-| D256 | `Uniform { weight: 23, nonzero_coeffs: [-1, 1] }` | 23 | 23 | 23 | `23^3 = 12167` | `4 * 23^2 = 2116` |
+| D64 | `signed-sparse { count_mag1: 31, count_mag2: 10 }` | 51 | 71 | 41 | `51^2 * 71 = 184671` | `4 * 71^2 = 20164` |
+| D128 | `pm1-only { weight: 31, nonzero_coeffs: [-1, 1] }` | 31 | 31 | 31 | `31^3 = 29791` | `4 * 31^2 = 3844` |
+| D256 | `pm1-only { weight: 23, nonzero_coeffs: [-1, 1] }` | 23 | 23 | 23 | `23^3 = 12167` | `4 * 23^2 = 2116` |
 
 So D128 and D256 use the same tensor-chaos method, with smaller absolute
 threshold constants than D64. Their ratio against the tensor worst-case beta
