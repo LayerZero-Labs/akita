@@ -554,8 +554,10 @@ impl LevelParams {
         if num_claims == 1 {
             return Ok(params.num_digits_fold_one());
         }
-        let challenge =
-            crate::sis::fold_challenge_norms(&self.fold_challenge_config, self.fold_challenge_shape);
+        let challenge = crate::sis::fold_challenge_norms(
+            &self.fold_challenge_config,
+            self.fold_challenge_shape,
+        );
         crate::sis::num_digits_fold(
             params.r_vars(),
             num_claims,

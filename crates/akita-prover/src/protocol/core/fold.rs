@@ -297,66 +297,70 @@ where
             F,
             ring_d,
             |D| {
-            let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-            let mut folded_rings = Vec::with_capacity(opening_batch.num_total_polynomials());
-            let mut e_folded_by_claim = Vec::with_capacity(opening_batch.num_total_polynomials());
-            for group_index in 0..opening_batch.num_groups() {
-                let group_lp = level_params.root_group_params(&opening_batch, group_index)?;
-                let target_len = alpha_bits
-                    .checked_add(group_lp.m_vars())
-                    .and_then(|n| n.checked_add(group_lp.r_vars()))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("group opening point length overflow".to_string())
-                    })?;
-                let group_protocol_point = &protocol_point[..protocol_point.len().min(target_len)];
-                let prepared_point = prepare_opening_point::<F, E, D>(
-                    group_protocol_point,
-                    basis,
-                    group_lp.m_vars(),
-                    group_lp.r_vars(),
-                    alpha_bits,
-                    block_order,
-                )?;
-                let group_polys = fold_claims.group_polys(group_index)?;
-                let (group_folded_rings, group_e_folded_by_claim) =
-                    evaluate_claims_at_prepared_point(
-                        opening.backend(),
-                        Some(opening.prepared()),
-                        group_polys,
-                        &prepared_point,
-                        group_lp.block_len(),
+                let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+                let mut folded_rings = Vec::with_capacity(opening_batch.num_total_polynomials());
+                let mut e_folded_by_claim =
+                    Vec::with_capacity(opening_batch.num_total_polynomials());
+                for group_index in 0..opening_batch.num_groups() {
+                    let group_lp = level_params.root_group_params(&opening_batch, group_index)?;
+                    let target_len = alpha_bits
+                        .checked_add(group_lp.m_vars())
+                        .and_then(|n| n.checked_add(group_lp.r_vars()))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "group opening point length overflow".to_string(),
+                            )
+                        })?;
+                    let group_protocol_point =
+                        &protocol_point[..protocol_point.len().min(target_len)];
+                    let prepared_point = prepare_opening_point::<F, E, D>(
+                        group_protocol_point,
+                        basis,
+                        group_lp.m_vars(),
+                        group_lp.r_vars(),
+                        alpha_bits,
+                        block_order,
                     )?;
-                for pt in &prepared_point.padded_point {
-                    append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+                    let group_polys = fold_claims.group_polys(group_index)?;
+                    let (group_folded_rings, group_e_folded_by_claim) =
+                        evaluate_claims_at_prepared_point(
+                            opening.backend(),
+                            Some(opening.prepared()),
+                            group_polys,
+                            &prepared_point,
+                            group_lp.block_len(),
+                        )?;
+                    for pt in &prepared_point.padded_point {
+                        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+                    }
+                    e_folded_by_claim.extend(
+                        group_e_folded_by_claim
+                            .iter()
+                            .map(|rows| RingVec::from_ring_elems(rows)),
+                    );
+                    folded_rings.extend(group_folded_rings);
+                    prepared_points.push(prepared_point);
                 }
-                e_folded_by_claim.extend(
-                    group_e_folded_by_claim
-                        .iter()
-                        .map(|rows| RingVec::from_ring_elems(rows)),
-                );
-                folded_rings.extend(group_folded_rings);
-                prepared_points.push(prepared_point);
-            }
 
-            let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
-                &reduction,
-                &folded_rings,
-                &prepared_points,
-                protocol_point,
-                alpha_bits,
-                basis,
-                trace_opening_batch,
-                row_coefficients,
-                transcript,
-            )?;
-            let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-            Ok::<_, AkitaError>((
-                prepared_points,
-                e_folded_by_claim,
-                trace_target,
-                row_coefficients,
-                RingVec::from_ring_elems(&row_coefficient_rings),
-            ))
+                let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
+                    &reduction,
+                    &folded_rings,
+                    &prepared_points,
+                    protocol_point,
+                    alpha_bits,
+                    basis,
+                    trace_opening_batch,
+                    row_coefficients,
+                    transcript,
+                )?;
+                let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
+                Ok::<_, AkitaError>((
+                    prepared_points,
+                    e_folded_by_claim,
+                    trace_target,
+                    row_coefficients,
+                    RingVec::from_ring_elems(&row_coefficient_rings),
+                ))
             }
         )?;
     let commitment = fold_claims.fold_commitment(level_params)?;

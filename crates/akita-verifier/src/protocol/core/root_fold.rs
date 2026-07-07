@@ -343,21 +343,17 @@ where
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
         let group_point = &shared_opening_point[..shared_opening_point.len().min(target_len)];
-        let prepared = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            d_a,
-            |D| {
-            prepare_opening_point::<F, E, D>(
-                group_point,
-                basis,
-                group_lp.m_vars(),
-                group_lp.r_vars(),
-                alpha_bits,
-                BlockOrder::RowMajor,
-            )
-            }
-        )?;
+        let prepared =
+            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+                prepare_opening_point::<F, E, D>(
+                    group_point,
+                    basis,
+                    group_lp.m_vars(),
+                    group_lp.r_vars(),
+                    alpha_bits,
+                    BlockOrder::RowMajor,
+                )
+            })?;
         for pt in &prepared.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }

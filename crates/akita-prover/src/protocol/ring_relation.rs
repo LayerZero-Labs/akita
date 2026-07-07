@@ -19,9 +19,7 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
-use akita_types::{
-    assemble_relation_y, relation_y_layout_for, RingVec, RingView,
-};
+use akita_types::{assemble_relation_y, relation_y_layout_for, RingVec, RingView};
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, MRowLayout};
 use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};

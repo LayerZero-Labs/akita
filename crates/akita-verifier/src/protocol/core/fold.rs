@@ -666,36 +666,38 @@ where
         lp: prepared.lp,
     };
     let d_a = role_dims.d_a();
-    let rs = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        d_a,
-        |D| match prepared.stage2 {
-            AkitaStage2Proof::Intermediate(_) => {
-                let next_w_commitment = prepared.next_w_commitment.ok_or(AkitaError::InvalidProof)?;
-                let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
-                ring_switch_verifier::<F, E, T, D>(
-                    &ring_switch_replay,
-                    prepared.w_len,
-                    next_w_commitment,
-                    next_ring_dim,
-                    transcript,
-                )
+    let rs =
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            d_a,
+            |D| match prepared.stage2 {
+                AkitaStage2Proof::Intermediate(_) => {
+                    let next_w_commitment =
+                        prepared.next_w_commitment.ok_or(AkitaError::InvalidProof)?;
+                    let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
+                    ring_switch_verifier::<F, E, T, D>(
+                        &ring_switch_replay,
+                        prepared.w_len,
+                        next_w_commitment,
+                        next_ring_dim,
+                        transcript,
+                    )
+                }
+                AkitaStage2Proof::Terminal(_) => {
+                    let replay = prepared
+                        .terminal_replay
+                        .as_ref()
+                        .ok_or(AkitaError::InvalidProof)?;
+                    ring_switch_verifier_terminal::<F, E, T, D>(
+                        &ring_switch_replay,
+                        prepared.w_len,
+                        transcript,
+                        replay,
+                    )
+                }
             }
-            AkitaStage2Proof::Terminal(_) => {
-                let replay = prepared
-                    .terminal_replay
-                    .as_ref()
-                    .ok_or(AkitaError::InvalidProof)?;
-                ring_switch_verifier_terminal::<F, E, T, D>(
-                    &ring_switch_replay,
-                    prepared.w_len,
-                    transcript,
-                    replay,
-                )
-            }
-        }
-    )?;
+        )?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
         relation_instance.role_dims(),
         &y_layout,

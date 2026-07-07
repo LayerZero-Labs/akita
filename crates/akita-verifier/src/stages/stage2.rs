@@ -8,8 +8,7 @@ use akita_field::{
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
-    CleartextWitnessProof,
-    FpExtEncoding, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
+    CleartextWitnessProof, FpExtEncoding, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
