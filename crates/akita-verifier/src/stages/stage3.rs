@@ -4,7 +4,7 @@
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use crate::protocol::{SetupEvalPlan, SetupEvaluator};
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::scalar_powers;
+use akita_algebra::ring::{eval_ring_at_pows_deferred, scalar_powers};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -99,7 +99,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         if stage2_challenges.len() != witness_rounds {
@@ -187,7 +187,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         let batched_rounds = self.rounds.max(witness_rounds);
@@ -289,7 +289,7 @@ fn setup_mle_at_eq_tables<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: ExtField<F> + akita_field::MulBaseUnreduced<F>,
 {
     if required > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
@@ -318,11 +318,10 @@ where
         0..required,
         E::zero,
         |mut acc, lambda| {
-            let ring = &setup_entries[lambda];
-            let mut ring_eval = E::zero();
-            for (weight, &coeff) in eq_y.iter().zip(ring.coefficients()) {
-                ring_eval += weight.mul_base(coeff);
-            }
+            // `Σ_k eq_y[k]·coeff[k]` is `eval_ring_at_pows(ring, eq_y)`; use the
+            // deferred-reduction form (one modular reduction instead of D) — the
+            // same win as the direct-mode `packed_slice_inner_sum` scan.
+            let ring_eval = eval_ring_at_pows_deferred(&setup_entries[lambda], eq_y);
             acc += eq_lambda[lambda] * ring_eval;
             acc
         },
