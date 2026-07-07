@@ -49,7 +49,7 @@ jobs:
   # run, then interleaved benchmark only when merge-base can complete every case.
   bench:
     name: Bench (${{ matrix.group.name }})
-    runs-on: ubuntu-latest
+    runs-on: GitHubRunner-Large-Public
     strategy:
       fail-fast: false
       matrix:
