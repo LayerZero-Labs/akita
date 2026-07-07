@@ -70,7 +70,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
 
 #[test]
 fn dp_fallback_fires_for_non_shipped_keys() {
-    check_table_miss_fallback::<fp128::D32OneHot>(14);
+    check_table_miss_fallback::<fp128::D64OneHot>(14);
     check_table_miss_fallback::<fp128::D64Full>(16);
     check_table_miss_fallback::<fp32::D64OneHot>(12);
 }
@@ -97,8 +97,6 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
 
 #[test]
 fn policy_bridge_matches_cfg_hooks() {
-    assert_policy_matches_cfg::<fp128::D32Full>();
-    assert_policy_matches_cfg::<fp128::D32OneHot>();
     assert_policy_matches_cfg::<fp128::D64Full>();
     assert_policy_matches_cfg::<fp128::D128Full>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
@@ -117,6 +115,6 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     ];
     for key in adversarial {
         // Must return without panicking; either branch (Ok/Err) is fine.
-        let _ = fp128::D32OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
+        let _ = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
     }
 }

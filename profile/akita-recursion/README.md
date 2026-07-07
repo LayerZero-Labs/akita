@@ -19,7 +19,7 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 | `host/`      | bin  | Compiles the guest, runs Jolt prove/verify, prints cycle counts. |
 | `guest/`     | bin  | `#[jolt::provable]` RISC-V program that runs the Akita verifier. |
 
-## Quick start (`nv=32`, OneHot D=32 — canonical target)
+## Quick start (`nv=32`, OneHot D=64 — canonical target)
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
@@ -35,15 +35,15 @@ cd profile/akita-recursion
 # 1. Build the host binaries.
 cargo build --release
 
-# 2. Generate the verifier-input blob (~576 MiB at nv=32 D=32 OneHot).
+# 2. Generate the verifier-input blob (artifact prints exact size).
 #    REQUIRED before step 3 — `host` reads this file from disk.
 AKITA_NUM_VARS=32 \
     AKITA_RECURSION_BLOB=target/akita_recursion_inputs_nv32.bin \
     ./target/release/akita-recursion-artifact
 
 # 3. Compile the guest to RISC-V, emulate it, and report cycle markers.
-#    Trace-only (no Jolt prover) because at nv=32 the trace is ≈ 10.4 G
-#    cycles, above the current `max_trace_length = 4 G` in the guest's
+#    Trace-only (no Jolt prover) because at nv=32 the trace is on the order of
+#    ~8 G cycles at D=64, still above the current `max_trace_length = 4 G` in
 #    `#[jolt::provable]` attribute (see "Open follow-ups" below).
 #    `--trace-output /dev/null` keeps the raw trace bytes off disk while
 #    preserving the cycle-marker output.
@@ -54,26 +54,19 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     --input target/akita_recursion_inputs_nv32.bin
 ```
 
-Expected output (Apple Silicon laptop, ≈ 22 min wall clock):
+Expected output (Apple Silicon laptop, ≈ 22 min wall clock; D=64 OneHot,
+order-of-magnitude — rerun `--trace-only` for fresh numbers):
 
 ```
-"deserialize_input": 3,246,868,723 RV64IMAC + 4,228,394,540 virtual = 7,475,263,263 total
-"transcript_init":   156           RV64IMAC + 176           virtual = 332           total
-"akita_verify":      2,874,382,109 RV64IMAC + 34,324,853    virtual = 2,908,706,962 total
-trace length: ~10.4 G cycles
+"deserialize_input": … (dominated by expanded verifier-setup decode)
+"transcript_init":   …
+"akita_verify":      …
+trace length: ~8 G cycles
 trace done
 ```
 
-| Marker             | Base RV64IMAC    | Virtual         | **Total cycles**    |
-| ------------------ | ---------------- | --------------- | ------------------- |
-| `deserialize_input`| 3,246,868,723    | 4,228,394,540   | **7,475,263,263**   |
-| `transcript_init`  | 156              | 176             | **332**             |
-| `akita_verify`     | 2,874,382,109    | 34,324,853      | **2,908,706,962**   |
-| **trace length**   |                  |                 | **10,384,142,367**  |
-
-Most of `deserialize_input` is decoding the ≈ 576 MiB expanded
-verifier-setup matrix that lives inside the blob; the proof itself is
-a tiny fraction.
+Most of `deserialize_input` is decoding the expanded verifier-setup matrix
+that lives inside the blob; the proof itself is a tiny fraction.
 
 ## Running the full prove pipeline
 
@@ -136,7 +129,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 ## How it works
 
-1. **`artifact`** runs `AkitaCommitmentScheme::<32, fp128::D32OneHot>` →
+1. **`artifact`** runs `AkitaCommitmentScheme::<64, fp128::D64OneHot>` →
    `setup_prover` → `commit` → `batched_prove` over a synthetic OneHot
    polynomial, sanity-verifies on the host, and serializes
    `(transcript_domain, num_vars, opening_point, opening, commitment,
@@ -169,20 +162,19 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    feature list to `guest`. A production recursion circuit must use strict
    setup validation or bind an externally checked setup commitment.
 
-## Why D=32 has more zkVM cycles than D=64
+## Why we pin D=64 (not D=32) for Jolt cycle benches
 
-A natural surprise: a smaller `D` makes proofs smaller and on-CPU
-verification faster, but in the Jolt zkVM the cycle count goes **up**.
-The example pins `D=32` (matching `HACHI_MODE=onehot_d32` in
-`crates/akita-pcs/examples/profile.rs`), so it pays this. Three
-compounding effects:
+A natural surprise: a smaller ring `D` can make on-CPU proofs smaller, but
+**D=32 is not a valid A-role fold degree** (`d_a ≥ 64`) after the ring-dim
+cutover, and historical D=32 Jolt traces were **more** expensive than D=64 at
+equal `num_vars`. Three compounding effects explained the old D=32 penalty:
 
 1. **More recursion levels.** Folding nv=32 to a tractable terminal
    takes 6 levels at D=64 vs 7 at D=32. Each level adds a full
    sumcheck-with-range-checks verification step.
-2. **Larger verifier-setup matrix.** Halving `D` doesn't halve the
-   matrix — Ajtai security forces the stride (column count) to grow
-   to compensate. Net: blob is ≈ 4.5× larger at D=32.
+2. **Larger verifier-setup matrix at D=32.** Halving `D` does not halve the
+   matrix — Ajtai security forces the stride (column count) to grow to
+   compensate. Net: the old D=32 blob was roughly **4.5×** larger than D=64.
 3. **Cycle count ≠ wall clock.** On a real CPU, fp128 ops at D=32 vs
    D=64 don't differ much in time (SIMD, cache prefetch, wide
    multiply). Inside `riscv64imac` emulation every fp128 mul is a
@@ -190,9 +182,9 @@ compounding effects:
    cycle. Smaller-D work doesn't compress into fewer RV64
    instructions.
 
-For reference: the same workload at OneHot D=64 nv=32 produces a
-≈ 8.1 G-cycle trace — ~30 % cheaper to verify inside Jolt — but is
-slower to verify on a real CPU and uses larger ring elements.
+For reference: OneHot **D=64** `nv=32` produces a trace on the order of
+**~8 G cycles** (~30% cheaper inside Jolt than the retired D=32 configuration)
+while remaining the production fp128 preset.
 
 ## Optimization history at `nv=20` (D=64)
 
@@ -209,26 +201,22 @@ The `Vec<u8>` → `&[u8]` switch shaved ~36 M cycles off the trace
 without changing any cycle marker, because the macro-generated
 `postcard::take_from_bytes::<Vec<u8>>(input_slice)` decoded the
 1.1 MiB input one byte at a time *before* the user function ran
-(≈30 cycles per byte × 1.1 M bytes ≈ 33 M cycles). Postcard's `&[u8]`
-deserialization is zero-copy: read the length prefix, return a slice
-pointing into the input region. At D=32 the input is 4× larger so the
-saving scales proportionally; in absolute terms it's roughly 130 M
-cycles at nv=20 and 4 G+ at nv=32.
+(≈30 cycles per byte × 1.1 M bytes ≈ 33 M cycles). Postcard's `&[u8]` deserialization is zero-copy: read the length prefix, return a
+slice pointing into the input region. At large `nv` the saving scales with blob
+size.
 
 ## Open follow-ups
 
 1. **Full prove at `nv=32`** on a beefier host. Requires:
-   - Bumping `max_trace_length` past 10.4 G in the `#[jolt::provable]`
+   - Bumping `max_trace_length` past ~8 G in the `#[jolt::provable]`
      attribute (currently 4 G — fine for `nv ≤ 20`, insufficient at
      `nv=32`).
-   - Server-class memory headroom (the guest heap is already at
-     1.5 GiB to fit the 576 MiB decoded verifier setup).
+   - Server-class memory headroom (guest heap is sized for large nv=32 blobs).
    - Expected wall clock at typical zkVM throughput (~500 kHz):
      **~6 h+** of proving.
 
-2. **Make `deserialize_input` cheaper.** At `nv=32` it costs **7.48 G
-   cycles** (~257 % of the verifier itself). Most of that is decoding
-   the expanded verifier-setup matrix. Options:
+2. **Make `deserialize_input` cheaper.** At `nv=32` it dominates the trace.
+   Most of that is decoding the expanded verifier-setup matrix. Options:
    - Ship just the `public_matrix_seed` (32 bytes) and re-derive the
      matrix inside the guest. Trades deserialization cycles for
      matrix-expansion cycles (probably ~similar order, with a much

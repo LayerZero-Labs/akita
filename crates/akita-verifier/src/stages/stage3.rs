@@ -13,7 +13,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_ring_dim_result, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    dispatch_for_field, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
     stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
     SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
@@ -119,18 +119,23 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             setup_len,
             transcript,
         )?;
-        dispatch_ring_dim_result!(ring_d, |D| {
-            self.verify_batched_stage3_kernel::<F, T, D>(
-                setup,
-                proof,
-                stage2_next_w_eval,
-                stage2_challenges,
-                witness_rounds,
-                setup_eval_len,
-                eta,
-                transcript,
-            )
-        })
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            ring_d,
+            |D| {
+                self.verify_batched_stage3_kernel::<F, T, D>(
+                    setup,
+                    proof,
+                    stage2_next_w_eval,
+                    stage2_challenges,
+                    witness_rounds,
+                    setup_eval_len,
+                    eta,
+                    transcript,
+                )
+            }
+        )
     }
 
     fn setup_eval_len<F, T>(

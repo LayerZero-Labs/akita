@@ -25,10 +25,6 @@ pub(crate) fn push_u128(bytes: &mut Vec<u8>, value: u128) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
-pub(crate) fn push_i8(bytes: &mut Vec<u8>, value: i8) {
-    bytes.extend_from_slice(&value.to_le_bytes());
-}
-
 pub(crate) fn sis_family_tag(family: SisModulusFamily) -> u8 {
     match family {
         SisModulusFamily::Q32 => 0,

@@ -42,6 +42,32 @@ fn scale_batched_root_layout_unchecked(
     Ok(scaled)
 }
 
+/// Build an extension opening point compatible with fp32 `FpExt4` ring-subfield
+/// packing at `ring_d`.
+///
+/// Root tensor projection requires `num_vars >= log2(ring_d)`. Inactive inner
+/// coordinates in `[trace_inner, log2(ring_d))` must be zero
+/// ([`akita_types::prepare_opening_point`]).
+fn fp32_ext4_ring_subfield_extension_point<E>(
+    ring_d: usize,
+    num_vars: usize,
+    coord_at: impl Fn(usize) -> E,
+) -> Vec<E>
+where
+    E: akita_field::AdditiveGroup + Copy,
+{
+    const EXT_DEGREE: usize = 4;
+    let trace_inner = (ring_d / EXT_DEGREE).trailing_zeros() as usize;
+    let alpha_bits = ring_d.trailing_zeros() as usize;
+    let mut point: Vec<E> = (0..num_vars).map(coord_at).collect();
+    for idx in trace_inner..alpha_bits {
+        if idx < point.len() {
+            point[idx] = E::zero();
+        }
+    }
+    point
+}
+
 #[derive(Clone)]
 struct Fp32RingSubfieldRootFoldCfg;
 #[derive(Clone)]
@@ -60,20 +86,16 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
     use akita_types::{AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
     let sis_family = akita_types::SisModulusFamily::Q32;
-    // Commit ring dimension must equal the static `D` the scheme dispatches
-    // (`DensePoly::<SmallF>` / `validate_commit_level_params::<F, D>`); both
-    // fixtures pin `D = 32`. `ring_subfield = 2` below is `FpExt4`'s
-    // embedding norm bound (a claim-field property), not `D / d`, so the
-    // collision buckets are independent of this dimension.
-    let d: usize = 32;
-    let stage1 = akita_challenges::SparseChallengeConfig::Uniform {
-        weight: 1,
-        nonzero_coeffs: vec![-1, 1],
-    };
+    // fp32 inner dispatch starts at D=64; fixtures pin uniform D=64.
+    // `ring_subfield = 2` below is `FpExt4`'s embedding norm bound (a claim-field
+    // property), not `D / d`, so the collision buckets are independent of this dimension.
+    let d: usize = 64;
+    let stage1 = akita_challenges::SparseChallengeConfig::production_for_ring_dim(d)
+        .expect("production D64 fold challenge");
     // Match the verifier-reachable derivation for this fixture's
-    // `(log_basis=3, log_commit_bound=32, stage1.inf_norm=1, ring_subfield=2)`:
+    // `(log_basis=3, log_commit_bound=32, production D64 signed-sparse, ring_subfield=2)`:
     // B/D use the exact coefficient bucket `7`; A rounds `linf=14` up to
-    // coefficient bucket `15`.
+    // coefficient bucket `15`. Buckets are pinned synthetically via `new_unchecked`.
     let a_bucket: u128 = 15;
     let bd_bucket: u128 = 7;
     let mut params = LevelParams::params_only(sis_family, d, 3, 1, 1, 1, stage1);
@@ -140,7 +162,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type Field = akita_field::Prime32Offset99;
     type ExtField = akita_field::FpExt4<Self::Field>;
 
-    const D: usize = 32;
+    const D: usize = 64;
 
     fn decomposition() -> akita_types::DecompositionParams {
         akita_types::DecompositionParams {
@@ -151,11 +173,12 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     }
 
     fn ring_challenge_config(
-        _d: usize,
+        d: usize,
     ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-        Ok(akita_challenges::SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![-1, 1],
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "no production fold-challenge ladder entry for ring dimension {d}"
+            ))
         })
     }
 
@@ -232,7 +255,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     type Field = akita_field::Prime32Offset99;
     type ExtField = akita_field::FpExt4<Self::Field>;
 
-    const D: usize = 32;
+    const D: usize = 64;
 
     fn decomposition() -> akita_types::DecompositionParams {
         akita_types::DecompositionParams {
@@ -243,11 +266,12 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     }
 
     fn ring_challenge_config(
-        _d: usize,
+        d: usize,
     ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-        Ok(akita_challenges::SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![-1, 1],
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "no production fold-challenge ladder entry for ring dimension {d}"
+            ))
         })
     }
 
@@ -476,7 +500,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
-    const NUM_VARS: usize = 5;
+    const NUM_VARS: usize = 6;
     type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
@@ -488,16 +512,14 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         .collect::<Vec<_>>();
     let poly_a = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_a).unwrap();
     let poly_b = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_b).unwrap();
-    let point = (0..NUM_VARS)
-        .map(|idx| {
-            SmallE::new([
-                SmallF::from_u64((idx + 2) as u64),
-                SmallF::from_u64((idx + 4) as u64),
-                SmallF::from_u64((idx + 6) as u64),
-                SmallF::from_u64((idx + 8) as u64),
-            ])
-        })
-        .collect::<Vec<_>>();
+    let point = fp32_ext4_ring_subfield_extension_point(SMALL_D, NUM_VARS, |idx| {
+        SmallE::new([
+            SmallF::from_u64((idx + 2) as u64),
+            SmallF::from_u64((idx + 4) as u64),
+            SmallF::from_u64((idx + 6) as u64),
+            SmallF::from_u64((idx + 8) as u64),
+        ])
+    });
     let weights = lagrange_weights(&point).unwrap();
     let opening_a = evals_a
         .iter()
@@ -584,7 +606,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
-    const NUM_VARS: usize = 5;
+    const NUM_VARS: usize = 6;
     type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
@@ -596,16 +618,14 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         .collect::<Vec<_>>();
     let poly_a = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_a).unwrap();
     let poly_b = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_b).unwrap();
-    let point = (0..NUM_VARS)
-        .map(|idx| {
-            SmallE::new([
-                SmallF::from_u64((idx + 2) as u64),
-                SmallF::from_u64((idx + 4) as u64),
-                SmallF::from_u64((idx + 6) as u64),
-                SmallF::from_u64((idx + 8) as u64),
-            ])
-        })
-        .collect::<Vec<_>>();
+    let point = fp32_ext4_ring_subfield_extension_point(SMALL_D, NUM_VARS, |idx| {
+        SmallE::new([
+            SmallF::from_u64((idx + 2) as u64),
+            SmallF::from_u64((idx + 4) as u64),
+            SmallF::from_u64((idx + 6) as u64),
+            SmallF::from_u64((idx + 8) as u64),
+        ])
+    });
     let weights = lagrange_weights(&point).unwrap();
     let opening_a = evals_a
         .iter()
@@ -682,7 +702,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
-    const NUM_VARS: usize = 5;
+    const NUM_VARS: usize = 6;
     type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
@@ -690,16 +710,14 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         .map(|idx| SmallF::from_u64((3 * idx as u64) + 5))
         .collect::<Vec<_>>();
     let poly = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals).unwrap();
-    let point_a = (0..NUM_VARS)
-        .map(|idx| {
-            SmallE::new([
-                SmallF::from_u64((idx + 3) as u64),
-                SmallF::from_u64((idx + 5) as u64),
-                SmallF::from_u64((idx + 7) as u64),
-                SmallF::from_u64((idx + 9) as u64),
-            ])
-        })
-        .collect::<Vec<_>>();
+    let point_a = fp32_ext4_ring_subfield_extension_point(SMALL_D, NUM_VARS, |idx| {
+        SmallE::new([
+            SmallF::from_u64((idx + 3) as u64),
+            SmallF::from_u64((idx + 5) as u64),
+            SmallF::from_u64((idx + 7) as u64),
+            SmallF::from_u64((idx + 9) as u64),
+        ])
+    });
     let opening_at = |point: &[SmallE]| {
         let weights = lagrange_weights(point).unwrap();
         evals

@@ -139,10 +139,7 @@ mod tests {
     }
 
     fn ring_challenge_config(_: usize) -> Result<SparseChallengeConfig, AkitaError> {
-        Ok(SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![-1, 1],
-        })
+        Ok(SparseChallengeConfig::pm1_only(1))
     }
 
     fn fold_shape(_: AkitaScheduleInputs) -> TensorChallengeShape {

@@ -4,8 +4,8 @@ use crate::compute::{
     OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
 };
 use akita_challenges::{
-    grind_probe_permutation, preview_folding_challenges, sample_folding_challenges,
-    stage1_fold_challenge_labels, Challenges,
+    grind_probe_permutation, witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw,
+    PreviewFoldDraw,
 };
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -26,6 +26,7 @@ use super::ring_relation::{
     window_sparse_challenges,
 };
 use crate::DecomposeFoldWitness;
+use akita_types::dispatch_for_field;
 
 /// Preview-only transcript access for prover-side fold grinding.
 ///
@@ -155,7 +156,7 @@ fn fold_witness_linf_digit_plan_for_claims(
         root_lp.field_bits_for_cache(),
         params.log_basis(),
         akita_types::sis::fold_challenge_norms(
-            &root_lp.stage1_config,
+            &root_lp.fold_challenge_config,
             root_lp.fold_challenge_shape,
         ),
         root_lp.fold_witness_norms_for_params(params),
@@ -322,16 +323,15 @@ where
 {
     let ring_d = root_lp.role_dims().d_a();
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
-    let labels = stage1_fold_challenge_labels();
+    let labels = witness_fold_challenge_labels();
     let mut grind_probe_count = 0u32;
     for &nonce in probe_nonces {
         grind_probe_count = grind_probe_count.saturating_add(1);
-        let challenges = preview_folding_challenges(
-            transcript,
+        let challenges = PreviewFoldDraw::new(transcript).draw_folding_challenges(
             ring_d,
             params.num_blocks(),
             num_claims,
-            &root_lp.stage1_config,
+            &root_lp.fold_challenge_config,
             &root_lp.fold_challenge_shape,
             labels,
             nonce,
@@ -367,12 +367,11 @@ where
             observed_linf: witness.centered_inf_norm,
             level_meta,
         });
-        let challenges = sample_folding_challenges::<F, T>(
-            transcript,
+        let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
             ring_d,
             params.num_blocks(),
             num_claims,
-            &root_lp.stage1_config,
+            &root_lp.fold_challenge_config,
             &root_lp.fold_challenge_shape,
             labels,
             nonce,
@@ -431,7 +430,7 @@ where
         akita_types::sis::fold_witness_representable_linf_bounds(params.log_basis(), delta_fold);
     let verifier_linf_bound = fold_witness_verifier_linf_bound(params.log_basis(), delta_fold);
     let challenge = akita_types::sis::fold_challenge_norms(
-        &root_lp.stage1_config,
+        &root_lp.fold_challenge_config,
         root_lp.fold_challenge_shape,
     );
     let witness_norms = root_lp.fold_witness_norms_for_params(params);
@@ -450,24 +449,29 @@ where
     let probe_nonces =
         grind_probe_nonces(&contract, &binding, transcript, root_lp, params, num_claims)?;
 
-    akita_types::dispatch_ring_dim_result!(ring_d, |D| {
-        sample_fold_decompose_witness_at_dim::<F, P, B, T, D>(
-            backend,
-            prepared,
-            transcript,
-            polys,
-            root_lp,
-            params,
-            num_claims,
-            tail_t_vectors,
-            &contract,
-            witness_linf_cap,
-            digit_negative_abs_bound,
-            digit_positive_bound,
-            level_meta,
-            &probe_nonces,
-        )
-    })
+    dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        F,
+        ring_d,
+        |D| {
+            sample_fold_decompose_witness_at_dim::<F, P, B, T, D>(
+                backend,
+                prepared,
+                transcript,
+                polys,
+                root_lp,
+                params,
+                num_claims,
+                tail_t_vectors,
+                &contract,
+                witness_linf_cap,
+                digit_negative_abs_bound,
+                digit_positive_bound,
+                level_meta,
+                &probe_nonces,
+            )
+        }
+    )
 }
 
 #[cfg(test)]
@@ -489,10 +493,7 @@ mod tests {
             2,
             4,
             3,
-            SparseChallengeConfig::Uniform {
-                weight: 3,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            SparseChallengeConfig::pm1_only(3),
         )
     }
 

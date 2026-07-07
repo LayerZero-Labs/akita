@@ -8,15 +8,12 @@ use akita_field::{Prime32Offset99, Prime64Offset59};
 fn sample_level_params() -> LevelParams {
     LevelParams::params_only(
         SisModulusFamily::Q32,
-        32,
+        64,
         3,
         2,
         3,
         2,
-        SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        },
+        SparseChallengeConfig::pm1_only(3),
     )
     .with_decomp(2, 3, 2, 2, 0)
     .expect("sample level params")
@@ -43,7 +40,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
     };
 
     AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, 32>().expect("algebra"),
+        AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99, 64>().expect("algebra"),
         SetupSection {
             decomposition: DecompositionParams {
                 log_basis: 3,
@@ -101,9 +98,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             229,
             [
-                0x4b, 0xb8, 0x2c, 0x87, 0xc3, 0x63, 0x2d, 0xd4, 0x3c, 0x76, 0xe4, 0x78, 0x7e, 0x90,
-                0x22, 0xa4, 0xda, 0xd6, 0x4a, 0x34, 0xfc, 0xaa, 0xc5, 0x7c, 0x9c, 0xbc, 0x8c, 0xff,
-                0x58, 0x74, 0x08, 0xea,
+                0x4f, 0x4c, 0x10, 0x0e, 0xa0, 0x89, 0xcd, 0xf9, 0x91, 0xe9, 0x3b, 0x56, 0x6a, 0xb9,
+                0x4e, 0x53, 0x47, 0xee, 0x50, 0xc4, 0x71, 0xea, 0x44, 0x53, 0x19, 0x77, 0x2c, 0x29,
+                0xc4, 0x88, 0x7d, 0x60,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
@@ -131,30 +128,30 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
         2,
         4,
         3,
-        SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
+        SparseChallengeConfig {
+            count_pm1: 30,
+            count_pm2: 12,
         },
     )
     .with_decomp(4, 2, 2, 2, 0)
     .expect("certified params");
-    let deterministic = LevelParams::params_only(
+    let worst_case_only = LevelParams::params_only(
         SisModulusFamily::Q128,
         64,
         3,
         2,
         4,
         3,
-        SparseChallengeConfig::BoundedL1Norm,
+        SparseChallengeConfig::pm1_only(31),
     )
     .with_decomp(4, 2, 2, 2, 0)
-    .expect("deterministic params");
+    .expect("worst-case-only params");
     assert_eq!(
         certified.fold_witness_linf_cap_policy(),
         crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
     );
     assert_eq!(
-        deterministic.fold_witness_linf_cap_policy(),
+        worst_case_only.fold_witness_linf_cap_policy(),
         crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
     );
 
@@ -167,9 +164,9 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
         })],
         total_bytes: 123,
     };
-    let schedule_deterministic = Schedule {
+    let schedule_worst_case = Schedule {
         steps: vec![Step::Fold(FoldStep {
-            params: deterministic,
+            params: worst_case_only,
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
@@ -179,7 +176,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
 
     assert_ne!(
         digest_effective_schedule(&schedule_certified),
-        digest_effective_schedule(&schedule_deterministic)
+        digest_effective_schedule(&schedule_worst_case)
     );
 }
 

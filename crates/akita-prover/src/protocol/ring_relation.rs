@@ -18,9 +18,8 @@ use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
-use akita_types::{
-    assemble_relation_y, dispatch_ring_dim_result, relation_y_layout_for, RingVec, RingView,
-};
+use akita_types::dispatch_for_field;
+use akita_types::{assemble_relation_y, relation_y_layout_for, RingVec, RingView};
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, MRowLayout};
 use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -609,31 +608,36 @@ impl RingRelationProver {
                 AkitaError::InvalidSetup("grouped e-folded offset overflow".to_string())
             })?;
             let group_lp = lp.root_group_params(&opening_batch, group_index)?;
-            let (e_hat_g, e_folded_g) = dispatch_ring_dim_result!(dims.d_d(), |D_D| {
-                let pre_folded_typed = pre_folded_e_by_poly[offset..end]
-                    .iter()
-                    .map(RingVec::as_ring_slice::<D_D>)
-                    .collect::<Result<Vec<_>, _>>()?;
-                let e_hat_typed = {
-                    let _span =
-                        tracing::info_span!("decompose_group_e_hat", group_index, claims = k_g)
-                            .entered();
-                    decompose_e_hat::<F, D_D>(
-                        &pre_folded_typed,
-                        group_lp.num_digits_open(),
-                        group_lp.log_basis(),
-                    )?
-                };
-                Ok::<_, AkitaError>((
-                    e_hat_typed,
-                    RingVec::from_coeffs(
-                        pre_folded_e_by_poly[offset..end]
-                            .iter()
-                            .flat_map(|block| block.coeffs().iter().copied())
-                            .collect(),
-                    ),
-                ))
-            })?;
+            let (e_hat_g, e_folded_g) = dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Opening),
+                F,
+                dims.d_d(),
+                |D_D| {
+                    let pre_folded_typed = pre_folded_e_by_poly[offset..end]
+                        .iter()
+                        .map(RingVec::as_ring_slice::<D_D>)
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let e_hat_typed = {
+                        let _span =
+                            tracing::info_span!("decompose_group_e_hat", group_index, claims = k_g)
+                                .entered();
+                        decompose_e_hat::<F, D_D>(
+                            &pre_folded_typed,
+                            group_lp.num_digits_open(),
+                            group_lp.log_basis(),
+                        )?
+                    };
+                    Ok::<_, AkitaError>((
+                        e_hat_typed,
+                        RingVec::from_coeffs(
+                            pre_folded_e_by_poly[offset..end]
+                                .iter()
+                                .flat_map(|block| block.coeffs().iter().copied())
+                                .collect(),
+                        ),
+                    ))
+                }
+            )?;
             group_e_hat.push(e_hat_g);
             group_e_folded.push(e_folded_g);
             offset = end;
@@ -648,17 +652,22 @@ impl RingRelationProver {
         } else {
             concat_digit_blocks(&group_e_hat)?
         };
-        let v = dispatch_ring_dim_result!(dims.d_d(), |D_D| {
-            let v_typed = compute_v_rows_for_layout::<F, T, RB, D_D>(
-                ring_switch_ctx,
-                transcript,
-                d_row_len,
-                log_basis,
-                &e_hat,
-                m_row_layout,
-            )?;
-            Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
-        })?;
+        let v = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Opening),
+            F,
+            dims.d_d(),
+            |D_D| {
+                let v_typed = compute_v_rows_for_layout::<F, T, RB, D_D>(
+                    ring_switch_ctx,
+                    transcript,
+                    d_row_len,
+                    log_basis,
+                    &e_hat,
+                    m_row_layout,
+                )?;
+                Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
+            }
+        )?;
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F>(hints, &group_sizes)?;
         let opening_backend = opening_ctx.backend();
 

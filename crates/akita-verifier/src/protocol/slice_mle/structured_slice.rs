@@ -1,7 +1,10 @@
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
+use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::{
+    eq_eval_at_index, eval_offset_eq_interval, summarize_pow2_block_carries,
+};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
@@ -204,8 +207,9 @@ pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
     pub g1_commit: &'a [F],
     /// Fold-side gadget. Length = `depth_fold`.
     pub fold_gadget: &'a [F],
-    /// Per-opening-point carry summary of `opening_point.a[..block_len]`.
-    pub a_block_summary: &'a [[E; 2]],
+    /// Carry summary of the opening point's in-block weights
+    /// `opening_point.a[..block_len]`.
+    pub a_block_summary: [E; 2],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub consistency_weight: E,
     /// Precomputed high-eq table relative to the slice's high offset.
@@ -219,7 +223,7 @@ where
 {
     #[inline]
     fn num_outer_indices(&self) -> usize {
-        self.a_block_summary.len() * self.fold_gadget.len() * self.g1_commit.len()
+        self.fold_gadget.len() * self.g1_commit.len()
     }
 
     #[inline]
@@ -229,14 +233,11 @@ where
 
     #[inline]
     fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let num_points = self.a_block_summary.len();
         let depth_fold = self.fold_gadget.len();
-        let pt = outer_index % num_points;
-        let q1 = outer_index / num_points;
-        let df = q1 % depth_fold;
-        let dc = q1 / depth_fold;
+        let df = outer_index % depth_fold;
+        let dc = outer_index / depth_fold;
 
-        let [a_carry0, a_carry1] = self.a_block_summary[pt];
+        let [a_carry0, a_carry1] = self.a_block_summary;
         let scale = (-self.consistency_weight)
             .mul_base(self.g1_commit[dc])
             .mul_base(self.fold_gadget[df]);
@@ -245,7 +246,7 @@ where
 }
 
 /// Dense fallback for non-pow2 Z segments. This path materializes the Z slice
-/// and evaluates it through the generic offset-equality tensor helper.
+/// and binds it over its live global interval with [`eval_offset_eq_interval`].
 pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
     /// Commit-side gadget. Length = `depth_commit`.
     pub g1_commit: &'a [F],
@@ -253,8 +254,9 @@ pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
     pub fold_gadget: &'a [F],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub consistency_weight: E,
-    /// Per-point alpha-evaluated ring-multiplier `a` values.
-    pub a_evals_by_point: &'a [Vec<E>],
+    /// Alpha-evaluated ring-multiplier `a` values for the opening point.
+    /// Length = `block_len`.
+    pub a_evals: &'a [E],
     /// Full multilinear evaluation point.
     pub full_vec_randomness: &'a [E],
     /// Start-of-slice offset of `z` inside `M`.
@@ -270,34 +272,34 @@ where
 {
     /// Evaluate the dense materialized Z segment.
     pub(crate) fn evaluate(&self) -> Result<E, AkitaError> {
-        let z_total_blocks = self.a_evals_by_point.len() * self.block_len;
-        let z_len = self.fold_gadget.len() * self.g1_commit.len() * z_total_blocks;
+        let z_len = self.fold_gadget.len() * self.g1_commit.len() * self.block_len;
         let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
             .map(|x| {
-                let compound_dig = x / z_total_blocks;
-                let global_blk = x % z_total_blocks;
+                let compound_dig = x / self.block_len;
+                let blk = x % self.block_len;
                 let dc_idx = compound_dig / self.fold_gadget.len();
                 let df = compound_dig % self.fold_gadget.len();
-                let point_idx = global_blk / self.block_len;
-                let blk = global_blk % self.block_len;
                 -self.consistency_weight
-                    * self.a_evals_by_point[point_idx][blk]
+                    * self.a_evals[blk]
                         .mul_base(self.g1_commit[dc_idx])
                         .mul_base(self.fold_gadget[df])
             })
             .collect();
-        eval_offset_eq_tensor(
+        eval_offset_eq_interval(
             self.full_vec_randomness,
             self.offset_z,
             E::one(),
-            &[z_segment_struct.as_slice()],
+            &z_segment_struct,
         )
     }
 }
 
-/// Compute the `r`-tail contribution. Power-of-two `levels` uses a
-/// multi-factor `eval_offset_eq_tensor`; otherwise materialises the
-/// `r`-tail vector and falls back to the single-factor path.
+/// Compute the `r`-tail contribution.
+///
+/// Power-of-two `levels` peels the pow2 low factor into carry buckets
+/// `[A0, A1]` and evaluates the small high factor at offsets `offset_hi` and
+/// `offset_hi + 1` via two sparse interval bindings. Otherwise it materialises
+/// the `r`-tail vector and evaluates it as a single contiguous interval.
 pub(crate) fn compute_r_contribution<F, E>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
@@ -310,33 +312,31 @@ where
     E: ExtField<F>,
 {
     let levels = r_gadget.len();
+    let rows = prepared.setup_contribution_inputs.rows;
     if levels.is_power_of_two() {
         let _span = tracing::info_span!("r_structured").entered();
         let r_gadget_ext: Vec<E> = r_gadget.iter().copied().map(E::lift_base).collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            offset_r,
-            -denom,
-            &[
-                &r_gadget_ext,
-                &prepared.eq_tau1[..prepared.setup_contribution_inputs.rows],
-            ],
-        )
+        // Peel the pow2 low factor into carry buckets [A0, A1], then evaluate
+        // the small high factor at offsets `offset_hi` and `offset_hi + 1`.
+        let m0 = levels.trailing_zeros() as usize;
+        let eq_low = EqPolynomial::evals(&full_vec_randomness[..m0])?;
+        let offset_lo = offset_r & (levels - 1);
+        let [a0, a1] = summarize_pow2_block_carries(&eq_low, offset_lo, &r_gadget_ext)?;
+        let offset_hi = offset_r >> m0;
+        let high = &full_vec_randomness[m0..];
+        let b0 = eval_offset_eq_interval(high, offset_hi, E::one(), &prepared.eq_tau1[..rows])?;
+        let b1 = eval_offset_eq_interval(high, offset_hi + 1, E::one(), &prepared.eq_tau1[..rows])?;
+        Ok(-denom * (a0 * b0 + a1 * b1))
     } else {
         let _span = tracing::info_span!("r_dense").entered();
-        let r_tail: Vec<E> = cfg_into_iter!(0..prepared.setup_contribution_inputs.rows * levels)
+        let r_tail: Vec<E> = cfg_into_iter!(0..rows * levels)
             .map(|idx| {
                 let row_idx = idx / levels;
                 let level_idx = idx % levels;
                 -(prepared.eq_tau1[row_idx] * denom).mul_base(r_gadget[level_idx])
             })
             .collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            offset_r,
-            E::one(),
-            &[r_tail.as_slice()],
-        )
+        eval_offset_eq_interval(full_vec_randomness, offset_r, E::one(), &r_tail)
     }
 }
 
@@ -356,9 +356,7 @@ mod tests {
         SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
     };
 
-    use crate::protocol::ring_switch::{
-        summarize_pow2_block_carries_base, RingSwitchDeferredRowGroupEval,
-    };
+    use crate::protocol::ring_switch::RingSwitchDeferredRowGroupEval;
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -389,10 +387,7 @@ mod tests {
             2,
             2,
             2,
-            SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![1],
-            },
+            SparseChallengeConfig::pm1_only(1),
         )
         .with_decomp(2, 3, 1, 26, 512 * 8)
         .expect("structured slice fixture lp")
@@ -670,22 +665,22 @@ mod tests {
             EqPolynomial::evals(&fx.full_vec_randomness[..z_offset_low_bits]).unwrap();
         let z_offset_low = fx.offset_z & (g.block_len - 1);
 
-        let a_block_summary = vec![summarize_pow2_block_carries_base::<F, F>(
+        let a_block_summary = summarize_pow2_block_carries(
             &z_block_low_eq,
             z_offset_low,
             &fx.opening_point.a[..g.block_len],
         )
-        .unwrap()];
+        .unwrap();
         let z_high = &fx.full_vec_randomness[z_offset_low_bits..];
         let z_offset_high = fx.offset_z >> z_offset_low_bits;
-        let z_outer = a_block_summary.len() * fx.fold_gadget.len() * fx.g1_commit.len();
+        let z_outer = fx.fold_gadget.len() * fx.g1_commit.len();
         let eq_hi_z: Vec<F> = (0..=z_outer)
             .map(|k| eq_eval_at_index(z_high, z_offset_high + k))
             .collect();
         let got = ZStructuredPow2SlicesEvaluator {
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
-            a_block_summary: &a_block_summary,
+            a_block_summary,
             consistency_weight: p.eq_tau1[0],
             high_eq_table: &eq_hi_z,
         }
@@ -718,12 +713,12 @@ mod tests {
 
         let z_len = g.depth_fold * g.depth_commit * g.block_len;
         let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
-        let a_evals_by_point = vec![fx.opening_point.a[..g.block_len].to_vec()];
+        let a_evals = fx.opening_point.a[..g.block_len].to_vec();
         let got = ZDenseSlicesEvaluator {
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
             consistency_weight: p.eq_tau1[0],
-            a_evals_by_point: &a_evals_by_point,
+            a_evals: &a_evals,
             full_vec_randomness: &fx.full_vec_randomness,
             offset_z: fx.offset_z,
             block_len: g.block_len,

@@ -288,8 +288,9 @@ pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
 /// Detect the field modulus from the canonical representation.
 ///
 /// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
+#[inline]
 pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
-    (-F::one()).to_canonical_u128() + 1
+    crate::dispatch::field_modulus::<F>()
 }
 
 /// Total ring elements in a recursive witness polynomial for an explicit
@@ -801,14 +802,12 @@ mod tests {
     #[test]
     fn chunked_witness_count_matches_chunk_layout_arithmetic() {
         const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         // num_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
-        let lp = LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, stage1_config)
-            .with_decomp(2, 3, 2, 2, 0)
-            .unwrap();
+        let lp =
+            LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, fold_challenge_config)
+                .with_decomp(2, 3, 2, 2, 0)
+                .unwrap();
         let field_bits = 128u32;
         let num_poly = 3usize;
 
@@ -841,14 +840,12 @@ mod tests {
     #[test]
     fn chunked_witness_count_rejects_invalid_chunk_counts() {
         const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         // num_blocks = 2^3 = 8.
-        let lp = LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, stage1_config)
-            .with_decomp(2, 3, 2, 2, 0)
-            .unwrap();
+        let lp =
+            LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, fold_challenge_config)
+                .with_decomp(2, 3, 2, 2, 0)
+                .unwrap();
         // Non-power-of-two chunk count.
         assert!(matches!(
             w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 6),
@@ -901,10 +898,7 @@ mod tests {
             1,
             1,
             1,
-            akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            akita_challenges::SparseChallengeConfig::pm1_only(1),
         );
         let schedule =
             root_direct_schedule(8, dummy_commit_params.clone()).expect("root-direct schedule");
@@ -937,10 +931,7 @@ mod tests {
             1,
             1,
             1,
-            akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            akita_challenges::SparseChallengeConfig::pm1_only(3),
         );
         let schedule =
             root_direct_schedule(witness_len, dummy_commit_params).expect("root-direct schedule");
@@ -1033,12 +1024,9 @@ mod tests {
     #[test]
     fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
         const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
@@ -1049,7 +1037,7 @@ mod tests {
                 2,
                 2,
                 2,
-                stage1_config.clone(),
+                fold_challenge_config,
             )
             .with_decomp(0, 0, 1, 1, 0)
             .unwrap();
@@ -1072,10 +1060,7 @@ mod tests {
     #[test]
     fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_w_len = D * 8;
         let num_claims = 3;
 
@@ -1087,7 +1072,7 @@ mod tests {
                 2,
                 2,
                 2,
-                stage1_config.clone(),
+                fold_challenge_config,
             )
             .with_decomp(0, 0, 1, 1, 0)
             .unwrap();
@@ -1136,12 +1121,9 @@ mod tests {
     #[test]
     fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
         const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
@@ -1152,7 +1134,7 @@ mod tests {
                 2,
                 2,
                 2,
-                stage1_config.clone(),
+                fold_challenge_config,
             )
             .with_decomp(0, 0, 1, 1, 0)
             .unwrap();

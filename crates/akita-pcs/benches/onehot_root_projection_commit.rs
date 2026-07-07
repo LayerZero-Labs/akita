@@ -203,7 +203,7 @@ where
 
 fn bench_onehot_root_projection_commit(c: &mut Criterion) {
     bench_case::<fp32::Field, fp32::D64OneHot, 64>(c, "fp32_d64");
-    bench_case::<fp64::Field, fp64::D32OneHot, 32>(c, "fp64_d32");
+    bench_case::<fp64::Field, fp64::D64OneHot, 64>(c, "fp64_d64");
 }
 
 criterion_group! {

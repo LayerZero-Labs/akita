@@ -2246,7 +2246,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     witness_chunk: ChunkedWitnessCfg { num_chunks: 1, num_activated_levels: 0 },
     root_fold_shape: TensorChallengeShape::Flat,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
-    ring_challenge_config_digest: 11249392371174434393,
+    ring_challenge_config_digest: 12477507731232336810,
     key_count: 248,
     key_digest: 674467980355251814,
 };

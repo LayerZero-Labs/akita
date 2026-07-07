@@ -7,7 +7,12 @@
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
-pub use dispatch::{validate_ring_dispatch, validate_role_dispatch};
+pub use dispatch::{
+    field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
+    ntt_ring_degree_supported_for_tier, outer_opening_min_ring_d, protocol_dispatch_tier,
+    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
+    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+};
 pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod golomb_rice;
@@ -66,7 +71,7 @@ pub use layout::{
     sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
     CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, MRowLayout,
     PrecommittedLevelParams, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
-    SUPPORTED_RING_DIMS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::NttCacheKey;
 pub use proof::{

@@ -94,7 +94,7 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// reconstructing a `Schedule` first.
     pub proof_shape: AkitaBatchedProofShape,
     /// The Akita batched proof itself. The extension field collapses to `F`
-    /// for the fp128 D32OneHot profile (`EXT_DEGREE == 1`).
+    /// for the fp128 D64OneHot profile (`EXT_DEGREE == 1`).
     pub proof: AkitaBatchedProof<F, F>,
 }
 

@@ -1,7 +1,7 @@
 //! Shared batching and root-opening helper types.
 
 use crate::{
-    basis_weights, embed_ring_subfield_scalar, embed_ring_subfield_vector,
+    basis_weights, dispatch_for_field, embed_ring_subfield_scalar, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
     BasisMode, BlockOrder, Commitment, FpExtEncoding, LevelParams, RingOpeningPoint, RingVec,
 };
@@ -347,6 +347,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         alpha_pows: &[E],
     ) -> Result<E, AkitaError>
     where
+        F: FieldCore + CanonicalField,
         E: ExtField<F>,
     {
         match self {
@@ -373,16 +374,21 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                 // The negacyclic product does not factor through evaluation at
                 // an arbitrary sumcheck challenge (alpha^D != -1), so multiply
                 // in the ring before evaluating.
-                crate::dispatch_ring_dim_result!(ring_d, |D| {
-                    let coeff_arr: [F; D] = coefficient_ring
-                        .try_into()
-                        .map_err(|_| AkitaError::InvalidProof)?;
-                    let value_arr: [F; D] =
-                        value.try_into().map_err(|_| AkitaError::InvalidProof)?;
-                    let product = CyclotomicRing::<F, D>::from_coefficients(coeff_arr)
-                        * CyclotomicRing::<F, D>::from_coefficients(value_arr);
-                    Ok(eval_ring_at_pows(&product, alpha_pows))
-                })
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Outer),
+                    F,
+                    ring_d,
+                    |D| {
+                        let coeff_arr: [F; D] = coefficient_ring
+                            .try_into()
+                            .map_err(|_| AkitaError::InvalidProof)?;
+                        let value_arr: [F; D] =
+                            value.try_into().map_err(|_| AkitaError::InvalidProof)?;
+                        let product = CyclotomicRing::<F, D>::from_coefficients(coeff_arr)
+                            * CyclotomicRing::<F, D>::from_coefficients(value_arr);
+                        Ok(eval_ring_at_pows(&product, alpha_pows))
+                    }
+                )
             }
         }
     }
@@ -870,10 +876,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            SparseChallengeConfig::pm1_only(1),
         )
     }
 

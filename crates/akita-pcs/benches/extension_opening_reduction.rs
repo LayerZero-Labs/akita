@@ -178,7 +178,7 @@ where
 
 fn bench_extension_opening_reduction(c: &mut Criterion) {
     bench_case::<fp32::Field, fp32::ExtensionField>(c, "fp32_d64");
-    bench_case::<fp64::Field, fp64::ExtensionField>(c, "fp64_d32");
+    bench_case::<fp64::Field, fp64::ExtensionField>(c, "fp64_d64");
 }
 
 criterion_group! {
