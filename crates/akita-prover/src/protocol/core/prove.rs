@@ -148,6 +148,7 @@ where
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
+    schedule.reject_grouped_multi_chunk("batched prove")?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => &root.params,
         Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {

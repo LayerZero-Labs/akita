@@ -289,9 +289,12 @@ fn grouped_root_segment_rings(
     num_digits_open: usize,
     num_digits_fold: usize,
 ) -> Result<usize, AkitaError> {
-    let e_hat = num_blocks.checked_mul(num_digits_open).ok_or_else(|| {
-        AkitaError::InvalidSetup("grouped root e-hat witness overflow".to_string())
-    })?;
+    let e_hat = num_polys
+        .checked_mul(num_blocks)
+        .and_then(|n| n.checked_mul(num_digits_open))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("grouped root e-hat witness overflow".to_string())
+        })?;
     let t_hat = num_polys
         .checked_mul(num_blocks)
         .and_then(|n| n.checked_mul(n_a))
@@ -310,30 +313,6 @@ fn grouped_root_segment_rings(
         .checked_add(t_hat)
         .and_then(|n| n.checked_add(z_hat))
         .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness overflow".to_string()))
-}
-
-fn grouped_root_m_row_count(params: &LevelParams, layout: MRowLayout) -> Result<usize, AkitaError> {
-    let mut rows = 1usize;
-    if matches!(layout, MRowLayout::WithDBlock) {
-        rows = rows
-            .checked_add(params.d_key.row_len())
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
-    }
-
-    // The grouped root has one public output row and one commitment/A block per group.
-    rows = rows
-        .checked_add(params.precommitted_groups.len() + 1)
-        .and_then(|n| n.checked_add(params.b_key.row_len()))
-        .and_then(|n| n.checked_add(params.a_key.row_len()))
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
-    for group in &params.precommitted_groups {
-        rows = rows
-            .checked_add(group.b_key.row_len())
-            .and_then(|n| n.checked_add(group.a_key.row_len()))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
-    }
-
-    Ok(rows)
 }
 
 pub(crate) fn grouped_root_next_w_len(
@@ -372,7 +351,7 @@ pub(crate) fn grouped_root_next_w_len(
             .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness overflow".to_string()))?;
     }
 
-    let r_rows = grouped_root_m_row_count(params, layout)?;
+    let r_rows = params.m_row_count_for(params.precommitted_groups.len() + 1, layout)?;
     let r_count = r_rows
         .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
         .ok_or_else(|| {
@@ -461,8 +440,8 @@ fn grouped_root_main_level_params_candidate(
         d,
     )?;
 
-    // Grouped D uses one `w_hat_g` segment per commitment group, not per polynomial.
-    let Some(main_d_width) = decomposed_w_ring_count(num_digits_open, num_blocks, 1) else {
+    let Some(main_d_width) = decomposed_w_ring_count(num_digits_open, num_blocks, main_num_polys)
+    else {
         return Ok(None);
     };
     let d_width = main_d_width
@@ -609,6 +588,11 @@ pub fn find_group_batch_schedule(
         return Err(AkitaError::InvalidSetup(
             "dense multi-group root batching is not supported; see specs/multi-group-batching.md"
                 .to_string(),
+        ));
+    }
+    if policy.witness_chunk.uses_multi_chunk() {
+        return Err(AkitaError::InvalidSetup(
+            akita_types::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
         ));
     }
 
@@ -798,9 +782,10 @@ pub fn find_group_batch_schedule(
 mod tests {
     use super::*;
     use crate::find_schedule;
+    use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout, SisModulusFamily,
-        DEFAULT_SIS_SECURITY_BITS,
+        AkitaScheduleLookupKey, DecompositionParams, MRowLayout, PolynomialGroupLayout,
+        SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -879,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn grouped_main_d_width_uses_per_group_w_segment_not_polynomial_count() {
+    fn decomposed_w_ring_count_scales_with_polynomial_count() {
         let main_polys = 4usize;
         let num_blocks = 8usize;
         let num_digits_open = 3usize;
@@ -888,6 +873,53 @@ mod tests {
             decomposed_w_ring_count(num_digits_open, num_blocks, main_polys).expect("scalar w");
         assert_ne!(per_group_w, scalar_w);
         assert_eq!(per_group_w * main_polys, scalar_w);
+    }
+
+    fn assert_grouped_fold_sizing_matches_runtime(final_polys: usize, pre_polys: usize) {
+        let mut policy = flat_policy();
+        policy.decomposition.log_open_bound = Some(128);
+        policy.basis_range = (4, 4);
+        let pre_key = PolynomialGroupLayout::new(20, pre_polys);
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(40, final_polys),
+            precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
+        };
+        let opening_batch = key.opening_layout().expect("opening layout");
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("grouped schedule");
+        let Step::Fold(root) = schedule.steps.first().expect("grouped root step") else {
+            panic!("expected grouped root fold");
+        };
+
+        let runtime_next_w_len = root
+            .params
+            .root_next_w_len::<Prime128OffsetA7F7>(&opening_batch, MRowLayout::WithDBlock)
+            .expect("runtime next w len");
+        assert_eq!(root.next_w_len, runtime_next_w_len);
+
+        let expected_d_width = root
+            .params
+            .num_digits_open
+            .checked_mul(root.params.num_blocks)
+            .and_then(|n| n.checked_mul(final_polys))
+            .expect("main D width")
+            + root
+                .params
+                .precommitted_groups
+                .iter()
+                .map(|group| group.d_segment_width().expect("precommitted D width"))
+                .sum::<usize>();
+        assert_eq!(root.params.d_key.col_len(), expected_d_width);
+    }
+
+    #[test]
+    fn grouped_fold_sizing_matches_runtime_for_one_three() {
+        assert_grouped_fold_sizing_matches_runtime(1, 3);
+    }
+
+    #[test]
+    fn grouped_fold_sizing_matches_runtime_for_two_one() {
+        assert_grouped_fold_sizing_matches_runtime(2, 1);
     }
 
     #[test]
