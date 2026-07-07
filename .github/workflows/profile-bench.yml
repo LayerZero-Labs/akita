@@ -83,15 +83,21 @@ jobs:
             pcs_mode_features: mode-onehot-fp128-d64-tensor
             cases: |
               onehot_fp128_d64_tensor:26:1
-          - name: 3-flat-onehot-suite
-            pcs_mode_features: mode-onehot-fp32-d128,mode-onehot-fp64-d128,mode-onehot-fp128-d64
+          - name: 3-flat-fp32-onehot
+            pcs_mode_features: mode-onehot-fp32-d128
             cases: |
               onehot_fp32_d128:28:1
+          - name: 4-flat-fp64-onehot
+            pcs_mode_features: mode-onehot-fp64-d128
+            cases: |
               onehot_fp64_d128:28:1
+          - name: 5-flat-fp128-onehot
+            pcs_mode_features: mode-onehot-fp128-d64
+            cases: |
               onehot_fp128_d64:32:1
               onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
-          - name: 4-distributed
+          - name: 6-distributed
             pcs_mode_features: mode-onehot-fp128-d64-multi-chunk-w2r2,mode-onehot-fp128-d64-multi-chunk-w4r2,mode-onehot-fp128-d64-multi-chunk-w8r2
             cases: |
               onehot_fp128_d64_multi_chunk_w2r2:32:1
