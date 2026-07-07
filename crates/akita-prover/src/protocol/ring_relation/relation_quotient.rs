@@ -4,6 +4,7 @@ use crate::compute::{
     OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
     RingSwitchRelationKernel, RingSwitchRelationPlan,
 };
+use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_types::{LevelParams, MRowLayout};
 
@@ -109,7 +110,7 @@ where
     Ok(out)
 }
 
-/// Relation quotient `r` returned by [`compute_relation_quotient`].
+/// Relation quotient `r` returned by [`compute_grouped_relation_quotient`].
 pub(crate) type RelationQuotientOutput<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
 
 fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
@@ -215,227 +216,208 @@ where
     Ok((CyclotomicRing::from_coefficients(cyclic), reduced))
 }
 
-/// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
-///
-/// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
-/// Uses split-eq factoring: `kron(left, gadget) · decomposed = left · pre_decomp`.
-///
-/// # Errors
-///
-/// Returns an error if the claim grouping, row layout, or split-eq witness
-/// dimensions are inconsistent.
-#[allow(clippy::too_many_arguments, clippy::needless_borrow)]
-#[tracing::instrument(skip_all, name = "compute_relation_quotient")]
-pub fn compute_relation_quotient<F, B, const D: usize>(
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "compute_grouped_relation_quotient")]
+pub(crate) fn compute_grouped_relation_quotient<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
-    challenges: &Challenges,
-    e_hat_flat: &[[i8; D]],
-    t_hat: &DigitBlocks,
-    recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
-    e_folded: &[CyclotomicRing<F, D>],
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
-    row_coefficient_rings: &[CyclotomicRing<F, D>],
-    z_folded_centered: &[[i32; D]],
-    z_folded_centered_inf_norm: u32,
+    opening_batch: &akita_types::OpeningClaimsLayout,
+    groups: &[PreparedRingSwitchGroup<'_, F, D>],
+    group_ring_multiplier_points: &[&RingMultiplierOpeningPoint<F>],
+    group_challenges: &[Challenges],
+    e_hat_concat: &[[i8; D]],
     y: &[CyclotomicRing<F, D>],
-    num_polys: usize,
-    blocks_per_claim: usize,
-    inner_width: usize,
     m_row_layout: MRowLayout,
 ) -> Result<RelationQuotientOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
     B: RingSwitchProveBackend<F, D>,
 {
+    lp.reject_grouped_multi_chunk("grouped relation quotient")?;
+    lp.validate_root_opening_batch(opening_batch)?;
+    if groups.len() != opening_batch.num_groups()
+        || group_ring_multiplier_points.len() != opening_batch.num_groups()
+        || group_challenges.len() != opening_batch.num_groups()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
-    if num_polys == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    let num_claims = row_coefficient_rings.len();
-    if num_polys != num_claims {
-        return Err(AkitaError::InvalidProof);
-    }
-    if num_claims.checked_mul(blocks_per_claim) != Some(e_folded.len()) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let expected_inner_rows = num_polys
-        .checked_mul(blocks_per_claim)
-        .ok_or(AkitaError::InvalidProof)?;
-    if recomposed_inner_rows.len() != expected_inner_rows {
-        return Err(AkitaError::InvalidProof);
-    }
-    let expected_challenges = num_claims
-        .checked_mul(blocks_per_claim)
-        .ok_or(AkitaError::InvalidProof)?;
-    if challenges.logical_len() != expected_challenges {
-        return Err(AkitaError::InvalidProof);
-    }
-    if e_hat_flat.len()
-        != expected_challenges
-            .checked_mul(lp.num_digits_open)
-            .ok_or(AkitaError::InvalidProof)?
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let n_b = lp.b_key.row_len();
-    let n_d = lp.d_key.row_len();
-    let n_a = lp.a_key.row_len();
-    let expected_t_hat_block_digits = n_a
-        .checked_mul(lp.num_digits_open)
-        .ok_or(AkitaError::InvalidProof)?;
-    let expected_t_hat_flat_digits = expected_inner_rows
-        .checked_mul(expected_t_hat_block_digits)
-        .ok_or(AkitaError::InvalidProof)?;
-    if t_hat.block_count() != expected_inner_rows
-        || t_hat
-            .block_sizes()
-            .iter()
-            .any(|&block_size| block_size != expected_t_hat_block_digits)
-        || t_hat.total_planes() != expected_t_hat_flat_digits
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    // Terminal layout drops the D-rows from M (and from `y`). All structural
-    // offsets must use `n_d_active`, not `n_d`, to match the verifier.
-    let n_d_active = match m_row_layout {
-        MRowLayout::WithDBlock => n_d,
-        MRowLayout::WithoutDBlock => 0,
-    };
-    let num_rows = lp.m_row_count_for(1, m_row_layout)?;
+    let n_d_active = lp.n_d_active_for(m_row_layout);
+    let num_rows = lp.m_row_count_for(opening_batch.num_groups(), m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Canonical row layout: consistency (1) | A | B | D.
-    let a_start = lp.a_start();
-    let b_start = lp.b_start()?;
-    let d_start = lp.d_start(1)?;
+    let d_start = num_rows
+        .checked_sub(n_d_active)
+        .ok_or(AkitaError::InvalidProof)?;
+    let mut result = vec![CyclotomicRing::<F, D>::zero(); num_rows];
+    let mut d_cyclic_rows: Option<Vec<CyclotomicRing<F, D>>> = None;
+    let order = opening_batch.root_group_order()?;
 
-    if inner_width == 0 || z_folded_centered.len() != inner_width {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let mut z_segments = z_folded_centered.chunks(inner_width);
-    let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
-
-    let relation_rows = RingSwitchRelationKernel::relation_rows(
-        backend,
-        prepared,
-        RingSwitchRelationView {
-            e_hat: e_hat_flat,
-            t_hat: t_hat.typed_planes::<D>()?,
-            z_segment: first_z_segment,
-            z_folded_centered_inf_norm,
-        },
-        RingSwitchRelationPlan {
-            n_d: n_d_active,
-            n_b,
-            n_a,
-            log_basis: lp.log_basis,
-        },
-    )?;
-    if relation_rows.d_cyclic.len() != n_d_active
-        || relation_rows.b_cyclic.len() != n_b
-        || relation_rows.a_quotients.len() != n_a
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let mut a_quotients = relation_rows.a_quotients;
-    let b_cyclic = relation_rows.b_cyclic;
-    let d_cyclic = relation_rows.d_cyclic;
-    for z_segment in z_segments {
-        let segment_rows = RingSwitchQuotientKernel::quotient_rows(
-            backend,
-            prepared,
-            RingSwitchQuotientView {
-                z_segment,
-                z_folded_centered_inf_norm,
-            },
-            RingSwitchQuotientPlan { n_a },
-        )?;
-        if segment_rows.len() != n_a {
+    for (order_pos, &group_index) in order.iter().enumerate() {
+        let group = groups.get(group_index).ok_or(AkitaError::InvalidProof)?;
+        let ring_multiplier_point = group_ring_multiplier_points
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let challenges = group_challenges
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let e_folded = &group.e_folded;
+        let recomposed_inner_rows = &group.recomposed_inner_rows;
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let log_basis = group.params.log_basis();
+        let num_digits_open = group.params.num_digits_open();
+        let n_a = group.params.a_rows_len();
+        let n_b = group.params.b_rows_len();
+        let blocks_per_claim = group.params.num_blocks();
+        let inner_width = group.params.a_col_len();
+        validate_i8_setup_log_basis(log_basis, "for grouped relation quotient")?;
+        if group_layout.num_polynomials() == 0 {
             return Err(AkitaError::InvalidProof);
         }
-        for (dst, src) in a_quotients.iter_mut().zip(segment_rows.into_iter()) {
-            *dst += src;
+        let expected_blocks = group_layout
+            .num_polynomials()
+            .checked_mul(blocks_per_claim)
+            .ok_or(AkitaError::InvalidProof)?;
+        if challenges.logical_len() != expected_blocks
+            || e_folded.len() != expected_blocks
+            || recomposed_inner_rows.len() != expected_blocks
+            || group.e_hat.typed_planes::<D>()?.len()
+                != expected_blocks
+                    .checked_mul(num_digits_open)
+                    .ok_or(AkitaError::InvalidProof)?
+        {
+            return Err(AkitaError::InvalidProof);
         }
-    }
-    let commitment_cyclic_rows = b_cyclic;
-    if commitment_cyclic_rows.len() != n_b {
-        return Err(AkitaError::InvalidProof);
-    }
-    let constant_opening_multipliers = ring_multiplier_point.is_constant();
-    let consistency_z_quotient = if constant_opening_multipliers {
-        // Degree-one openings embed scalar weights as constant rings. Cyclic
-        // and negacyclic multiplication by a constant agree, so the quotient
-        // row is identically zero.
-        CyclotomicRing::<F, D>::zero()
-    } else {
-        let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
-            ring_multiplier_point,
-            z_folded_centered,
-            lp.block_len,
-            lp.num_digits_commit,
-            lp.log_basis,
+        if group.z_centered.len() != inner_width {
+            return Err(AkitaError::InvalidProof);
+        }
+        let expected_t_hat_block_digits = n_a
+            .checked_mul(num_digits_open)
+            .ok_or(AkitaError::InvalidProof)?;
+        if group.t_hat.block_count() != expected_blocks
+            || group
+                .t_hat
+                .block_sizes()
+                .iter()
+                .any(|&size| size != expected_t_hat_block_digits)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        let n_d_for_group = if order_pos == 0 { n_d_active } else { 0 };
+        let e_hat_for_group = if order_pos == 0 { e_hat_concat } else { &[] };
+        let mut z_segments = group.z_centered.chunks(inner_width);
+        let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
+        let relation_rows = RingSwitchRelationKernel::relation_rows(
+            backend,
+            prepared,
+            RingSwitchRelationView {
+                e_hat: e_hat_for_group,
+                t_hat: group.t_hat.typed_planes::<D>()?,
+                z_segment: first_z_segment,
+                z_folded_centered_inf_norm: group.z_inf,
+            },
+            RingSwitchRelationPlan {
+                n_d: n_d_for_group,
+                n_b,
+                n_a,
+                log_basis,
+            },
         )?;
-        quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
-    };
+        if relation_rows.d_cyclic.len() != n_d_for_group
+            || relation_rows.b_cyclic.len() != n_b
+            || relation_rows.a_quotients.len() != n_a
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        if n_d_for_group != 0 {
+            d_cyclic_rows = Some(relation_rows.d_cyclic);
+        }
+        let mut a_quotients = relation_rows.a_quotients;
+        for z_segment in z_segments {
+            let segment_rows = RingSwitchQuotientKernel::quotient_rows(
+                backend,
+                prepared,
+                RingSwitchQuotientView {
+                    z_segment,
+                    z_folded_centered_inf_norm: group.z_inf,
+                },
+                RingSwitchQuotientPlan { n_a },
+            )?;
+            if segment_rows.len() != n_a {
+                return Err(AkitaError::InvalidProof);
+            }
+            for (dst, src) in a_quotients.iter_mut().zip(segment_rows.into_iter()) {
+                *dst += src;
+            }
+        }
 
-    let mut result = Vec::with_capacity(num_rows);
-    let mut other_time = 0.0f64;
+        let consistency_z_quotient = if ring_multiplier_point.is_constant() {
+            CyclotomicRing::<F, D>::zero()
+        } else {
+            let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
+                ring_multiplier_point,
+                &group.z_centered,
+                group.params.block_len(),
+                group.params.num_digits_commit(),
+                log_basis,
+            )?;
+            quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
+        };
+        let quotient = parallel_high_half_accumulate::<F, _, D>(challenges, |i| Some(e_folded[i]))?;
+        let mut quotient = CyclotomicRing::from_slice(&quotient);
+        quotient -= consistency_z_quotient;
+        result[0] += quotient;
 
-    for row_idx in 0..num_rows {
-        if row_idx == 0 {
-            let t_row = Instant::now();
-            let _span = tracing::info_span!("challenge_fold_row").entered();
-            // Consistency row: Σ c_i · e_folded[i] over all (claim, block).
-            let quotient =
-                parallel_high_half_accumulate::<F, _, D>(challenges, |i| Some(e_folded[i]))?;
-            let mut quotient = CyclotomicRing::from_slice(&quotient);
-            quotient -= consistency_z_quotient;
-            result.push(quotient);
-            other_time += t_row.elapsed().as_secs_f64();
-        } else if row_idx < b_start {
-            let t_row = Instant::now();
-            let _span = tracing::info_span!("A_row").entered();
-            let a_idx = row_idx - a_start;
-
-            // In a dense single commitment group, claim order is polynomial
-            // order. Iterate `(claim, block)` over the challenge space and
-            // read the matching committed polynomial block directly.
+        let a_range = lp.root_a_row_range(opening_batch, group_index, m_row_layout)?;
+        if a_range.len() != n_a {
+            return Err(AkitaError::InvalidProof);
+        }
+        for (a_idx, row_idx) in a_range.enumerate() {
             let mut quotient = parallel_high_half_accumulate::<F, _, D>(challenges, |i| {
                 let claim_idx = i / blocks_per_claim;
                 let block_idx = i % blocks_per_claim;
                 let inner_idx = claim_idx * blocks_per_claim + block_idx;
                 recomposed_inner_rows[inner_idx].get(a_idx).copied()
             })?;
-
             let a_q = a_quotients[a_idx].coefficients();
             for k in 0..D {
                 quotient[k] -= a_q[k];
             }
-            result.push(CyclotomicRing::from_slice(&quotient));
-            other_time += t_row.elapsed().as_secs_f64();
-        } else if row_idx < d_start {
-            // B-block: B·t̂; RHS is the sent commitment in `y`.
-            let commit_idx = row_idx - b_start;
-            let cyclic = commitment_cyclic_rows
+            result[row_idx] = CyclotomicRing::from_slice(&quotient);
+        }
+
+        let b_range = lp.root_commitment_row_range(opening_batch, group_index, m_row_layout)?;
+        if b_range.len() != n_b {
+            return Err(AkitaError::InvalidProof);
+        }
+        for (commit_idx, row_idx) in b_range.enumerate() {
+            let cyclic = relation_rows
+                .b_cyclic
                 .get(commit_idx)
                 .ok_or(AkitaError::InvalidProof)?;
-            result.push(quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]));
-        } else {
-            // D-block: v = D·ê.
-            result.push(quotient_from_cyclic_and_reduced(
-                &d_cyclic[row_idx - d_start],
-                &y[row_idx],
-            ));
+            result[row_idx] = quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]);
         }
     }
 
-    tracing::debug!(other_s = other_time, "compute_r breakdown");
-
+    // Terminal layout (`WithoutDBlock`) drops the D rows from M entirely, so no
+    // group produces D-cyclic rows and `d_start == num_rows`.
+    if n_d_active == 0 {
+        if d_cyclic_rows.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+    } else {
+        let d_cyclic_rows = d_cyclic_rows.ok_or(AkitaError::InvalidProof)?;
+        if d_cyclic_rows.len() != n_d_active {
+            return Err(AkitaError::InvalidProof);
+        }
+        for (d_idx, cyclic) in d_cyclic_rows.iter().enumerate() {
+            let row_idx = d_start.checked_add(d_idx).ok_or(AkitaError::InvalidProof)?;
+            result[row_idx] = quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]);
+        }
+    }
     Ok(result)
 }
 

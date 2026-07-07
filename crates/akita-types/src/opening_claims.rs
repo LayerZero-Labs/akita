@@ -262,6 +262,19 @@ impl OpeningClaimsLayout {
             .ok_or(AkitaError::InvalidProof)
     }
 
+    /// Group processing order for grouped root schedules: final/new group first.
+    pub fn root_group_order(&self) -> Result<Vec<usize>, AkitaError> {
+        let final_group_index = self.root_final_group_index()?;
+        let mut order = Vec::with_capacity(self.num_groups());
+        order.push(final_group_index);
+        for group_index in 0..self.num_groups() {
+            if group_index != final_group_index {
+                order.push(group_index);
+            }
+        }
+        Ok(order)
+    }
+
     /// Layouts of precommitted groups in root transcript order.
     pub fn root_precommitted_group_layouts(&self) -> Result<&[PolynomialGroupLayout], AkitaError> {
         self.check()?;
@@ -725,6 +738,10 @@ mod tests {
         assert_eq!(
             layout.root_final_group_layout().expect("final layout"),
             PolynomialGroupLayout::new(4, 1)
+        );
+        assert_eq!(
+            layout.root_group_order().expect("group order"),
+            vec![2, 0, 1]
         );
         assert_eq!(layout.root_group_claim_range(0).expect("range"), 0..1);
         assert_eq!(layout.root_group_claim_range(1).expect("range"), 1..3);

@@ -530,49 +530,60 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
         if lp.has_precommitted_groups() {
             lp.reject_grouped_multi_chunk("segment_layout")?;
+            // Group-major layout: one chunk per group in `root_group_order()`
+            // (final group first), each holding that group's contiguous
+            // `[z_g ‖ e_g ‖ t_g]`, followed by one shared trailing `r` carried by
+            // the last chunk. `grouped_ring_relation_segment_lengths` returns the
+            // per-group widths already in that order. The per-chunk block-window
+            // fields (`blocks_per_chunk`, `global_block_base`) are inert here:
+            // each group is a single, non-windowed segment stride.
             let GroupedRingRelationSegmentLengths {
                 z_lens,
                 e_lens,
                 t_lens,
             } = grouped_ring_relation_segment_lengths::<F>(lp, &self.opening_batch)?;
-            let z_total = z_lens.iter().try_fold(0usize, |acc, &len| {
-                acc.checked_add(len)
-                    .ok_or_else(|| AkitaError::InvalidSetup("grouped z width overflow".to_string()))
-            })?;
-            let e_total = e_lens.iter().try_fold(0usize, |acc, &len| {
-                acc.checked_add(len)
-                    .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))
-            })?;
-            let t_total = t_lens.iter().try_fold(0usize, |acc, &len| {
-                acc.checked_add(len)
-                    .ok_or_else(|| AkitaError::InvalidSetup("grouped t width overflow".to_string()))
-            })?;
-            let offset_e = z_total;
-            let offset_t = offset_e
-                .checked_add(e_total)
-                .ok_or_else(|| AkitaError::InvalidSetup("grouped t offset overflow".to_string()))?;
-            let offset_r = offset_t
-                .checked_add(t_total)
-                .ok_or_else(|| AkitaError::InvalidSetup("grouped r offset overflow".to_string()))?;
-            let layout = WitnessLayout {
-                blocks_per_chunk: lp.num_blocks,
-                chunks: vec![WitnessChunkLayout {
-                    offset_z: 0,
+            let num_groups = z_lens.len();
+            let mut chunks = Vec::with_capacity(num_groups);
+            let mut chunk_lengths = Vec::with_capacity(num_groups);
+            let mut base = 0usize;
+            for p in 0..num_groups {
+                let z_g = z_lens[p];
+                let e_g = e_lens[p];
+                let t_g = t_lens[p];
+                let offset_e = base.checked_add(z_g).ok_or_else(|| {
+                    AkitaError::InvalidSetup("grouped e offset overflow".to_string())
+                })?;
+                let offset_t = offset_e.checked_add(e_g).ok_or_else(|| {
+                    AkitaError::InvalidSetup("grouped t offset overflow".to_string())
+                })?;
+                let after_t = offset_t.checked_add(t_g).ok_or_else(|| {
+                    AkitaError::InvalidSetup("grouped group stride overflow".to_string())
+                })?;
+                let is_last = p + 1 == num_groups;
+                chunks.push(WitnessChunkLayout {
+                    offset_z: base,
                     offset_e,
                     offset_t,
-                    offset_r: Some(offset_r),
+                    offset_r: is_last.then_some(after_t),
                     offset_u: None,
                     global_block_base: 0,
-                }],
-                chunk_lengths: vec![WitnessChunkLengths {
-                    z_len: z_total,
-                    e_len: e_total,
-                    t_len: t_total,
+                });
+                chunk_lengths.push(WitnessChunkLengths {
+                    z_len: z_g,
+                    e_len: e_g,
+                    t_len: t_g,
                     u_len: None,
-                    r_len: Some(r_len_total),
-                }],
+                    r_len: is_last.then_some(r_len_total),
+                });
+                base = after_t;
+            }
+            let layout = WitnessLayout {
+                blocks_per_chunk: lp.num_blocks,
+                chunks,
+                chunk_lengths,
             };
             if let Some(witness_ring_len) = witness_ring_len {
+                let offset_r = layout.r_offset()?;
                 let needed = offset_r.checked_add(r_len_total).ok_or_else(|| {
                     AkitaError::InvalidSetup("witness capacity overflow".to_string())
                 })?;
@@ -1065,23 +1076,46 @@ mod tests {
         let layout = instance
             .segment_layout(&lp, None)
             .expect("grouped segment layout");
-        assert_eq!(layout.num_chunks(), 1);
-        let chunk = layout.chunks[0];
-        let lengths = layout.chunk_lengths[0];
         let grouped_lens =
             grouped_ring_relation_segment_lengths::<F>(&lp, &opening_batch).expect("group lens");
+        let num_groups = grouped_lens.z_lens.len();
+        // Group-major: one chunk per group, each holding a contiguous
+        // `[z_g | e_g | t_g]` stride; only the last chunk carries the single
+        // shared `r` tail.
+        assert_eq!(layout.num_chunks(), num_groups);
         let z_total: usize = grouped_lens.z_lens.iter().sum();
         let e_total: usize = grouped_lens.e_lens.iter().sum();
         let t_total: usize = grouped_lens.t_lens.iter().sum();
-        assert_eq!(lengths.z_len, z_total);
-        assert_eq!(lengths.e_len, e_total);
-        assert_eq!(lengths.t_len, t_total);
-        assert_eq!(chunk.offset_z, 0);
-        assert_eq!(chunk.offset_e, z_total);
-        assert_eq!(chunk.offset_t, z_total + e_total);
-        assert_eq!(chunk.offset_r, Some(z_total + e_total + t_total));
+        let r_len_total = y_rows * r_decomp_levels::<F>(lp.log_basis);
 
-        let witness_ring_cols = z_total + e_total + t_total + lengths.r_len.expect("r tail");
+        let mut base = 0usize;
+        for (p, (chunk, lengths)) in layout
+            .chunks
+            .iter()
+            .zip(layout.chunk_lengths.iter())
+            .enumerate()
+        {
+            let z_g = grouped_lens.z_lens[p];
+            let e_g = grouped_lens.e_lens[p];
+            let t_g = grouped_lens.t_lens[p];
+            assert_eq!(lengths.z_len, z_g);
+            assert_eq!(lengths.e_len, e_g);
+            assert_eq!(lengths.t_len, t_g);
+            assert_eq!(chunk.offset_z, base);
+            assert_eq!(chunk.offset_e, base + z_g);
+            assert_eq!(chunk.offset_t, base + z_g + e_g);
+            if p + 1 == num_groups {
+                assert_eq!(chunk.offset_r, Some(base + z_g + e_g + t_g));
+                assert_eq!(lengths.r_len, Some(r_len_total));
+            } else {
+                assert_eq!(chunk.offset_r, None);
+                assert_eq!(lengths.r_len, None);
+            }
+            base += z_g + e_g + t_g;
+        }
+        assert_eq!(base, z_total + e_total + t_total);
+
+        let witness_ring_cols = z_total + e_total + t_total + r_len_total;
         let expected_w_len = lp
             .root_next_w_len::<F>(&opening_batch, MRowLayout::WithDBlock)
             .expect("root next w len");

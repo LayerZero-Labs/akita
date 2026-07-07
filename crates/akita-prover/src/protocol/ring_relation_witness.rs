@@ -19,6 +19,25 @@ pub struct RingRelationGroupWitness<F: FieldCore> {
 }
 
 impl<F: FieldCore> RingRelationGroupWitness<F> {
+    /// Construct one group witness from D-free carriers.
+    pub fn from_parts(
+        z_folded_rings: DecomposeFoldWitness<F>,
+        z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
+        e_hat: DigitBlocks,
+        e_folded: RingVec<F>,
+        hint: AkitaCommitmentHint<F>,
+        role_dims: CommitmentRingDims,
+    ) -> Self {
+        Self {
+            z_folded_rings,
+            z_folded_centered_per_chunk,
+            e_hat,
+            e_folded,
+            hint,
+            role_dims,
+        }
+    }
+
     /// Per-role ring dimensions for this group witness.
     pub fn role_dims(&self) -> CommitmentRingDims {
         self.role_dims
@@ -137,14 +156,22 @@ impl<F: FieldCore> RingRelationWitness<F> {
     ) -> Self {
         Self {
             fold_grind_nonce,
-            groups: vec![RingRelationGroupWitness {
+            groups: vec![RingRelationGroupWitness::from_parts(
                 z_folded_rings,
                 z_folded_centered_per_chunk,
                 e_hat,
                 e_folded,
                 hint,
                 role_dims,
-            }],
+            )],
+        }
+    }
+
+    /// Construct from already-grouped witnesses.
+    pub fn from_groups(fold_grind_nonce: u32, groups: Vec<RingRelationGroupWitness<F>>) -> Self {
+        Self {
+            fold_grind_nonce,
+            groups,
         }
     }
 

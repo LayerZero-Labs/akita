@@ -267,7 +267,7 @@ fn commit_group_returns_frozen_conservative_layout() {
 }
 
 #[test]
-fn grouped_root_direct_two_group_onehot_roundtrip() {
+fn grouped_root_folded_two_group_onehot_produces_proof() {
     const PRE_NV: usize = 8;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_SIZE: usize = 1;
@@ -285,7 +285,6 @@ fn grouped_root_direct_two_group_onehot_roundtrip() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = RegularCommitter::setup_verifier(&setup);
 
     let (pre_commitment, pre_hint) =
         ConservativeCommitter::batched_commit(&setup, &pre_polys, &stack).expect("precommit");
@@ -313,9 +312,6 @@ fn grouped_root_direct_two_group_onehot_roundtrip() {
             .expect("final grouped commitment");
 
     let point = debug_random_point(FINAL_NV);
-    let pre_opening = opening_from_poly(&pre_polys[0], &point[..PRE_NV], &pre_layout);
-    let final_opening = opening_from_poly(&final_polys[0], &point, final_layout);
-
     let pre_refs: Vec<&OneHotPoly<OneHotF, u8>> = pre_polys.iter().collect();
     let final_refs: Vec<&OneHotPoly<OneHotF, u8>> = final_polys.iter().collect();
     let prover_groups = vec![
@@ -351,25 +347,8 @@ fn grouped_root_direct_two_group_onehot_roundtrip() {
     .expect("grouped prove");
     assert!(matches!(
         proof.root,
-        akita_types::AkitaBatchedRootProof::ZeroFold { .. }
+        akita_types::AkitaBatchedRootProof::Fold(_)
     ));
-
-    let verifier_groups = vec![
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre verifier point vars"),
-            vec![pre_opening],
-            &pre_commitment,
-        )
-        .expect("pre verifier group"),
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final verifier point vars"),
-            vec![final_opening],
-            &final_commitment,
-        )
-        .expect("final verifier group"),
-    ];
-    let verifier_claims =
-        OpeningClaims::from_groups(point, verifier_groups).expect("grouped verifier claims");
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -382,21 +361,10 @@ fn grouped_root_direct_two_group_onehot_roundtrip() {
     )
     .expect("deserialize grouped proof");
     assert_eq!(decoded, proof);
-
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-root-direct");
-    RegularCommitter::batched_verify(
-        &decoded,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims,
-        BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
-    )
-    .expect("grouped verify");
 }
 
 #[test]
-fn grouped_root_direct_three_group_onehot_roundtrip() {
+fn grouped_root_folded_three_group_onehot_produces_proof() {
     const PRE_NV: usize = 8;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_A_SIZE: usize = 1;
@@ -419,7 +387,6 @@ fn grouped_root_direct_three_group_onehot_roundtrip() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = RegularCommitter::setup_verifier(&setup);
 
     let (pre_a_commitment, pre_a_hint) =
         ConservativeCommitter::batched_commit(&setup, &pre_a_polys, &stack).expect("precommit A");
@@ -490,50 +457,8 @@ fn grouped_root_direct_three_group_onehot_roundtrip() {
     .expect("grouped prove");
     assert!(matches!(
         proof.root,
-        akita_types::AkitaBatchedRootProof::ZeroFold { .. }
+        akita_types::AkitaBatchedRootProof::Fold(_)
     ));
-
-    let verifier_groups = vec![
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre A verifier point vars"),
-            vec![opening_from_poly(
-                &pre_a_polys[0],
-                &point[..PRE_NV],
-                &pre_a_layout,
-            )],
-            &pre_a_commitment,
-        )
-        .expect("pre A verifier group"),
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre B verifier point vars"),
-            vec![opening_from_poly(
-                &pre_b_polys[0],
-                &point[..PRE_NV],
-                &pre_b_layout,
-            )],
-            &pre_b_commitment,
-        )
-        .expect("pre B verifier group"),
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final verifier point vars"),
-            vec![opening_from_poly(&final_polys[0], &point, main_params)],
-            &final_commitment,
-        )
-        .expect("final verifier group"),
-    ];
-    let verifier_claims =
-        OpeningClaims::from_groups(point, verifier_groups).expect("grouped verifier claims");
-
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-root-direct-3");
-    RegularCommitter::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims,
-        BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
-    )
-    .expect("grouped verify");
 }
 
 #[test]

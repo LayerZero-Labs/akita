@@ -691,9 +691,9 @@ where
         .into_iter()
         .map(|key| {
             key.validate()?;
-            let opening_batch = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
+            let singleton = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
             let params = <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &opening_batch,
+                &singleton,
             )?;
             Ok(PrecommittedGroupParams::from_params(key, &params))
         })

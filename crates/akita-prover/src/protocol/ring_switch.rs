@@ -2,7 +2,7 @@
 use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
-use crate::protocol::ring_relation::compute_relation_quotient;
+use crate::protocol::ring_relation::compute_grouped_relation_quotient;
 use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
@@ -24,9 +24,8 @@ use akita_types::dispatch_ring_dim_result;
 use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths, AkitaCommitmentHint,
-    AkitaExpandedSetup, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationOpeningCounts, RingVec,
+    gadget_row_scalars, r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding,
+    LevelParams, MRowLayout, RingVec,
 };
 
 mod coeffs;
@@ -36,10 +35,11 @@ mod finalize;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
-pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
+pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
-pub use evals::{build_w_evals_compact, compute_m_evals_x};
+pub use evals::{build_w_evals_compact, compute_grouped_m_evals_x};
 pub use finalize::ring_switch_finalize;
 
 /// D-agnostic output of the ring switch protocol, containing everything
