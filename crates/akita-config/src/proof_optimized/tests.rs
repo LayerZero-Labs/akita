@@ -1,6 +1,5 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::FieldCore;
 #[cfg(feature = "schedules-default")]
 use akita_field::{CanonicalField, One};
 #[cfg(feature = "schedules-default")]
