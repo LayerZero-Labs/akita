@@ -37,7 +37,12 @@ fn prepare_fold_replay<'a, F, E, T>(
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let lp = &scheduled.params;
@@ -199,7 +204,12 @@ pub(super) fn verify_suffix<'a, F, E, T>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     for (offset, step) in steps.iter().enumerate() {

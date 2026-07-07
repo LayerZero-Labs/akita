@@ -29,7 +29,12 @@ pub(super) fn verify_root<F, E, T>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let m_row_layout = proof.fold_m_row_layout().ok_or(AkitaError::InvalidProof)?;
@@ -135,7 +140,12 @@ fn verify_root_inner<F, E, T>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let role_dims = root_lp.role_dims();
