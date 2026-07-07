@@ -84,7 +84,7 @@ where
 /// why callers can use it even though `Fp128` keeps `DELAYED_PRODUCT_SUM_IS_EXACT`
 /// at its conservative `false` default.
 #[inline]
-pub fn eval_flat_ring_at_pows_deferred<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
+pub fn eval_flat_ring_at_pows_fast<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
 where
     F: FieldCore,
     E: MulBaseUnreduced<F>,
@@ -95,21 +95,6 @@ where
         |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_to_product_accum(*coeff),
     );
     <E as HasUnreducedOps>::reduce_product_accum(accum)
-}
-
-/// Deferred-reduction form of [`eval_ring_at_pows`]; see
-/// [`eval_flat_ring_at_pows_deferred`] for the accumulation/reduction details.
-#[inline]
-pub fn eval_ring_at_pows_deferred<F, E, const D: usize>(
-    r: &CyclotomicRing<F, D>,
-    alpha_pows: &[E],
-) -> E
-where
-    F: FieldCore,
-    E: MulBaseUnreduced<F>,
-{
-    debug_assert_eq!(alpha_pows.len(), D);
-    eval_flat_ring_at_pows_deferred(r.coefficients(), alpha_pows)
 }
 
 #[cfg(test)]
@@ -147,7 +132,7 @@ mod tests {
             }
             assert_eq!(
                 eval_ring_at_pows(&ring, &pows),
-                eval_ring_at_pows_deferred(&ring, &pows),
+                eval_flat_ring_at_pows_fast(ring.coefficients(), &pows),
                 "deferred reduction diverged from per-term at seed {seed}"
             );
         }

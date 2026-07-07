@@ -4,7 +4,7 @@
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use crate::protocol::{SetupEvalPlan, SetupEvaluator};
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::{eval_ring_at_pows_deferred, scalar_powers};
+use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -318,10 +318,7 @@ where
         0..required,
         E::zero,
         |mut acc, lambda| {
-            // `Σ_k eq_y[k]·coeff[k]` is `eval_ring_at_pows(ring, eq_y)`; use the
-            // deferred-reduction form (one modular reduction instead of D) — the
-            // same win as the direct-mode `packed_slice_inner_sum` scan.
-            let ring_eval = eval_ring_at_pows_deferred(&setup_entries[lambda], eq_y);
+            let ring_eval = eval_flat_ring_at_pows_fast(setup_entries[lambda].coefficients(), eq_y);
             acc += eq_lambda[lambda] * ring_eval;
             acc
         },
