@@ -17,14 +17,14 @@ workflow = repo / ".github/workflows/profile-bench.yml"
 pcs = repo / "crates/akita-pcs/Cargo.toml"
 
 MODE_FEATURE = {
-    "onehot_fp32_d128": "schedules-fp32-d128-onehot",
-    "onehot_fp64_d128": "schedules-fp64-d128-onehot",
-    "dense_fp128_d64": "schedules-fp128-d64-full",
-    "onehot_fp128_d64": "schedules-fp128-d64-onehot",
-    "onehot_fp128_d64_tensor": "schedules-fp128-d64-onehot-tensor",
-    "onehot_fp128_d64_multi_chunk_w8r2": "schedules-fp128-d64-onehot-multi-chunk",
-    "onehot_fp128_d64_multi_chunk_w2r2": "schedules-fp128-d64-onehot-multi-chunk-w2r2",
-    "onehot_fp128_d64_multi_chunk_w4r2": "schedules-fp128-d64-onehot-multi-chunk-w4r2",
+    "onehot_fp32_d128": "mode-onehot-fp32-d128",
+    "onehot_fp64_d128": "mode-onehot-fp64-d128",
+    "dense_fp128_d64": "mode-dense-fp128-d64",
+    "onehot_fp128_d64": "mode-onehot-fp128-d64",
+    "onehot_fp128_d64_tensor": "mode-onehot-fp128-d64-tensor",
+    "onehot_fp128_d64_multi_chunk_w8r2": "mode-onehot-fp128-d64-multi-chunk-w8r2",
+    "onehot_fp128_d64_multi_chunk_w2r2": "mode-onehot-fp128-d64-multi-chunk-w2r2",
+    "onehot_fp128_d64_multi_chunk_w4r2": "mode-onehot-fp128-d64-multi-chunk-w4r2",
 }
 MODE_NUM_POLYS = {mode: {1, 4} for mode in MODE_FEATURE}
 
