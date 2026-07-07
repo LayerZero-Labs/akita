@@ -338,7 +338,7 @@ fn verify_stage2<F, E, T>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let witness_oracle = match stage2 {
@@ -493,7 +493,7 @@ fn verify_stage2_kernel<F, E, T, const D: usize>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let stage2_verifier = AkitaStage2Verifier::new(
@@ -537,7 +537,7 @@ fn verify_stage3<F, E, T>(
 ) -> Result<Option<Vec<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
@@ -588,7 +588,7 @@ pub(in crate::protocol::core) fn verify_fold<F, E, T>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let opening_shape = prepared.opening_shape.clone();

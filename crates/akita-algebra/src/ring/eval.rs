@@ -1,7 +1,8 @@
 //! Scalar evaluation helpers for cyclotomic ring elements.
 
 use super::CyclotomicRing;
-use akita_field::{FieldCore, MulBase};
+use akita_field::unreduced::HasUnreducedOps;
+use akita_field::{FieldCore, MulBase, MulBaseUnreduced, Zero};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
@@ -66,4 +67,89 @@ where
         .fold(E::zero(), |acc, (coeff, alpha_pow)| {
             acc + alpha_pow.mul_base(*coeff)
         })
+}
+
+/// Deferred-reduction form of [`eval_flat_ring_at_pows`].
+///
+/// Accumulates all `E × F` products into a single
+/// [`HasUnreducedOps::ProductAccum`] and reduces **once** at the end, instead of
+/// reducing after every coefficient. On a 128-bit prime the modular reduction is
+/// a large fraction of each multiply, so this turns ~`len` reductions into one.
+///
+/// The result is bit-identical to [`eval_flat_ring_at_pows`] as long as the
+/// running product-sum stays within the accumulator's carry headroom. For
+/// `Fp128` each `u128` accumulator limb holds a 64-bit product word, so the sum
+/// of up to ~`2^64` products is exact — the `D ≈ 64` setup entries are trivially
+/// within bounds (validated by `deferred_matches_per_term_fp128_d64`). This is
+/// why callers can use it even though `Fp128` keeps `DELAYED_PRODUCT_SUM_IS_EXACT`
+/// at its conservative `false` default.
+#[inline]
+pub fn eval_flat_ring_at_pows_deferred<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
+where
+    F: FieldCore,
+    E: MulBaseUnreduced<F>,
+{
+    debug_assert_eq!(alpha_pows.len(), coeffs.len());
+    let accum = coeffs.iter().zip(alpha_pows.iter()).fold(
+        <E as HasUnreducedOps>::ProductAccum::zero(),
+        |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_to_product_accum(*coeff),
+    );
+    <E as HasUnreducedOps>::reduce_product_accum(accum)
+}
+
+/// Deferred-reduction form of [`eval_ring_at_pows`]; see
+/// [`eval_flat_ring_at_pows_deferred`] for the accumulation/reduction details.
+#[inline]
+pub fn eval_ring_at_pows_deferred<F, E, const D: usize>(
+    r: &CyclotomicRing<F, D>,
+    alpha_pows: &[E],
+) -> E
+where
+    F: FieldCore,
+    E: MulBaseUnreduced<F>,
+{
+    debug_assert_eq!(alpha_pows.len(), D);
+    eval_flat_ring_at_pows_deferred(r.coefficients(), alpha_pows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime128OffsetA7F7;
+
+    type F = Prime128OffsetA7F7;
+    const D: usize = 64;
+
+    fn sample(seed: u128) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|i| {
+            let x = seed
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15_1234_5678_9ABC_DEF1)
+                .wrapping_add((i as u128).wrapping_mul(0x100_0000_01B3));
+            F::from_canonical_u128(x & ((1u128 << 120) - 1))
+        }))
+    }
+
+    /// The deferred-reduction dot product must equal the per-term reduce path
+    /// bit-for-bit at `D = 64` (validates the `Fp128` accumulator headroom that
+    /// `DELAYED_PRODUCT_SUM_IS_EXACT = false` leaves formally unblessed).
+    #[test]
+    fn deferred_matches_per_term_fp128_d64() {
+        for seed in 0..128u128 {
+            let ring = sample(seed.wrapping_add(1));
+            let alpha = F::from_canonical_u128(
+                seed.wrapping_mul(0x1234_5678_9ABC).wrapping_add(7) & ((1u128 << 120) - 1),
+            );
+            let mut pows = [F::zero(); D];
+            let mut p = F::one();
+            for slot in pows.iter_mut() {
+                *slot = p;
+                p *= alpha;
+            }
+            assert_eq!(
+                eval_ring_at_pows(&ring, &pows),
+                eval_ring_at_pows_deferred(&ring, &pows),
+                "deferred reduction diverged from per-term at seed {seed}"
+            );
+        }
+    }
 }

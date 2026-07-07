@@ -6,10 +6,10 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::eval_ring_at_pows;
+use akita_algebra::ring::eval_ring_at_pows_deferred;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, ExtField, FieldCore, MulBase};
+use akita_field::{AkitaError, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 
 use crate::layout::{LevelParams, MRowLayout};
 use crate::proof::AkitaExpandedSetup;
@@ -224,7 +224,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
         if self.required > setup_len {
@@ -683,7 +683,7 @@ fn packed_slice_inner_sum<
 ) -> E
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: ExtField<F> + MulBaseUnreduced<F>,
 {
     cfg_fold_reduce!(
         range,
@@ -702,7 +702,7 @@ where
                 weight += a_weight * z_eq[lambda - a_start];
             }
             if !weight.is_zero() {
-                acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
+                acc += eval_ring_at_pows_deferred(&setup_flat[lambda], alpha_pows) * weight;
             }
             acc
         },

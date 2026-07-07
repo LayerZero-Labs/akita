@@ -72,7 +72,10 @@ where
     pub(crate) fn evaluate<const D: usize>(
         &self,
         mode: SetupEvaluatorMode<'_, F, E>,
-    ) -> Result<SetupEvaluation<E>, AkitaError> {
+    ) -> Result<SetupEvaluation<E>, AkitaError>
+    where
+        E: akita_field::MulBaseUnreduced<F>,
+    {
         if self.alpha_pows.len() != D {
             return Err(AkitaError::InvalidSize {
                 expected: D,
