@@ -59,6 +59,10 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 
 Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 
+## akita-pcs integration tests
+
+New `akita-pcs` integration test files go under `crates/akita-pcs/tests/integration_tests/*.rs`, not directly under `crates/akita-pcs/tests/` — the latter is auto-discovered by Cargo as one binary per file, defeating the point of the consolidated suite. Add a `#[path = "integration_tests/<name>.rs"] mod <name>;` line for it in `crates/akita-pcs/tests/integration_tests_suite.rs`; `scripts/check-pcs-integration-tests-coverage.sh` fails CI if you forget.
+
 ## Maintainer pointers
 
 | Topic | Where |
