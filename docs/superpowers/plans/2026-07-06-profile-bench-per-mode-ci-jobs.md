@@ -550,6 +550,134 @@ Expected: `profile-ci linkage smoke check passed.` and `profile-ci feature cover
 
 ---
 
+### Task 7: Split group 3 by field type
+
+**Context:** Task 5's verification measured group `3-flat-onehot-suite` at 103.7s versus the ~107s all-8-modes baseline — only a ~3% improvement, because it's the only matrix job spanning 3 distinct field types (fp32, fp64, fp128) in one binary, and each field type appears to pay its own large fixed monomorphization cost regardless of mode count (confirmed characteristic, not a bug in Tasks 1-6). Since the 4 (now more) matrix jobs run in `fail-fast: false` parallel, this job is the CI run's long pole, so overall wall-clock barely improves even though per-job compute cost drops. The human has decided: split group 3 into one job per field type so each job pays the fixed cost for only one field type, bringing all jobs down to the ~40-50s range and delivering a real wall-clock win, not just a runner-minutes win.
+
+**Files:**
+- Modify: `.github/workflows/profile-bench.yml:99-117` (the existing group 3 and group 4 entries)
+
+**Interfaces:**
+- Consumes: `mode-onehot-fp32-d128`, `mode-onehot-fp64-d128`, `mode-onehot-fp128-d64` Cargo features (from Task 1), already-working per-group `pcs_mode_features` mechanism (from Task 4).
+- No script or Rust changes needed: `scripts/check_profile_ci_features.sh`'s per-group check (from the fix wave) parses matrix groups generically by `- name:` entries, so it will validate the new groups without modification.
+
+- [ ] **Step 1: Replace group 3 with three per-field-type groups, and renumber the old group 4**
+
+Current content at `.github/workflows/profile-bench.yml:99-117`:
+
+```yaml
+          - name: 3-flat-onehot-suite
+            pcs_mode_features: mode-onehot-fp32-d128,mode-onehot-fp64-d128,mode-onehot-fp128-d64
+            cases: |
+              onehot_fp32_d128:28:1
+              onehot_fp64_d128:28:1
+              onehot_fp128_d64:32:1
+              onehot_fp128_d64:32:1:recursive
+              onehot_fp128_d64:30:4
+          - name: 4-distributed
+            # Keep this in its own group so the first PR that introduces the
+            # profile mode can still benchmark the PR side even though its
+            # merge-base binary cannot run the new mode. Once merged, future
+            # PRs compare this case against merge-base like the rest.
+            baseline_required_mode: onehot_fp128_d64_multi_chunk_w8r2
+            pcs_mode_features: mode-onehot-fp128-d64-multi-chunk-w2r2,mode-onehot-fp128-d64-multi-chunk-w4r2,mode-onehot-fp128-d64-multi-chunk-w8r2
+            cases: |
+              onehot_fp128_d64_multi_chunk_w2r2:32:1
+              onehot_fp128_d64_multi_chunk_w4r2:32:1
+              onehot_fp128_d64_multi_chunk_w8r2:32:1
+```
+
+Replace with:
+
+```yaml
+          - name: 3-flat-fp32-onehot
+            pcs_mode_features: mode-onehot-fp32-d128
+            cases: |
+              onehot_fp32_d128:28:1
+          - name: 4-flat-fp64-onehot
+            pcs_mode_features: mode-onehot-fp64-d128
+            cases: |
+              onehot_fp64_d128:28:1
+          - name: 5-flat-fp128-onehot
+            pcs_mode_features: mode-onehot-fp128-d64
+            cases: |
+              onehot_fp128_d64:32:1
+              onehot_fp128_d64:32:1:recursive
+              onehot_fp128_d64:30:4
+          - name: 6-distributed
+            # Keep this in its own group so the first PR that introduces the
+            # profile mode can still benchmark the PR side even though its
+            # merge-base binary cannot run the new mode. Once merged, future
+            # PRs compare this case against merge-base like the rest.
+            baseline_required_mode: onehot_fp128_d64_multi_chunk_w8r2
+            pcs_mode_features: mode-onehot-fp128-d64-multi-chunk-w2r2,mode-onehot-fp128-d64-multi-chunk-w4r2,mode-onehot-fp128-d64-multi-chunk-w8r2
+            cases: |
+              onehot_fp128_d64_multi_chunk_w2r2:32:1
+              onehot_fp128_d64_multi_chunk_w4r2:32:1
+              onehot_fp128_d64_multi_chunk_w8r2:32:1
+```
+
+(Only the `name:`/`pcs_mode_features:`/`cases:` values change; every other mechanism — `AKITA_BENCH_PCS_MODE_FEATURES` export, the 3-tier merge-base fallback, artifact naming — already works generically off `matrix.group.*` and needs no changes. The old group 4's `baseline_required_mode` and its explanatory comment move unchanged onto the renumbered group 6.)
+
+Note the index renumbering (3/4/5/6): the surrounding comment block (`.github/workflows/profile-bench.yml:59-61`) explains group names are index-prefixed so the `report` job's artifact glob sorts deterministically — keep every group sequentially numbered after this split so that ordering guarantee holds. Do not renumber group 1 or group 2.
+
+- [ ] **Step 2: Validate the YAML**
+
+Run: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/profile-bench.yml'))" && echo OK`
+Expected: `OK`
+
+- [ ] **Step 3: Confirm the coverage script still passes against the new group shape**
+
+Run: `./scripts/check_profile_ci_features.sh`
+Expected: `profile-ci feature coverage check passed.` followed by `per-group pcs_mode_features coverage check passed.` — this exercises the fix-wave's per-group check against the new 6-group structure with no script changes, proving that check's generality.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .github/workflows/profile-bench.yml
+git commit -m "ci(profile-bench): split flat-onehot-suite into one job per field type"
+```
+
+---
+
+### Task 8: Re-verify timing after the split
+
+**Files:**
+- None (verification only, no source changes).
+
+**Interfaces:**
+- Consumes: everything from Task 7.
+
+- [ ] **Step 1: Clean-build the three new field-type groups and record timing**
+
+Run (same pattern as Task 5 Step 1, using a fresh `CARGO_TARGET_DIR` per group):
+
+```bash
+for spec in \
+  "3-flat-fp32-onehot:mode-onehot-fp32-d128" \
+  "4-flat-fp64-onehot:mode-onehot-fp64-d128" \
+  "5-flat-fp128-onehot:mode-onehot-fp128-d64" \
+; do
+  name="${spec%%:*}"
+  features="${spec#*:}"
+  target_dir="$(mktemp -d)/target"
+  echo "=== $name ($features) ==="
+  time CARGO_TARGET_DIR="$target_dir" cargo build --release --example profile \
+    --no-default-features --features "parallel,profile-ci-registry,$features" -p akita-pcs
+  rm -rf "$(dirname "$target_dir")"
+done
+```
+
+Expected: each of the three new groups finishes in roughly the same ~40-50s range as groups 1/2/6 (single field type each) — a real improvement over group 3's previous 103.7s, since each job now pays only one field type's fixed monomorphization cost. If any of the three is still close to 100s, something about the split didn't work as intended — stop and report rather than proceeding.
+
+- [ ] **Step 2: Confirm the CI run's new critical path**
+
+Report the max of all 6 groups' measured times (3 from this task, 3 already known from Task 5: group 1 = 42.4s, group 2 = 43.0s, group 6/old-group-4 = 43.5s). This max is the new expected CI wall-clock floor for the `bench` phase (before the parallel jobs converge in `report`). Compare it against the original ~107s all-8-modes baseline to state the actual wall-clock improvement now achieved.
+
+- [ ] **Step 3: Commit** (only if any of the above surfaced a fix; otherwise skip — this task is verification-only)
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
