@@ -7,8 +7,8 @@ use akita_field::{
 };
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof,
-    FpExtEncoding, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
+    dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
+    CleartextWitnessProof, FpExtEncoding, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -132,9 +132,10 @@ where
     let d_a = lp.role_dims().d_a();
     let source = match witness {
         CleartextWitnessProof::SegmentTyped(_) => {
-            let digits = akita_types::dispatch_ring_dim_result!(d_a, |D| {
-                witness.logical_i8_digits::<D>(lp, num_segments)
-            })?;
+            let digits =
+                dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+                    witness.logical_i8_digits::<D>(lp, num_segments)
+                })?;
             if digits.len() != physical_w_len {
                 return Err(AkitaError::InvalidProof);
             }

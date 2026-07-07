@@ -293,7 +293,7 @@ Under this spec the verifier builds one `RingRelationInstance` from those same p
 Every field is already in the verifier's hands at this point, so this is a regrouping, not new computation. Concretely:
 
 - `m_row_layout`: from the level's `LevelParams` (copied out).
-- `challenges`: the stage-1 fold challenges already sampled from the transcript.
+- `challenges`: the witness fold challenges already sampled from the transcript.
 - `opening_points` / `ring_multiplier_points`: the verifier's reconstructed opening points (`RingMultiplierOpeningPoint::from_base` is already used in `proof/batch.rs`).
 - `incidence`: the `ClaimIncidenceSummary` the verifier already threads through `verify_root_level_inner` (`levels.rs:283`) and `verify_one_level_inner` (`recursive.rs:886`); this supplies `num_public_rows` and the three summary maps.
 - `commitment_routing`: built from the same per-path data the verifier already derives for `PreparedRingSwitchRowEval.claim_to_point_poly` (`ring_switch.rs:133`); root collapses to the point routing, recursive multipoint routes all claims to group 0.
@@ -310,7 +310,7 @@ The verifier's `RingSwitchSegmentLayout` is replaced by this method's return typ
 This is the deduplication that earns `RingRelationInstance` its place in `akita-types`: without it, the shared type would be a passive bag of fields rather than the single source of the layout both sides must agree on.
 
 **Deferred (enabled but not in this PR).**
-Unifying the ring-switch Fiat-Shamir sampling blocks (prover `finalize.rs` versus verifier `ring_switch_verifier_core`) and the fold-challenge wrapper (`derive_stage1_challenges` versus the prover inline path) is enabled by the shared instance but is left to a follow-up to keep this PR's review surface bounded.
+Unifying the ring-switch Fiat-Shamir sampling blocks (prover `finalize.rs` versus verifier `ring_switch_verifier_core`) and the fold-challenge wrapper (`derive_witness_fold_challenges` versus the prover inline path) is enabled by the shared instance but is left to a follow-up to keep this PR's review surface bounded.
 Unifying the prover's materialized M-table build with the verifier's deferred slice-MLE evaluators is explicitly not pursued; they are intentionally different cost models.
 
 **True recursive multipoint (one commitment opened at many points): deferred.**

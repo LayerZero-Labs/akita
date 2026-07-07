@@ -84,7 +84,7 @@ pub fn optimal_m_r_split(
     ring_subfield_norm_bound: u32,
     fold_challenge: FoldChallengeNorms,
     fold_witness: FoldWitnessNorms,
-    stage1_config: &SparseChallengeConfig,
+    fold_challenge_config: &SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
     decomposition: DecompositionParams,
     onehot_chunk_size: usize,
@@ -119,7 +119,7 @@ pub fn optimal_m_r_split(
             sis_family,
             d as usize,
             decomposition,
-            stage1_config,
+            fold_challenge_config,
             fold_challenge_shape,
             log_commit_bound == 1,
             onehot_chunk_size,
@@ -138,7 +138,7 @@ pub fn optimal_m_r_split(
             num_claims,
             inner_width,
             decomposition,
-            stage1_config,
+            fold_challenge_config,
             fold_challenge_shape,
             d as usize,
             fold_challenge,
@@ -169,21 +169,21 @@ mod tests {
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
         use crate::sis::fold_witness_linf_digit_plan;
-        use akita_challenges::{D64_PRODUCTION_EXACT_SHELL_MAG1, D64_PRODUCTION_EXACT_SHELL_MAG2};
-        let stage1_config = SparseChallengeConfig::ExactShell {
-            count_mag1: D64_PRODUCTION_EXACT_SHELL_MAG1,
-            count_mag2: D64_PRODUCTION_EXACT_SHELL_MAG2,
+        use akita_challenges::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
+        let fold_challenge_config = SparseChallengeConfig {
+            count_pm1: D64_PRODUCTION_PM1_COUNT,
+            count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
         let fold_challenge =
-            crate::sis::fold_challenge_norms(&stage1_config, TensorChallengeShape::Flat);
+            crate::sis::fold_challenge_norms(&fold_challenge_config, TensorChallengeShape::Flat);
         let fold_witness = FoldWitnessNorms::new(3, 64, 64, true);
         let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
             crate::sis::fold_witness_linf_cap_policy(
-                &stage1_config,
+                &fold_challenge_config,
                 TensorChallengeShape::Flat,
                 64,
             ),
-            &stage1_config,
+            &fold_challenge_config,
             TensorChallengeShape::Flat,
             64,
             64,

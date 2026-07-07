@@ -389,10 +389,7 @@ mod tests {
             2,
             2,
             2,
-            SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![1],
-            },
+            SparseChallengeConfig::pm1_only(1),
         )
         .with_decomp(2, 3, 1, 26, 512 * 8)
         .expect("structured slice fixture lp")

@@ -2,14 +2,16 @@
 
 use akita_algebra::ntt::prime::PrimeWidth;
 use akita_algebra::ntt::tables::{
-    q128_primes, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
-    Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
+    q128_primes, validate_profile_crt_ring_degree, Q128_MAX_RING_D, Q128_MODULUS, Q128_NUM_PRIMES,
+    Q32_MAX_RING_D, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MAX_RING_D, Q64_MODULUS,
+    Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{cfg_iter, AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
 use akita_field::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
+use akita_types::ntt_ring_degree_supported_for_field;
 
 use akita_types::{NttCacheKey, RingMatrixView};
 
@@ -25,11 +27,10 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 /// Select a CRT+NTT parameter set from field modulus and ring degree.
 ///
 /// Dispatch policy:
-/// - `q <= 2^32-99` and `D <= 256`: Q32 (`i32`, K=2)
-/// - `q <= 2^64-59` and `D <= 256`: Q64 (`i32`, K=3)
-/// - `q ∈ { 2^128-275, 2^128-159, 2^128-2355, 2^128-2^32+22537 }` and
-///   `D <= 256`: Q128 (`i32`, K=5)
-/// - otherwise: explicit setup error
+/// - `q <= 2^32-99`, `D` in fp32 NTT tier band: Q32 (K=2)
+/// - `q <= 2^64-59`, `D` in fp64 NTT tier band: Q64 (K=3)
+/// - listed fp128 moduli, `D` in fp128 NTT tier band: Q128 (K=5)
+/// - profile CRT caps apply at `D >= 64`; smaller B/D degrees skip caps
 ///
 /// # Errors
 ///
@@ -37,13 +38,16 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 /// matches the field modulus.
 pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
-    if !matches!(D, 32 | 64 | 128 | 256) {
+    if !ntt_ring_degree_supported_for_field::<F>(D) {
+        let tier = akita_types::protocol_dispatch_tier::<F>();
         return Err(AkitaError::InvalidSetup(format!(
-            "CRT+NTT supports ring degree in {{32, 64, 128, 256}}, got D={D}"
+            "CRT+NTT ring degree {D} outside tier band [{}, {}] for this field",
+            akita_types::ntt_min_ring_d(tier),
+            akita_types::ntt_max_ring_d(tier),
         )));
     }
 
-    let modulus = detect_field_modulus::<F>();
+    let modulus = akita_types::field_modulus::<F>();
     let split_only_q128_modulus =
         u128::MAX - (<Prime128Offset159 as PseudoMersenneField>::MODULUS_OFFSET - 1);
     let ntt_q128_modulus =
@@ -52,10 +56,16 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
         u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
     if modulus <= Q32_MODULUS as u128 {
+        if D >= 64 {
+            validate_profile_crt_ring_degree(D, Q32_MAX_RING_D)?;
+        }
         return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(Q32_PRIMES)));
     }
 
     if modulus <= Q64_MODULUS as u128 {
+        if D >= 64 {
+            validate_profile_crt_ring_degree(D, Q64_MAX_RING_D)?;
+        }
         return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(Q64_PRIMES)));
     }
 
@@ -64,6 +74,9 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
         || modulus == ntt_q128_modulus
         || modulus == a7f7_q128_modulus
     {
+        if D >= 64 {
+            validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
+        }
         return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
             q128_primes(),
         )));
@@ -72,10 +85,6 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     Err(AkitaError::InvalidSetup(format!(
         "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}, {a7f7_q128_modulus}}}"
     )))
-}
-
-fn detect_field_modulus<F: CanonicalField>() -> u128 {
-    (-F::one()).to_canonical_u128() + 1
 }
 
 /// Pre-converted CRT+NTT cache for a flat 1D matrix, keyed by parameter family.
@@ -168,93 +177,76 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
     }
 }
 
-/// Type-erased prepared-setup NTT cache over supported protocol ring degrees.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NttSlotCacheAny {
-    /// Ring degree 32.
-    D32(NttSlotCache<32>),
-    /// Ring degree 64.
-    D64(NttSlotCache<64>),
-    /// Ring degree 128.
-    D128(NttSlotCache<128>),
-    /// Ring degree 256.
-    D256(NttSlotCache<256>),
+macro_rules! define_ntt_slot_cache_any {
+    ( $( $d:literal => $v:ident ),+ $(,)? ) => {
+        /// Type-erased prepared-setup NTT cache over supported NTT ring degrees.
+        #[allow(clippy::large_enum_variant)]
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub enum NttSlotCacheAny {
+            $( #[doc = concat!("Ring degree ", stringify!($d), ".")] $v(NttSlotCache<$d>), )+
+        }
+
+        impl NttSlotCacheAny {
+            #[must_use]
+            pub const fn ring_d(&self) -> usize {
+                match self {
+                    $( Self::$v(_) => $d, )+
+                }
+            }
+
+            /// In-memory byte footprint of this cache entry.
+            #[must_use]
+            pub fn cache_bytes(&self) -> usize {
+                match self {
+                    $( Self::$v(cache) => cache.cache_bytes(), )+
+                }
+            }
+
+            /// Cache-hit accessor. Returns [`AkitaError::InvalidSetup`] when the stored
+            /// variant does not match the requested compile-time ring degree.
+            pub fn as_d<const D: usize>(&self) -> Result<&NttSlotCache<D>, AkitaError> {
+                if self.ring_d() != D {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "NTT cache ring_d mismatch: stored {}, requested {D}",
+                        self.ring_d()
+                    )));
+                }
+                // SAFETY: `ring_d()` equals `D`, so the active enum variant is the one
+                // for degree `D` and the pointer cast is layout-identical.
+                Ok(unsafe { self.as_d_assuming_match::<D>() })
+            }
+
+            #[inline]
+            unsafe fn as_d_assuming_match<const D: usize>(&self) -> &NttSlotCache<D> {
+                match self {
+                    $( Self::$v(cache) => {
+                        &*(cache as *const NttSlotCache<$d> as *const NttSlotCache<D>)
+                    } )+
+                }
+            }
+        }
+
+        $( impl From<NttSlotCache<$d>> for NttSlotCacheAny {
+            fn from(cache: NttSlotCache<$d>) -> Self {
+                Self::$v(cache)
+            }
+        } )+
+    };
 }
+
+define_ntt_slot_cache_any!(
+    16 => D16,
+    32 => D32,
+    64 => D64,
+    128 => D128,
+    256 => D256,
+    512 => D512,
+    1024 => D1024,
+    2048 => D2048,
+);
 
 /// Map of warmed NTT caches keyed by [`NttCacheKey`].
 pub type NttCacheMap = std::collections::HashMap<NttCacheKey, std::sync::Arc<NttSlotCacheAny>>;
-
-impl NttSlotCacheAny {
-    #[must_use]
-    pub const fn ring_d(&self) -> usize {
-        match self {
-            Self::D32(_) => 32,
-            Self::D64(_) => 64,
-            Self::D128(_) => 128,
-            Self::D256(_) => 256,
-        }
-    }
-
-    /// In-memory byte footprint of this cache entry.
-    #[must_use]
-    pub fn cache_bytes(&self) -> usize {
-        match self {
-            Self::D32(cache) => cache.cache_bytes(),
-            Self::D64(cache) => cache.cache_bytes(),
-            Self::D128(cache) => cache.cache_bytes(),
-            Self::D256(cache) => cache.cache_bytes(),
-        }
-    }
-
-    /// Cache-hit accessor. Returns [`AkitaError::InvalidSetup`] when the stored
-    /// variant does not match the requested compile-time ring degree.
-    pub fn as_d<const D: usize>(&self) -> Result<&NttSlotCache<D>, AkitaError> {
-        if self.ring_d() != D {
-            return Err(AkitaError::InvalidSetup(format!(
-                "NTT cache ring_d mismatch: stored {}, requested {D}",
-                self.ring_d()
-            )));
-        }
-        // SAFETY: `ring_d()` equals `D`, so the active enum variant is the one
-        // for degree `D` and the pointer cast is layout-identical.
-        Ok(unsafe { self.as_d_assuming_match::<D>() })
-    }
-
-    #[inline]
-    unsafe fn as_d_assuming_match<const D: usize>(&self) -> &NttSlotCache<D> {
-        match self {
-            Self::D32(cache) => &*(cache as *const NttSlotCache<32> as *const NttSlotCache<D>),
-            Self::D64(cache) => &*(cache as *const NttSlotCache<64> as *const NttSlotCache<D>),
-            Self::D128(cache) => &*(cache as *const NttSlotCache<128> as *const NttSlotCache<D>),
-            Self::D256(cache) => &*(cache as *const NttSlotCache<256> as *const NttSlotCache<D>),
-        }
-    }
-}
-
-impl From<NttSlotCache<32>> for NttSlotCacheAny {
-    fn from(cache: NttSlotCache<32>) -> Self {
-        Self::D32(cache)
-    }
-}
-
-impl From<NttSlotCache<64>> for NttSlotCacheAny {
-    fn from(cache: NttSlotCache<64>) -> Self {
-        Self::D64(cache)
-    }
-}
-
-impl From<NttSlotCache<128>> for NttSlotCacheAny {
-    fn from(cache: NttSlotCache<128>) -> Self {
-        Self::D128(cache)
-    }
-}
-
-impl From<NttSlotCache<256>> for NttSlotCacheAny {
-    fn from(cache: NttSlotCache<256>) -> Self {
-        Self::D256(cache)
-    }
-}
 
 impl<const D: usize> NttSlotCache<D> {
     /// Total number of NTT elements stored in this cache.
@@ -318,15 +310,18 @@ mod tests {
     }
 
     #[test]
-    fn selects_q32_params_across_supported_ring_dims() {
-        assert_selects_q32_params::<Prime32Offset99, 32>();
+    fn selects_q32_params_across_tier_ntt_band() {
+        assert!(matches!(
+            select_crt_ntt_params::<Prime32Offset99, 32>(),
+            Err(AkitaError::InvalidSetup(_))
+        ));
         assert_selects_q32_params::<Prime32Offset99, 64>();
         assert_selects_q32_params::<Prime32Offset99, 128>();
         assert_selects_q32_params::<Prime32Offset99, 256>();
     }
 
     #[test]
-    fn selects_q64_params_across_supported_ring_dims() {
+    fn selects_q64_params_across_tier_ntt_band() {
         assert_selects_q64_params::<Prime64Offset59, 32>();
         assert_selects_q64_params::<Prime64Offset59, 64>();
         assert_selects_q64_params::<Prime64Offset59, 128>();
@@ -334,15 +329,28 @@ mod tests {
     }
 
     #[test]
-    fn rejects_ring_degrees_above_256() {
+    fn fp128_tier_ntt_accepts_d16() {
+        assert_selects_q128_params::<Prime128OffsetA7F7, 16>();
+    }
+
+    #[test]
+    fn profile_caps_limit_crt_ring_degree_by_modulus() {
+        assert!(select_crt_ntt_params::<Prime32Offset99, 512>().is_ok());
+        assert!(select_crt_ntt_params::<Prime32Offset99, 2048>().is_ok());
+        assert!(select_crt_ntt_params::<Prime64Offset59, 1024>().is_ok());
         assert!(matches!(
-            select_crt_ntt_params::<Prime32Offset99, 512>(),
+            select_crt_ntt_params::<Prime64Offset59, 2048>(),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(select_crt_ntt_params::<Prime128Offset275, 512>().is_ok());
+        assert!(matches!(
+            select_crt_ntt_params::<Prime128Offset275, 1024>(),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
 
     #[test]
-    fn selects_q128_params_for_prime275_across_small_protocol_ring_dims() {
+    fn selects_q128_params_for_prime275_across_challenge_ring_dims() {
         assert_selects_q128_params::<Prime128Offset275, 32>();
         assert_selects_q128_params::<Prime128Offset275, 64>();
         assert_selects_q128_params::<Prime128Offset275, 128>();
@@ -355,14 +363,14 @@ mod tests {
     }
 
     #[test]
-    fn selects_q128_params_for_prime_a7f7_across_small_protocol_ring_dims() {
+    fn selects_q128_params_for_prime_a7f7_across_challenge_ring_dims() {
         assert_selects_q128_params::<Prime128OffsetA7F7, 32>();
         assert_selects_q128_params::<Prime128OffsetA7F7, 64>();
         assert_selects_q128_params::<Prime128OffsetA7F7, 128>();
     }
 
     #[test]
-    fn selects_q128_params_for_prime2355_across_small_protocol_ring_dims() {
+    fn selects_q128_params_for_prime2355_across_challenge_ring_dims() {
         assert_selects_q128_params::<Prime128Offset2355, 32>();
         assert_selects_q128_params::<Prime128Offset2355, 64>();
         assert_selects_q128_params::<Prime128Offset2355, 128>();
@@ -372,12 +380,10 @@ mod tests {
 #[cfg(test)]
 mod ntt_slot_cache_any {
     use super::*;
-    use akita_field::{AkitaError, Prime32Offset99};
+    use akita_field::{AkitaError, Prime128OffsetA7F7, Prime32Offset99};
     use akita_types::FlatMatrix;
 
-    type F = Prime32Offset99;
-
-    fn sample_cache<const D: usize>() -> NttSlotCache<D> {
+    fn sample_cache<F: FieldCore + CanonicalField, const D: usize>() -> NttSlotCache<D> {
         let ring = akita_algebra::CyclotomicRing::<F, D>::zero();
         let flat = FlatMatrix::from_ring_slice(&[ring]);
         build_ntt_slot(flat.ring_view::<D>(1, 1).expect("view")).expect("ntt slot")
@@ -385,23 +391,25 @@ mod ntt_slot_cache_any {
 
     #[test]
     fn as_d_returns_matching_variant() {
-        let any: NttSlotCacheAny = sample_cache::<64>().into();
+        let any: NttSlotCacheAny = sample_cache::<Prime32Offset99, 64>().into();
         assert!(any.as_d::<64>().is_ok());
     }
 
     #[test]
     fn as_d_rejects_ring_d_mismatch_without_panic() {
-        let any: NttSlotCacheAny = sample_cache::<64>().into();
+        let any: NttSlotCacheAny = sample_cache::<Prime32Offset99, 64>().into();
         let err = any.as_d::<32>().expect_err("mismatched ring_d");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
     fn from_maps_each_supported_ring_degree() {
-        let d32: NttSlotCacheAny = sample_cache::<32>().into();
-        let d64: NttSlotCacheAny = sample_cache::<64>().into();
-        let d128: NttSlotCacheAny = sample_cache::<128>().into();
-        let d256: NttSlotCacheAny = sample_cache::<256>().into();
+        let d16: NttSlotCacheAny = sample_cache::<Prime128OffsetA7F7, 16>().into();
+        let d32: NttSlotCacheAny = sample_cache::<akita_field::Prime64Offset59, 32>().into();
+        let d64: NttSlotCacheAny = sample_cache::<Prime32Offset99, 64>().into();
+        let d128: NttSlotCacheAny = sample_cache::<Prime32Offset99, 128>().into();
+        let d256: NttSlotCacheAny = sample_cache::<Prime32Offset99, 256>().into();
+        assert_eq!(d16.ring_d(), 16);
         assert_eq!(d32.ring_d(), 32);
         assert_eq!(d64.ring_d(), 64);
         assert_eq!(d128.ring_d(), 128);
@@ -415,7 +423,10 @@ mod ntt_slot_cache_any {
             ring_d: 64,
             num_ring_elements: 1,
         };
-        map.insert(key, std::sync::Arc::new(sample_cache::<64>().into()));
+        map.insert(
+            key,
+            std::sync::Arc::new(sample_cache::<Prime32Offset99, 64>().into()),
+        );
         assert!(map.contains_key(&key));
         assert_eq!(map.get(&key).expect("slot").ring_d(), 64);
     }

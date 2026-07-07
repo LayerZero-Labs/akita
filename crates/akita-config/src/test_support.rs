@@ -67,7 +67,6 @@ where
     // batched commit layout `Scheme::commit` actually uses.
     Cfg::get_params_for_batched_commitment(&OpeningClaimsLayout::new(num_vars, num_polynomials)?)
 }
-
 /// Minimal setup seed for schedule ring-dimension integration tests.
 #[must_use]
 pub fn ring_plan_test_seed(gen_ring_dim: usize) -> akita_types::AkitaSetupSeed {

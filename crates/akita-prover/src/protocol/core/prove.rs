@@ -9,9 +9,9 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
+use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
-    schedule_terminal_direct_witness_shape, should_reject_grouped_root,
+    dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_grouped_root,
     validate_schedule_ring_dims, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 
@@ -38,19 +38,24 @@ pub fn prove_root_direct<F, E, P>(
     ring_d: usize,
 ) -> Result<AkitaBatchedProof<F, E>, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
     E: ExtField<F>,
     P: DirectRootWitnessSource<F, 32>
         + DirectRootWitnessSource<F, 64>
         + DirectRootWitnessSource<F, 128>
         + DirectRootWitnessSource<F, 256>,
 {
-    let witnesses = dispatch_ring_dim_result!(ring_d, |D| {
-        polys
-            .iter()
-            .map(|poly| DirectRootWitnessSource::<F, D>::direct_root_witness(*poly))
-            .collect::<Result<Vec<_>, _>>()
-    })?;
+    let witnesses = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        ring_d,
+        |D| {
+            polys
+                .iter()
+                .map(|poly| DirectRootWitnessSource::<F, D>::direct_root_witness(*poly))
+                .collect::<Result<Vec<_>, _>>()
+        }
+    )?;
     let _ = hints;
     Ok(AkitaBatchedProof {
         root: AkitaBatchedRootProof::new_zero_fold(witnesses),
@@ -169,15 +174,20 @@ where
     // exactly as the verifier's `batched_verify` does) keeps the prover and
     // verifier descriptors byte-identical under a future mixed-D preset. This is
     // the one absorption-parity point the compiler cannot check (S7/S9 caveat).
-    dispatch_ring_dim_result!(expanded.seed().gen_ring_dim, |GEN_D| {
-        bind_transcript_instance_descriptor::<Cfg::Field, T, GEN_D, Cfg>(
-            expanded.as_ref(),
-            &opening_batch,
-            &schedule,
-            basis,
-            transcript,
-        )
-    })?;
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Envelope,
+        Cfg::Field,
+        expanded.seed().gen_ring_dim,
+        |GEN_D| {
+            bind_transcript_instance_descriptor::<Cfg::Field, T, GEN_D, Cfg>(
+                expanded.as_ref(),
+                &opening_batch,
+                &schedule,
+                basis,
+                transcript,
+            )
+        }
+    )?;
 
     if schedule_is_root_direct(&schedule) {
         let commitment_hints = claims.hints().to_vec();

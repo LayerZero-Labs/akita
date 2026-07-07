@@ -248,10 +248,7 @@ mod tests {
             2,
             3,
             2,
-            SparseChallengeConfig::Uniform {
-                weight: 3,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            SparseChallengeConfig::pm1_only(3),
         )
         .with_decomp(2, 3, 2, 2, 3)
         .expect("level params")
@@ -344,11 +341,6 @@ mod tests {
         assert_eq!(slot.padded_len, n_prefix);
         setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
-    }
-
-    #[test]
-    fn commit_setup_prefix_populates_d32_singleton_slot() {
-        assert_commit_setup_prefix_populates_singleton_slot::<32>();
     }
 
     #[test]

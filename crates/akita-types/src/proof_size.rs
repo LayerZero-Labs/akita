@@ -292,12 +292,9 @@ mod tests {
     #[test]
     fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
         const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
@@ -308,7 +305,7 @@ mod tests {
                 2,
                 2,
                 2,
-                stage1_config.clone(),
+                fold_challenge_config,
             )
             .with_decomp(0, 0, 1, 1, 0)
             .unwrap();
@@ -361,12 +358,9 @@ mod tests {
         // serialize to exactly the direct `level_proof_bytes` plus
         // `stage3_setup_product_bytes`, with no other field affected.
         const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
         let next_w_len = D * 8;
         // 100 is not a power of two, so the verifier pads lambda to 128.
         let setup_ring_len = 100usize;
@@ -379,7 +373,7 @@ mod tests {
                 2,
                 2,
                 2,
-                stage1_config.clone(),
+                fold_challenge_config,
             )
             .with_decomp(0, 0, 1, 1, 0)
             .unwrap();
@@ -414,10 +408,7 @@ mod tests {
     #[test]
     fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_w_len = D * 8;
         let num_claims = 3;
 
@@ -429,7 +420,7 @@ mod tests {
                 2,
                 2,
                 2,
-                stage1_config.clone(),
+                fold_challenge_config,
             )
             .with_decomp(0, 0, 1, 1, 0)
             .unwrap();
