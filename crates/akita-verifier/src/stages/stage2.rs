@@ -7,7 +7,8 @@ use akita_field::{
 };
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    dispatch_for_field, eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof,
+    dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
+    CleartextWitnessProof,
     FpExtEncoding, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
 use std::borrow::Cow;
@@ -308,12 +309,19 @@ where
         };
         let relation_oracle = w_eval * alpha_val * row_val;
         let trace_oracle = if let Some(trace) = &self.trace {
-            let trace_weight = eval_trace_terms_closed::<F, E, D>(
-                &trace.layout,
-                y_challenges,
-                x_challenges,
-                &trace.trace_terms,
-            )?;
+            // Grouped roots carry the dense trace-weight table (per-group block
+            // geometry the closed form cannot express); scalar/recursive folds
+            // use the succinct per-claim closed form.
+            let trace_weight = if let Some(dense_evals) = &trace.dense_evals {
+                eval_dense_trace_table::<E>(dense_evals, y_challenges, x_challenges)?
+            } else {
+                eval_trace_terms_closed::<F, E, D>(
+                    &trace.layout,
+                    y_challenges,
+                    x_challenges,
+                    &trace.trace_terms,
+                )?
+            };
             trace.trace_coeff * w_eval * trace_weight
         } else {
             E::zero()

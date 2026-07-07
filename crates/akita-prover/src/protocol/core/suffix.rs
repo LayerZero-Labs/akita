@@ -358,7 +358,7 @@ mod tests {
         let err = match compute_trace_target::<TestF, TestF, _, D>(
             &reduction,
             &folded_rings,
-            &prepared_point,
+            std::slice::from_ref(&prepared_point),
             &[],
             0,
             BasisMode::Lagrange,

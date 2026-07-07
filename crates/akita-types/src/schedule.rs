@@ -548,6 +548,15 @@ impl Schedule {
         self.fold_steps().count()
     }
 
+    /// Reject any fold level that combines precommitted groups with multi-chunk
+    /// witness layout.
+    pub fn reject_grouped_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
+        for fold in self.fold_steps() {
+            fold.params.reject_grouped_multi_chunk(context)?;
+        }
+        Ok(())
+    }
+
     /// Resolve one fold's execution schedule from the static schedule.
     ///
     /// # Errors

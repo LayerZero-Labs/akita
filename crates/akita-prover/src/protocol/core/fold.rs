@@ -49,7 +49,7 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<E>>,
     pub(in crate::protocol::core) trace_eval_target: E,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) trace_prepared_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
     pub(in crate::protocol::core) trace_scale: E,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
@@ -134,11 +134,9 @@ where
 
     if needs_extension_reduction {
         if pad_base_evals {
-            let fold_refs = fold_polys.to_vec();
             finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
                 stack,
                 fold_claims,
-                fold_refs: &fold_refs,
                 protocol_point: &protocol_point,
                 reduction,
                 row_coefficients,
@@ -180,7 +178,6 @@ where
                 FinishFoldArgs {
                     stack,
                     fold_claims: transformed_fold_claims,
-                    fold_refs: &fold_refs,
                     protocol_point: &protocol_point,
                     reduction,
                     row_coefficients,
@@ -197,11 +194,9 @@ where
             )
         }
     } else {
-        let fold_refs = fold_polys.to_vec();
         finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
             stack,
             fold_claims,
-            fold_refs: &fold_refs,
             protocol_point: &protocol_point,
             reduction,
             row_coefficients,
@@ -230,7 +225,6 @@ where
 {
     stack: &'a ProverComputeStack<'a, F, C, O, TS, R>,
     fold_claims: ProverOpeningData<'a, E, Q, F>,
-    fold_refs: &'a [&'a Q],
     protocol_point: &'a [E],
     reduction: Option<ExtensionOpeningReduction<E>>,
     row_coefficients: Option<Vec<E>>,
@@ -275,7 +269,6 @@ where
     let FinishFoldArgs {
         stack,
         fold_claims,
-        fold_refs,
         protocol_point,
         reduction,
         row_coefficients,
@@ -293,68 +286,91 @@ where
     // Extracted level numbers for the A-role claims-evaluation operation; the
     // kernels below must not read schedule types.
     let ring_d = level_params.role_dims().d_a();
-    let m_vars = level_params.m_vars;
-    let r_vars = level_params.r_vars;
-    let block_len = level_params.block_len;
     // A-role operation: prepare the typed opening point, fold-evaluate every
     // claim polynomial at it, and derive the trace target. Typed outputs are
     // converted to D-free carriers (`PreparedOpeningPoint`, `RingVec`) inside
     // the arm.
-    let (prepared_point, e_folded_by_claim, trace_target, row_coefficients, row_coefficient_rings) =
+    let opening_batch = fold_claims.opening_claims().layout()?;
+    let (prepared_points, e_folded_by_claim, trace_target, row_coefficients, row_coefficient_rings) =
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             ring_d,
             |D| {
+            let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+            let mut folded_rings = Vec::with_capacity(opening_batch.num_total_polynomials());
+            let mut e_folded_by_claim = Vec::with_capacity(opening_batch.num_total_polynomials());
+            for group_index in 0..opening_batch.num_groups() {
+                let group_lp = level_params.root_group_params(&opening_batch, group_index)?;
+                let target_len = alpha_bits
+                    .checked_add(group_lp.m_vars())
+                    .and_then(|n| n.checked_add(group_lp.r_vars()))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("group opening point length overflow".to_string())
+                    })?;
+                let group_protocol_point = &protocol_point[..protocol_point.len().min(target_len)];
                 let prepared_point = prepare_opening_point::<F, E, D>(
-                    protocol_point,
+                    group_protocol_point,
                     basis,
-                    m_vars,
-                    r_vars,
+                    group_lp.m_vars(),
+                    group_lp.r_vars(),
                     alpha_bits,
                     block_order,
                 )?;
-                let (folded_rings, e_folded_by_claim) = evaluate_claims_at_prepared_point(
-                    opening.backend(),
-                    Some(opening.prepared()),
-                    fold_refs,
-                    &prepared_point,
-                    block_len,
-                )?;
+                let group_polys = fold_claims.group_polys(group_index)?;
+                let (group_folded_rings, group_e_folded_by_claim) =
+                    evaluate_claims_at_prepared_point(
+                        opening.backend(),
+                        Some(opening.prepared()),
+                        group_polys,
+                        &prepared_point,
+                        group_lp.block_len(),
+                    )?;
                 for pt in &prepared_point.padded_point {
                     append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
                 }
-                let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
-                    &reduction,
-                    &folded_rings,
-                    &prepared_point,
-                    protocol_point,
-                    alpha_bits,
-                    basis,
-                    trace_opening_batch,
-                    row_coefficients,
-                    transcript,
-                )?;
-                let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
-                let e_folded_by_claim = e_folded_by_claim
-                    .iter()
-                    .map(|rows| RingVec::from_ring_elems(rows))
-                    .collect::<Vec<_>>();
-                Ok::<_, AkitaError>((
-                    prepared_point,
-                    e_folded_by_claim,
-                    trace_target,
-                    row_coefficients,
-                    RingVec::from_ring_elems(&row_coefficient_rings),
-                ))
+                e_folded_by_claim.extend(
+                    group_e_folded_by_claim
+                        .iter()
+                        .map(|rows| RingVec::from_ring_elems(rows)),
+                );
+                folded_rings.extend(group_folded_rings);
+                prepared_points.push(prepared_point);
+            }
+
+            let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
+                &reduction,
+                &folded_rings,
+                &prepared_points,
+                protocol_point,
+                alpha_bits,
+                basis,
+                trace_opening_batch,
+                row_coefficients,
+                transcript,
+            )?;
+            let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
+            Ok::<_, AkitaError>((
+                prepared_points,
+                e_folded_by_claim,
+                trace_target,
+                row_coefficients,
+                RingVec::from_ring_elems(&row_coefficient_rings),
+            ))
             }
         )?;
     let commitment = fold_claims.fold_commitment(level_params)?;
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
-        prepared_point.ring_opening_point.clone(),
-        prepared_point.ring_multiplier_point.clone(),
+        prepared_points
+            .iter()
+            .map(|prepared| prepared.ring_opening_point.clone())
+            .collect::<Vec<_>>(),
+        prepared_points
+            .iter()
+            .map(|prepared| prepared.ring_multiplier_point.clone())
+            .collect::<Vec<_>>(),
         fold_claims,
         e_folded_by_claim,
         level_params.clone(),
@@ -397,7 +413,7 @@ where
         extension_opening_reduction,
         trace_eval_target: trace_target.trace_eval_target,
         trace_scale: trace_target.trace_scale,
-        trace_prepared_point: Some(prepared_point),
+        trace_prepared_points: Some(prepared_points),
         trace_claim_scales,
         row_coefficients,
     })
@@ -537,11 +553,16 @@ where
         m_row_layout,
     )?;
 
-    let relation_claim = relation_claim_from_rows_extension_at_dims::<F, E>(
+    let y_layout = relation_y_layout_for(
+        lp,
+        prepared_fold.instance.opening_batch(),
+        prepared_fold.instance.m_row_layout(),
+    )?;
+    let relation_claim = relation_claim_from_layout_extension::<F, E>(
         prepared_fold.instance.role_dims(),
+        &y_layout,
         &rs.tau1,
         rs.alpha,
-        lp.a_key.row_len(),
         prepared_fold.instance.v(),
         &prepared_fold.commitment,
     )?;
@@ -568,34 +589,57 @@ where
     let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
-        let num_trace_blocks = prepared_fold
-            .instance
-            .opening_batch()
-            .num_total_polynomials()
-            .checked_mul(lp.num_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
-        let (_, layout) = trace_layout_for_instance(
-            lp,
-            &prepared_fold.instance,
-            rs.col_bits,
-            rs.ring_bits,
-            num_trace_blocks,
-        )?;
-        Some(build_root_stage2_trace_table::<F, E>(
-            ring_d,
-            lp.num_blocks,
-            &layout,
-            prepared_fold.instance.opening_batch(),
-            prepared_fold
-                .trace_prepared_point
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?,
-            row_coefficients,
-            prepared_fold.trace_claim_scales.as_deref(),
-            trace_coeff,
-            rs.live_x_cols,
-        )?)
-    } else if let Some(prepared) = prepared_fold.trace_prepared_point.as_ref() {
+        if lp.has_precommitted_groups() {
+            Some(akita_types::build_grouped_root_stage2_trace_table::<F, E>(
+                ring_d,
+                lp,
+                prepared_fold.instance.opening_batch(),
+                prepared_fold
+                    .trace_prepared_points
+                    .as_ref()
+                    .ok_or(AkitaError::InvalidProof)?,
+                row_coefficients,
+                prepared_fold.trace_claim_scales.as_deref(),
+                trace_coeff,
+                rs.live_x_cols,
+            )?)
+        } else {
+            let num_trace_blocks = prepared_fold
+                .instance
+                .opening_batch()
+                .num_total_polynomials()
+                .checked_mul(lp.num_blocks)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("trace block count overflow".to_string())
+                })?;
+            let (_, layout) = trace_layout_for_instance(
+                lp,
+                &prepared_fold.instance,
+                rs.col_bits,
+                rs.ring_bits,
+                num_trace_blocks,
+            )?;
+            Some(build_root_stage2_trace_table::<F, E>(
+                ring_d,
+                lp.num_blocks,
+                &layout,
+                prepared_fold.instance.opening_batch(),
+                prepared_fold
+                    .trace_prepared_points
+                    .as_ref()
+                    .and_then(|points| points.first())
+                    .ok_or(AkitaError::InvalidProof)?,
+                row_coefficients,
+                prepared_fold.trace_claim_scales.as_deref(),
+                trace_coeff,
+                rs.live_x_cols,
+            )?)
+        }
+    } else if let Some(prepared) = prepared_fold
+        .trace_prepared_points
+        .as_ref()
+        .and_then(|points| points.first())
+    {
         let (_, layout) = trace_layout_for_instance(
             lp,
             &prepared_fold.instance,

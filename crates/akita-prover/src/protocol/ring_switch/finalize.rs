@@ -49,7 +49,6 @@ where
         let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
         let opening_batch = instance.opening_batch();
-        let num_polys = opening_batch.num_total_polynomials();
 
         let num_ring_elems = w.len() / D;
         let live_x_cols = num_ring_elems;
@@ -60,7 +59,7 @@ where
             })?
             .trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
-        let m_rows = lp.m_row_count_for(1, m_row_layout)?;
+        let m_rows = lp.m_row_count_for(opening_batch.num_groups(), m_row_layout)?;
         let num_sc_vars = col_bits + ring_bits;
         let num_i = m_rows
             .checked_next_power_of_two()
@@ -79,7 +78,6 @@ where
         let ring_alpha_evals_y = scalar_powers(alpha, D);
         let alpha_evals_y = scalar_powers(alpha, D);
 
-        let challenges = &instance.challenges;
         if gamma.len() != instance.opening_batch().num_total_polynomials() {
             return Err(AkitaError::InvalidInput(
                 "ring-switch gamma length does not match claim count".to_string(),
@@ -89,17 +87,14 @@ where
         #[cfg(feature = "parallel")]
         let (m_evals_x_result, w_result) = rayon::join(
             || {
-                compute_m_evals_x::<F, E>(
+                compute_grouped_m_evals_x::<F, E>(
                     setup,
-                    instance.opening_point(),
-                    instance.ring_multiplier_point(),
-                    challenges,
+                    instance,
                     alpha,
                     &ring_alpha_evals_y,
                     dims,
                     lp,
                     &tau1,
-                    num_polys,
                     gamma,
                     m_row_layout,
                 )
@@ -108,17 +103,14 @@ where
         );
         #[cfg(not(feature = "parallel"))]
         let (m_evals_x_result, w_result) = {
-            let m_evals_x = compute_m_evals_x::<F, E>(
+            let m_evals_x = compute_grouped_m_evals_x::<F, E>(
                 setup,
-                instance.opening_point(),
-                instance.ring_multiplier_point(),
-                challenges,
+                instance,
                 alpha,
                 &ring_alpha_evals_y,
                 dims,
                 lp,
                 &tau1,
-                num_polys,
                 gamma,
                 m_row_layout,
             )?;

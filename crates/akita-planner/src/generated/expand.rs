@@ -374,7 +374,7 @@ impl GeneratedFoldStep {
         )
         .ok_or_else(|| no_layout("B"))?;
 
-        let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, 1)
+        let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, main_num_polys)
             .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = main_d_width
             .checked_add(precommitted_d_width)
