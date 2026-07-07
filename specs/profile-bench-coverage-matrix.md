@@ -309,11 +309,7 @@ benchmark matrix at nv=26 in its own group (`2-fp128-tensor`), not nv=32: under
 the 138-bit L-infinity SIS floors the tensor root split is top-heavy, so the
 public setup matrix grows ~4x per +2 nv (~1 GiB at nv=26, ~72 GiB at nv=32,
 which OOM-aborts the runner). nv=26 keeps its footprint on par with the flat
-`onehot_fp128_d64` nv=32 cell. The group sets `skip_merge_base_baseline: true`
-because main before this cutover ships a placeholder tensor schedule (every nv a
-non-committing `Direct` step) whose baseline binary panics resolving the commit
-layout at any nv; future PRs compare against merge-base once the real schedules
-land on main. The mode remains excluded from `AKITA_MODE=all`.
+`onehot_fp128_d64` nv=32 cell. The mode remains excluded from `AKITA_MODE=all`.
 
 ### Benchmark Runner And Artifacts
 
@@ -355,8 +351,17 @@ runner so the batched profile emits planned-level output too.
 
 ### Workflow Behavior
 
-`profile-bench.yml` builds the profile example once and runs the configured
-matrix with `AKITA_BENCH_RUNS=3`.
+`profile-bench.yml` builds the profile example once per matrix group. On pull
+requests, `scripts/profile_bench_merge_base_policy.py resolve` is the single
+source of truth for merge-base baseline:
+
+1. **Mode names** — merge-base must define every profile mode in the group
+   (`PROFILE_CI_MODES`, or legacy `PROFILE_MODES` / `PROFILE_ALL_MODES`).
+2. **Smoke** — when (1) passes, CI builds the merge-base profile binary and runs
+   one smoke execution per case. If merge-base cannot complete a case (placeholder
+   schedules, panic, missing tables), baseline is skipped for the group.
+3. **Benchmark** — when (1) and (2) pass, PR head and merge-base run
+   interleaved; otherwise PR head only (Main=n/a, job stays green).
 
 The workflow:
 

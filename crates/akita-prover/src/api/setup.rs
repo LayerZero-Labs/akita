@@ -3,9 +3,9 @@
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
-    derive_public_matrix_flat, dispatch_ring_dim_result, sample_public_matrix_seed,
-    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, SetupMatrixEnvelope,
-    SetupPrefixProverRegistry, SetupPrefixVerifierRegistry,
+    derive_public_matrix_flat, dispatch_for_field, sample_public_matrix_seed, AkitaExpandedSetup,
+    AkitaSetupSeed, AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixProverRegistry,
+    SetupPrefixVerifierRegistry,
 };
 use std::sync::Arc;
 
@@ -85,7 +85,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         // Matrix expansion still needs the concrete generation ring dimension;
         // dispatch on the runtime `gen_ring_dim` at this single kernel-entry
         // boundary (the canonical akita-types dispatcher; D-free `Self` result).
-        let expanded = dispatch_ring_dim_result!(gen_ring_dim, |D| {
+        let expanded = dispatch_for_field!(ProtocolDispatchSlot::Envelope, F, gen_ring_dim, |D| {
             let shared_flat = derive_public_matrix_flat::<F, D>(
                 setup_envelope.max_setup_len,
                 &public_matrix_seed,
@@ -176,7 +176,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         // unsupported `gen_ring_dim`; `total_ring_elements_at::<D>` re-checks the
         // matrix is an exact multiple of the ring dimension.
         let gen_ring_dim = expanded.seed().gen_ring_dim;
-        dispatch_ring_dim_result!(gen_ring_dim, |D| {
+        dispatch_for_field!(ProtocolDispatchSlot::Envelope, F, gen_ring_dim, |D| {
             expanded.shared_matrix().total_ring_elements_at::<D>()?;
             Ok::<_, AkitaError>(())
         })?;
@@ -290,18 +290,18 @@ mod tests {
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
             8,
             1,
-            32,
+            64,
             SetupMatrixEnvelope { max_setup_len: 1 },
         )
         .expect("generate setup");
-        let decomposed = DigitBlocks::empty(32);
+        let decomposed = DigitBlocks::empty(64);
         let hint = AkitaCommitmentHint::singleton(decomposed);
         setup
             .prefix_slots
             .insert(SetupPrefixSlot {
                 id: SetupPrefixSlotId {
                     setup_seed_digest: [1u8; 32],
-                    d_setup: 32,
+                    d_setup: 64,
                     natural_len: 1,
                     n_prefix: 3,
                     level_params_digest: [2u8; 32],
@@ -309,7 +309,7 @@ mod tests {
                 natural_len: 1,
                 padded_len: 3,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![RingVec::from_coeffs(vec![Prime128Offset275::default(); 32])],
+                    rows: vec![RingVec::from_coeffs(vec![Prime128Offset275::default(); 64])],
                 },
                 hint,
             })

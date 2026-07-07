@@ -293,8 +293,8 @@ fn monomial_basis_prove_verify_round_trip() {
 }
 
 #[test]
-fn tiny_d32_root_direct_helpers_accept_valid_proof() {
-    type DirectCfg = fp128::D32Full;
+fn tiny_d64_root_direct_helpers_accept_valid_proof() {
+    type DirectCfg = fp128::D64Full;
     type DirectF = fp128::Field;
     const DIRECT_D: usize = DirectCfg::D;
     type DirectScheme = AkitaCommitmentScheme<DirectCfg>;

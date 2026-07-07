@@ -272,7 +272,7 @@ pub struct PlanSection {
     /// actual opening-point shape and extension-packing support predicates.
     /// Covers the ordered list of steps (fold | direct | terminal), the full
     /// per-level `LevelParams` (ring dimension, log_basis ladder, `{a,b,d}_key`
-    /// dimensions/collision bounds, `stage1_config`, block geometry, digit
+    /// dimensions/collision bounds, `fold_challenge_config`, block geometry, digit
     /// depths), the root-direct commit layout, and the terminal direct witness
     /// shape. This is a digest of behavior, not just the planner lookup key or
     /// `schedule_key` string.

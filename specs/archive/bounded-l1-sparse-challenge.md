@@ -47,12 +47,12 @@ crates/akita-challenges/src/challenge.rs
 crates/akita-challenges/src/sampler/bounded_l1.rs
 ```
 
-`LevelParams.stage1_config` carries the selected config through the protocol,
+`LevelParams.fold_challenge_config` carries the selected config through the protocol,
 and prover/verifier replay both call `sample_sparse_challenges`.
 
 ## Motivation
 
-The stage-1 sparse challenge folds witness data in the coefficient embedding of
+The ring fold sparse challenge folds witness data in the coefficient embedding of
 the negacyclic ring. If the witness coefficients satisfy:
 
 ```text
@@ -99,7 +99,7 @@ D=32:
   infinity_norm() = 8
 
 D=64:
-  SparseChallengeConfig::ExactShell {
+  SparseChallengeConfig::signed-sparse {
       count_mag1: 31,
       count_mag2: 10,
   }
@@ -107,7 +107,7 @@ D=64:
   infinity_norm() = 2
 
 D=128:
-  SparseChallengeConfig::Uniform {
+  SparseChallengeConfig::pm1-only {
       weight: 31,
       nonzero_coeffs: [-1, 1],
   }
@@ -115,7 +115,7 @@ D=128:
   infinity_norm() = 1
 
 D=256:
-  SparseChallengeConfig::Uniform {
+  SparseChallengeConfig::pm1-only {
       weight: 23,
       nonzero_coeffs: [-1, 1],
   }
@@ -147,7 +147,7 @@ tags:
 
 ```text
 Uniform       tag = 0
-ExactShell    tag = 1
+signed-sparse    tag = 1
 BoundedL1Norm tag = 2
 ```
 
@@ -361,7 +361,7 @@ The implementation should keep these checks pinned:
 - Do not adopt bounded-`L1` sampling for fp128 `D=64` in this branch.
 - Do not adopt bounded-`L1` sampling for fp128 `D=128` in this branch.
 - Do not expose a generic public `BoundedL1Ball { M, B }` config until there are tables, tests, and transcript fixtures for each supported triple.
-- Do not serialize `SparseChallengeConfig` into proof objects; challenges are re-derived from `LevelParams.stage1_config` and transcript state.
+- Do not serialize `SparseChallengeConfig` into proof objects; challenges are re-derived from `LevelParams.fold_challenge_config` and transcript state.
 
 ## References
 

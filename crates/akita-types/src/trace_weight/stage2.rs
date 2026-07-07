@@ -12,9 +12,9 @@ use super::build::{
 use super::layout::TraceChunkLayout;
 use super::trace_table::TraceTable;
 use crate::{
-    embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams, OpeningClaimsLayout,
-    PreparedOpeningPoint, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm,
-    TraceWeightLayout, WitnessLayout,
+    dispatch_for_field, embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams,
+    OpeningClaimsLayout, PreparedOpeningPoint, TraceFieldBlockOpening, TraceRingBlockOpening,
+    TraceTerm, TraceWeightLayout, WitnessLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -594,92 +594,99 @@ where
             return Err(AkitaError::InvalidProof);
         }
     }
-    crate::dispatch_ring_dim_result!(ring_d, |D| {
-        let ring_len = D;
-        let order = opening_batch.root_group_order()?;
-        let mut e_offsets = vec![0usize; opening_batch.num_groups()];
-        let mut base = 0usize;
-        for &group_index in &order {
-            let group_lp = lp.root_group_params(opening_batch, group_index)?;
-            let group_layout = opening_batch.group_layout(group_index)?;
-            let depth_fold = lp.num_digits_fold_for_params(
-                group_lp,
-                group_layout.num_polynomials(),
-                lp.field_bits_for_cache(),
-            )?;
-            let overflow =
-                || AkitaError::InvalidSetup("grouped trace segment width overflow".to_string());
-            let z_g = group_lp
-                .block_len()
-                .checked_mul(group_lp.num_digits_commit())
-                .and_then(|n| n.checked_mul(depth_fold))
-                .ok_or_else(overflow)?;
-            let e_g = group_layout
-                .num_polynomials()
-                .checked_mul(group_lp.num_blocks())
-                .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-                .ok_or_else(overflow)?;
-            let t_g = group_layout
-                .num_polynomials()
-                .checked_mul(group_lp.num_blocks())
-                .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
-                .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-                .ok_or_else(overflow)?;
-            e_offsets[group_index] = base.checked_add(z_g).ok_or_else(overflow)?;
-            base = base
-                .checked_add(z_g)
-                .and_then(|n| n.checked_add(e_g))
-                .and_then(|n| n.checked_add(t_g))
-                .ok_or_else(overflow)?;
-        }
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        ring_d,
+        |D| {
+            let ring_len = D;
+            let order = opening_batch.root_group_order()?;
+            let mut e_offsets = vec![0usize; opening_batch.num_groups()];
+            let mut base = 0usize;
+            for &group_index in &order {
+                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_layout = opening_batch.group_layout(group_index)?;
+                let depth_fold = lp.num_digits_fold_for_params(
+                    group_lp,
+                    group_layout.num_polynomials(),
+                    lp.field_bits_for_cache(),
+                )?;
+                let overflow =
+                    || AkitaError::InvalidSetup("grouped trace segment width overflow".to_string());
+                let z_g = group_lp
+                    .block_len()
+                    .checked_mul(group_lp.num_digits_commit())
+                    .and_then(|n| n.checked_mul(depth_fold))
+                    .ok_or_else(overflow)?;
+                let e_g = group_layout
+                    .num_polynomials()
+                    .checked_mul(group_lp.num_blocks())
+                    .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+                    .ok_or_else(overflow)?;
+                let t_g = group_layout
+                    .num_polynomials()
+                    .checked_mul(group_lp.num_blocks())
+                    .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
+                    .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+                    .ok_or_else(overflow)?;
+                e_offsets[group_index] = base.checked_add(z_g).ok_or_else(overflow)?;
+                base = base
+                    .checked_add(z_g)
+                    .and_then(|n| n.checked_add(e_g))
+                    .and_then(|n| n.checked_add(t_g))
+                    .ok_or_else(overflow)?;
+            }
 
-        let mut table = vec![E::zero(); live_x_cols * ring_len];
-        let mut claim_offset = 0usize;
-        for group_index in 0..opening_batch.num_groups() {
-            let group_lp = lp.root_group_params(opening_batch, group_index)?;
-            let group_layout = opening_batch.group_layout(group_index)?;
-            let prepared = &prepared_points[group_index];
-            let inner = prepared.packed_inner_owned::<D>()?;
-            let inner_coeffs = inner.coefficients();
-            let gadget =
-                crate::gadget_row_scalars::<F>(group_lp.num_digits_open(), group_lp.log_basis());
-            for local_claim in 0..group_layout.num_polynomials() {
-                let claim_idx = claim_offset + local_claim;
-                let scale = trace_claim_scales
-                    .and_then(|scales| scales.get(claim_idx).copied())
-                    .unwrap_or_else(E::one);
-                let coefficient = output_scale * row_coefficients[claim_idx] * scale;
-                for block in 0..group_lp.num_blocks() {
-                    let block_weight = prepared
-                        .ring_opening_point
-                        .b
-                        .get(block)
-                        .copied()
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let block_weight = E::lift_base(block_weight);
-                    for (plane, gadget_scalar) in gadget.iter().enumerate() {
-                        let col = e_offsets[group_index]
-                            + plane * (group_layout.num_polynomials() * group_lp.num_blocks())
-                            + local_claim * group_lp.num_blocks()
-                            + block;
-                        if col >= live_x_cols {
-                            continue;
-                        }
-                        let dst_base = col * ring_len;
-                        let factor = coefficient * block_weight * E::lift_base(*gadget_scalar);
-                        for (dst, coeff) in table[dst_base..dst_base + ring_len]
-                            .iter_mut()
-                            .zip(inner_coeffs.iter())
-                        {
-                            *dst += factor * E::lift_base(*coeff);
+            let mut table = vec![E::zero(); live_x_cols * ring_len];
+            let mut claim_offset = 0usize;
+            for group_index in 0..opening_batch.num_groups() {
+                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_layout = opening_batch.group_layout(group_index)?;
+                let prepared = &prepared_points[group_index];
+                let inner = prepared.packed_inner_owned::<D>()?;
+                let inner_coeffs = inner.coefficients();
+                let gadget = crate::gadget_row_scalars::<F>(
+                    group_lp.num_digits_open(),
+                    group_lp.log_basis(),
+                );
+                for local_claim in 0..group_layout.num_polynomials() {
+                    let claim_idx = claim_offset + local_claim;
+                    let scale = trace_claim_scales
+                        .and_then(|scales| scales.get(claim_idx).copied())
+                        .unwrap_or_else(E::one);
+                    let coefficient = output_scale * row_coefficients[claim_idx] * scale;
+                    for block in 0..group_lp.num_blocks() {
+                        let block_weight = prepared
+                            .ring_opening_point
+                            .b
+                            .get(block)
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let block_weight = E::lift_base(block_weight);
+                        for (plane, gadget_scalar) in gadget.iter().enumerate() {
+                            let col = e_offsets[group_index]
+                                + plane * (group_layout.num_polynomials() * group_lp.num_blocks())
+                                + local_claim * group_lp.num_blocks()
+                                + block;
+                            if col >= live_x_cols {
+                                continue;
+                            }
+                            let dst_base = col * ring_len;
+                            let factor = coefficient * block_weight * E::lift_base(*gadget_scalar);
+                            for (dst, coeff) in table[dst_base..dst_base + ring_len]
+                                .iter_mut()
+                                .zip(inner_coeffs.iter())
+                            {
+                                *dst += factor * E::lift_base(*coeff);
+                            }
                         }
                     }
                 }
+                claim_offset += group_layout.num_polynomials();
             }
-            claim_offset += group_layout.num_polynomials();
+            Ok::<_, AkitaError>(TraceTable::ring_dense(table))
         }
-        Ok::<_, AkitaError>(TraceTable::ring_dense(table))
-    })
+    )
 }
 
 /// Build the verifier's short closed-form trace term for a recursive singleton
