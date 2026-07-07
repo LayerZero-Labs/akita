@@ -16,7 +16,7 @@ use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2
 use crate::stages::SetupSumcheckVerifier;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling,
+    HalvingField, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;

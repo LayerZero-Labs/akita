@@ -4,6 +4,7 @@ use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
+    MulBaseUnreduced,
 };
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
@@ -178,7 +179,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
@@ -275,7 +276,7 @@ where
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
