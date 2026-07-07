@@ -18,18 +18,13 @@
 //! This keeps good coverage of the aggregated path while avoiding the old
 //! near-cartesian-product runtime blowup.
 
-
-#[allow(dead_code)]
-#[path = "common/mod.rs"]
-mod common;
-
+use crate::common::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::MultilinearPolynomial;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, OpeningClaimsLayout};
-use common::*;
 
 const DENSE_ONEHOT_K: usize = DENSE_D;
 

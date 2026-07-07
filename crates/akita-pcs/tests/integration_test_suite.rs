@@ -13,9 +13,13 @@
 // fails CI if a file is added here without a corresponding line, so a
 // forgotten entry cannot silently vanish from the suite.
 
+#[allow(dead_code)]
+#[path = "integration_test/common/mod.rs"]
+mod common;
+
 #[path = "integration_test/akita_e2e.rs"]
 mod akita_e2e;
-#[path = "integration_test/algebra.rs"]
+#[path = "integration_test/algebra/mod.rs"]
 mod algebra;
 #[path = "integration_test/batched_aggregated_e2e.rs"]
 mod batched_aggregated_e2e;

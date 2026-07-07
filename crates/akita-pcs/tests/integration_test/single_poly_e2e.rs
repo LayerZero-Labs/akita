@@ -13,18 +13,13 @@
 //! - one-hot: 10, 15, 20
 //! - dense: 10, 15, 18
 
-
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
-#[allow(dead_code)]
-#[path = "common/mod.rs"]
-mod common;
-
+use crate::common::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
-use common::*;
 
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();

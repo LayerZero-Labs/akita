@@ -1,4 +1,3 @@
-
 use akita_field::{pseudo_mersenne_modulus, PrimeOffsetSpec, PRIME_OFFSET_SPECS};
 
 // Strong probable-prime test using multiple fixed bases.

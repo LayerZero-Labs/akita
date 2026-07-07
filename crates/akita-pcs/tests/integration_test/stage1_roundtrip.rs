@@ -1,4 +1,3 @@
-
 use akita_field::Prime128Offset275;
 use akita_prover::AkitaStage1Prover;
 use akita_transcript::{labels, AkitaTranscript};

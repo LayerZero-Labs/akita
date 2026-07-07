@@ -16,20 +16,15 @@
 //!   Direct mode, and a Direct proof must not verify under Recursive mode. This
 //!   pins the setup-product sumcheck as load-bearing rather than cosmetic.
 
-
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
-#[allow(dead_code)]
-#[path = "common/mod.rs"]
-mod common;
-
+use crate::common::*;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, SetupContributionMode,
 };
-use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"recursive_setup_e2e/onehot";
 
