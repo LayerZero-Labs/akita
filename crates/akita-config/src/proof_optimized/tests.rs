@@ -1,5 +1,6 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
+use akita_field::FieldCore;
 #[cfg(feature = "schedules-default")]
 use akita_field::{CanonicalField, One};
 #[cfg(feature = "schedules-default")]
@@ -278,6 +279,25 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
         digest_effective_schedule(&real_schedule),
         digest_effective_schedule(&singleton_schedule),
         "schedule digest must distinguish batched vs singleton root-direct commit params"
+    );
+}
+
+#[test]
+fn grouped_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
+    type Cfg = fp128::D64OneHotMultiChunkW2R2;
+    let opening_batch = OpeningClaimsLayout::from_groups(vec![
+        PolynomialGroupLayout::new(8, 1),
+        PolynomialGroupLayout::new(16, 1),
+    ])
+    .expect("grouped opening batch");
+    let point = vec![fp128::Field::zero(); opening_batch.max_num_vars()];
+
+    let err = crate::effective_batched_schedule::<Cfg>(&opening_batch, &point)
+        .expect_err("grouped multi-chunk schedule must reject");
+
+    assert!(
+        err.to_string().contains("multi-chunk witness layout"),
+        "unexpected error: {err}"
     );
 }
 

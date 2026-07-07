@@ -31,6 +31,11 @@ where
     let root_direct_witness_len = opening_batch.root_direct_witness_len()?;
     let mut schedule = Cfg::get_params_for_prove(opening_batch)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
+        if opening_batch.num_groups() > 1 && Cfg::EXT_DEGREE != 1 {
+            let commit_params = Cfg::get_params_for_batched_commitment(opening_batch)?;
+            return root_direct_schedule(root_direct_witness_len, commit_params);
+        }
+
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         let supports_opening_shape =
             dispatch_ring_dim_result!(root_step.params.ring_dimension, |D| Ok(
@@ -51,4 +56,129 @@ where
     }
 
     Ok(schedule)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::{ExtField, Fp32, FpExt4};
+    use akita_types::{
+        AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, LevelParams,
+        PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusFamily, Step,
+    };
+
+    type Base = Fp32<251>;
+    type BaseExt = FpExt4<Base>;
+
+    #[derive(Clone)]
+    struct GroupedExtensionCfg;
+
+    fn grouped_extension_params() -> Result<LevelParams, AkitaError> {
+        Ok(LevelParams::params_only(
+            SisModulusFamily::Q32,
+            GroupedExtensionCfg::D,
+            3,
+            1,
+            1,
+            1,
+            GroupedExtensionCfg::ring_challenge_config(GroupedExtensionCfg::D)?,
+        ))
+    }
+
+    impl CommitmentConfig for GroupedExtensionCfg {
+        type Field = Base;
+        type ExtField = BaseExt;
+
+        const D: usize = 8;
+
+        fn decomposition() -> akita_types::DecompositionParams {
+            akita_types::DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 8,
+                log_open_bound: Some(8),
+            }
+        }
+
+        fn ring_challenge_config(_d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+            Ok(SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            })
+        }
+
+        fn sis_modulus_family() -> SisModulusFamily {
+            SisModulusFamily::Q32
+        }
+
+        fn max_setup_matrix_size(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+        ) -> Result<SetupMatrixEnvelope, AkitaError> {
+            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
+        }
+
+        fn basis_range() -> (u32, u32) {
+            (3, 3)
+        }
+
+        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+            let params = grouped_extension_params()?;
+            Ok(Schedule {
+                steps: vec![
+                    Step::Fold(FoldStep {
+                        params,
+                        current_w_len: 1 << 8,
+                        next_w_len: 1 << 5,
+                        level_bytes: 0,
+                    }),
+                    Step::Direct(DirectStep {
+                        current_w_len: 1 << 5,
+                        witness_shape: CleartextWitnessShape::FieldElements(1 << 5),
+                        direct_bytes: 0,
+                        params: None,
+                    }),
+                ],
+                total_bytes: 0,
+            })
+        }
+
+        fn get_params_for_prove(_layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+            Self::runtime_schedule(AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                4, 1,
+            )))
+        }
+
+        fn get_params_for_batched_commitment(
+            _layout: &OpeningClaimsLayout,
+        ) -> Result<LevelParams, AkitaError> {
+            grouped_extension_params()
+        }
+    }
+
+    #[test]
+    fn grouped_extension_openings_fallback_to_root_direct() {
+        let opening_batch = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(4, 1),
+        ])
+        .expect("grouped opening batch");
+        let point = vec![
+            BaseExt::from_base_slice(&[
+                Base::from_u64(0),
+                Base::from_u64(1),
+                Base::from_u64(2),
+                Base::from_u64(3),
+            ]);
+            4
+        ];
+
+        let schedule = effective_batched_schedule::<GroupedExtensionCfg>(&opening_batch, &point)
+            .expect("effective schedule");
+
+        assert!(
+            matches!(schedule.steps.first(), Some(Step::Direct(_))),
+            "grouped extension openings must not select the grouped folded trace path"
+        );
+    }
 }

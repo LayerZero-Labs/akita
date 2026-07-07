@@ -739,10 +739,22 @@ where
             rs.ring_bits,
             num_trace_blocks,
         )?;
-        let live_x_cols = prepared
-            .w_len
-            .checked_div(d_a)
-            .ok_or(AkitaError::InvalidProof)?;
+        if d_a == 0 || !prepared.w_len.is_multiple_of(d_a) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let live_x_cols = prepared.w_len / d_a;
+        let col_bits = u32::try_from(rs.col_bits).map_err(|_| {
+            AkitaError::InvalidSetup("grouped trace column bits overflow".to_string())
+        })?;
+        let max_live_x_cols = 1usize.checked_shl(col_bits).ok_or_else(|| {
+            AkitaError::InvalidSetup("grouped trace column bound overflow".to_string())
+        })?;
+        if live_x_cols > max_live_x_cols {
+            return Err(AkitaError::InvalidSize {
+                expected: max_live_x_cols,
+                actual: live_x_cols,
+            });
+        }
         let prepared_points = prepared
             .trace_prepared_points
             .as_ref()
