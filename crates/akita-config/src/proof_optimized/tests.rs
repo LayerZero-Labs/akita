@@ -273,6 +273,25 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
 }
 
 #[test]
+fn grouped_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
+    type Cfg = fp128::D64OneHotMultiChunkW2R2;
+    let opening_batch = OpeningClaimsLayout::from_groups(vec![
+        PolynomialGroupLayout::new(8, 1),
+        PolynomialGroupLayout::new(16, 1),
+    ])
+    .expect("grouped opening batch");
+    let point = vec![fp128::Field::zero(); opening_batch.max_num_vars()];
+
+    let err = crate::effective_batched_schedule::<Cfg>(&opening_batch, &point)
+        .expect_err("grouped multi-chunk schedule must reject");
+
+    assert!(
+        err.to_string().contains("multi-chunk witness layout"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     let opening_batch = OpeningClaimsLayout::new(30, 4).expect("grouped same-point opening_batch");
     let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&opening_batch)
