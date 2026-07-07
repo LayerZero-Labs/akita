@@ -12,7 +12,7 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
     dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_grouped_root,
-    RingDimPlan, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    validate_schedule_ring_dims, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 
 fn grouped_root_prover_error(message: &'static str) -> AkitaError {
@@ -152,7 +152,7 @@ where
         return Err(grouped_root_prover_error(message));
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
-    let ring_plan = RingDimPlan::from_schedule(&schedule, expanded.seed())?;
+    validate_schedule_ring_dims(&schedule, expanded.seed())?;
     schedule.reject_grouped_multi_chunk("batched prove")?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => &root.params,
@@ -210,7 +210,6 @@ where
         transcript,
         claims,
         &schedule,
-        &ring_plan,
         basis,
         setup_contribution_mode,
     )
@@ -245,7 +244,6 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
     transcript: &mut T,
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &Schedule,
-    ring_plan: &RingDimPlan,
     basis: BasisMode,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
@@ -292,10 +290,10 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    // `RingDimPlan` validates every level's role dims against the setup seed at
-    // entry; NTT pre-warm reads the same plan-derived dims per level.
-    for level in 0..ring_plan.num_folds() {
-        let role_dims = ring_plan.dims_at(level)?;
+    // Role dims were validated against the setup seed at batched_prove entry;
+    // NTT pre-warm reads the same schedule-owned dims per level.
+    for level in 0..schedule.num_fold_levels() {
+        let role_dims = schedule.get_execution_schedule(level)?.params.role_dims();
         stacks
             .prove_stack_at_level(level)
             .ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;

@@ -7,8 +7,9 @@ use akita_config::test_support::ring_plan_test_seed;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
-    validate_role_dispatch, AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep,
-    LevelParams, OpeningClaimsLayout, RingDimPlan, RingRole, Schedule, Step,
+    validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
+    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, RingRole,
+    Schedule, Step,
 };
 
 fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
@@ -57,7 +58,7 @@ fn ring_dim_plan_rejects_level_dim_larger_than_gen_ring_dim() {
         ],
         total_bytes: 0,
     };
-    let err = RingDimPlan::from_schedule(&schedule, &ring_plan_test_seed(64))
+    let err = validate_schedule_ring_dims(&schedule, &ring_plan_test_seed(64))
         .expect_err("gen_ring_dim=64 cannot host a fold level at ring_dimension=128");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
@@ -76,7 +77,7 @@ fn validate_role_dispatch_rejects_stack_d_mismatch() {
 fn ring_dim_plan_accepts_uniform_d64_preset() {
     type Cfg = fp64::D64Full;
     let schedule = real_schedule::<Cfg>(10);
-    RingDimPlan::from_schedule(&schedule, &ring_plan_test_seed(Cfg::D))
+    validate_schedule_ring_dims(&schedule, &ring_plan_test_seed(Cfg::D))
         .expect("uniform preset envelope");
 }
 
@@ -84,6 +85,6 @@ fn ring_dim_plan_accepts_uniform_d64_preset() {
 fn ring_dim_plan_accepts_fp128_d64_preset() {
     type Cfg = fp128::D64Full;
     let schedule = real_schedule::<Cfg>(12);
-    RingDimPlan::from_schedule(&schedule, &ring_plan_test_seed(Cfg::D))
+    validate_schedule_ring_dims(&schedule, &ring_plan_test_seed(Cfg::D))
         .expect("fp128 uniform preset envelope");
 }
