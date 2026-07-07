@@ -76,12 +76,15 @@ jobs:
         # recursive flat folds.
         group:
           - name: 1-fp128-dense
+            pcs_mode_features: mode-dense-fp128-d64
             cases: |
               dense_fp128_d64:24:1
           - name: 2-fp128-tensor
+            pcs_mode_features: mode-onehot-fp128-d64-tensor
             cases: |
               onehot_fp128_d64_tensor:26:1
           - name: 3-flat-onehot-suite
+            pcs_mode_features: mode-onehot-fp32-d128,mode-onehot-fp64-d128,mode-onehot-fp128-d64
             cases: |
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
@@ -89,6 +92,7 @@ jobs:
               onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
           - name: 4-distributed
+            pcs_mode_features: mode-onehot-fp128-d64-multi-chunk-w2r2,mode-onehot-fp128-d64-multi-chunk-w4r2,mode-onehot-fp128-d64-multi-chunk-w8r2
             cases: |
               onehot_fp128_d64_multi_chunk_w2r2:32:1
               onehot_fp128_d64_multi_chunk_w4r2:32:1
@@ -110,6 +114,7 @@ jobs:
           echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_PCS_MODE_FEATURES=${{ matrix.group.pcs_mode_features }}" >> "$GITHUB_ENV"
 
       - name: Determine PR benchmark merge base
         if: github.event_name == 'pull_request'
@@ -187,7 +192,20 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bench-bins"
           (
             cd "$RUNNER_TEMP/bench-base" &&
-            if python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
+            # 3-tier fallback so a merge-base commit that predates this PR's
+            # per-mode features still builds a usable (if slower) baseline:
+            # 1) merge-base already has the specific mode features (steady
+            #    state) -> fast, narrow build.
+            # 2) merge-base has profile-ci but not yet the per-mode split
+            #    (the PR introducing this split) -> slow, full-8-mode build.
+            # 3) merge-base predates profile-ci entirely -> default-features
+            #    build, same as before this change.
+            if python3 scripts/cargo_feature_exists.py akita-pcs profile-ci-registry; then
+              CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
+                cargo build --release --quiet --example profile \
+                  --no-default-features \
+                  --features "parallel,profile-ci-registry,$AKITA_BENCH_PCS_MODE_FEATURES"
+            elif python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
                   --no-default-features --features parallel,profile-ci
@@ -220,7 +238,8 @@ jobs:
       - name: Build profile binary
         run: |
           cargo build --release --quiet --example profile \
-            --no-default-features --features parallel,profile-ci
+            --no-default-features \
+            --features "parallel,profile-ci-registry,$AKITA_BENCH_PCS_MODE_FEATURES"
 
       - name: Verify profile-ci linkage isolation
         run: ./scripts/check_profile_ci_linkage.sh target/release/examples/profile
