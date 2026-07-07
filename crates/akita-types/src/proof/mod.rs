@@ -9,6 +9,7 @@
 
 pub mod batch;
 pub mod commitment;
+pub mod grouped_m_evals;
 pub mod relation;
 pub mod ring_relation;
 pub mod scheme;
@@ -49,6 +50,7 @@ pub use containers::{
 pub use direct_witness::{
     segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape,
 };
+pub use grouped_m_evals::compute_grouped_m_evals_x;
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,

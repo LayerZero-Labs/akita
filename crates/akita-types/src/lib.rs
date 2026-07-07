@@ -78,8 +78,8 @@ pub use proof::{
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_relation_y, build_segment_typed_witness,
-    decode_terminal_z_golomb_payload, derive_public_matrix_flat, e_folded_segment_bytes,
-    emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
+    compute_grouped_m_evals_x, decode_terminal_z_golomb_payload, derive_public_matrix_flat,
+    e_folded_segment_bytes, emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
     expand_segment_typed_to_i8_digits, folded_root_supports_opening_shape, generate_y,
     i8_digits_to_bytes, padded_scalar_batch_num_vars, padded_setup_prefix_len,
     prepare_opening_point, relation_claim_from_layout_extension, relation_claim_from_rows,
@@ -136,7 +136,8 @@ pub use tail_golomb_rice_low_bits::{
     WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
 };
 pub use trace_weight::{
-    build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
+    build_grouped_root_stage2_trace_table, build_trace_claim_grouped_root, build_trace_claim_root,
+    build_trace_table_scaled, ensure_trace_stage2_supported, eval_dense_trace_table,
     eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
     trace_terms_root, trace_weight_layout_from_segment, TraceChunkLayout, TraceClaim,
