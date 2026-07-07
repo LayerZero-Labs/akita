@@ -21,6 +21,13 @@ full matrix scan. It also adds the missing end-to-end test coverage and a
 runnable example for this mode, both of which previously only existed for
 `Direct`.
 
+This spec describes the current explicit Stage-3 scaffold. The final verifier
+offloading architecture moves the setup-contribution dependency into Stage 2:
+Stage 1 carries the relation/witness claim through its last regular batched
+sumcheck, and Stage 2 proves both the carried witness-claim reduction and the
+setup contribution. Until that cutover lands, Stage 3 remains the implementation
+boundary for the recursive setup-product sumcheck.
+
 ## Intent
 
 ### Goal
@@ -87,6 +94,9 @@ Key abstractions and surfaces:
   does not carry the `(rho_lambda, rho_y, s_rho)` setup-prefix opening into the
   next recursive fold or batch it with the folded-witness opening (STACK.md
   slices 02B/02C/04).
+- **Final two-stage verifier offloading.** This spec does not remove Stage 3 or
+  move setup contribution into Stage 2. That is a later sumcheck-planner cutover
+  built on the same setup-product prover/verifier instance.
 - **Planner/table changes.** No schedule-table regeneration; mode selection is
   orthogonal to the schedule.
 - **Making `Recursive` the default.** `Direct` remains the default mode for the

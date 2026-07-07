@@ -29,6 +29,12 @@ Those ideas were never implemented and are superseded by a smaller cutover: **on
 pair-scan kernel**, **geometry-driven iterators**, and **`round_batching` as the
 only special-case fast path**.
 
+This spec also locks down the final mixed-dimension landing zone for the prover.
+The current PR stack may land it in slices, but the end state is not "old x/y
+code with flatter names": it is a flat witness layout, row-family relation
+embeddings, one pair-scan contract, and fast paths that are proven equivalent to
+that contract.
+
 ## Intent
 
 ### Goal
@@ -174,6 +180,55 @@ Reject and do not revive without a new spec:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Final mixed-dimension prover shape (locked target)
+
+The final prover has three load-bearing objects at the stage boundary:
+
+1. `FlatWitnessLayout`: the canonical live-address layout for the next witness.
+   It owns `live_len`, Boolean width, segment offsets, segment live lengths,
+   padding/zero-extension policy, per-segment local embeddings, and range
+   policy. It is not a pass-through wrapper around `Stage2Geometry`.
+2. `RelationWeightPolynomial`: one live flat vector over that layout. It has no
+   global coefficient axis, no `alpha(y) * m(x)` factorization, and no trace
+   side table.
+3. `FoldSchedule`: the bind order and pair/fold maps derived from the layout.
+   It may expose optimized local views, but all public pair steps are flat
+   addresses.
+
+A segment descriptor has this semantic content, even if the concrete Rust type
+is named differently:
+
+```rust
+struct FlatWitnessSegment {
+    flat_offset: usize,
+    live_len: usize,
+    domain_len: usize,
+    local_ring_dim: Option<usize>,
+    range_policy: RangePolicy,
+    row_family: Option<RelationRowFamily>,
+}
+
+enum RangePolicy {
+    BalancedDigits,
+    NegativeBinaryLayer2,
+    FieldEvals,
+    Unchecked,
+}
+```
+
+The important contract is not the exact type names. The important contract is
+that every stage, relation row, range term, fold, and fast path addresses the
+same flat live stream. A local coordinate such as `(segment column,
+coefficient)` is allowed only inside an embedding helper:
+
+```text
+embed(segment, local_coordinate) -> Option<flat_address>
+```
+
+The final implementation must not infer the witness geometry from one global
+`D`, one global `ring_len`, or `live_len / d_a`. Those are valid
+implementation shortcuts only inside a uniform segment whose descriptor says so.
+
 `x` and `y` are not protocol concepts. They are temporary storage labels for
 the current uniform scalar-level next-witness stream. Mixed role dimensions
 already invalidate `y` as a row-family abstraction, and future heterogeneous
@@ -254,6 +309,14 @@ enum RangeBindingTerm<'a, E> {
 Shape can differ, but the contract is fixed: the range term computes
 `gamma * eq(stage1_point, z) * w(z) * (w(z) + 1)` over the same flat witness
 addresses as the relation term. It must not use a separate global `x/y` scan.
+
+In the final compressed layout, `Present` must be refined by the layout's
+`RangePolicy`. Balanced base-`b` digit segments use the ordinary
+`w * (w + 1)` virtual range term for the digit range-check chain. The compressed
+commitment layer-2 negative-binary witness positions use the same polynomial
+identity only on their own flat subset. Segments with `FieldEvals` or
+`Unchecked` policy do not silently inherit a range binding. The range policy is
+part of `FlatWitnessLayout`, not an extra scan shape.
 
 ### Flat pair streams (replace prefix modules)
 
@@ -384,6 +447,53 @@ It scans only `0..live_len`; padded columns are implicit zeroes.
 See [`relation-weight-polynomial.md`](relation-weight-polynomial.md) §1a for
 naming and grid contracts.
 
+### Mixed-dimension round batching (required)
+
+The two-round batching path must survive mixed ring dimensions. This is
+possible because the optimization batches **bind variables over a flat address
+window**, not a proof-language `x/y` rectangle.
+
+The final batching planner selects windows like:
+
+```rust
+struct RoundBatchWindow {
+    segment: usize,
+    bind_start: usize,
+    bind_width: u8, // 2 for groups of 4, 3 for groups of 8
+}
+```
+
+For each window, the planner asks the layout to enumerate the `2^bind_width`
+local points and embed them to flat addresses. Every lane is then read through
+the same accessors as the pair scan:
+
+```text
+witness(flat_address) = 0 if the lane is padded or out of live range
+weight(flat_address)  = 0 if the lane is padded or out of live range
+range(flat_address)   = active only if the segment's RangePolicy says so
+```
+
+The window may correspond to the old inner coefficient axis in a uniform
+segment, but it is not required to. For mixed dimensions, there can be several
+segment-local windows with different `local_ring_dim` values, and the grid
+builder just adds their flat contributions into the ordinary round message. If
+one logical old window would cross a segment boundary or a range-policy
+boundary, the planner splits it into multiple windows.
+
+So yes: walking in groups of 4 or 8 still works. The batching precondition is
+that the selected bind variables form a contiguous local window in the fold
+schedule and can be embedded to flat addresses. It is **not** that all witness
+segments share one coefficient axis or one ring dimension.
+
+Acceptance tests for the mixed path must compare:
+
+- initial round-batching vs full pair scan for uniform schedules;
+- initial round-batching vs full pair scan for at least two segments with
+  different `local_ring_dim`;
+- windows split at segment boundaries;
+- windows over a segment whose live length is not a multiple of 4 or 8;
+- windows with a range-bound segment beside an unchecked or field-eval segment.
+
 ### Stage 1 (share machinery, different virt polynomial)
 
 Stage 1 proves `0 = sum eq(tau0, z) * Q(S(z))` with eq-factored messages.
@@ -407,6 +517,26 @@ at leaves.
 Stage 3 uses `FactoredProductTerm` (setup λ × ring), not witness hypercube pair
 scan.
 Only align naming and cross-links in docs.
+
+### Final stage placement target
+
+This cutover preserves the current Stage-3 scaffold, but it is not the final
+protocol shape. The final stage planner has two modes:
+
+| Mode | Stage 1 | Stage 2 |
+|------|---------|---------|
+| No verifier offloading | Eq-factored product/range tree sub-stages. | Relation-weight sumcheck plus range binding over the flat witness. |
+| Verifier offloading | Product/range tree sub-stages, followed by the relation sumcheck as a regular batched sumcheck, not eq-factored. | Carried witness-claim reduction plus setup-contribution sumcheck. |
+
+The offloaded relation sub-stage is not eq-factored because it no longer shares
+the product-tree equality factor. It is an ordinary batched sumcheck over the
+same flat witness layout. Its output carries the witness claim needed by Stage
+2.
+
+The current explicit Stage 3 is therefore an implementation scaffold for the
+recursive setup-contribution path. The final offloading cutover moves that
+dependency into Stage 2 and removes Stage 3 as a separately planned protocol
+stage.
 
 ### Verifier and wire format
 

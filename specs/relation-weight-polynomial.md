@@ -287,6 +287,71 @@ If `embed_family` returns no flat address, or returns an address outside
 same flat `RelationWeightPolynomial` vector. There is no global `x/y` split,
 global `ring_len`, or global ring dimension in the Stage-2 protocol contract.
 
+### Final Mixed-Dimension Boundary
+
+The final mixed-dimension implementation has one shared witness-layout object at
+the prover/verifier boundary. This spec calls it `FlatWitnessLayout`; the exact
+Rust name may differ, but the role must not.
+
+`FlatWitnessLayout` owns:
+
+- the flat live next-witness length and Boolean width;
+- segment offsets and live lengths;
+- each segment's local ring dimension, if it has one;
+- the embedding from row-family-local coordinates to flat witness addresses;
+- each segment's range policy;
+- the fold/bind schedule used by pair scan, fused fold-scan, and
+  `round_batching`.
+
+`RelationWeightPolynomial` remains a flat polynomial, not a segmented object.
+The layout is the only authority that explains how row-family terms land in
+that flat polynomial.
+
+This means the following are transition-only shortcuts, not final contracts:
+
+- deriving `live_segments = live_len / d_a`;
+- splitting verifier challenges into `coefficient_challenges` of length one
+  compile-time `D` before consulting any layout;
+- treating A-width coefficient order as the witness layout;
+- requiring B/D/compression-family rows to be re-expressed through an A-width
+  segment before they can contribute to `RelationWeightPolynomial`.
+
+Those shortcuts are acceptable while mixed dimensions are still rejected at the
+schedule boundary. They must be removed before accepting a schedule with
+`d_a != d_b`, `d_a != d_d`, or compression layers with their own row-family
+dimensions.
+
+The row-family evaluator has the final shape:
+
+```text
+for family in RelationRowLayout:
+  for local term in family.evaluate_at_alpha(...):
+    if let Some(a) = FlatWitnessLayout::embed_family(family, local term.addr):
+      relation_weight[a] += eq(tau1, family.row) * local term.weight
+```
+
+The verifier's `PreparedRelationWeightPolynomial` evaluates the same object
+without materializing the vector. It may use closed forms and fused setup scans,
+but it must take the same layout and row-family metadata as inputs. A verifier
+implementation that hard-codes one global coefficient axis is only a uniform
+schedule specialization.
+
+### Range Policies And Compression Landing Zone
+
+Range binding is segment-local. The layout classifies every flat witness segment
+with a range policy:
+
+| Policy | Stage behavior |
+|--------|----------------|
+| `BalancedDigits` | Included in the ordinary digit range-check product tree and in the Stage-2 `w * (w + 1)` binding when that binding is active. |
+| `NegativeBinaryLayer2` | Not part of the ordinary digit product tree; checked by the same `w * (w + 1)` identity over this compressed commitment layer-2 subset. |
+| `FieldEvals` | Folded/evaluated as witness field values; no digit range binding. |
+| `Unchecked` | No range binding in this protocol stage. |
+
+This is how compressed commitments fit the same protocol without adding a new
+Stage-2 summand. Compression adds row families and witness segments; it does not
+bring back split `alpha/m/trace` APIs or a separate range scan.
+
 The relation construction produces one multilinear polynomial:
 
 ```text
@@ -1171,6 +1236,12 @@ segment:
 
 That segment builder is the landing point for mixed role dimensions.
 
+In the final mixed-dimension cutover, that segment builder takes
+`FlatWitnessLayout` and `RelationRowLayout` together. It must not derive segment
+boundaries from `d_a` alone. The uniform implementation may still choose the
+same flat order as today, but the API must make that a layout fact, not an
+implicit arithmetic assumption.
+
 ## Rollout Risks
 
 - **Transcript accidental change.** Intentional transcript deltas are limited to
@@ -1193,6 +1264,9 @@ That segment builder is the landing point for mixed role dimensions.
 
 - `RelationWeightPolynomial`, `RelationRowLayout`, and
   `RelationQuotientLayout` live in `akita-types`.
+- `FlatWitnessLayout` or its concrete equivalent is the canonical owner of
+  flat witness segments, row-family embeddings, range policies, and fold/batch
+  windows before mixed schedules are enabled.
 - `EvaluationTrace` is a real row family in `RelationRowLayout`, weighted by
   `eq(tau1, EvaluationTrace)`.
 - Stage 2 has no trace-side claim, trace-side coefficient, or trace-side
