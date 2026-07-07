@@ -6,7 +6,7 @@
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::{outer_consistency_row_start, MRowLayout, FOLD_CONSISTENCY_ROW};
+use crate::layout::{MRowLayout};
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;
@@ -54,12 +54,10 @@ pub fn setup_required_for_inputs<E: FieldCore>(
         MRowLayout::WithDBlock => inputs.n_d,
         MRowLayout::WithoutDBlock => 0,
     };
-    // Canonical row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
-    let _a_start = FOLD_CONSISTENCY_ROW;
-    let b_start = outer_consistency_row_start(inputs.n_a);
+    // Opening-consistency rows: consistency (1) | A | B | D.
     let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
     let a_end = checked_add(
-        b_start
+        checked_add(1, inputs.n_a, "B row start")?
             .checked_add(b_rows_total)
             .ok_or_else(|| AkitaError::InvalidSetup("D row start overflow".into()))?,
         n_d_active,

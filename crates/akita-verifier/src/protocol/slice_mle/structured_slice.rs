@@ -4,7 +4,6 @@ use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_types::RelationQuotientLayout;
 
 /// Number of carry buckets per outer index produced by
 /// [`StructuredSliceMleEvaluator::compute_inner_sum`].
@@ -303,20 +302,42 @@ pub(crate) fn compute_r_contribution<F, E>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     offset_r: usize,
-    quotient_layout: &RelationQuotientLayout,
-    alpha: E,
+    denom: E,
+    r_gadget: &[F],
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    let r_tail = quotient_layout.materialize_tail_weights::<F, E>(&prepared.eq_tau1, alpha)?;
-    eval_offset_eq_tensor(
-        full_vec_randomness,
-        offset_r,
-        E::one(),
-        &[r_tail.as_slice()],
-    )
+    let levels = r_gadget.len();
+    if levels.is_power_of_two() {
+        let _span = tracing::info_span!("r_structured").entered();
+        let r_gadget_ext: Vec<E> = r_gadget.iter().copied().map(E::lift_base).collect();
+        eval_offset_eq_tensor(
+            full_vec_randomness,
+            offset_r,
+            -denom,
+            &[
+                &r_gadget_ext,
+                &prepared.eq_tau1[..prepared.setup_contribution_inputs.rows],
+            ],
+        )
+    } else {
+        let _span = tracing::info_span!("r_dense").entered();
+        let r_tail: Vec<E> = cfg_into_iter!(0..prepared.setup_contribution_inputs.rows * levels)
+            .map(|idx| {
+                let row_idx = idx / levels;
+                let level_idx = idx % levels;
+                -(prepared.eq_tau1[row_idx] * denom).mul_base(r_gadget[level_idx])
+            })
+            .collect();
+        eval_offset_eq_tensor(
+            full_vec_randomness,
+            offset_r,
+            E::one(),
+            &[r_tail.as_slice()],
+        )
+    }
 }
 
 #[cfg(test)]
@@ -327,7 +348,7 @@ mod tests {
     use akita_algebra::offset_eq::{eq_eval_at_index, summarize_pow2_block_carries};
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128OffsetA7F7;
+    use akita_field::{Prime128OffsetA7F7, MulBase};
     use akita_types::{
         gadget_row_scalars, LevelParams, MRowLayout, OpeningClaimsLayout,
         RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
@@ -718,14 +739,18 @@ mod tests {
             p,
             &fx.full_vec_randomness,
             fx.offset_r,
-            &fx.quotient_layout,
-            alpha,
+            alpha * alpha + F::one(),
+            &fx.fold_gadget,
         )
         .unwrap();
-        let expected_tail = fx
-            .quotient_layout
-            .materialize_tail_weights::<F, F>(&p.eq_tau1, alpha)
-            .unwrap();
+        let levels = fx.fold_gadget.len();
+        let denom = alpha * alpha + F::one();
+        let mut expected_tail = Vec::with_capacity(p.setup_contribution_inputs.rows * levels);
+        for row_idx in 0..p.setup_contribution_inputs.rows {
+            for level_idx in 0..levels {
+                expected_tail.push(-(p.eq_tau1[row_idx] * denom).mul_base(fx.fold_gadget[level_idx]));
+            }
+        }
         let mut expected = F::zero();
         for (idx, entry) in expected_tail.into_iter().enumerate() {
             expected += entry * eq[fx.offset_r + idx];

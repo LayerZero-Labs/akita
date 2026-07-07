@@ -313,27 +313,7 @@ fn grouped_root_segment_rings(
 }
 
 fn grouped_root_m_row_count(params: &LevelParams, layout: MRowLayout) -> Result<usize, AkitaError> {
-    let mut rows = 1usize;
-    if matches!(layout, MRowLayout::WithDBlock) {
-        rows = rows
-            .checked_add(params.d_key.row_len())
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
-    }
-
-    // The grouped root has one public output row and one commitment/A block per group.
-    rows = rows
-        .checked_add(params.precommitted_groups.len() + 1)
-        .and_then(|n| n.checked_add(params.b_key.row_len()))
-        .and_then(|n| n.checked_add(params.a_key.row_len()))
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
-    for group in &params.precommitted_groups {
-        rows = rows
-            .checked_add(group.b_key.row_len())
-            .and_then(|n| n.checked_add(group.a_key.row_len()))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped root M rows overflow".to_string()))?;
-    }
-
-    Ok(rows)
+    params.m_row_count_for(params.precommitted_groups.len() + 1, layout)
 }
 
 pub(crate) fn grouped_root_next_w_len(

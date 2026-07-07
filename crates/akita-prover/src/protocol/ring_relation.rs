@@ -32,6 +32,7 @@ use std::time::Instant;
 mod relation_quotient;
 
 pub use relation_quotient::compute_relation_quotient;
+pub(crate) use relation_quotient::compute_grouped_relation_quotient;
 
 fn absorb_terminal_e_folded_fields<F, T>(
     transcript: &mut T,
@@ -458,7 +459,8 @@ impl RingRelationProver {
             let group_hint = fold_claims.group_hint(group_index)?;
             let group_rows =
                 RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
-            if group_rows != lp.b_key.row_len() {
+            let expected_rows = lp.root_group_commitment_rows(&opening_batch, group_index)?;
+            if group_rows != expected_rows {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));

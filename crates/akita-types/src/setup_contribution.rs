@@ -11,7 +11,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, ExtField, FieldCore, MulBase};
 
-use crate::layout::{outer_consistency_row_start, LevelParams, MRowLayout, FOLD_CONSISTENCY_ROW};
+use crate::layout::{LevelParams, MRowLayout};
 use crate::proof::AkitaExpandedSetup;
 const POSSIBLE_CARRIES: usize = 2;
 
@@ -101,10 +101,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
                 "B-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let rows = lp
-            .m_row_count_for(num_commitment_groups, m_row_layout)?
-            .checked_add(1)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation tau1 row count overflow".into()))?;
+        let rows = lp.m_row_count_for(num_commitment_groups, m_row_layout)?;
         Ok(Self {
             eq_tau1: Vec::new(),
             num_t_vectors: num_polynomials,
@@ -484,9 +481,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             MRowLayout::WithDBlock => inputs.n_d,
             MRowLayout::WithoutDBlock => 0,
         };
-        // Canonical row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
-        let a_start = FOLD_CONSISTENCY_ROW;
-        let b_start = outer_consistency_row_start(inputs.n_a);
+        // Opening-consistency rows: consistency (1) | A | B | D.
+        let a_start = 1usize;
+        let b_start = checked_add(a_start, inputs.n_a, "B row start")?;
         let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
         let d_start = checked_add(b_start, b_rows_total, "D row start")?;
         let a_end = checked_add(d_start, n_d_active, "D row end")?;

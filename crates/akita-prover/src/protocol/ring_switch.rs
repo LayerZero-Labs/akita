@@ -2,8 +2,6 @@
 use crate::api::commitment::{
     validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
 };
-use crate::protocol::ring_relation::compute_relation_quotient;
-use crate::protocol::RingRelationWitness;
 use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
@@ -32,12 +30,13 @@ mod finalize;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
 pub use evals::{
-    build_relation_weight_evals, build_relation_weight_evals_from_instance, build_w_evals_compact,
-    compute_grouped_m_evals_x, compute_relation_column_weights, RelationWeightTraceBuild,
+    build_relation_weight_evals_from_instance, build_w_evals_compact, compute_grouped_m_evals_x,
+    RelationWeightTraceBuild,
 };
 pub use finalize::{ring_switch_finalize, RelationWeightFinalizeInputs};
 
