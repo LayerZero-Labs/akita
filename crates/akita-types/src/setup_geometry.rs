@@ -6,7 +6,7 @@
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::{MRowLayout};
+use crate::layout::MRowLayout;
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;

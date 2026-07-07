@@ -551,7 +551,9 @@ where
                 .opening_batch()
                 .num_total_polynomials()
                 .checked_mul(lp.num_blocks)
-                .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("trace block count overflow".to_string())
+                })?;
             let (_, layout) = trace_layout_for_instance(
                 lp,
                 &prepared_fold.instance,

@@ -81,8 +81,8 @@ pub use proof::{
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_relation_y, build_segment_typed_witness,
-    compute_grouped_m_evals_x, decode_terminal_z_golomb_payload, derive_public_matrix_flat, e_folded_segment_bytes,
-    emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
+    compute_grouped_m_evals_x, decode_terminal_z_golomb_payload, derive_public_matrix_flat,
+    e_folded_segment_bytes, emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
     expand_segment_typed_to_i8_digits, folded_root_supports_opening_shape, generate_y,
     i8_digits_to_bytes, padded_scalar_batch_num_vars, padded_setup_prefix_len,
     prepare_opening_point, relation_claim_from_layout_extension, relation_claim_from_rows,
@@ -117,7 +117,8 @@ pub use proof::{
     SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
     GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use relation_weight::{

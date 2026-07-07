@@ -39,9 +39,9 @@ use akita_types::{
     BasisMode, BlockOrder, CleartextWitnessProof, ExecutionSchedule,
     ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding, LevelParams,
     MRowLayout, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PreparedOpeningPoint, RelationOnlyStage2Inputs, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingVec, Schedule, SetupContributionMode,
-    SetupSumcheckProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    PreparedOpeningPoint, RelationOnlyStage2Inputs, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationInstance, RingVec, Schedule, SetupContributionMode, SetupSumcheckProof,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

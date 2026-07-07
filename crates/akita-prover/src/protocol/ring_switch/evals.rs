@@ -2,9 +2,10 @@ use super::*;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_types::{
-    build_grouped_root_stage2_trace_table, build_trace_table_scaled, trace_public_weights_recursive,
-    trace_public_weights_root_terms, CommitmentRingDims, LevelParams, OpeningClaimsLayout,
-    PreparedOpeningPoint, RingRelationInstance, TraceWeightLayout, MRowLayout,
+    build_grouped_root_stage2_trace_table, build_trace_table_scaled,
+    trace_public_weights_recursive, trace_public_weights_root_terms, CommitmentRingDims,
+    LevelParams, MRowLayout, OpeningClaimsLayout, PreparedOpeningPoint, RingRelationInstance,
+    TraceWeightLayout,
 };
 
 pub use akita_types::compute_grouped_m_evals_x;

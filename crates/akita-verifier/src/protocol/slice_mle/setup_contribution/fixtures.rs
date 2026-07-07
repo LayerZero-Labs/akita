@@ -7,13 +7,15 @@ use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, outer_consistency_row_start, AkitaExpandedSetup, AkitaSetupSeed,
-    FlatMatrix, MRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessChunkLengths,
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
+    MRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessChunkLengths,
     WitnessLayout,
 };
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
-use crate::protocol::ring_switch::{PreparedChallengeEvals, RingSwitchDeferredRowEval};
+use crate::protocol::ring_switch::{
+    PreparedChallengeEvals, RingSwitchDeferredRowEval, RingSwitchDeferredRowGroupEval,
+};
 
 pub(crate) type TestField = Prime128OffsetA7F7;
 pub(crate) const TEST_RING_DIM: usize = 32;
@@ -126,8 +128,8 @@ impl SetupContributionFixture {
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
-        // Canonical M-row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
-        let rows = outer_consistency_row_start(shape.n_a) + shape.n_b * num_points + shape.n_d;
+        // Canonical M-row layout: consistency | A | B | D.
+        let rows = 1 + shape.n_a + shape.n_b * num_points + shape.n_d;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
@@ -187,41 +189,63 @@ impl SetupContributionFixture {
             rows,
             num_polys_per_segment: shape.num_polys_per_segment.clone(),
         };
+        let chunk_layout = WitnessLayout {
+            blocks_per_chunk: shape.num_blocks,
+            chunks: vec![WitnessChunkLayout {
+                offset_z,
+                offset_e,
+                offset_t,
+                offset_u: None,
+                offset_r: Some(offset_r),
+                global_block_base: 0,
+            }],
+            chunk_lengths: vec![WitnessChunkLengths {
+                z_len,
+                e_len,
+                t_len,
+                u_len: None,
+                r_len: Some(0),
+            }],
+            quotient_layout: WitnessLayout::empty_quotient_layout(),
+        };
+        let n_d_active = match shape.m_row_layout {
+            MRowLayout::WithDBlock => shape.n_d,
+            MRowLayout::WithoutDBlock => 0,
+        };
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..total_blocks)
-                    .map(|idx| test_scalar(41 + idx as u128))
-                    .collect(),
-            ),
             eq_tau1,
-            num_t_vectors,
-            num_blocks: shape.num_blocks,
-            num_claims: shape.num_claims,
-            depth_open: shape.depth_open,
-            depth_commit: shape.depth_commit,
+            role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
+            groups: vec![RingSwitchDeferredRowGroupEval {
+                c_alphas: PreparedChallengeEvals::Flat(
+                    (0..total_blocks)
+                        .map(|idx| test_scalar(41 + idx as u128))
+                        .collect(),
+                ),
+                a_evals: (0..shape.block_len)
+                    .map(|idx| test_scalar(501 + idx as u128))
+                    .collect(),
+                chunk_range: 0..chunk_layout.chunks.len(),
+                e_setup_offset: 0,
+                num_claims: shape.num_claims,
+                num_blocks: shape.num_blocks,
+                block_len: shape.block_len,
+                depth_open: shape.depth_open,
+                depth_commit: shape.depth_commit,
+                depth_fold: shape.depth_fold,
+                log_basis: shape.log_basis,
+                n_a: shape.n_a,
+                n_b: shape.n_b,
+                inner_width,
+                t_cols_per_vector: shape.n_a * shape.depth_open * shape.num_blocks,
+                a_row_start: 1,
+                b_row_start: 1 + shape.n_a,
+            }],
+            e_setup_cols: n_cols_e,
+            n_d_active,
+            d_start: rows - n_d_active,
             depth_fold: shape.depth_fold,
-            block_len: shape.block_len,
             log_basis: shape.log_basis,
-            n_a: shape.n_a,
-            chunk_layout: WitnessLayout {
-                blocks_per_chunk: shape.num_blocks,
-                chunks: vec![WitnessChunkLayout {
-                    offset_z,
-                    offset_e,
-                    offset_t,
-                    offset_u: None,
-                    offset_r: Some(offset_r),
-                    global_block_base: 0,
-                }],
-                chunk_lengths: vec![WitnessChunkLengths {
-                    z_len,
-                    e_len,
-                    t_len,
-                    u_len: None,
-                    r_len: Some(0),
-                }],
-                quotient_layout: WitnessLayout::empty_quotient_layout(),
-            },
+            chunk_layout,
             setup_contribution_inputs,
         };
 

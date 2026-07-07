@@ -1,7 +1,10 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp32;
-use akita_types::{SisModulusFamily, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
+use akita_types::{
+    RingMultiplierOpeningPoint, RingOpeningPoint, SisModulusFamily, WitnessChunkLayout,
+    WitnessChunkLengths, WitnessLayout,
+};
 
 /// Placeholder layout for prepare-path rejection tests. These cases fail before
 /// any layout-dependent evaluation runs, so the offsets are not required to
@@ -38,12 +41,20 @@ fn stage1_config() -> SparseChallengeConfig {
     }
 }
 
+fn reject_test_multiplier_point() -> RingMultiplierOpeningPoint<F> {
+    RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
+        a: Vec::new(),
+        b: Vec::new(),
+    })
+}
+
 #[test]
 fn ring_switch_prepare_rejects_invalid_log_basis() {
     let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 0, 1, 1, 1, stage1_config());
     let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
     let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
         &challenges,
+        &reject_test_multiplier_point(),
         F::one(),
         &lp,
         &[],
@@ -53,8 +64,6 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
         reject_test_segment_layout(),
         1,
         0,
-        1,
-        vec![0],
     ) {
         Ok(_) => panic!("invalid log_basis should be rejected"),
         Err(err) => err,
@@ -68,6 +77,7 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
     let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
     let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
         &challenges,
+        &reject_test_multiplier_point(),
         F::one(),
         &lp,
         &[],
@@ -77,8 +87,6 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         reject_test_segment_layout(),
         1,
         0,
-        1,
-        vec![0],
     ) {
         Ok(_) => panic!("zero num_blocks should be rejected"),
         Err(err) => err,
