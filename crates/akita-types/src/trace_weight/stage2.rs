@@ -2,6 +2,7 @@
 
 use std::marker::PhantomData;
 
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 
@@ -48,6 +49,13 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     /// sampled after the next-level witness is bound to the transcript.
     pub trace_coeff: E,
     pub trace_opening_claim: E,
+    /// Dense grouped-root trace-weight table (`col ⊗ ring`, `output_scale = 1`).
+    /// When present the stage-2 verifier evaluates its multilinear extension at
+    /// the witness point instead of the closed-form [`Self::trace_terms`]. This
+    /// is the grouped-root counterpart of the succinct per-claim terms: grouped
+    /// roots decompose each group with per-group `num_blocks`/`num_digits_open`
+    /// and a group-major e-hat offset, which the closed form cannot express.
+    pub dense_evals: Option<Vec<E>>,
 }
 
 /// Whether the trace-weight dispatcher has an algebraic implementation for this
@@ -459,6 +467,218 @@ where
             row_coefficients,
             claim_scales,
         )?,
+        dense_evals: None,
+    })
+}
+
+/// Build the grouped-root verifier trace claim from a dense trace-weight table.
+///
+/// The table is [`build_grouped_root_stage2_trace_table`] with `output_scale =
+/// 1`; the stage-2 `trace_coeff` factor stays separate so `expected_output_claim`
+/// applies it once. `trace_terms` are left empty because the closed form cannot
+/// express per-group block geometry; the dense table is evaluated directly.
+#[allow(clippy::too_many_arguments)]
+pub fn build_trace_claim_grouped_root<F, E, const D: usize>(
+    layout: TraceWeightLayout,
+    lp: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+    prepared_points: &[PreparedOpeningPoint<F, E>],
+    row_coefficients: &[E],
+    claim_scales: Option<&[E]>,
+    trace_coeff: E,
+    trace_eval_target: E,
+    live_x_cols: usize,
+) -> Result<TraceClaim<F, E, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
+    let table = build_grouped_root_stage2_trace_table::<F, E>(
+        lp.role_dims().d_a(),
+        lp,
+        opening_batch,
+        prepared_points,
+        row_coefficients,
+        claim_scales,
+        E::one(),
+        live_x_cols,
+    )?;
+    Ok(TraceClaim {
+        layout,
+        trace_coeff,
+        trace_opening_claim: trace_coeff * trace_eval_target,
+        trace_terms: Vec::new(),
+        dense_evals: Some(table.into_ring_dense()?),
+    })
+}
+
+/// Evaluate the multilinear extension of a dense `col ⊗ ring` trace table at the
+/// stage-2 witness point.
+///
+/// `challenges = [y_challenges (ring), x_challenges (col)]` matches the stage-2
+/// witness variable order (`table[col * ring_len + coord]`, `col` outer, ring
+/// coordinate inner). Live columns below the padded width evaluate as implicit
+/// zeros, mirroring the prover's compact table.
+pub fn eval_dense_trace_table<E>(
+    dense_evals: &[E],
+    y_challenges: &[E],
+    x_challenges: &[E],
+) -> Result<E, AkitaError>
+where
+    E: FieldCore,
+{
+    let ring_len = 1usize
+        .checked_shl(u32::try_from(y_challenges.len()).map_err(|_| AkitaError::InvalidProof)?)
+        .ok_or(AkitaError::InvalidProof)?;
+    if ring_len == 0 || !dense_evals.len().is_multiple_of(ring_len) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let live_x_cols = dense_evals.len() / ring_len;
+    let eq_x = EqPolynomial::evals(x_challenges)?;
+    let eq_y = EqPolynomial::evals(y_challenges)?;
+    if live_x_cols > eq_x.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut acc = E::zero();
+    for (col, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+        let base = col * ring_len;
+        let mut ring_acc = E::zero();
+        for (coord, &y_weight) in eq_y.iter().enumerate() {
+            ring_acc += y_weight * dense_evals[base + coord];
+        }
+        acc += x_weight * ring_acc;
+    }
+    Ok(acc)
+}
+
+/// Build the dense grouped-root stage-2 trace table (`col ⊗ ring`).
+///
+/// Group `g`'s e-hat block sits inside its contiguous `[z_g ‖ e_g ‖ t_g]` stride
+/// at `base_g + z_g`, where `base_g` is the cumulative `z+e+t` width of the
+/// groups emitted before it in `root_group_order()`; this matches the prover's
+/// `ring_switch_build_w` / `segment_layout` witness emission. `output_scale` is
+/// the stage-2 `trace_coeff` on the prover and `1` on the verifier (which keeps
+/// `trace_coeff` separate for `expected_output_claim`).
+///
+/// # Errors
+///
+/// Returns an error for a non-degree-one opening field, mismatched group counts,
+/// or any segment-width arithmetic overflow.
+#[allow(clippy::too_many_arguments)]
+pub fn build_grouped_root_stage2_trace_table<F, E>(
+    ring_d: usize,
+    lp: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+    prepared_points: &[PreparedOpeningPoint<F, E>],
+    row_coefficients: &[E],
+    trace_claim_scales: Option<&[E]>,
+    output_scale: E,
+    live_x_cols: usize,
+) -> Result<TraceTable<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
+    if E::EXT_DEGREE != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "grouped root trace table currently requires degree-one openings".to_string(),
+        ));
+    }
+    if prepared_points.len() != opening_batch.num_groups()
+        || row_coefficients.len() != opening_batch.num_total_polynomials()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    if let Some(scales) = trace_claim_scales {
+        if scales.len() != opening_batch.num_total_polynomials() {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+    crate::dispatch_ring_dim_result!(ring_d, |D| {
+        let ring_len = D;
+        let order = opening_batch.root_group_order()?;
+        let mut e_offsets = vec![0usize; opening_batch.num_groups()];
+        let mut base = 0usize;
+        for &group_index in &order {
+            let group_lp = lp.root_group_params(opening_batch, group_index)?;
+            let group_layout = opening_batch.group_layout(group_index)?;
+            let depth_fold = lp.num_digits_fold_for_params(
+                group_lp,
+                group_layout.num_polynomials(),
+                lp.field_bits_for_cache(),
+            )?;
+            let overflow =
+                || AkitaError::InvalidSetup("grouped trace segment width overflow".to_string());
+            let z_g = group_lp
+                .block_len()
+                .checked_mul(group_lp.num_digits_commit())
+                .and_then(|n| n.checked_mul(depth_fold))
+                .ok_or_else(overflow)?;
+            let e_g = group_layout
+                .num_polynomials()
+                .checked_mul(group_lp.num_blocks())
+                .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+                .ok_or_else(overflow)?;
+            let t_g = group_layout
+                .num_polynomials()
+                .checked_mul(group_lp.num_blocks())
+                .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
+                .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+                .ok_or_else(overflow)?;
+            e_offsets[group_index] = base.checked_add(z_g).ok_or_else(overflow)?;
+            base = base
+                .checked_add(z_g)
+                .and_then(|n| n.checked_add(e_g))
+                .and_then(|n| n.checked_add(t_g))
+                .ok_or_else(overflow)?;
+        }
+
+        let mut table = vec![E::zero(); live_x_cols * ring_len];
+        let mut claim_offset = 0usize;
+        for group_index in 0..opening_batch.num_groups() {
+            let group_lp = lp.root_group_params(opening_batch, group_index)?;
+            let group_layout = opening_batch.group_layout(group_index)?;
+            let prepared = &prepared_points[group_index];
+            let inner = prepared.packed_inner_owned::<D>()?;
+            let inner_coeffs = inner.coefficients();
+            let gadget =
+                crate::gadget_row_scalars::<F>(group_lp.num_digits_open(), group_lp.log_basis());
+            for local_claim in 0..group_layout.num_polynomials() {
+                let claim_idx = claim_offset + local_claim;
+                let scale = trace_claim_scales
+                    .and_then(|scales| scales.get(claim_idx).copied())
+                    .unwrap_or_else(E::one);
+                let coefficient = output_scale * row_coefficients[claim_idx] * scale;
+                for block in 0..group_lp.num_blocks() {
+                    let block_weight = prepared
+                        .ring_opening_point
+                        .b
+                        .get(block)
+                        .copied()
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let block_weight = E::lift_base(block_weight);
+                    for (plane, gadget_scalar) in gadget.iter().enumerate() {
+                        let col = e_offsets[group_index]
+                            + plane * (group_layout.num_polynomials() * group_lp.num_blocks())
+                            + local_claim * group_lp.num_blocks()
+                            + block;
+                        if col >= live_x_cols {
+                            continue;
+                        }
+                        let dst_base = col * ring_len;
+                        let factor = coefficient * block_weight * E::lift_base(*gadget_scalar);
+                        for (dst, coeff) in table[dst_base..dst_base + ring_len]
+                            .iter_mut()
+                            .zip(inner_coeffs.iter())
+                        {
+                            *dst += factor * E::lift_base(*coeff);
+                        }
+                    }
+                }
+            }
+            claim_offset += group_layout.num_polynomials();
+        }
+        Ok::<_, AkitaError>(TraceTable::ring_dense(table))
     })
 }
 

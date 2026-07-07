@@ -443,6 +443,9 @@ where
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
+    schedule
+        .reject_grouped_multi_chunk("batched verify")
+        .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
     // The transcript instance descriptor binds the setup-wide root ring

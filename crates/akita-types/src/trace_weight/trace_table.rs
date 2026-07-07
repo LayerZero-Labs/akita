@@ -153,6 +153,18 @@ impl<E: FieldCore> TraceTable<E> {
         Self::RingDense(dense)
     }
 
+    /// Extract the flat `col ⊗ ring` table backing a dense trace table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] for a sparse (`K = 1`) table.
+    pub fn into_ring_dense(self) -> Result<Vec<E>, AkitaError> {
+        match self {
+            Self::RingDense(dense) => Ok(dense),
+            Self::FieldSparse(_) => Err(AkitaError::InvalidProof),
+        }
+    }
+
     pub fn materialize_dense(&self, live_x_cols: usize, y_len: usize) -> Vec<E> {
         match self {
             Self::FieldSparse(table) => {

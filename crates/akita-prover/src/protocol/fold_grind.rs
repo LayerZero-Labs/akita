@@ -16,7 +16,7 @@ use akita_types::{
         fold_witness_beta, fold_witness_verifier_linf_bound, FoldWitnessGrindContract,
         FoldWitnessLinfCapPolicy,
     },
-    FoldLinfProtocolBinding, LevelParams, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
+    FoldLinfProtocolBinding, LevelParams, LevelParamsLike, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
@@ -133,28 +133,77 @@ fn accepts_fold_witness<F: CanonicalField, const D: usize>(
 }
 
 fn witness_linf_cap_for_grind(
-    lp: &LevelParams,
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
     contract: &FoldWitnessGrindContract,
     tail_t_vectors: Option<usize>,
 ) -> Result<u128, AkitaError> {
     match tail_t_vectors {
-        Some(num_t_vectors) => lp.fold_witness_linf_cap_for_claims(num_t_vectors),
+        Some(num_t_vectors) => fold_witness_linf_cap_for_claims(root_lp, params, num_t_vectors),
         None => Ok(contract.witness_linf_cap),
     }
+}
+
+fn fold_witness_linf_digit_plan_for_claims(
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
+    num_claims: usize,
+) -> Result<akita_types::sis::FoldWitnessLinfDigitPlan, AkitaError> {
+    akita_types::sis::fold_witness_linf_digit_plan(
+        params.r_vars(),
+        num_claims,
+        root_lp.field_bits_for_cache(),
+        params.log_basis(),
+        akita_types::sis::fold_challenge_norms(
+            &root_lp.stage1_config,
+            root_lp.fold_challenge_shape,
+        ),
+        root_lp.fold_witness_norms_for_params(params),
+        &root_lp.fold_linf_cap_config,
+    )
+}
+
+fn fold_witness_linf_cap_for_claims(
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
+    num_claims: usize,
+) -> Result<u128, AkitaError> {
+    Ok(fold_witness_linf_digit_plan_for_claims(root_lp, params, num_claims)?.grind_cap)
+}
+
+fn fold_witness_grind_contract(
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
+    num_claims: usize,
+    max_grind_attempts: u32,
+) -> Result<FoldWitnessGrindContract, AkitaError> {
+    let policy = root_lp.fold_witness_linf_cap_policy();
+    let max_nonce_exclusive = match policy {
+        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => max_grind_attempts,
+    };
+    let witness_linf_cap = fold_witness_linf_cap_for_claims(root_lp, params, num_claims)?;
+    Ok(FoldWitnessGrindContract {
+        policy,
+        witness_linf_cap,
+        max_nonce_exclusive,
+    })
 }
 
 fn grind_probe_nonces(
     contract: &FoldWitnessGrindContract,
     binding: &FoldLinfProtocolBinding,
     transcript: &dyn FoldChallengeSeedPreview,
-    lp: &LevelParams,
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
     num_claims: usize,
 ) -> Result<Vec<u32>, AkitaError> {
     let cap = contract.max_nonce_exclusive;
     match binding.grind_probe_order {
         FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN => Ok((0..cap).collect()),
         FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE if contract.policy.allows_grind() => {
-            let absorb_buf = lp.fold_grind_probe_order_absorb_buf(num_claims);
+            let absorb_buf = fold_grind_probe_order_absorb_buf(root_lp, params, num_claims);
             let seed = transcript.preview_challenge_bytes_after_absorb(&absorb_buf, 32);
             Ok(grind_probe_permutation(&seed, cap))
         }
@@ -163,6 +212,23 @@ fn grind_probe_nonces(
             "unsupported fold grind probe order tag {other}"
         ))),
     }
+}
+
+fn fold_grind_probe_order_absorb_buf(
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
+    num_claims: usize,
+) -> Vec<u8> {
+    let num_claims = u32::try_from(num_claims).unwrap_or(u32::MAX);
+    let mut buf = Vec::with_capacity(48);
+    buf.extend_from_slice(akita_types::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
+    buf.extend_from_slice(&(root_lp.ring_dimension as u64).to_le_bytes());
+    buf.extend_from_slice(&params.log_basis().to_le_bytes());
+    buf.extend_from_slice(&(params.m_vars() as u64).to_le_bytes());
+    buf.extend_from_slice(&(params.r_vars() as u64).to_le_bytes());
+    buf.extend_from_slice(&(params.num_blocks() as u64).to_le_bytes());
+    buf.extend_from_slice(&num_claims.to_le_bytes());
+    buf
 }
 
 /// One fold probe: returns the global folded witness and the per-window centered
@@ -181,7 +247,8 @@ fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     challenges: &Challenges,
     polys: &[&P],
     point_indices: &[usize],
-    lp: &LevelParams,
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -190,8 +257,8 @@ where
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
-    let num_chunks = lp.witness_chunk.num_chunks;
-    let blocks_per_chunk = lp.num_blocks / num_chunks.max(1);
+    let num_chunks = root_lp.witness_chunk.num_chunks;
+    let blocks_per_chunk = params.num_blocks() / num_chunks.max(1);
     if num_chunks <= 1 {
         let witness = build_point_decompose_fold_witness::<F, P, B, D>(
             backend,
@@ -199,7 +266,7 @@ where
             challenges,
             polys,
             point_indices,
-            lp,
+            params,
         )?;
         let per_chunk = vec![witness.centered_coeffs_owned::<D>()];
         return Ok((witness, per_chunk));
@@ -214,7 +281,7 @@ where
                 &windowed,
                 polys,
                 point_indices,
-                lp,
+                params,
             )
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -233,7 +300,8 @@ fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
     polys: &[&P],
-    lp: &LevelParams,
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
     num_claims: usize,
     tail_t_vectors: Option<usize>,
     contract: &FoldWitnessGrindContract,
@@ -252,7 +320,7 @@ where
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
-    let ring_d = lp.role_dims().d_a();
+    let ring_d = root_lp.role_dims().d_a();
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
     let labels = stage1_fold_challenge_labels();
     let mut grind_probe_count = 0u32;
@@ -261,10 +329,10 @@ where
         let challenges = preview_folding_challenges(
             transcript,
             ring_d,
-            lp.num_blocks,
+            params.num_blocks(),
             num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
+            &root_lp.stage1_config,
+            &root_lp.fold_challenge_shape,
             labels,
             nonce,
         )?;
@@ -274,7 +342,8 @@ where
             &challenges,
             polys,
             &point_indices,
-            lp,
+            root_lp,
+            params,
         )?;
         if !accepts_fold_witness::<F, D>(
             contract,
@@ -301,10 +370,10 @@ where
         let challenges = sample_folding_challenges::<F, T>(
             transcript,
             ring_d,
-            lp.num_blocks,
+            params.num_blocks(),
             num_claims,
-            &lp.stage1_config,
-            &lp.fold_challenge_shape,
+            &root_lp.stage1_config,
+            &root_lp.fold_challenge_shape,
             labels,
             nonce,
         )?;
@@ -326,13 +395,14 @@ where
 /// When `tail_t_vectors` is set, presets reject witnesses whose centered coefficients do not
 /// fit the terminal Golomb planner budget at wire low bits (including `WorstCaseBetaOnly`
 /// presets that do not reroll on linf cap).
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn sample_fold_decompose_witness<F, P, B, T>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
     polys: &[&P],
-    lp: &LevelParams,
+    root_lp: &LevelParams,
+    params: &(impl LevelParamsLike + ?Sized),
     num_claims: usize,
     tail_t_vectors: Option<usize>,
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
@@ -347,22 +417,25 @@ where
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     // A-role fold dimension; per-role split attaches here (mixed-row spec).
-    let ring_d = lp.role_dims().d_a();
+    let ring_d = root_lp.role_dims().d_a();
     let binding = FoldLinfProtocolBinding::CURRENT;
-    let contract = lp.fold_witness_grind_contract(num_claims, binding.max_grind_attempts)?;
+    let contract =
+        fold_witness_grind_contract(root_lp, params, num_claims, binding.max_grind_attempts)?;
     // Tail Golomb grinding sizes caps from `tail_t_vectors`; keep observer metrics on the
     // same claim count so snap hints do not mix β/t*/δ from one count with cap from another.
     let sizing_claims = tail_t_vectors.unwrap_or(num_claims);
-    let witness_linf_cap = witness_linf_cap_for_grind(lp, &contract, tail_t_vectors)?;
-    let digit_plan = lp.fold_witness_linf_digit_plan_for_claims(sizing_claims)?;
+    let witness_linf_cap = witness_linf_cap_for_grind(root_lp, params, &contract, tail_t_vectors)?;
+    let digit_plan = fold_witness_linf_digit_plan_for_claims(root_lp, params, sizing_claims)?;
     let delta_fold = digit_plan.delta_fold;
     let (digit_negative_abs_bound, digit_positive_bound) =
-        akita_types::sis::fold_witness_representable_linf_bounds(lp.log_basis, delta_fold);
-    let verifier_linf_bound = fold_witness_verifier_linf_bound(lp.log_basis, delta_fold);
-    let challenge =
-        akita_types::sis::fold_challenge_norms(&lp.stage1_config, lp.fold_challenge_shape);
-    let witness_norms = lp.fold_witness_norms();
-    let beta_inf = fold_witness_beta(lp.r_vars, sizing_claims, challenge, witness_norms)?;
+        akita_types::sis::fold_witness_representable_linf_bounds(params.log_basis(), delta_fold);
+    let verifier_linf_bound = fold_witness_verifier_linf_bound(params.log_basis(), delta_fold);
+    let challenge = akita_types::sis::fold_challenge_norms(
+        &root_lp.stage1_config,
+        root_lp.fold_challenge_shape,
+    );
+    let witness_norms = root_lp.fold_witness_norms_for_params(params);
+    let beta_inf = fold_witness_beta(params.r_vars(), sizing_claims, challenge, witness_norms)?;
     let level_meta = FoldGrindLevelMeta {
         beta_inf,
         t_star: digit_plan.t_star,
@@ -370,11 +443,12 @@ where
         delta_fold,
         verifier_linf_bound,
         policy: contract.policy,
-        log_basis: lp.log_basis,
-        r_vars: u32::try_from(lp.r_vars).unwrap_or(u32::MAX),
+        log_basis: params.log_basis(),
+        r_vars: u32::try_from(params.r_vars()).unwrap_or(u32::MAX),
         num_claims: u32::try_from(sizing_claims).unwrap_or(u32::MAX),
     };
-    let probe_nonces = grind_probe_nonces(&contract, &binding, transcript, lp, num_claims)?;
+    let probe_nonces =
+        grind_probe_nonces(&contract, &binding, transcript, root_lp, params, num_claims)?;
 
     akita_types::dispatch_ring_dim_result!(ring_d, |D| {
         sample_fold_decompose_witness_at_dim::<F, P, B, T, D>(
@@ -382,7 +456,8 @@ where
             prepared,
             transcript,
             polys,
-            lp,
+            root_lp,
+            params,
             num_claims,
             tail_t_vectors,
             &contract,
@@ -432,8 +507,8 @@ mod tests {
         let transcript = AkitaTranscript::<F>::prover(b"grind/order", b"instance");
         let mut binding = FoldLinfProtocolBinding::CURRENT;
         binding.grind_probe_order = FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE;
-        let shuffled =
-            grind_probe_nonces(&contract, &binding, &transcript, &lp, 1).expect("shuffle order");
+        let shuffled = grind_probe_nonces(&contract, &binding, &transcript, &lp, &lp, 1)
+            .expect("shuffle order");
         let sequential = (0..contract.max_nonce_exclusive).collect::<Vec<_>>();
         assert_ne!(shuffled, sequential);
     }
