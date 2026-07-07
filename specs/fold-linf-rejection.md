@@ -306,8 +306,8 @@ used by planner/prover/verifier paths.
 ### ZK: grind probe order
 
 The wire contract fixes only the **accepted** `fold_grind_nonce` (`u32`) and its
-absorb point in `sparse_challenge_absorb_buf`. It does **not** mandate how the
-prover searches for an accepting nonce.
+sparse-challenge absorb point. It does **not** mandate how the prover searches
+for an accepting nonce.
 
 **Plain presets (`grind_probe_order = sequential_min`).** The prover probes
 `nonce = 0, 1, 2, …` and commits the **minimum** accepting index. This is
@@ -480,10 +480,11 @@ worst-case path is generalized in place):
   `ChallengeShape` (`Flat → challenge_l2_sq_max`, `Tensor → l1_factor^2 ·
   challenge_l2_sq_max`).
 - `src/sampler/mod.rs`: extend `sample_folding_challenges` (and the inner
-  `sample_sparse_challenges`) with a `grind_nonce: u32` that is folded into
-  `sparse_challenge_absorb_buf` (a new field after the config domain separator),
-  so an incremented nonce yields an independent transcript-derived stream while
-  staying prover/verifier-replayable. Unsupported policies pass nonce `0`.
+  `sample_sparse_challenges`) with a `grind_nonce: u32` that is folded into the
+  sparse-challenge absorb payload (a new field after the config domain
+  separator), so an incremented nonce yields an independent transcript-derived
+  stream while staying prover/verifier-replayable. Unsupported policies pass
+  nonce `0`.
 
 **`akita-types`**
 

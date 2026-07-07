@@ -139,7 +139,7 @@ pub enum Challenges {
     },
 }
 
-/// Transcript labels consumed by [`crate::sample_folding_challenges`].
+/// Transcript labels consumed by [`crate::FoldDraw::draw_folding_challenges`].
 ///
 /// Bundling them in a struct keeps the call sites self-describing and prevents
 /// accidental left/right swaps. Callers pick label byte strings appropriate

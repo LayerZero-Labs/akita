@@ -7,7 +7,7 @@
 
 use crate::sampler::position_sample::sample_distinct_positions_into;
 use crate::sampler::xof::XofCursor;
-use crate::SparseChallenge;
+use crate::{SparseChallenge, SparseChallengeConfig};
 
 /// Stack chunk for random sign bytes.
 const SIGN_BYTE_CHUNK: usize = 64;
@@ -27,6 +27,21 @@ impl SignedSparseScratch {
             coeffs: Vec::with_capacity(total),
             total,
         }
+    }
+
+    pub(crate) fn sample_challenges(
+        cursor: &mut XofCursor,
+        d: usize,
+        n: usize,
+        cfg: &SparseChallengeConfig,
+    ) -> Vec<SparseChallenge> {
+        let mut challenges = Vec::with_capacity(n);
+        let mut scratch = Self::new(cfg.count_pm1, cfg.count_pm2);
+        for _ in 0..n {
+            scratch.sample(cursor, d, cfg.count_pm1, cfg.count_pm2);
+            challenges.push(scratch.take_challenge());
+        }
+        challenges
     }
 
     /// Draw one signed-sparse candidate into the scratch buffers.

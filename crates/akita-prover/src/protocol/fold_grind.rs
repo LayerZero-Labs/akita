@@ -4,8 +4,8 @@ use crate::compute::{
     OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
 };
 use akita_challenges::{
-    grind_probe_permutation, preview_folding_challenges, sample_folding_challenges,
-    witness_fold_challenge_labels, Challenges,
+    grind_probe_permutation, witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw,
+    PreviewFoldDraw,
 };
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -327,8 +327,7 @@ where
     let mut grind_probe_count = 0u32;
     for &nonce in probe_nonces {
         grind_probe_count = grind_probe_count.saturating_add(1);
-        let challenges = preview_folding_challenges(
-            transcript,
+        let challenges = PreviewFoldDraw::new(transcript).draw_folding_challenges(
             ring_d,
             params.num_blocks(),
             num_claims,
@@ -368,8 +367,7 @@ where
             observed_linf: witness.centered_inf_norm,
             level_meta,
         });
-        let challenges = sample_folding_challenges::<F, T>(
-            transcript,
+        let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
             ring_d,
             params.num_blocks(),
             num_claims,

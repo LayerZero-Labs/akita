@@ -8,7 +8,9 @@
 //!   exposing policy questions like `l1_norm()` / `infinity_norm()` / `validate()`
 //!   to `akita-config`, `akita-types`, and `akita-planner`.
 //! - [`sample_sparse_challenges`] — the transcript-driven sampler that turns
-//!   a config plus a Fiat-Shamir transcript into challenges.
+//!   a config plus a Fiat-Shamir transcript into sparse challenges.
+//! - [`FoldDraw`] / [`LiveFoldDraw`] / [`PreviewFoldDraw`] — tensor-aware
+//!   fold-challenge drawing over live or preview transcript state.
 //! - [`ChallengeShape`] / [`Challenges`] — tensor-aware folding
 //!   challenge selection and sampled challenge containers.
 //! - [`TensorChallenges`] — the tensor-only factored representation used when
@@ -31,11 +33,9 @@ pub use config::{
     SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
-pub use fold_draw::{preview_folding_challenges, sample_folding_challenges};
+pub use fold_draw::{FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 pub use grind_probe::grind_probe_permutation;
-pub use sampler::{
-    sample_sparse_challenges, sparse_challenge_absorb_buf, sparse_challenges_from_seed,
-};
+pub use sampler::sample_sparse_challenges;
 pub use tensor::{
     fold_sparse_challenge_sample_count, tensor_left_digest, tensor_split,
     witness_fold_challenge_labels, ChallengeLabels, ChallengeShape,

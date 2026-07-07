@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
 use akita_challenges::{
-    preview_folding_challenges, sample_folding_challenges, sample_sparse_challenges,
-    tensor_left_digest, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
-    SparseChallengeConfig, TensorChallenges,
+    sample_sparse_challenges, tensor_left_digest, ChallengeLabels, ChallengeShape, Challenges,
+    FoldDraw, LiveFoldDraw, PreviewFoldDraw, SparseChallenge, SparseChallengeConfig,
+    TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
@@ -285,17 +285,17 @@ fn tensor_sampling_uses_two_vectors() {
     let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(7));
 
-    let challenges = sample_folding_challenges::<F, _>(
-        &mut transcript,
-        TD,
-        8,
-        2,
-        &cfg,
-        &ChallengeShape::Tensor,
-        fold_challenge_labels(),
-        0,
-    )
-    .unwrap();
+    let challenges = LiveFoldDraw::<F, _>::new(&mut transcript)
+        .draw_folding_challenges(
+            TD,
+            8,
+            2,
+            &cfg,
+            &ChallengeShape::Tensor,
+            fold_challenge_labels(),
+            0,
+        )
+        .unwrap();
 
     let Challenges::Tensor {
         factored: tensor, ..
@@ -350,17 +350,17 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
 
     let mut sampled_transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     sampled_transcript.append_field(b"seed", &F::from_u64(0x5151));
-    let sampled = sample_folding_challenges::<F, _>(
-        &mut sampled_transcript,
-        TD,
-        8,
-        2,
-        &cfg,
-        &ChallengeShape::Tensor,
-        fold_challenge_labels(),
-        0,
-    )
-    .unwrap();
+    let sampled = LiveFoldDraw::<F, _>::new(&mut sampled_transcript)
+        .draw_folding_challenges(
+            TD,
+            8,
+            2,
+            &cfg,
+            &ChallengeShape::Tensor,
+            fold_challenge_labels(),
+            0,
+        )
+        .unwrap();
     let Challenges::Tensor {
         factored: sampled, ..
     } = sampled
@@ -428,28 +428,28 @@ fn tensor_preview_matches_live_sample_without_advancing_transcript() {
     let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(0x7171));
 
-    let previewed = preview_folding_challenges(
-        &transcript,
-        TD,
-        8,
-        2,
-        &cfg,
-        &ChallengeShape::Tensor,
-        fold_challenge_labels(),
-        7,
-    )
-    .unwrap();
-    let live = sample_folding_challenges::<F, _>(
-        &mut transcript,
-        TD,
-        8,
-        2,
-        &cfg,
-        &ChallengeShape::Tensor,
-        fold_challenge_labels(),
-        7,
-    )
-    .unwrap();
+    let previewed = PreviewFoldDraw::new(&transcript)
+        .draw_folding_challenges(
+            TD,
+            8,
+            2,
+            &cfg,
+            &ChallengeShape::Tensor,
+            fold_challenge_labels(),
+            7,
+        )
+        .unwrap();
+    let live = LiveFoldDraw::<F, _>::new(&mut transcript)
+        .draw_folding_challenges(
+            TD,
+            8,
+            2,
+            &cfg,
+            &ChallengeShape::Tensor,
+            fold_challenge_labels(),
+            7,
+        )
+        .unwrap();
 
     assert_eq!(previewed, live);
 }
@@ -473,17 +473,17 @@ fn tensor_lazy_evals_match_ring_product_reference() {
     let cfg = SparseChallengeConfig::pm1_only(2);
     let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(99));
-    let challenges = sample_folding_challenges::<F, _>(
-        &mut transcript,
-        TD,
-        8,
-        1,
-        &cfg,
-        &ChallengeShape::Tensor,
-        fold_challenge_labels(),
-        0,
-    )
-    .unwrap();
+    let challenges = LiveFoldDraw::<F, _>::new(&mut transcript)
+        .draw_folding_challenges(
+            TD,
+            8,
+            1,
+            &cfg,
+            &ChallengeShape::Tensor,
+            fold_challenge_labels(),
+            0,
+        )
+        .unwrap();
 
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
     let lazy = challenges.evals_at_pows::<F, F>(&alpha_pows).unwrap();

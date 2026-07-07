@@ -6,7 +6,7 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_challenges::{sample_folding_challenges, witness_fold_challenge_labels, Challenges};
+use akita_challenges::{witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
@@ -74,16 +74,17 @@ where
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-        group_challenges.push(sample_folding_challenges::<F, T>(
-            transcript,
-            ring_d,
-            group_lp.num_blocks(),
-            k_g,
-            &lp.fold_challenge_config,
-            &lp.fold_challenge_shape,
-            labels,
-            grind_nonce,
-        )?);
+        group_challenges.push(
+            LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
+                ring_d,
+                group_lp.num_blocks(),
+                k_g,
+                &lp.fold_challenge_config,
+                &lp.fold_challenge_shape,
+                labels,
+                grind_nonce,
+            )?,
+        );
     }
     Ok(group_challenges)
 }
