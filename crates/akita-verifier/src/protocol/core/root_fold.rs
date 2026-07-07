@@ -253,7 +253,7 @@ where
             .then_some(next_fold_level_params.role_dims().d_b()),
         terminal_replay,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
-        trace_prepared_point: Some(prepared_point.clone()),
+        trace_prepared_points: Some(vec![prepared_point.clone()]),
         trace_block_opening: Some(trace_block_opening),
         trace_eval_target,
         trace_eval_scale: E::one(),

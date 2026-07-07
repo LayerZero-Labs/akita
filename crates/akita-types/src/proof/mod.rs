@@ -9,6 +9,7 @@
 
 pub mod batch;
 pub mod commitment;
+pub mod grouped_m_evals;
 pub mod relation;
 pub mod ring_relation;
 pub mod scheme;
@@ -30,7 +31,8 @@ mod wire;
 pub use crate::opening_claims::{
     sample_public_row_coefficients, should_reject_grouped_root, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED,
+    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
@@ -48,6 +50,7 @@ pub use containers::{
 pub use direct_witness::{
     segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape,
 };
+pub use grouped_m_evals::compute_grouped_m_evals_x;
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
@@ -56,9 +59,12 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use relation::{
-    assemble_relation_y, generate_y, relation_claim_from_rows, relation_claim_from_rows_extension,
-    relation_claim_from_rows_extension_at_dims, relation_weight_claim_from_rows_extension_at_dims,
-    relation_y_coeff_len, relation_y_row_count, RelationYLayout,
+    assemble_relation_y, generate_y, relation_claim_from_layout_extension,
+    relation_claim_from_rows, relation_claim_from_rows_extension,
+    relation_claim_from_rows_extension_at_dims,
+    relation_weight_claim_from_layout_extension_at_dims,
+    relation_weight_claim_from_rows_extension_at_dims, relation_y_coeff_len,
+    relation_y_layout_for, relation_y_row_count, RelationGroupRows, RelationYLayout,
 };
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,

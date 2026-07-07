@@ -8,12 +8,9 @@ use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
 };
-use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::Challenges;
 use akita_config::CommitmentConfig;
-use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, Invertible,
     LiftBase, MulBase, RandomSampling,
@@ -24,9 +21,8 @@ use akita_types::dispatch_ring_dim_result;
 use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, ring_relation_segment_lengths, AkitaCommitmentHint,
-    AkitaExpandedSetup, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationOpeningCounts, RingVec,
+    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    MRowLayout, RingVec,
 };
 
 mod coeffs;
@@ -40,8 +36,8 @@ pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{build_w_coeffs, ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
 pub use evals::{
-    build_relation_weight_evals, build_w_evals_compact, compute_relation_column_weights,
-    RelationWeightTraceBuild,
+    build_relation_weight_evals, build_relation_weight_evals_from_instance, build_w_evals_compact,
+    compute_grouped_m_evals_x, compute_relation_column_weights, RelationWeightTraceBuild,
 };
 pub use finalize::{ring_switch_finalize, RelationWeightFinalizeInputs};
 

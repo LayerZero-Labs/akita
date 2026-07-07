@@ -420,7 +420,11 @@ where
     let num_polynomials = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polynomials, lp.field_bits_for_cache())?;
     let m_row_layout = relation.m_row_layout();
-    let rows = relation.relation_row_layout(lp)?.total_row_count();
+    let rows = if lp.has_precommitted_groups() {
+        lp.m_row_count_for(opening_batch.num_groups(), m_row_layout)?
+    } else {
+        relation.relation_row_layout(lp)?.total_row_count()
+    };
     SetupContributionPlanInputs::from_level_params(
         lp,
         num_polynomials,

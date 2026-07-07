@@ -51,7 +51,7 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<E>>,
     pub(in crate::protocol::core) trace_eval_target: E,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) trace_prepared_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
     pub(in crate::protocol::core) trace_scale: E,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
@@ -384,7 +384,7 @@ where
         extension_opening_reduction,
         trace_eval_target: trace_target.trace_eval_target,
         trace_scale: trace_target.trace_scale,
-        trace_prepared_point: Some(prepared_point),
+        trace_prepared_points: Some(vec![prepared_point]),
         trace_claim_scales,
         row_coefficients,
     })
@@ -523,33 +523,62 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?;
     let pre_ring_bits = ring_d.trailing_zeros() as usize;
     let trace_build = if let Some(row_coefficients) = prepared_fold.row_coefficients.clone() {
-        let num_trace_blocks = prepared_fold
-            .instance
-            .opening_batch()
-            .num_total_polynomials()
-            .checked_mul(lp.num_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
-        let (_, layout) = trace_layout_for_instance(
-            lp,
-            &prepared_fold.instance,
-            pre_col_bits,
-            pre_ring_bits,
-            num_trace_blocks,
-        )?;
-        Some(RelationWeightTraceBuild::Root {
-            ring_d,
-            num_blocks: lp.num_blocks,
-            layout,
-            opening_batch: prepared_fold.instance.opening_batch().clone(),
-            prepared_point: prepared_fold
-                .trace_prepared_point
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?
-                .clone(),
-            row_coefficients,
-            trace_claim_scales: prepared_fold.trace_claim_scales.clone(),
-        })
-    } else if let Some(prepared) = prepared_fold.trace_prepared_point.as_ref() {
+        if lp.has_precommitted_groups() {
+            let (_, layout) = trace_layout_for_instance(
+                lp,
+                &prepared_fold.instance,
+                pre_col_bits,
+                pre_ring_bits,
+                lp.num_blocks,
+            )?;
+            Some(RelationWeightTraceBuild::GroupedRoot {
+                ring_d,
+                lp: Box::new(lp.clone()),
+                layout,
+                opening_batch: prepared_fold.instance.opening_batch().clone(),
+                prepared_points: prepared_fold
+                    .trace_prepared_points
+                    .as_ref()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .clone(),
+                row_coefficients,
+                trace_claim_scales: prepared_fold.trace_claim_scales.clone(),
+                live_x_cols: logical_w.len() / ring_d,
+            })
+        } else {
+            let num_trace_blocks = prepared_fold
+                .instance
+                .opening_batch()
+                .num_total_polynomials()
+                .checked_mul(lp.num_blocks)
+                .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+            let (_, layout) = trace_layout_for_instance(
+                lp,
+                &prepared_fold.instance,
+                pre_col_bits,
+                pre_ring_bits,
+                num_trace_blocks,
+            )?;
+            Some(RelationWeightTraceBuild::Root {
+                ring_d,
+                num_blocks: lp.num_blocks,
+                layout,
+                opening_batch: prepared_fold.instance.opening_batch().clone(),
+                prepared_point: prepared_fold
+                    .trace_prepared_points
+                    .as_ref()
+                    .and_then(|points| points.first())
+                    .ok_or(AkitaError::InvalidProof)?
+                    .clone(),
+                row_coefficients,
+                trace_claim_scales: prepared_fold.trace_claim_scales.clone(),
+            })
+        }
+    } else if let Some(prepared) = prepared_fold
+        .trace_prepared_points
+        .as_ref()
+        .and_then(|points| points.first())
+    {
         let (_, layout) = trace_layout_for_instance(
             lp,
             &prepared_fold.instance,

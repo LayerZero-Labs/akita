@@ -1,11 +1,13 @@
 //! Verifier-side prepared relation-weight polynomial evaluator.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
+use akita_algebra::ring::scalar_powers;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBase};
 use akita_sumcheck::multilinear_eval;
 use akita_types::{
-    eval_trace_terms_closed, AkitaExpandedSetup, FpExtEncoding, RingMultiplierOpeningPoint,
-    RingOpeningPoint, SetupContributionPlanInputs, TraceTerm, TraceWeightLayout,
+    eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup, FpExtEncoding,
+    RingMultiplierOpeningPoint, RingOpeningPoint, SetupContributionPlanInputs, TraceTerm,
+    TraceWeightLayout,
 };
 
 /// EvaluationTrace row data for closed-form relation-weight evaluation.
@@ -13,6 +15,7 @@ use akita_types::{
 pub(crate) struct EvaluationTraceRowEval<F: FieldCore, E: FieldCore, const D: usize> {
     pub layout: TraceWeightLayout,
     pub terms: Vec<TraceTerm<F, E, D>>,
+    pub dense_evals: Option<Vec<E>>,
 }
 
 /// Verifier-side prepared evaluator for the unified relation-weight polynomial.
@@ -49,7 +52,24 @@ where
         layout: TraceWeightLayout,
         terms: Vec<TraceTerm<F, E, D>>,
     ) -> Self {
-        self.evaluation_trace = Some(EvaluationTraceRowEval { layout, terms });
+        self.evaluation_trace = Some(EvaluationTraceRowEval {
+            layout,
+            terms,
+            dense_evals: None,
+        });
+        self
+    }
+
+    pub(crate) fn with_evaluation_trace_dense(
+        mut self,
+        layout: TraceWeightLayout,
+        dense_evals: Vec<E>,
+    ) -> Self {
+        self.evaluation_trace = Some(EvaluationTraceRowEval {
+            layout,
+            terms: Vec::new(),
+            dense_evals: Some(dense_evals),
+        });
         self
     }
 
@@ -79,7 +99,7 @@ where
         let y_len = 1usize
             .checked_shl(self.ring_bits as u32)
             .ok_or(AkitaError::InvalidProof)?;
-        let alpha_evals_y = akita_algebra::ring::scalar_powers(self.alpha, y_len);
+        let alpha_evals_y = scalar_powers(self.alpha, y_len);
         let alpha_val = multilinear_eval(&alpha_evals_y, y_challenges)?;
         let row_val = self.deferred.eval_at_point::<F, D>(
             x_challenges,
@@ -96,12 +116,17 @@ where
                 .first()
                 .copied()
                 .unwrap_or(E::zero());
-            eval_trace_terms_closed::<F, E, D>(
-                &trace.layout,
-                y_challenges,
-                x_challenges,
-                &trace.terms,
-            )? * eq_trace
+            let trace_eval = if let Some(dense_evals) = &trace.dense_evals {
+                eval_dense_trace_table::<E>(dense_evals, y_challenges, x_challenges)?
+            } else {
+                eval_trace_terms_closed::<F, E, D>(
+                    &trace.layout,
+                    y_challenges,
+                    x_challenges,
+                    &trace.terms,
+                )?
+            };
+            trace_eval * eq_trace
         } else {
             E::zero()
         };

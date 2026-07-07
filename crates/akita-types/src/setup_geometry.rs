@@ -6,7 +6,7 @@
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::{outer_consistency_row_start, MRowLayout};
+use crate::layout::{outer_consistency_row_start, MRowLayout, FOLD_CONSISTENCY_ROW};
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;
@@ -55,6 +55,7 @@ pub fn setup_required_for_inputs<E: FieldCore>(
         MRowLayout::WithoutDBlock => 0,
     };
     // Canonical row layout: EvaluationTrace | FoldEvaluation | FoldConsistency | B | D.
+    let _a_start = FOLD_CONSISTENCY_ROW;
     let b_start = outer_consistency_row_start(inputs.n_a);
     let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
     let a_end = checked_add(

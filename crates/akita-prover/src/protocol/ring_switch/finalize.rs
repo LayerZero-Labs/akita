@@ -53,7 +53,7 @@ where
         let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
         let opening_batch = instance.opening_batch();
-        let num_polys = opening_batch.num_total_polynomials();
+        let _num_polys = opening_batch.num_total_polynomials();
 
         let num_ring_elems = w.len() / D;
         let live_x_cols = num_ring_elems;
@@ -82,14 +82,25 @@ where
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
             .collect();
 
-        let challenges = &instance.challenges;
         if gamma.len() != instance.opening_batch().num_total_polynomials() {
             return Err(AkitaError::InvalidInput(
                 "ring-switch gamma length does not match claim count".to_string(),
             ));
         }
 
-        let relation_weight_claim =
+        let opening_batch = instance.opening_batch();
+        let relation_weight_claim = if opening_batch.num_groups() > 1 {
+            let y_layout = akita_types::relation_y_layout_for(lp, opening_batch, m_row_layout)?;
+            akita_types::relation_weight_claim_from_layout_extension_at_dims::<F, E>(
+                dims,
+                &y_layout,
+                &tau1,
+                alpha,
+                relation_weight.trace_eval_target,
+                instance.v(),
+                commitment,
+            )?
+        } else {
             akita_types::relation_weight_claim_from_rows_extension_at_dims::<F, E>(
                 dims,
                 &tau1,
@@ -98,22 +109,19 @@ where
                 relation_weight.trace_eval_target,
                 instance.v(),
                 commitment,
-            )?;
+            )?
+        };
 
         #[cfg(feature = "parallel")]
         let (relation_weight_evals_result, w_result) = rayon::join(
             || {
-                super::evals::build_relation_weight_evals::<F, E>(
+                super::evals::build_relation_weight_evals_from_instance::<F, E>(
                     setup,
-                    instance.opening_point(),
-                    instance.ring_multiplier_point(),
-                    challenges,
+                    instance,
                     alpha,
                     dims,
                     lp,
                     &tau1,
-                    num_polys,
-                    opening_batch.num_groups(),
                     gamma,
                     m_row_layout,
                     ring_bits,
@@ -125,23 +133,20 @@ where
         );
         #[cfg(not(feature = "parallel"))]
         let (relation_weight_evals_result, w_result) = {
-            let relation_weight_evals = super::evals::build_relation_weight_evals::<F, E>(
-                setup,
-                instance.opening_point(),
-                instance.ring_multiplier_point(),
-                challenges,
-                alpha,
-                dims,
-                lp,
-                &tau1,
-                num_polys,
-                opening_batch.num_groups(),
-                gamma,
-                m_row_layout,
-                ring_bits,
-                live_x_cols,
-                relation_weight.trace.clone(),
-            )?;
+            let relation_weight_evals =
+                super::evals::build_relation_weight_evals_from_instance::<F, E>(
+                    setup,
+                    instance,
+                    alpha,
+                    dims,
+                    lp,
+                    &tau1,
+                    gamma,
+                    m_row_layout,
+                    ring_bits,
+                    live_x_cols,
+                    relation_weight.trace.clone(),
+                )?;
             let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
             (Ok(relation_weight_evals), w_compact)
         };

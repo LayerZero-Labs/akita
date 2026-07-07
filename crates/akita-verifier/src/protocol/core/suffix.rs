@@ -174,7 +174,7 @@ where
         next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
         terminal_replay,
         stage3,
-        trace_prepared_point: Some(prepared_point.clone()),
+        trace_prepared_points: Some(vec![prepared_point.clone()]),
         trace_block_opening: None,
         trace_eval_target,
         trace_eval_scale,

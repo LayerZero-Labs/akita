@@ -1,4 +1,5 @@
 mod boundary;
+mod pair_scan_equiv;
 mod trace_prefix;
 
 use super::*;

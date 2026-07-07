@@ -246,8 +246,34 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         &self.opening_point
     }
 
+    /// Per-group opening point for grouped-root replay.
+    ///
+    /// Singleton relations expose group `0` only.
+    pub fn group_opening_point(&self, g: usize) -> Result<&RingOpeningPoint<F>, AkitaError> {
+        if self.opening_batch.num_groups() != 1 || g != 0 {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(&self.opening_point)
+    }
+
     pub fn ring_multiplier_point(&self) -> &RingMultiplierOpeningPoint<F> {
         &self.ring_multiplier_point
+    }
+
+    /// Per-group ring-multiplier opening point for grouped-root replay.
+    pub fn group_ring_multiplier_point(
+        &self,
+        g: usize,
+    ) -> Result<&RingMultiplierOpeningPoint<F>, AkitaError> {
+        if self.opening_batch.num_groups() != 1 || g != 0 {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(&self.ring_multiplier_point)
+    }
+
+    /// Per-group stage-1 challenges for grouped-root replay.
+    pub fn group_challenges(&self) -> Vec<&Challenges> {
+        vec![&self.challenges]
     }
 
     pub fn gamma(&self) -> &[F] {
@@ -410,19 +436,17 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
         // Shared, single-machine quotient tail: never scales with the chunk count.
         let r_levels = r_decomp_levels::<F>(lp.log_basis);
-        let n_d_active = match self.m_row_layout {
+        let _n_d_active = match self.m_row_layout {
             MRowLayout::WithDBlock => lp.d_key.row_len(),
             MRowLayout::WithoutDBlock => 0,
         };
-        let y_layout = crate::proof::relation::RelationYLayout {
-            n_d: n_d_active,
-            commit_rows_per_group: lp.b_key.row_len(),
-            b_inner_rows_per_group: 0,
-            n_a: lp.a_key.row_len(),
-        };
-        let num_groups = self.opening_batch.num_groups();
+        let y_layout = crate::proof::relation::relation_y_layout_for(
+            lp,
+            &self.opening_batch,
+            self.m_row_layout,
+        )?;
         let expected_y_len =
-            crate::proof::relation::relation_y_coeff_len(self.role_dims, y_layout, num_groups)?;
+            crate::proof::relation::relation_y_coeff_len(self.role_dims, &y_layout)?;
         if self.y.coeff_len() != expected_y_len {
             return Err(AkitaError::InvalidSetup(format!(
                 "ring relation y coefficient length {} does not match per-role layout (expected {expected_y_len})",
@@ -782,13 +806,14 @@ mod tests {
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let y_layout = RelationYLayout {
-            n_d: lp.d_key.row_len(),
-            commit_rows_per_group: lp.b_key.row_len(),
-            b_inner_rows_per_group: 0,
-            n_a: lp.a_key.row_len(),
-        };
-        let y_rows = relation_y_row_count(y_layout, opening_batch.num_groups());
+        let y_layout = RelationYLayout::uniform(
+            lp.d_key.row_len(),
+            lp.a_key.row_len(),
+            lp.b_key.row_len(),
+            0,
+            opening_batch.num_groups(),
+        );
+        let y_rows = relation_y_row_count(&y_layout);
         let v_zeros = vec![CyclotomicRing::zero(); y_layout.n_d];
         let y_zeros = vec![CyclotomicRing::zero(); y_rows];
         let instance = RingRelationInstance::<F>::from_parts::<D>(

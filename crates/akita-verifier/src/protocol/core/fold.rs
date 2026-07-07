@@ -239,7 +239,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) next_ring_dim: Option<usize>,
     pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
     pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
-    pub(in crate::protocol::core) trace_prepared_point: Option<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) trace_prepared_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
     pub(in crate::protocol::core) trace_block_opening: Option<Vec<E>>,
     pub(in crate::protocol::core) trace_eval_target: E,
     pub(in crate::protocol::core) trace_eval_scale: E,
@@ -373,6 +373,15 @@ enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
         opening_batch: OpeningClaimsLayout,
         lp: &'a LevelParams,
     },
+    GroupedRoot {
+        layout: akita_types::TraceWeightLayout,
+        prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+        row_coefficients: Vec<E>,
+        trace_claim_scales: Option<Vec<E>>,
+        opening_batch: OpeningClaimsLayout,
+        lp: &'a LevelParams,
+        live_x_cols: usize,
+    },
 }
 
 impl<'a, F, E> TraceWireAtRoleA<'a, F, E>
@@ -422,6 +431,27 @@ where
                     trace_claim_scales.as_deref(),
                 )?,
             ),
+            Self::GroupedRoot {
+                layout,
+                prepared_points,
+                row_coefficients,
+                trace_claim_scales,
+                opening_batch,
+                lp,
+                live_x_cols,
+            } => {
+                let table = akita_types::build_grouped_root_stage2_trace_table::<F, E>(
+                    lp.role_dims().d_a(),
+                    lp,
+                    &opening_batch,
+                    &prepared_points,
+                    &row_coefficients,
+                    trace_claim_scales.as_deref(),
+                    E::one(),
+                    live_x_cols,
+                )?;
+                prepared.with_evaluation_trace_dense(layout, table.into_ring_dense()?)
+            }
         };
         Ok(prepared)
     }
@@ -583,27 +613,14 @@ where
             &prepared.row_coefficients,
         )
     })?;
-    let n_d_active = match prepared.m_row_layout {
-        MRowLayout::WithDBlock => prepared.lp.d_key.row_len(),
-        MRowLayout::WithoutDBlock => 0,
-    };
-    let relation_y = assemble_relation_y::<F>(
-        role_dims,
-        RelationYLayout {
-            n_d: n_d_active,
-            commit_rows_per_group: prepared.lp.b_key.row_len(),
-            b_inner_rows_per_group: 0,
-            n_a: prepared.lp.a_key.row_len(),
-        },
-        &prepared.v,
-        commitment,
-    )?;
+    let y_layout = relation_y_layout_for(prepared.lp, &opening_shape, prepared.m_row_layout)?;
+    let relation_y = assemble_relation_y::<F>(role_dims, &y_layout, &prepared.v, commitment)?;
     let relation_instance = RingRelationInstance::new(
         prepared.m_row_layout,
         stage1_challenges,
         prepared.ring_opening_point,
         prepared.ring_multiplier_point,
-        opening_shape,
+        opening_shape.clone(),
         gamma,
         row_coefficient_rings,
         relation_y,
@@ -642,18 +659,31 @@ where
             )
         }
     })?;
-    let relation_weight_claim = relation_weight_claim_from_rows_extension_at_dims::<F, E>(
-        relation_instance.role_dims(),
-        &rs.tau1,
-        rs.alpha,
-        prepared.lp.a_key.row_len(),
-        prepared.trace_eval_target,
-        relation_instance.v(),
-        commitment,
-    )?;
+    let num_groups = opening_shape.num_groups();
+    let relation_weight_claim = if num_groups > 1 {
+        relation_weight_claim_from_layout_extension_at_dims::<F, E>(
+            relation_instance.role_dims(),
+            &y_layout,
+            &rs.tau1,
+            rs.alpha,
+            prepared.trace_eval_target,
+            relation_instance.v(),
+            commitment,
+        )?
+    } else {
+        relation_weight_claim_from_rows_extension_at_dims::<F, E>(
+            relation_instance.role_dims(),
+            &rs.tau1,
+            rs.alpha,
+            prepared.lp.a_key.row_len(),
+            prepared.trace_eval_target,
+            relation_instance.v(),
+            commitment,
+        )?
+    };
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
-    let trace_wire = if prepared.trace_prepared_point.is_none() {
+    let trace_wire = if prepared.trace_prepared_points.is_none() {
         None
     } else if prepared.trace_block_opening.is_none() {
         let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
@@ -665,8 +695,9 @@ where
             prepared.lp.num_blocks,
         )?;
         let prepared_point = prepared
-            .trace_prepared_point
+            .trace_prepared_points
             .as_ref()
+            .and_then(|points| points.first())
             .ok_or(AkitaError::InvalidProof)?;
         Some(TraceWireAtRoleA::Recursive {
             layout,
@@ -674,6 +705,38 @@ where
             trace_basis: prepared.trace_basis,
             trace_eval_scale: prepared.trace_eval_scale,
             lp: prepared.lp,
+        })
+    } else if num_groups > 1 {
+        let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
+        let num_trace_blocks = relation_instance
+            .opening_batch()
+            .num_total_polynomials()
+            .checked_mul(prepared.lp.num_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+        let layout = trace_weight_layout_from_segment(
+            prepared.lp,
+            &segment_layout,
+            rs.col_bits,
+            rs.ring_bits,
+            num_trace_blocks,
+        )?;
+        let live_x_cols = prepared
+            .w_len
+            .checked_div(d_a)
+            .ok_or(AkitaError::InvalidProof)?;
+        let prepared_points = prepared
+            .trace_prepared_points
+            .as_ref()
+            .ok_or(AkitaError::InvalidProof)?
+            .clone();
+        Some(TraceWireAtRoleA::GroupedRoot {
+            layout,
+            prepared_points,
+            row_coefficients: prepared.row_coefficients.clone(),
+            trace_claim_scales: prepared.trace_claim_scales.clone(),
+            opening_batch: relation_instance.opening_batch().clone(),
+            lp: prepared.lp,
+            live_x_cols,
         })
     } else {
         let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
@@ -692,8 +755,9 @@ where
         Some(TraceWireAtRoleA::Root {
             layout,
             prepared_point: prepared
-                .trace_prepared_point
+                .trace_prepared_points
                 .as_ref()
+                .and_then(|points| points.first())
                 .ok_or(AkitaError::InvalidProof)?
                 .clone(),
             trace_block_opening: prepared

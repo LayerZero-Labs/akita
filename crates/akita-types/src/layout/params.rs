@@ -182,8 +182,11 @@ pub trait LevelParamsLike {
     fn b_rows_len(&self) -> usize;
     fn num_blocks(&self) -> usize;
     fn block_len(&self) -> usize;
+    fn m_vars(&self) -> usize;
+    fn r_vars(&self) -> usize;
     fn num_digits_commit(&self) -> usize;
     fn num_digits_open(&self) -> usize;
+    fn num_digits_fold_one(&self) -> usize;
     fn log_basis(&self) -> u32;
 }
 
@@ -208,12 +211,24 @@ impl LevelParamsLike for LevelParams {
         self.block_len
     }
 
+    fn m_vars(&self) -> usize {
+        self.m_vars
+    }
+
+    fn r_vars(&self) -> usize {
+        self.r_vars
+    }
+
     fn num_digits_commit(&self) -> usize {
         self.num_digits_commit
     }
 
     fn num_digits_open(&self) -> usize {
         self.num_digits_open
+    }
+
+    fn num_digits_fold_one(&self) -> usize {
+        self.num_digits_fold_one
     }
 
     fn log_basis(&self) -> u32 {
@@ -242,12 +257,24 @@ impl LevelParamsLike for PrecommittedLevelParams {
         self.block_len
     }
 
+    fn m_vars(&self) -> usize {
+        self.layout.m_vars
+    }
+
+    fn r_vars(&self) -> usize {
+        self.layout.r_vars
+    }
+
     fn num_digits_commit(&self) -> usize {
         self.num_digits_commit
     }
 
     fn num_digits_open(&self) -> usize {
         self.num_digits_open
+    }
+
+    fn num_digits_fold_one(&self) -> usize {
+        self.num_digits_fold_one
     }
 
     fn log_basis(&self) -> u32 {
@@ -399,6 +426,17 @@ impl LevelParams {
         !self.precommitted_groups.is_empty()
     }
 
+    /// Reject grouped-root params combined with multi-chunk witness layout.
+    pub fn reject_grouped_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
+        if self.has_precommitted_groups() && self.witness_chunk.num_chunks > 1 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{context}: {}",
+                crate::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED
+            )));
+        }
+        Ok(())
+    }
+
     /// Reject grouped-root params at scalar-only call sites.
     pub fn require_scalar_level(&self, context: &str) -> Result<(), AkitaError> {
         if self.has_precommitted_groups() {
@@ -423,6 +461,21 @@ impl LevelParams {
         let is_onehot = self.onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
             self.log_basis,
+            self.ring_dimension,
+            if is_onehot { self.onehot_chunk_size } else { 1 },
+            is_onehot,
+        )
+    }
+
+    /// Per-row committed-witness norms for a root group-local parameter view.
+    #[inline]
+    pub fn fold_witness_norms_for_params(
+        &self,
+        params: &(impl LevelParamsLike + ?Sized),
+    ) -> crate::sis::FoldWitnessNorms {
+        let is_onehot = self.onehot_chunk_size > 0;
+        crate::sis::FoldWitnessNorms::new(
+            params.log_basis(),
             self.ring_dimension,
             if is_onehot { self.onehot_chunk_size } else { 1 },
             is_onehot,
@@ -655,6 +708,29 @@ impl LevelParams {
         )
     }
 
+    /// Gadget depth for a root group using group-local geometry and root policy.
+    pub fn num_digits_fold_for_params(
+        &self,
+        params: &(impl LevelParamsLike + ?Sized),
+        num_claims: usize,
+        field_bits: u32,
+    ) -> Result<usize, AkitaError> {
+        if num_claims == 1 {
+            return Ok(params.num_digits_fold_one());
+        }
+        let challenge =
+            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
+        crate::sis::num_digits_fold(
+            params.r_vars(),
+            num_claims,
+            field_bits,
+            params.log_basis(),
+            challenge,
+            self.fold_witness_norms_for_params(params),
+            self.fold_linf_cap_config,
+        )
+    }
+
     /// Set the one-hot chunk size `K`, returning the updated params.
     #[inline]
     #[must_use]
@@ -883,6 +959,22 @@ impl LevelParams {
         self.precommitted_groups
             .get(group_index)
             .map(|group| group.b_key.row_len())
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Group-local parameter view for root folded opening work.
+    pub fn root_group_params<'a>(
+        &'a self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        if group_index == final_group_index {
+            return Ok(self);
+        }
+        self.precommitted_groups
+            .get(group_index)
+            .map(|group| group as &dyn LevelParamsLike)
             .ok_or(AkitaError::InvalidProof)
     }
 

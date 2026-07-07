@@ -20,6 +20,10 @@ pub const GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED: &str =
 pub const GROUPED_ROOT_DENSE_UNSUPPORTED: &str =
     "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md";
 
+/// Grouped-root witness emission rejects multi-chunk layouts.
+pub const GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED: &str =
+    "grouped root witness emission does not support multi-chunk layouts; see specs/multi-group-batching.md";
+
 /// Legacy grouped-root unsupported message kept for stale-proof diagnostics.
 #[deprecated(note = "multi-group root-direct opening is supported for one-hot Direct setup")]
 pub const GROUPED_ROOT_UNSUPPORTED: &str =
@@ -256,6 +260,19 @@ impl OpeningClaimsLayout {
             .len()
             .checked_sub(1)
             .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Group processing order for grouped root schedules: final/new group first.
+    pub fn root_group_order(&self) -> Result<Vec<usize>, AkitaError> {
+        let final_group_index = self.root_final_group_index()?;
+        let mut order = Vec::with_capacity(self.num_groups());
+        order.push(final_group_index);
+        for group_index in 0..self.num_groups() {
+            if group_index != final_group_index {
+                order.push(group_index);
+            }
+        }
+        Ok(order)
     }
 
     /// Layouts of precommitted groups in root transcript order.

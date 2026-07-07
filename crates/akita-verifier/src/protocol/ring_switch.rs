@@ -254,11 +254,11 @@ where
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let prepared_row_eval =
+    let deferred =
         prepare_ring_switch_row_eval::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
 
     Ok(RingSwitchVerifyCoreOutput {
-        deferred: prepared_row_eval,
+        deferred,
         col_bits,
         ring_bits,
         tau0,
