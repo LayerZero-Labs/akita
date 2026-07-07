@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install taplo
-        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # taplo-cli
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # taplo-cli
         with:
           tool: taplo-cli
       - name: Check TOML formatting
@@ -77,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install cargo-machete
-        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # cargo-machete
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # cargo-machete
         with:
           tool: cargo-machete
       - name: Check unused dependencies
@@ -126,7 +126,9 @@ jobs:
           add-job-id-key: false
           cache-on-failure: true
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # carg-nextest
+        with:
+          tool: cargo-nextest
       - name: Run tests
         env:
           SHARD_INDEX: ${{ matrix.shard }}

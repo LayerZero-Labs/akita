@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install ripgrep
-        uses: taiki-e/install-action@v2.82.10 # ripgrep
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # ripgrep
         with:
           tool: ripgrep
 
