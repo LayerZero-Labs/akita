@@ -53,7 +53,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             num_vars: geometry.num_vars(),
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: local_view
+            initial_batch_stage1_point: local_view
                 .is_some_and(|view| can_use_stage2_initial_round_batch(view.coeff_bits(), b))
                 .then(|| stage1_point.to_vec()),
             initial_round_batch: None,
@@ -89,57 +89,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    pub(super) fn in_coefficient_round(&self) -> bool {
-        self.rounds_completed < self.coeff_bits()
-    }
-
-    #[inline]
-    pub(super) fn segment_rounds_completed(&self) -> usize {
-        self.rounds_completed.saturating_sub(self.coeff_bits())
-    }
-
-    #[inline]
-    pub(super) fn current_segment_width(&self) -> usize {
-        self.segment_bits
-            .saturating_sub(self.segment_rounds_completed())
-    }
-
-    #[inline]
-    pub(super) fn current_segment_capacity(&self) -> usize {
-        1usize << self.current_segment_width()
-    }
-
-    #[inline]
-    pub(super) fn use_coefficient_prefix_round(&self) -> bool {
-        if self.geometry.local_view().is_none() {
-            return false;
-        }
-        self.in_coefficient_round() && self.live_segments < self.current_segment_capacity()
-    }
-
-    #[inline]
-    pub(super) fn use_segment_prefix_round(&self) -> bool {
-        if self.geometry.local_view().is_none() {
-            return false;
-        }
-        self.rounds_completed >= self.coeff_bits()
-            && self.segment_rounds_completed() < self.segment_bits
-            && self.live_segments < self.current_segment_capacity()
-    }
-
-    #[inline]
-    pub(super) fn next_use_segment_prefix_round_after_current(&self) -> bool {
-        if self.geometry.local_view().is_none() {
-            return false;
-        }
-        self.rounds_completed >= self.coeff_bits()
-            && self.segment_rounds_completed() + 1 < self.segment_bits
-            && self.live_segments.div_ceil(2) < (self.current_segment_capacity() / 2)
-    }
-
-    #[inline]
     pub(crate) fn can_use_stage2_initial_round_batch(&self) -> bool {
-        self.prefix_r_stage1.is_some()
+        self.initial_batch_stage1_point.is_some()
     }
 
     #[inline]
@@ -208,10 +159,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     pub(super) fn ensure_initial_round_batch(&mut self) -> &mut Stage2InitialRoundBatch<E> {
         if self.initial_round_batch.is_none() {
             let stage1_point = self
-                .prefix_r_stage1
+                .initial_batch_stage1_point
                 .clone()
                 .expect("initial round batch requested without cached stage-1 challenges");
             let coeff_bits = self.num_vars - self.segment_bits;
+            let layout = Stage2InitialRoundBatchLayout::new(
+                self.geometry.live_len(),
+                self.num_vars,
+                self.live_segments,
+                self.segment_bits,
+                coeff_bits,
+            )
+            .expect("initial round batch requires a valid local embedding");
             let w_compact = match &self.witness_table {
                 WitnessTable::Compact(w_compact) => w_compact,
                 WitnessTable::Full(_) => {
@@ -223,9 +182,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 self.relation_weight.evals(),
                 &stage1_point,
                 self.b,
-                self.live_segments,
-                self.segment_bits,
-                coeff_bits,
+                layout,
             )
             .expect("initial round batch should be available");
             let relation_weight_claim = self.input_claim - self.batching_coeff * self.s_claim;

@@ -98,32 +98,40 @@ pub(crate) struct Stage2RoundBatchGrid<E: FieldCore> {
     pub relation: OmittedCornerEvaluationGrid<E>,
 }
 
-/// Return the stage-2 full-domain grid in row-major `x`-major order over
-/// `{0, 1, Infinity}^2`.
+/// Return the stage-2 full-domain grid in first-local-round-major order over
+/// the first-two-round local batch domain.
 #[cfg(test)]
 pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
     mut eval: impl FnMut(RoundBatchPoint<E>, RoundBatchPoint<E>) -> E,
 ) -> [E; 9] {
-    let points = stage2_full_prefix_points::<E>();
+    let points = stage2_initial_batch_points::<E>();
     std::array::from_fn(|idx| {
-        let x = points[idx / 3];
-        let y = points[idx % 3];
-        eval(x, y)
+        let first_round_point = points[idx / 3];
+        let second_round_point = points[idx % 3];
+        eval(first_round_point, second_round_point)
     })
 }
 
-/// Evaluate a biquadratic from its full `{0, 1, Infinity}^2` grid.
+/// Evaluate a biquadratic from its full first-two-round local batch grid.
 #[inline]
 #[cfg(test)]
 pub(crate) fn eval_biquadratic_from_full_grid<E: FieldCore>(
     full_grid: [E; 9],
-    x: RoundBatchPoint<E>,
-    y: RoundBatchPoint<E>,
+    first_round_point: RoundBatchPoint<E>,
+    second_round_point: RoundBatchPoint<E>,
 ) -> E {
-    let q_y0 = eval_quadratic_from_01_inf(full_grid[0], full_grid[3], full_grid[6], x);
-    let q_y1 = eval_quadratic_from_01_inf(full_grid[1], full_grid[4], full_grid[7], x);
-    let q_yinf = eval_quadratic_from_01_inf(full_grid[2], full_grid[5], full_grid[8], x);
-    eval_quadratic_from_01_inf(q_y0, q_y1, q_yinf, y)
+    let at_second_zero =
+        eval_quadratic_from_01_inf(full_grid[0], full_grid[3], full_grid[6], first_round_point);
+    let at_second_one =
+        eval_quadratic_from_01_inf(full_grid[1], full_grid[4], full_grid[7], first_round_point);
+    let at_second_infinity =
+        eval_quadratic_from_01_inf(full_grid[2], full_grid[5], full_grid[8], first_round_point);
+    eval_quadratic_from_01_inf(
+        at_second_zero,
+        at_second_one,
+        at_second_infinity,
+        second_round_point,
+    )
 }
 
 /// Return the local claim weights for the four Boolean corners of the stage-2
@@ -144,7 +152,7 @@ pub(crate) fn stage2_norm_corner_weights_from_linear_evals<E: FieldCore>(
 }
 
 /// Return the local claim weights for the four Boolean corners of the stage-2
-/// norm half when the two local eq factors are `eq(tau0, X)` and `eq(tau1, Y)`.
+/// norm half from the two local eq factors bound by `tau0` and `tau1`.
 #[inline]
 pub(crate) fn stage2_norm_corner_weights_from_taus<E: FieldCore>(tau0: E, tau1: E) -> [E; 4] {
     stage2_norm_corner_weights_from_linear_evals(E::one() - tau0, tau0, E::one() - tau1, tau1)
@@ -196,21 +204,65 @@ pub(crate) fn recover_stage2_relation_grid_from_claim<E: FieldCore>(
         .expect("relation corner weights are all one")
 }
 
-/// Whether stage 2 has enough y-rounds to use the 2-round prefix path.
+/// Flat Stage-2 witness layout plus the optional local embedding used by the
+/// first-two-round batch optimization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stage2InitialRoundBatchLayout {
+    pub live_len: usize,
+    pub num_vars: usize,
+    pub live_tiles: usize,
+    pub tile_bits: usize,
+    pub lane_bits: usize,
+}
+
+impl Stage2InitialRoundBatchLayout {
+    pub(crate) fn new(
+        live_len: usize,
+        num_vars: usize,
+        live_tiles: usize,
+        tile_bits: usize,
+        lane_bits: usize,
+    ) -> Option<Self> {
+        let lane_len = 1usize.checked_shl(u32::try_from(lane_bits).ok()?)?;
+        let tile_capacity = 1usize.checked_shl(u32::try_from(tile_bits).ok()?)?;
+        let domain_len = 1usize.checked_shl(u32::try_from(num_vars).ok()?)?;
+        if live_tiles == 0
+            || live_tiles > tile_capacity
+            || live_len != live_tiles.checked_mul(lane_len)?
+            || num_vars != tile_bits.checked_add(lane_bits)?
+            || live_len > domain_len
+        {
+            return None;
+        }
+        Some(Self {
+            live_len,
+            num_vars,
+            live_tiles,
+            tile_bits,
+            lane_bits,
+        })
+    }
+
+    #[inline]
+    fn lane_len(self) -> usize {
+        1usize << self.lane_bits
+    }
+}
+
+/// Whether stage 2 has enough lane-local rounds to use the 2-round batch path.
 #[inline]
-pub(crate) fn can_use_stage2_initial_round_batch(ring_bits: usize, b: usize) -> bool {
-    ring_bits >= 2 && matches!(b, 4 | 8)
+pub(crate) fn can_use_stage2_initial_round_batch(lane_bits: usize, b: usize) -> bool {
+    lane_bits >= 2 && matches!(b, 4 | 8)
 }
 
 /// Build the stage-2 first-two-round bivariate-skip payload from the compact
 /// witness table at the start of stage 2.
 ///
-/// Returns `None` when there are fewer than two y-rounds to batch.
+/// Returns `None` when the flat layout has no valid local two-round embedding.
 #[tracing::instrument(
     skip_all,
     name = "round_batching::build_stage2_initial_round_batch_grid"
 )]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_stage2_initial_round_batch_grid<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
@@ -218,25 +270,23 @@ pub(crate) fn build_stage2_initial_round_batch_grid<
     relation_weight_evals: &[E],
     stage1_point: &[E],
     b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
+    layout: Stage2InitialRoundBatchLayout,
 ) -> Option<Stage2RoundBatchGrid<E>> {
-    if !can_use_stage2_initial_round_batch(ring_bits, b) {
+    if !can_use_stage2_initial_round_batch(layout.lane_bits, b) {
         return None;
     }
 
-    let y_len = 1usize << ring_bits;
-    assert_eq!(relation_weight_evals.len(), live_x_cols * y_len);
-    assert_eq!(w_compact.len(), live_x_cols * y_len);
-    assert_eq!(stage1_point.len(), col_bits + ring_bits);
+    let lane_len = layout.lane_len();
+    assert_eq!(relation_weight_evals.len(), layout.live_len);
+    assert_eq!(w_compact.len(), layout.live_len);
+    assert_eq!(stage1_point.len(), layout.num_vars);
 
-    let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
-        .expect("stage-2 two-round prefix dimensions are prevalidated");
-    let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
-        .expect("stage-2 x-prefix dimensions are prevalidated");
-    let y_quads = y_len >> 2;
-    debug_assert_eq!(eq_y_suffix.len(), y_quads);
+    let eq_lane_suffix = EqPolynomial::evals(&stage1_point[2..layout.lane_bits])
+        .expect("stage-2 two-round batch dimensions are prevalidated");
+    let eq_tile = EqPolynomial::evals(&stage1_point[layout.lane_bits..])
+        .expect("stage-2 tile dimensions are prevalidated");
+    let lane_quads = lane_len >> 2;
+    debug_assert_eq!(eq_lane_suffix.len(), lane_quads);
     let norm_omitted_corner = default_stage2_norm_omitted_corner(
         stage2_norm_corner_weights_from_taus(stage1_point[0], stage1_point[1]),
     );
@@ -265,7 +315,7 @@ pub(crate) fn build_stage2_initial_round_batch_grid<
     };
 
     let (norm_pos, norm_neg, rel_accum) = cfg_fold_reduce!(
-        0..live_x_cols,
+        0..layout.live_tiles,
         || {
             (
                 [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
@@ -273,21 +323,22 @@ pub(crate) fn build_stage2_initial_round_batch_grid<
                 [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
             )
         },
-        |(mut norm_pos, mut norm_neg, mut rel_accum), x_idx| {
-            let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
-            let weight_column = &relation_weight_evals[x_idx * y_len..(x_idx + 1) * y_len];
-            let eq_x_weight = eq_x[x_idx];
-            let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
-                let base = 4 * y_quad;
+        |(mut norm_pos, mut norm_neg, mut rel_accum), tile_idx| {
+            let column = &w_compact[tile_idx * lane_len..(tile_idx + 1) * lane_len];
+            let weight_column =
+                &relation_weight_evals[tile_idx * lane_len..(tile_idx + 1) * lane_len];
+            let eq_tile_weight = eq_tile[tile_idx];
+            let mut tile_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut tile_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            for (lane_quad, &eq_lane_weight) in eq_lane_suffix.iter().enumerate() {
+                let base = 4 * lane_quad;
                 let lookup_idx = lookup_index_fn([
                     w_digit_fn(column[base]),
                     w_digit_fn(column[base + 1]),
                     w_digit_fn(column[base + 2]),
                     w_digit_fn(column[base + 3]),
                 ]);
-                let norm_weight = eq_y_weight * eq_x_weight;
+                let norm_weight = eq_lane_weight * eq_tile_weight;
                 accum_lookup_vector_signed_selected(
                     &mut norm_pos,
                     &mut norm_neg,
@@ -298,15 +349,15 @@ pub(crate) fn build_stage2_initial_round_batch_grid<
                 let weight_quad = std::array::from_fn(|offset| weight_column[base + offset]);
                 let weight_point_values = stage2_relation_m_point_values_compressed(weight_quad);
                 accum_pointwise_signed(
-                    &mut x_rel_pos,
-                    &mut x_rel_neg,
+                    &mut tile_rel_pos,
+                    &mut tile_rel_neg,
                     &weight_point_values,
                     &rel_table[lookup_idx],
                 );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
-                let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
-                rel_accum[idx] += E::one().mul_to_product_accum(x_rel);
+                let tile_rel = reduce_signed_accum::<E>(tile_rel_pos[idx], tile_rel_neg[idx]);
+                rel_accum[idx] += E::one().mul_to_product_accum(tile_rel);
             }
             (norm_pos, norm_neg, rel_accum)
         },
@@ -344,8 +395,8 @@ pub(crate) fn build_stage2_initial_round_batch_grid<
 /// from the internal bivariate-skip payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage2RoundBatchState<E: FieldCore> {
-    norm_x_row_coeffs: [[E; 3]; 3],
-    relation_x_row_coeffs: [[E; 3]; 3],
+    norm_first_round_row_coeffs: [[E; 3]; 3],
+    relation_first_round_row_coeffs: [[E; 3]; 3],
     tau0: E,
     tau1: E,
     batching_coeff: E,
@@ -371,23 +422,23 @@ impl<E: FieldCore> Stage2RoundBatchState<E> {
         )?;
         let relation_full_grid =
             recover_stage2_relation_grid_from_claim(&proof.relation, relation_claim);
-        let norm_x_row_coeffs = std::array::from_fn(|y_idx| {
+        let norm_first_round_row_coeffs = std::array::from_fn(|row_idx| {
             quadratic_coeffs_from_01_inf(
-                norm_full_grid[y_idx],
-                norm_full_grid[3 + y_idx],
-                norm_full_grid[6 + y_idx],
+                norm_full_grid[row_idx],
+                norm_full_grid[3 + row_idx],
+                norm_full_grid[6 + row_idx],
             )
         });
-        let relation_x_row_coeffs = std::array::from_fn(|y_idx| {
+        let relation_first_round_row_coeffs = std::array::from_fn(|row_idx| {
             quadratic_coeffs_from_01_inf(
-                relation_full_grid[y_idx],
-                relation_full_grid[3 + y_idx],
-                relation_full_grid[6 + y_idx],
+                relation_full_grid[row_idx],
+                relation_full_grid[3 + row_idx],
+                relation_full_grid[6 + row_idx],
             )
         });
         Some(Self {
-            norm_x_row_coeffs,
-            relation_x_row_coeffs,
+            norm_first_round_row_coeffs,
+            relation_first_round_row_coeffs,
             tau0,
             tau1,
             batching_coeff,
@@ -399,15 +450,17 @@ impl<E: FieldCore + FromPrimitiveInt> Stage2RoundBatchState<E> {
     #[inline]
     pub(crate) fn reconstruct_round0_polys(&self) -> (UniPoly<E>, UniPoly<E>) {
         let norm_q = add_quadratic_coeffs(
-            scale_quadratic_coeffs(self.norm_x_row_coeffs[0], E::one() - self.tau1),
-            scale_quadratic_coeffs(self.norm_x_row_coeffs[1], self.tau1),
+            scale_quadratic_coeffs(self.norm_first_round_row_coeffs[0], E::one() - self.tau1),
+            scale_quadratic_coeffs(self.norm_first_round_row_coeffs[1], self.tau1),
         );
         let mut norm_coeffs = mul_linear_by_quadratic_coeffs(self.tau0, norm_q);
         for coeff in &mut norm_coeffs {
             *coeff = self.batching_coeff * *coeff;
         }
-        let relation_coeffs =
-            add_quadratic_coeffs(self.relation_x_row_coeffs[0], self.relation_x_row_coeffs[1]);
+        let relation_coeffs = add_quadratic_coeffs(
+            self.relation_first_round_row_coeffs[0],
+            self.relation_first_round_row_coeffs[1],
+        );
         (
             UniPoly::from_coeffs(norm_coeffs.to_vec()),
             UniPoly::from_coeffs(relation_coeffs.to_vec()),
@@ -416,23 +469,26 @@ impl<E: FieldCore + FromPrimitiveInt> Stage2RoundBatchState<E> {
 
     #[inline]
     pub(crate) fn reconstruct_round1_polys(&self, r0: E) -> (UniPoly<E>, UniPoly<E>) {
-        let norm_y_values: [E; 3] = std::array::from_fn(|y_idx| {
-            eval_quadratic_from_coeffs(self.norm_x_row_coeffs[y_idx], r0)
+        let norm_second_round_values: [E; 3] = std::array::from_fn(|row_idx| {
+            eval_quadratic_from_coeffs(self.norm_first_round_row_coeffs[row_idx], r0)
         });
-        let norm_q =
-            quadratic_coeffs_from_01_inf(norm_y_values[0], norm_y_values[1], norm_y_values[2]);
+        let norm_q = quadratic_coeffs_from_01_inf(
+            norm_second_round_values[0],
+            norm_second_round_values[1],
+            norm_second_round_values[2],
+        );
         let round0_eq = linear_eq_eval(self.tau0, r0);
         let mut norm_coeffs = mul_linear_by_quadratic_coeffs(self.tau1, norm_q);
         for coeff in &mut norm_coeffs {
             *coeff = self.batching_coeff * round0_eq * *coeff;
         }
-        let relation_y_values: [E; 3] = std::array::from_fn(|y_idx| {
-            eval_quadratic_from_coeffs(self.relation_x_row_coeffs[y_idx], r0)
+        let relation_second_round_values: [E; 3] = std::array::from_fn(|row_idx| {
+            eval_quadratic_from_coeffs(self.relation_first_round_row_coeffs[row_idx], r0)
         });
         let relation_coeffs = quadratic_coeffs_from_01_inf(
-            relation_y_values[0],
-            relation_y_values[1],
-            relation_y_values[2],
+            relation_second_round_values[0],
+            relation_second_round_values[1],
+            relation_second_round_values[2],
         );
         (
             UniPoly::from_coeffs(norm_coeffs.to_vec()),

@@ -1,6 +1,6 @@
 mod boundary;
 mod fold_scan;
-mod trace_prefix;
+mod trace_initial_batch;
 
 use super::*;
 use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;
@@ -337,11 +337,11 @@ fn fold_compact_flat_reference(w_compact: &[i8], r: F) -> Vec<F> {
 fn stage2_compact_fold_lookup_matches_direct_formula() {
     let r = F::from_u64(53);
 
-    let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
-    let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
+    let w_live = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
+    let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_live, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::fold_witness_compact_to_field(&w_prefix, &fold_lut),
-        fold_compact_flat_reference(&w_prefix, r)
+        AkitaStage2Prover::<F>::fold_witness_compact_to_field(&w_live, &fold_lut),
+        fold_compact_flat_reference(&w_live, r)
     );
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
@@ -399,7 +399,7 @@ fn stage2_compact_round0_matches_unfused_reference() {
 }
 
 #[test]
-fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
+fn stage2_live_rows_match_explicit_full_m_table() {
     let coeff_bits = 2usize;
     for b in [4usize, 8, 16, 32] {
         let half = (b / 2) as i8;
@@ -407,10 +407,10 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
             let segment_bits = live_segments.next_power_of_two().trailing_zeros() as usize;
             let segment_capacity = 1usize << segment_bits;
             let coeff_len = 1usize << coeff_bits;
-            let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+            let w_live: Vec<i8> = (0..(live_segments * coeff_len))
                 .map(|i| ((i * 7 + 5) % b) as i8 - half)
                 .collect();
-            let w_padded = pad_compact_witness(&w_prefix, live_segments, segment_bits, coeff_bits);
+            let w_padded = pad_compact_witness(&w_live, live_segments, segment_bits, coeff_bits);
             let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
                 .map(|i| F::from_u64((i as u64) + 31))
                 .collect();
@@ -422,9 +422,9 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
                 .collect();
             let m_evals_segment_padded = zero_padded_m_evals(&m_evals_segment, live_segments);
 
-            let mut prefix_prover = new_stage2_test_prover(
+            let mut live_prover = new_stage2_test_prover(
                 F::from_u64(17),
-                w_prefix.clone(),
+                w_live.clone(),
                 alpha_evals_coeff.clone(),
                 m_evals_segment.clone(),
                 Stage2Params {
@@ -448,26 +448,26 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
                     coeff_bits,
                 },
             );
-            let mut prefix_claim = prefix_prover.input_claim();
+            let mut live_claim = live_prover.input_claim();
             let mut padded_claim = padded_prover.input_claim();
 
             for round in 0..(segment_bits + coeff_bits) {
-                let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+                let live_poly = live_prover.compute_round_univariate(round, live_claim);
                 let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
                 assert_eq!(
-                    prefix_poly, padded_poly,
+                    live_poly, padded_poly,
                     "round {round} polynomial mismatch live_segments={live_segments} b={b}"
                 );
 
                 let challenge = F::from_u64((round as u64) + 37);
-                prefix_claim = prefix_poly.evaluate(&challenge);
+                live_claim = live_poly.evaluate(&challenge);
                 padded_claim = padded_poly.evaluate(&challenge);
-                prefix_prover.ingest_challenge(round, challenge);
+                live_prover.ingest_challenge(round, challenge);
                 padded_prover.ingest_challenge(round, challenge);
             }
 
-            assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
-            assert_eq!(prefix_claim, padded_claim);
+            assert_eq!(live_prover.final_w_eval(), padded_prover.final_w_eval());
+            assert_eq!(live_claim, padded_claim);
         }
     }
 }
@@ -519,7 +519,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 11 + 7) % b) as i8 - half)
         .collect();
     let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
@@ -541,7 +541,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(83),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         params,
@@ -553,7 +553,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let r1 = F::from_u64(97);
 
     let expected_w_full =
-        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_prefix, r0, r1);
+        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_live, r0, r1);
     let initial_relation = prover.relation_weight.evals().to_vec();
     let expected_relation_round2 =
         AkitaStage2Prover::<F>::fold_relation_weight_through_two_challenges(
@@ -564,7 +564,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
 
     let mut expected = new_stage2_test_prover(
         F::from_u64(83),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff,
         m_evals_segment,
         params,
@@ -605,20 +605,20 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     );
     assert!(!prover.can_use_stage2_initial_round_batch());
     assert!(!prover.using_initial_round_batch());
-    assert!(prover.prefix_r_stage1.is_none());
+    assert!(prover.initial_batch_stage1_point.is_none());
     assert!(prover.initial_round_batch.is_none());
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }
 
 #[test]
-fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
+fn stage2_initial_batch_second_round_transition_matches_two_pass_reference() {
     let segment_bits = 3usize;
     let coeff_bits = 4usize;
     let live_segments = 6usize;
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 13 + 9) % b) as i8 - half)
         .collect();
     let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
@@ -640,7 +640,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(109),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         params,
@@ -652,7 +652,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let r1 = F::from_u64(127);
 
     let expected_w_full =
-        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_prefix, r0, r1);
+        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_live, r0, r1);
     let initial_relation = prover.relation_weight.evals().to_vec();
     let expected_relation_round2 =
         AkitaStage2Prover::<F>::fold_relation_weight_through_two_challenges(
@@ -663,7 +663,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
 
     let mut expected = new_stage2_test_prover(
         F::from_u64(109),
-        w_prefix,
+        w_live,
         alpha_evals_coeff,
         m_evals_segment,
         params,
@@ -706,14 +706,14 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
 }
 
 #[test]
-fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
+fn stage2_later_full_fold_matches_two_pass_reference() {
     let segment_bits = 5usize;
     let coeff_bits = 2usize;
     let live_segments = 12usize;
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 9 + 7) % b) as i8 - half)
         .collect();
     let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
@@ -735,7 +735,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(149),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         params,
@@ -751,7 +751,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
 
     let mut expected = new_stage2_test_prover(
         F::from_u64(149),
-        w_prefix,
+        w_live,
         alpha_evals_coeff,
         m_evals_segment,
         params,
@@ -795,7 +795,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
 
     match &prover.witness_table {
         WitnessTable::Full(w_full) => assert_eq!(w_full, &expected_next_w_full),
-        WitnessTable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+        WitnessTable::Compact(_) => panic!("expected later full fold stage to stay full"),
     }
     assert_eq!(
         prover.relation_weight.evals(),
@@ -811,7 +811,7 @@ fn stage2_large_odd_sparse_boolean_round_batching_matches_direct_path() {
     let live_segments = 34_519usize;
     let b = 8usize;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
         .collect();
     let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
@@ -833,19 +833,19 @@ fn stage2_large_odd_sparse_boolean_round_batching_matches_direct_path() {
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(191),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         params,
     );
     let mut direct = new_stage2_test_prover(
         F::from_u64(191),
-        w_prefix,
+        w_live,
         alpha_evals_coeff,
         m_evals_segment,
         params,
     );
-    direct.prefix_r_stage1 = None;
+    direct.initial_batch_stage1_point = None;
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -870,16 +870,16 @@ fn stage2_large_odd_sparse_boolean_round_batching_matches_direct_path() {
 }
 
 #[test]
-fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
+fn stage2_large_odd_sparse_boolean_live_rows_match_padded_reference() {
     let segment_bits = 16usize;
     let coeff_bits = 6usize;
     let live_segments = 34_519usize;
     let b = 8usize;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
         .collect();
-    let w_padded = pad_compact_witness(&w_prefix, live_segments, segment_bits, coeff_bits);
+    let w_padded = pad_compact_witness(&w_live, live_segments, segment_bits, coeff_bits);
     let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
         .map(|i| F::from_u64((3 * i as u64) + 223))
         .collect();
@@ -891,9 +891,9 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
         .collect();
     let m_evals_segment_padded = zero_padded_m_evals(&m_evals_segment, live_segments);
 
-    let mut prefix_prover = new_stage2_test_prover(
+    let mut live_prover = new_stage2_test_prover(
         F::from_u64(233),
-        w_prefix,
+        w_live,
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         Stage2Params {
@@ -918,26 +918,26 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
         },
     );
 
-    let mut prefix_claim = prefix_prover.input_claim();
+    let mut live_claim = live_prover.input_claim();
     let mut padded_claim = padded_prover.input_claim();
 
     for round in 0..(segment_bits + coeff_bits) {
-        let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+        let live_poly = live_prover.compute_round_univariate(round, live_claim);
         let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(
-            prefix_poly, padded_poly,
+            live_poly, padded_poly,
             "round {round} polynomial mismatch for padded large odd sparse boolean witness"
         );
 
         let challenge = F::from_u64((13 * round as u64) + 239);
-        prefix_claim = prefix_poly.evaluate(&challenge);
+        live_claim = live_poly.evaluate(&challenge);
         padded_claim = padded_poly.evaluate(&challenge);
-        prefix_prover.ingest_challenge(round, challenge);
+        live_prover.ingest_challenge(round, challenge);
         padded_prover.ingest_challenge(round, challenge);
     }
 
-    assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(live_claim, padded_claim);
+    assert_eq!(live_prover.final_w_eval(), padded_prover.final_w_eval());
 }
 
 #[test]
@@ -948,7 +948,7 @@ fn stage2_large_odd_dense_round_batching_matches_direct_path() {
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 29 + 17) % b) as i8 - half)
         .collect();
     let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
@@ -970,19 +970,19 @@ fn stage2_large_odd_dense_round_batching_matches_direct_path() {
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(263),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         params,
     );
     let mut direct = new_stage2_test_prover(
         F::from_u64(263),
-        w_prefix,
+        w_live,
         alpha_evals_coeff,
         m_evals_segment,
         params,
     );
-    direct.prefix_r_stage1 = None;
+    direct.initial_batch_stage1_point = None;
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -993,7 +993,7 @@ fn stage2_large_odd_dense_round_batching_matches_direct_path() {
         assert_eq!(
             prover_poly.evaluate(&F::zero()) + prover_poly.evaluate(&F::one()),
             prover_claim,
-            "prefix path sumcheck invariant mismatch at round {round}"
+            "live-row path sumcheck invariant mismatch at round {round}"
         );
         assert_eq!(
             direct_poly.evaluate(&F::zero()) + direct_poly.evaluate(&F::one()),
@@ -1017,17 +1017,17 @@ fn stage2_large_odd_dense_round_batching_matches_direct_path() {
 }
 
 #[test]
-fn stage2_large_odd_dense_prefix_matches_padded_reference() {
+fn stage2_large_odd_dense_live_rows_match_padded_reference() {
     let segment_bits = 16usize;
     let coeff_bits = 6usize;
     let live_segments = 34_519usize;
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 31 + 11) % b) as i8 - half)
         .collect();
-    let w_padded = pad_compact_witness(&w_prefix, live_segments, segment_bits, coeff_bits);
+    let w_padded = pad_compact_witness(&w_live, live_segments, segment_bits, coeff_bits);
     let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
         .map(|i| F::from_u64((31 * i as u64) + 271))
         .collect();
@@ -1039,9 +1039,9 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
         .collect();
     let m_evals_segment_padded = zero_padded_m_evals(&m_evals_segment, live_segments);
 
-    let mut prefix_prover = new_stage2_test_prover(
+    let mut live_prover = new_stage2_test_prover(
         F::from_u64(283),
-        w_prefix,
+        w_live,
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         Stage2Params {
@@ -1066,24 +1066,24 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
         },
     );
 
-    let mut prefix_claim = prefix_prover.input_claim();
+    let mut live_claim = live_prover.input_claim();
     let mut padded_claim = padded_prover.input_claim();
 
     for round in 0..(segment_bits + coeff_bits) {
-        let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+        let live_poly = live_prover.compute_round_univariate(round, live_claim);
         let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(
-            prefix_poly, padded_poly,
+            live_poly, padded_poly,
             "round {round} polynomial mismatch for padded large odd dense witness"
         );
 
         let challenge = F::from_u64((43 * round as u64) + 293);
-        prefix_claim = prefix_poly.evaluate(&challenge);
+        live_claim = live_poly.evaluate(&challenge);
         padded_claim = padded_poly.evaluate(&challenge);
-        prefix_prover.ingest_challenge(round, challenge);
+        live_prover.ingest_challenge(round, challenge);
         padded_prover.ingest_challenge(round, challenge);
     }
 
-    assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(live_claim, padded_claim);
+    assert_eq!(live_prover.final_w_eval(), padded_prover.final_w_eval());
 }

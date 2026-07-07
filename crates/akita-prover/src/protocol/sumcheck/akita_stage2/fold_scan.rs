@@ -2,27 +2,6 @@
 
 use super::*;
 
-/// How the current round folds live witness/relation storage.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FoldRoundKind {
-    FlatPair,
-    EmbeddedSegmentAxis,
-    EmbeddedCoefficientAxis,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum WitnessFoldInput<'a, E: FieldCore> {
-    Compact {
-        digits: &'a [i8],
-        fold_lut: &'a CompactPairFoldLut<E>,
-    },
-    Full {
-        evals: &'a [E],
-        challenge: E,
-        use_local_view_flat_fold: bool,
-    },
-}
-
 /// Fused fold-and-scan paths that preserve hot-cache round messages.
 pub(crate) enum FusedFoldScan<'a, E: FieldCore> {
     InitialRound2 {
@@ -31,40 +10,9 @@ pub(crate) enum FusedFoldScan<'a, E: FieldCore> {
         r0: E,
         r1: E,
     },
-    SegmentAxis {
-        w_full: &'a [E],
-        challenge: E,
-    },
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
-    /// Relation and witness storage can fold on different axes in the same round.
-    ///
-    /// Compact witness digits are still laid out as a flat `live_len` vector until
-    /// the first promotion to field evals. Embedded coefficient-axis folding assumes
-    /// segment-major field layout, so compact witness must keep flat pairwise fold
-    /// even when relation weight uses `EmbeddedCoefficientAxis`.
-    pub(super) fn witness_fold_kind(
-        relation_kind: FoldRoundKind,
-        witness_is_compact: bool,
-    ) -> FoldRoundKind {
-        if witness_is_compact && relation_kind == FoldRoundKind::EmbeddedCoefficientAxis {
-            FoldRoundKind::FlatPair
-        } else {
-            relation_kind
-        }
-    }
-
-    pub(super) fn fold_round_kind(&self, folding_segment_round: bool) -> FoldRoundKind {
-        if self.in_coefficient_round() && self.use_coefficient_prefix_round() {
-            FoldRoundKind::EmbeddedCoefficientAxis
-        } else if folding_segment_round && self.use_segment_prefix_round() {
-            FoldRoundKind::EmbeddedSegmentAxis
-        } else {
-            FoldRoundKind::FlatPair
-        }
-    }
-
     pub(super) fn fold_witness_flat_compact(
         w_compact: &[i8],
         fold_lut: &CompactPairFoldLut<E>,
@@ -125,6 +73,39 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
         fold_live_evals_zero_padded(&after_r0, r1)
     }
 
+    pub(super) fn fold_relation_weight_initial_batch(
+        evals: &[E],
+        live_segments: usize,
+        coeff_len: usize,
+        r0: E,
+        r1: E,
+    ) -> Vec<E> {
+        debug_assert!(coeff_len.is_power_of_two());
+        debug_assert!(coeff_len >= 4);
+        let next_coeff_len = coeff_len >> 2;
+        let mut out = vec![E::zero(); live_segments * next_coeff_len];
+        for segment in 0..live_segments {
+            let src_start = segment * coeff_len;
+            let dst_start = segment * next_coeff_len;
+            let column = &evals[src_start..src_start + coeff_len];
+            for (quad, dst) in out[dst_start..dst_start + next_coeff_len]
+                .iter_mut()
+                .enumerate()
+            {
+                let base = 4 * quad;
+                *dst = Self::direct_fold_e_quad_to_round2(
+                    column[base],
+                    column[base + 1],
+                    column[base + 2],
+                    column[base + 3],
+                    r0,
+                    r1,
+                );
+            }
+        }
+        out
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn fold_witness_compact_to_field(
         w_compact: &[i8],
@@ -138,92 +119,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
         fold_live_evals_zero_padded(evals, challenge)
     }
 
-    pub(super) fn fold_witness_full_owned(
-        evals: Vec<E>,
-        kind: FoldRoundKind,
-        live_segments: usize,
-        coeff_len: usize,
-        challenge: E,
-        use_local_view_flat_fold: bool,
-    ) -> Vec<E> {
-        if use_local_view_flat_fold && kind == FoldRoundKind::FlatPair {
-            let mut evals = evals;
-            fold_evals_in_place(&mut evals, challenge);
-            evals
-        } else {
-            Self::fold_witness_polynomial(
-                WitnessFoldInput::Full {
-                    evals: &evals,
-                    challenge,
-                    use_local_view_flat_fold: false,
-                },
-                kind,
-                live_segments,
-                coeff_len,
-            )
-        }
-    }
-
-    pub(super) fn fold_witness_polynomial(
-        input: WitnessFoldInput<'_, E>,
-        kind: FoldRoundKind,
-        live_segments: usize,
-        coeff_len: usize,
-    ) -> Vec<E> {
-        match (input, kind) {
-            (
-                WitnessFoldInput::Compact { digits, fold_lut },
-                FoldRoundKind::EmbeddedSegmentAxis,
-            ) => Self::fold_witness_embedded_segment_compact(
-                digits,
-                live_segments,
-                coeff_len,
-                fold_lut,
-            ),
-            (
-                WitnessFoldInput::Full {
-                    evals, challenge, ..
-                },
-                FoldRoundKind::EmbeddedSegmentAxis,
-            ) => {
-                Self::fold_witness_embedded_segment_full(evals, live_segments, coeff_len, challenge)
-            }
-            (
-                WitnessFoldInput::Full {
-                    evals, challenge, ..
-                },
-                FoldRoundKind::EmbeddedCoefficientAxis,
-            ) => Self::fold_witness_embedded_coefficient_full(
-                evals,
-                live_segments,
-                coeff_len,
-                challenge,
-            ),
-            (WitnessFoldInput::Compact { digits, fold_lut }, FoldRoundKind::FlatPair) => {
-                Self::fold_witness_flat_compact(digits, fold_lut)
-            }
-            (
-                WitnessFoldInput::Full {
-                    evals,
-                    challenge,
-                    use_local_view_flat_fold,
-                },
-                FoldRoundKind::FlatPair,
-            ) => {
-                if use_local_view_flat_fold {
-                    let mut out = evals.to_vec();
-                    fold_evals_in_place(&mut out, challenge);
-                    out
-                } else {
-                    fold_live_evals_zero_padded(evals, challenge)
-                }
-            }
-            (WitnessFoldInput::Compact { .. }, FoldRoundKind::EmbeddedCoefficientAxis) => {
-                unreachable!("coefficient-axis fold expects full witness storage")
-            }
-        }
-    }
-
     pub(super) fn run_fused_fold_scan(
         &self,
         fused: FusedFoldScan<'_, E>,
@@ -235,9 +130,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Akita
                 r0,
                 r1,
             } => self.fused_fold_scan_initial_round2(w_compact, relation_round2, r0, r1),
-            FusedFoldScan::SegmentAxis { w_full, challenge } => {
-                self.fused_fold_scan_segment_axis(w_full, challenge)
-            }
         }
     }
 }

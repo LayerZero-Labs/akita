@@ -17,11 +17,11 @@ fn fold_compact_flat_reference(w_compact: &[i8], r: F) -> Vec<F> {
 #[test]
 fn fold_witness_compact_to_field_matches_reference() {
     let r = F::from_u64(53);
-    let w_prefix = vec![1i8, 2, 3, 1, 2, 3, 1, 2, 3, 1];
-    let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
+    let w_live = vec![1i8, 2, 3, 1, 2, 3, 1, 2, 3, 1];
+    let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_live, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::fold_witness_compact_to_field(&w_prefix, &fold_lut),
-        fold_compact_flat_reference(&w_prefix, r)
+        AkitaStage2Prover::<F>::fold_witness_compact_to_field(&w_live, &fold_lut),
+        fold_compact_flat_reference(&w_live, r)
     );
 
     let w_dense = vec![1i8, 2, 3, 1, 2, 3];

@@ -56,14 +56,19 @@ fn build_stage2_grid_from_split(
         ring_bits,
         live_x_cols,
     );
+    let layout = Stage2InitialRoundBatchLayout::new(
+        live_x_cols * (1usize << ring_bits),
+        col_bits + ring_bits,
+        live_x_cols,
+        col_bits,
+        ring_bits,
+    )?;
     build_stage2_initial_round_batch_grid(
         w_compact,
         &relation_weight_evals,
         stage1_point,
         b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        layout,
     )
 }
 
@@ -87,14 +92,19 @@ fn build_stage2_grid_from_split_reference(
         ring_bits,
         live_x_cols,
     );
+    let layout = Stage2InitialRoundBatchLayout::new(
+        live_x_cols * (1usize << ring_bits),
+        col_bits + ring_bits,
+        live_x_cols,
+        col_bits,
+        ring_bits,
+    )?;
     build_stage2_initial_round_batch_grid_reference(
         w_compact,
         &relation_weight_evals,
         stage1_point,
         b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        layout,
     )
 }
 
@@ -276,7 +286,7 @@ fn build_stage1_initial_round_batch_grid_reference(
 
     let y_len = 1usize << ring_bits;
     let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits])
-        .expect("stage-1 reference two-round prefix dimensions are prevalidated");
+        .expect("stage-1 reference two-round batch dimensions are prevalidated");
     let eq_x = EqPolynomial::evals(&tau0[ring_bits..])
         .expect("stage-1 reference x-prefix dimensions are prevalidated");
     let points = stage1_full_prefix_points::<F>();
@@ -319,34 +329,33 @@ fn build_stage2_initial_round_batch_grid_reference(
     relation_weight_evals: &[F],
     stage1_point: &[F],
     b: usize,
-    live_x_cols: usize,
-    _col_bits: usize,
-    ring_bits: usize,
+    layout: Stage2InitialRoundBatchLayout,
 ) -> Option<Stage2RoundBatchGrid<F>> {
-    if !can_use_stage2_initial_round_batch(ring_bits, b) {
+    if !can_use_stage2_initial_round_batch(layout.lane_bits, b) {
         return None;
     }
 
-    let y_len = 1usize << ring_bits;
-    assert_eq!(relation_weight_evals.len(), live_x_cols * y_len);
-    let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
-        .expect("stage-2 reference two-round prefix dimensions are prevalidated");
-    let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
-        .expect("stage-2 reference x-prefix dimensions are prevalidated");
-    let points = stage2_full_prefix_points::<F>();
-    let y_quads = y_len >> 2;
+    let lane_len = 1usize << layout.lane_bits;
+    assert_eq!(relation_weight_evals.len(), layout.live_len);
+    let eq_lane_suffix = EqPolynomial::evals(&stage1_point[2..layout.lane_bits])
+        .expect("stage-2 reference two-round batch dimensions are prevalidated");
+    let eq_tile = EqPolynomial::evals(&stage1_point[layout.lane_bits..])
+        .expect("stage-2 reference tile dimensions are prevalidated");
+    let points = stage2_initial_batch_points::<F>();
+    let lane_quads = lane_len >> 2;
     let mut norm_full = [F::zero(); 9];
     let mut relation_full = [F::zero(); 9];
 
-    for x_idx in 0..live_x_cols {
-        let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
-        let eq_x_weight = eq_x[x_idx];
-        for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate().take(y_quads) {
-            let base = 4 * y_quad;
+    for tile_idx in 0..layout.live_tiles {
+        let column = &w_compact[tile_idx * lane_len..(tile_idx + 1) * lane_len];
+        let eq_tile_weight = eq_tile[tile_idx];
+        for (lane_quad, &eq_lane_weight) in eq_lane_suffix.iter().enumerate().take(lane_quads) {
+            let base = 4 * lane_quad;
             let w_quad = std::array::from_fn(|offset| F::from_i64(column[base + offset] as i64));
-            let weight_quad =
-                std::array::from_fn(|offset| relation_weight_evals[x_idx * y_len + base + offset]);
-            let norm_weight = eq_y_weight * eq_x_weight;
+            let weight_quad = std::array::from_fn(|offset| {
+                relation_weight_evals[tile_idx * lane_len + base + offset]
+            });
+            let norm_weight = eq_lane_weight * eq_tile_weight;
             for idx in 0..9 {
                 let x = points[idx / 3];
                 let y = points[idx % 3];
@@ -405,7 +414,7 @@ fn stage1_b8_lookup_table_matches_raw_evals() {
 
 #[test]
 fn stage2_b8_norm_lookup_table_matches_raw_evals() {
-    let points = stage2_full_prefix_points::<F>();
+    let points = stage2_initial_batch_points::<F>();
     for w00 in -4i64..=3 {
         for w10 in -4i64..=3 {
             for w01 in -4i64..=3 {
@@ -439,7 +448,7 @@ fn stage2_b8_norm_lookup_table_matches_raw_evals() {
 
 #[test]
 fn stage2_b8_relation_weight_table_matches_prefix_w_evals() {
-    let points = stage2_full_prefix_points::<F>();
+    let points = stage2_initial_batch_points::<F>();
     for w00 in -4i64..=3 {
         for w10 in -4i64..=3 {
             for w01 in -4i64..=3 {
@@ -995,7 +1004,7 @@ fn stage2_default_norm_omitted_corner_falls_back_when_00_is_zero() {
 
 #[test]
 fn stage2_norm_reduced_domain_has_round_message_collision() {
-    let reduced = stage2_reduced_prefix_points::<F>();
+    let reduced = stage2_reduced_initial_batch_points::<F>();
     let tau0 = F::from_u64(7);
     let tau1 = F::from_u64(11);
     let r0 = F::from_u64(13);
@@ -1046,7 +1055,7 @@ fn stage2_norm_reduced_domain_has_round_message_collision() {
 
 #[test]
 fn stage2_relation_reduced_domain_has_round_message_collision() {
-    let reduced = stage2_reduced_prefix_points::<F>();
+    let reduced = stage2_reduced_initial_batch_points::<F>();
     let r0 = F::from_u64(13);
     let alpha = F::one();
     let bit = [F::zero(), F::one()];
@@ -1113,7 +1122,7 @@ fn stage2_relation_reduced_domain_has_round_message_collision() {
 
 #[test]
 fn stage2_norm_full_domain_matches_local_round_messages() {
-    let full = stage2_full_prefix_points::<F>();
+    let full = stage2_initial_batch_points::<F>();
     let tau0 = F::from_u64(7);
     let tau1 = F::from_u64(11);
     let r0 = F::from_u64(13);
@@ -1201,7 +1210,7 @@ fn stage2_norm_8_point_reconstruction_matches_full_grid_and_round_messages() {
 
 #[test]
 fn stage2_relation_full_domain_matches_local_round_messages() {
-    let full = stage2_full_prefix_points::<F>();
+    let full = stage2_initial_batch_points::<F>();
     let r0 = F::from_u64(13);
     let alpha = F::one();
     let bit = [F::zero(), F::one()];

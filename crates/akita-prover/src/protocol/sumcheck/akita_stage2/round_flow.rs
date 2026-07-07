@@ -7,15 +7,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let rounds_completed = self.rounds_completed;
         let poly = if use_round_batching {
             let (virt_poly, rel_poly) = {
-                let prefix = self.ensure_initial_round_batch();
+                let batch = self.ensure_initial_round_batch();
                 if rounds_completed == 0 {
-                    let (virt_poly, rel_poly) = prefix.skip_state.reconstruct_round0_polys();
+                    let (virt_poly, rel_poly) = batch.skip_state.reconstruct_round0_polys();
                     (virt_poly, rel_poly)
                 } else {
-                    let r0 = prefix
-                        .first_challenge
-                        .expect("round 1 prefix polynomial requested before ingesting round 0");
-                    let (virt_poly, rel_poly) = prefix.skip_state.reconstruct_round1_polys(r0);
+                    let r0 = batch.first_challenge.expect(
+                        "round 1 initial-batch polynomial requested before ingesting round 0",
+                    );
+                    let (virt_poly, rel_poly) = batch.skip_state.reconstruct_round1_polys(r0);
                     (virt_poly, rel_poly)
                 }
             };
@@ -75,8 +75,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 self.ensure_initial_round_batch().first_challenge = Some(r);
             } else {
                 let r0 = {
-                    let prefix = self.ensure_initial_round_batch();
-                    prefix
+                    let batch = self.ensure_initial_round_batch();
+                    batch
                         .first_challenge
                         .expect("round 1 ingest requires the round 0 challenge")
                 };
@@ -120,7 +120,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 .expect("relation weight round-2 fold preserves shape");
                 self.relation_coeff_len = next_coeff_len;
                 self.initial_round_batch = None;
-                self.prefix_r_stage1 = None;
+                self.initial_batch_stage1_point = None;
                 if let Some((virt_terms, rel_coeffs)) = round2_terms {
                     self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                 }
@@ -148,76 +148,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
 
         self.split_eq.bind(r);
 
-        if self.geometry.local_view().is_none() {
-            self.witness_table =
-                match mem::replace(&mut self.witness_table, WitnessTable::Full(Vec::new())) {
-                    WitnessTable::Compact(w_compact) => {
-                        let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
-                        self.fold_relation_weight_flat(r);
-                        WitnessTable::Full(Self::fold_witness_flat_compact(&w_compact, &fold_lut))
-                    }
-                    WitnessTable::Full(w_full) => {
-                        self.fold_relation_weight_flat(r);
-                        WitnessTable::Full(Self::fold_witness_field_flat(w_full, r))
-                    }
-                };
-        } else {
-            let folding_segment_round = !self.in_coefficient_round();
-            let fold_kind = self.fold_round_kind(folding_segment_round);
-            let fuse_next_segment_axis_round = fold_kind == FoldRoundKind::EmbeddedSegmentAxis
-                && self.next_use_segment_prefix_round_after_current();
-            let coeff_len = self.relation_weight_coeff_len();
-            let live_segments = self.live_segments;
-
-            self.witness_table =
-                match mem::replace(&mut self.witness_table, WitnessTable::Full(Vec::new())) {
-                    WitnessTable::Compact(w_compact) => {
-                        let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
-                        let witness_kind = Self::witness_fold_kind(fold_kind, true);
-                        let w_full = Self::fold_witness_polynomial(
-                            WitnessFoldInput::Compact {
-                                digits: &w_compact,
-                                fold_lut: &fold_lut,
-                            },
-                            witness_kind,
-                            live_segments,
-                            coeff_len,
-                        );
-                        self.fold_relation_weight(r, fold_kind);
-                        WitnessTable::Full(w_full)
-                    }
-                    WitnessTable::Full(w_full) => {
-                        if fold_kind == FoldRoundKind::EmbeddedSegmentAxis
-                            && fuse_next_segment_axis_round
-                        {
-                            self.fold_relation_weight(r, fold_kind);
-                            let (next_w_full, virt_terms, rel_coeffs) =
-                                self.run_fused_fold_scan(FusedFoldScan::SegmentAxis {
-                                    w_full: &w_full,
-                                    challenge: r,
-                                });
-                            self.cached_round_poly =
-                                Some(self.combine_terms(virt_terms, rel_coeffs));
-                            WitnessTable::Full(next_w_full)
-                        } else {
-                            let next_w_full = Self::fold_witness_full_owned(
-                                w_full,
-                                fold_kind,
-                                live_segments,
-                                coeff_len,
-                                r,
-                                self.geometry.local_view().is_some(),
-                            );
-                            self.fold_relation_weight(r, fold_kind);
-                            WitnessTable::Full(next_w_full)
-                        }
-                    }
-                };
-
-            if folding_segment_round {
-                self.live_segments = self.live_segments.div_ceil(2);
-            }
-        }
+        self.witness_table =
+            match mem::replace(&mut self.witness_table, WitnessTable::Full(Vec::new())) {
+                WitnessTable::Compact(w_compact) => {
+                    let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
+                    self.fold_relation_weight_flat(r);
+                    WitnessTable::Full(Self::fold_witness_flat_compact(&w_compact, &fold_lut))
+                }
+                WitnessTable::Full(w_full) => {
+                    self.fold_relation_weight_flat(r);
+                    WitnessTable::Full(Self::fold_witness_field_flat(w_full, r))
+                }
+            };
 
         self.rounds_completed += 1;
         if self.rounds_completed < self.num_vars {

@@ -586,15 +586,15 @@ pub(crate) fn interpolate_eq_factored_q_poly<E: FieldCore + FromPrimitiveInt>(
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>(
+pub(crate) fn stage2_reduced_initial_batch_points<E: FieldCore + FromPrimitiveInt>(
 ) -> [RoundBatchPoint<E>; 2] {
     [RoundBatchPoint::Finite(E::one()), RoundBatchPoint::Infinity]
 }
 
 /// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [RoundBatchPoint<E>; 3]
-{
+pub(crate) fn stage2_initial_batch_points<E: FieldCore + FromPrimitiveInt>(
+) -> [RoundBatchPoint<E>; 3] {
     [
         RoundBatchPoint::Finite(E::zero()),
         RoundBatchPoint::Finite(E::one()),

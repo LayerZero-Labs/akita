@@ -50,5 +50,5 @@ pub(crate) use stage1::{
 };
 pub(crate) use stage2::{
     build_stage2_initial_round_batch_grid, can_use_stage2_initial_round_batch,
-    Stage2RoundBatchState,
+    Stage2InitialRoundBatchLayout, Stage2RoundBatchState,
 };

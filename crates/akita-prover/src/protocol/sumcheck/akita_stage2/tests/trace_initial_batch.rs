@@ -8,7 +8,7 @@ fn stage2_trace_round_batching_matches_direct_path() {
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 17 + 5) % b) as i8 - half)
         .collect();
     let trace_compact: Vec<F> = (0..(live_segments * coeff_len))
@@ -33,7 +33,7 @@ fn stage2_trace_round_batching_matches_direct_path() {
 
     let mut prover = new_stage2_test_prover_with_trace(
         F::from_u64(43),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         trace_compact.clone(),
@@ -42,13 +42,13 @@ fn stage2_trace_round_batching_matches_direct_path() {
     assert!(prover.can_use_stage2_initial_round_batch());
     let mut direct = new_stage2_test_prover_with_trace(
         F::from_u64(43),
-        w_prefix,
+        w_live,
         alpha_evals_coeff,
         m_evals_segment,
         trace_compact,
         params,
     );
-    direct.prefix_r_stage1 = None;
+    direct.initial_batch_stage1_point = None;
     assert!(!direct.can_use_stage2_initial_round_batch());
 
     let mut prover_claim = prover.input_claim();
@@ -59,7 +59,7 @@ fn stage2_trace_round_batching_matches_direct_path() {
         let direct_poly = direct.compute_round_univariate(round, direct_claim);
         assert_eq!(
             prover_poly, direct_poly,
-            "trace two-round prefix mismatch at round {round}"
+            "trace two-round batch mismatch at round {round}"
         );
 
         let challenge = F::from_u64((11 * round as u64) + 47);
@@ -81,7 +81,7 @@ fn stage2_sparse_trace_table_matches_dense_trace_table() {
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 41 + 17) % b) as i8 - half)
         .collect();
     let active_cols = [1usize, 4, 11, 17];
@@ -122,7 +122,7 @@ fn stage2_sparse_trace_table_matches_dense_trace_table() {
 
     let mut dense = new_stage2_test_prover_with_trace_table(
         F::from_u64(137),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         TraceTable::ring_dense(trace_compact.clone()),
@@ -131,7 +131,7 @@ fn stage2_sparse_trace_table_matches_dense_trace_table() {
     );
     let mut sparse = new_stage2_test_prover_with_trace_table(
         F::from_u64(137),
-        w_prefix,
+        w_live,
         alpha_evals_coeff,
         m_evals_segment,
         sparse_trace,
@@ -168,13 +168,13 @@ fn stage2_trace_round_batching_matches_padded_reference() {
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 23 + 7) % b) as i8 - half)
         .collect();
     let trace_compact: Vec<F> = (0..(live_segments * coeff_len))
         .map(|i| F::from_u64((29 * i as u64) + 53))
         .collect();
-    let w_padded = pad_compact_witness(&w_prefix, live_segments, segment_bits, coeff_bits);
+    let w_padded = pad_compact_witness(&w_live, live_segments, segment_bits, coeff_bits);
     let trace_padded = pad_trace_compact(&trace_compact, live_segments, segment_bits, coeff_bits);
     let stage1_point: Vec<F> = (0..(segment_bits + coeff_bits))
         .map(|i| F::from_u64((13 * i as u64) + 59))
@@ -187,9 +187,9 @@ fn stage2_trace_round_batching_matches_padded_reference() {
         .collect();
     let m_evals_segment_padded = zero_padded_m_evals(&m_evals_segment, live_segments);
 
-    let mut prefix_prover = new_stage2_test_prover_with_trace(
+    let mut live_prover = new_stage2_test_prover_with_trace(
         F::from_u64(71),
-        w_prefix,
+        w_live,
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         trace_compact,
@@ -216,26 +216,26 @@ fn stage2_trace_round_batching_matches_padded_reference() {
         },
     );
 
-    let mut prefix_claim = prefix_prover.input_claim();
+    let mut live_claim = live_prover.input_claim();
     let mut padded_claim = padded_prover.input_claim();
-    assert_eq!(prefix_claim, padded_claim);
+    assert_eq!(live_claim, padded_claim);
     for round in 0..(segment_bits + coeff_bits) {
-        let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
+        let live_poly = live_prover.compute_round_univariate(round, live_claim);
         let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(
-            prefix_poly, padded_poly,
-            "trace prefix/padded mismatch at round {round}"
+            live_poly, padded_poly,
+            "trace live/padded mismatch at round {round}"
         );
 
         let challenge = F::from_u64((23 * round as u64) + 73);
-        prefix_claim = prefix_poly.evaluate(&challenge);
+        live_claim = live_poly.evaluate(&challenge);
         padded_claim = padded_poly.evaluate(&challenge);
-        prefix_prover.ingest_challenge(round, challenge);
+        live_prover.ingest_challenge(round, challenge);
         padded_prover.ingest_challenge(round, challenge);
     }
 
-    assert_eq!(prefix_claim, padded_claim);
-    assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
+    assert_eq!(live_claim, padded_claim);
+    assert_eq!(live_prover.final_w_eval(), padded_prover.final_w_eval());
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let b = 8usize;
     let half = (b / 2) as i8;
     let coeff_len = 1usize << coeff_bits;
-    let w_prefix: Vec<i8> = (0..(live_segments * coeff_len))
+    let w_live: Vec<i8> = (0..(live_segments * coeff_len))
         .map(|i| ((i * 31 + 11) % b) as i8 - half)
         .collect();
     let trace_compact: Vec<F> = (0..(live_segments * coeff_len))
@@ -271,7 +271,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
 
     let mut prover = new_stage2_test_prover_with_trace(
         F::from_u64(101),
-        w_prefix.clone(),
+        w_live.clone(),
         alpha_evals_coeff.clone(),
         m_evals_segment.clone(),
         trace_compact.clone(),
@@ -284,7 +284,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let r1 = F::from_u64(107);
 
     let expected_w_full =
-        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_prefix, r0, r1);
+        AkitaStage2Prover::<F>::fold_witness_through_two_challenges(&w_live, r0, r1);
     let initial_relation = prover.relation_weight.evals().to_vec();
     let expected_relation_round2 =
         AkitaStage2Prover::<F>::fold_relation_weight_through_two_challenges(
@@ -295,7 +295,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
 
     let mut expected = new_stage2_test_prover_with_trace(
         F::from_u64(101),
-        w_prefix,
+        w_live,
         alpha_evals_coeff,
         m_evals_segment,
         trace_compact,

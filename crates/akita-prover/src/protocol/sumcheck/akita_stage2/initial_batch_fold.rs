@@ -99,20 +99,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let next_coeff_len = coeff_len >> 2;
         debug_assert_eq!(relation_round2.len(), self.live_segments * next_coeff_len);
 
-        let current_y_half = next_coeff_len >> 1;
+        let current_lane_half = next_coeff_len >> 1;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
-        let block_size = num_first.min(current_y_half);
+        let block_size = num_first.min(current_lane_half);
         let quad_fold_lut = match self.b {
             4 => Self::build_round2_w_lookup_b4(r0, r1),
             8 => Self::build_round2_w_lookup_b8(r0, r1),
-            _ => unreachable!("unsupported stage-2 two-round prefix basis"),
+            _ => unreachable!("unsupported stage-2 initial-batch basis"),
         };
         let quad_index_fn: fn(&[i8], usize) -> usize = match self.b {
             4 => Self::stage2_b4_quad_lookup_index_from_column,
             8 => Self::stage2_b8_quad_lookup_index_from_column,
-            _ => unreachable!("unsupported stage-2 two-round prefix basis"),
+            _ => unreachable!("unsupported stage-2 initial-batch basis"),
         };
         let mut out = vec![E::zero(); self.live_segments * next_coeff_len];
 
@@ -121,22 +121,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = out
                 .par_chunks_mut(next_coeff_len)
                 .enumerate()
-                .map(|(x, column_out)| {
-                    let column_start = x * coeff_len;
+                .map(|(tile, column_out)| {
+                    let column_start = tile * coeff_len;
                     let column = &w_compact[column_start..column_start + coeff_len];
-                    let j_base = x * current_y_half;
+                    let j_base = tile * current_lane_half;
                     let mut virt = [E::zero(); 2];
                     let mut rel = [E::zero(); 3];
                     let mut blk = 0usize;
 
-                    while blk < current_y_half {
+                    while blk < current_lane_half {
                         let (j_high, blk_end) = stage2_eq_block(
                             j_base,
                             blk,
                             num_first,
                             first_bits,
                             block_size,
-                            current_y_half,
+                            current_lane_half,
                         );
                         let mut inner_virt = [E::zero(); 2];
 
@@ -154,7 +154,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let idx0 = x * next_coeff_len + left;
+                            let idx0 = tile * next_coeff_len + left;
                             let idx1 = idx0 + 1;
                             let (p0, p1) = (relation_round2[idx0], relation_round2[idx1]);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
@@ -185,20 +185,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 2];
                 let mut rel = [E::zero(); 3];
-                for (x, column_out) in out.chunks_mut(next_coeff_len).enumerate() {
-                    let column_start = x * coeff_len;
+                for (tile, column_out) in out.chunks_mut(next_coeff_len).enumerate() {
+                    let column_start = tile * coeff_len;
                     let column = &w_compact[column_start..column_start + coeff_len];
-                    let j_base = x * current_y_half;
+                    let j_base = tile * current_lane_half;
                     let mut blk = 0usize;
 
-                    while blk < current_y_half {
+                    while blk < current_lane_half {
                         let (j_high, blk_end) = stage2_eq_block(
                             j_base,
                             blk,
                             num_first,
                             first_bits,
                             block_size,
-                            current_y_half,
+                            current_lane_half,
                         );
                         let mut inner_virt = [E::zero(); 2];
 
@@ -216,7 +216,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let idx0 = x * next_coeff_len + left;
+                            let idx0 = tile * next_coeff_len + left;
                             let idx1 = idx0 + 1;
                             let (p0, p1) = (relation_round2[idx0], relation_round2[idx1]);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
@@ -237,22 +237,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = out
                 .par_chunks_mut(next_coeff_len)
                 .enumerate()
-                .map(|(x, column_out)| {
-                    let column_start = x * coeff_len;
+                .map(|(tile, column_out)| {
+                    let column_start = tile * coeff_len;
                     let column = &w_compact[column_start..column_start + coeff_len];
-                    let j_base = x * current_y_half;
+                    let j_base = tile * current_lane_half;
                     let mut virt = [E::zero(); 3];
                     let mut rel = [E::zero(); 3];
                     let mut blk = 0usize;
 
-                    while blk < current_y_half {
+                    while blk < current_lane_half {
                         let (j_high, blk_end) = stage2_eq_block(
                             j_base,
                             blk,
                             num_first,
                             first_bits,
                             block_size,
-                            current_y_half,
+                            current_lane_half,
                         );
                         let mut inner_virt = [E::zero(); 3];
 
@@ -272,7 +272,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let idx0 = x * next_coeff_len + left;
+                            let idx0 = tile * next_coeff_len + left;
                             let idx1 = idx0 + 1;
                             let (p0, p1) = (relation_round2[idx0], relation_round2[idx1]);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
@@ -304,20 +304,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 3];
                 let mut rel = [E::zero(); 3];
-                for (x, column_out) in out.chunks_mut(next_coeff_len).enumerate() {
-                    let column_start = x * coeff_len;
+                for (tile, column_out) in out.chunks_mut(next_coeff_len).enumerate() {
+                    let column_start = tile * coeff_len;
                     let column = &w_compact[column_start..column_start + coeff_len];
-                    let j_base = x * current_y_half;
+                    let j_base = tile * current_lane_half;
                     let mut blk = 0usize;
 
-                    while blk < current_y_half {
+                    while blk < current_lane_half {
                         let (j_high, blk_end) = stage2_eq_block(
                             j_base,
                             blk,
                             num_first,
                             first_bits,
                             block_size,
-                            current_y_half,
+                            current_lane_half,
                         );
                         let mut inner_virt = [E::zero(); 3];
 
@@ -337,7 +337,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let idx0 = x * next_coeff_len + left;
+                            let idx0 = tile * next_coeff_len + left;
                             let idx1 = idx0 + 1;
                             let (p0, p1) = (relation_round2[idx0], relation_round2[idx1]);
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
