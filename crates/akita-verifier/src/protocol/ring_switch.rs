@@ -857,8 +857,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     }
                     let z_block_low_eq = EqPolynomial::evals(&x_challenges[..z_offset_low_bits])?;
                     let z_offset_low = chunk.offset_z & (group.block_len - 1);
-                    let a_block_summary =
-                        summarize_pow2_block_carries(&z_block_low_eq, z_offset_low, &group.a_evals)?;
+                    let a_block_summary = summarize_pow2_block_carries(
+                        &z_block_low_eq,
+                        z_offset_low,
+                        &group.a_evals,
+                    )?;
                     let z_offset_high = chunk.offset_z >> z_offset_low_bits;
                     let z_hi_len = fold_gadget.len() * g_commit.len();
                     let eq_hi_z_table =
