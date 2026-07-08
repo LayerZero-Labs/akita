@@ -30,7 +30,10 @@ pub(crate) fn row_bytes_for(cols: usize) -> Result<usize, AkitaError> {
             "JL matrix requires a non-zero column count".to_string(),
         ));
     }
-    Ok(cols.div_ceil(8))
+    cols.checked_add(7)
+        .ok_or_else(jl_geometry_overflow)?
+        .checked_div(8)
+        .ok_or_else(jl_geometry_overflow)
 }
 
 #[inline]

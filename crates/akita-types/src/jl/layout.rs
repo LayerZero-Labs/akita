@@ -68,6 +68,24 @@ impl JlWitnessLayout {
         })
     }
 
+    /// Canonical witness layout for `matrix_cols` live coefficients and `ring_bits`
+    /// ring slots per outer column.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `matrix_cols` is not divisible by `2^ring_bits`.
+    pub fn canonical_for_matrix(matrix_cols: usize, ring_bits: usize) -> Result<Self, AkitaError> {
+        let ring_len = pow2(ring_bits, "JL witness ring dimension")?;
+        if matrix_cols % ring_len != 0 {
+            return Err(AkitaError::InvalidInput(format!(
+                "JL matrix column count {matrix_cols} is not divisible by ring length {ring_len}"
+            )));
+        }
+        let live_x_cols = matrix_cols / ring_len;
+        let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+        Self::new(matrix_cols, live_x_cols, col_bits, ring_bits)
+    }
+
     /// Number of live flat witness entries, equal to the JL matrix column count.
     pub fn live_len(&self) -> usize {
         self.live_x_cols * self.ring_len
@@ -129,6 +147,26 @@ pub fn validate_layout_for_matrix_mle(
             col_hyper.padded_len
         )));
     }
+    if layout.num_vars() != col_hyper.log_len {
+        return Err(AkitaError::InvalidInput(format!(
+            "JL layout witness num_vars {} does not match flat column MLE log_len {}",
+            layout.num_vars(),
+            col_hyper.log_len
+        )));
+    }
+    let min_col_bits = layout.live_x_cols.next_power_of_two().trailing_zeros() as usize;
+    if layout.col_bits != min_col_bits {
+        return Err(AkitaError::InvalidInput(format!(
+            "JL layout col_bits {} is not minimal for live_x_cols {}",
+            layout.col_bits, layout.live_x_cols
+        )));
+    }
+    let canonical = JlWitnessLayout::canonical_for_matrix(matrix_cols, layout.ring_bits)?;
+    if layout != canonical {
+        return Err(AkitaError::InvalidInput(
+            "JL witness layout does not match canonical matrix factorization".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -170,5 +208,16 @@ mod tests {
     fn rejects_layout_whose_live_len_differs_from_matrix_cols() {
         let layout = JlWitnessLayout::new(12, 3, 2, 2).unwrap();
         assert!(validate_layout_for_matrix_mle(10, layout).is_err());
+    }
+
+    #[test]
+    fn canonical_layout_is_unique_per_ring_bits() {
+        let ring1 = JlWitnessLayout::canonical_for_matrix(8, 1).unwrap();
+        assert_eq!(ring1.live_x_cols, 4);
+        let ring2 = JlWitnessLayout::canonical_for_matrix(8, 2).unwrap();
+        assert_eq!(ring2.live_x_cols, 2);
+        assert_ne!(ring1, ring2);
+        assert!(validate_layout_for_matrix_mle(8, ring1).is_ok());
+        assert!(validate_layout_for_matrix_mle(8, ring2).is_ok());
     }
 }

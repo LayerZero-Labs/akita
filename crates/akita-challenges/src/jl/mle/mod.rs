@@ -71,7 +71,7 @@ pub fn eval_jl_mle_at<L: FieldCore>(
     r_w: &[L],
 ) -> Result<L, AkitaError> {
     let (e_j, e_w) = prepare_eq_tables(matrix, r_J, r_w)?;
-    Ok(eval_jl_mle_at_from_eq_tables_impl(matrix, &e_j, &e_w))
+    eval_jl_mle_at_from_eq_tables(matrix, &e_j, &e_w)
 }
 
 /// Fused `J̃(r_J, r_w)` given precomputed equality tables.

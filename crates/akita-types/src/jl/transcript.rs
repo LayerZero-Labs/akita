@@ -4,6 +4,21 @@ use akita_algebra::PaddedHypercube;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::{labels, Transcript};
 
+use super::JlWitnessLayout;
+
+/// Absorb the pinned JL witness layout before image binding.
+pub fn absorb_jl_witness_layout<F, T>(transcript: &mut T, layout: JlWitnessLayout)
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let mut bytes = Vec::with_capacity(24);
+    bytes.extend_from_slice(&(layout.live_x_cols as u64).to_le_bytes());
+    bytes.extend_from_slice(&(layout.col_bits as u64).to_le_bytes());
+    bytes.extend_from_slice(&(layout.ring_bits as u64).to_le_bytes());
+    transcript.absorb_and_record_bytes(labels::ABSORB_JL_WITNESS_LAYOUT, &bytes);
+}
+
 /// Absorb verifier-wire JL image coordinates before sampling `r_J`.
 pub fn absorb_jl_image<F, T>(transcript: &mut T, image_coords: &[i32])
 where
