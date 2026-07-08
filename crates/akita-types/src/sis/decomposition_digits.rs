@@ -43,7 +43,7 @@ use crate::DecompositionParams;
 ///
 /// Stage-1 digit membership is the only norm-shaped constraint on `z`; A-role
 /// weak binding must price at the absolute envelope of all accepted digit
-/// strings, not at [`super::norm_bound::fold_witness_honest_prover_linf_cap`]
+/// strings, not at [`super::norm_bound::fold_witness_linf_digit_plan`]
 /// alone and not only at the shorter positive side.
 ///
 /// Balanced digits lie in `[-b/2, b/2 - 1]`, so `num_digits` digits represent

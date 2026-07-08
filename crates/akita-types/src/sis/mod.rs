@@ -40,8 +40,8 @@ pub use decomposition_digits::{
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use norm_bound::{
     committed_fold_a_role_rank, committed_fold_collision_linf_bound, fold_challenge_norms,
-    fold_level_witness_scoring_cost, fold_witness_beta, fold_witness_honest_prover_linf_cap,
-    fold_witness_linf_cap_policy, fold_witness_linf_digit_plan,
+    fold_level_witness_scoring_cost, fold_witness_beta, fold_witness_linf_cap_policy,
+    fold_witness_linf_digit_plan,
     fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
     fold_witness_linf_tensor_tail_bound_sq, isqrt_ceil, l2_sq_from_linf,
     ring_product_infinity_norm_bound, rounded_up_collision_linf_t, rounded_up_collision_linf_w,

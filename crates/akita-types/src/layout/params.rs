@@ -353,7 +353,7 @@ impl LevelParams {
         )
     }
 
-    /// Level-static config for [`crate::sis::fold_witness_honest_prover_linf_cap`] inside
+    /// Level-static config for [`crate::sis::fold_witness_linf_digit_plan`] inside
     /// [`crate::sis::num_digits_fold`].
     #[inline]
     pub fn fold_witness_linf_cap_config(&self) -> crate::sis::FoldWitnessLinfCapConfig {

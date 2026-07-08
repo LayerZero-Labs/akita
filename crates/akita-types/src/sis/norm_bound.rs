@@ -169,7 +169,7 @@ fn fold_witness_pre_snap_linf_cap(
     let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
     if beta == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_honest_prover_linf_cap: folded-witness bound β = 0".to_string(),
+            "fold_witness_pre_snap_linf_cap: folded-witness bound β = 0".to_string(),
         ));
     }
     let witness_linf_sq = witness
@@ -274,38 +274,13 @@ pub fn fold_witness_linf_digit_plan(
     })
 }
 
-/// Honest-prover coefficient-`L∞` target for the folded witness `z`.
-///
-/// Drives grind retries and sizes `δ_fold` via [`super::decomposition_digits::num_digits_fold`].
-/// May be below `β_inf` when tail-bound-with-grind is enabled (`min(β_inf, t*)`).
-/// Soundness prices A-role collision at [`fold_witness_verifier_linf_bound`] of the
-/// resulting `δ_fold`, not at this cap directly.
-///
-/// # Errors
-///
-/// Propagates [`fold_witness_beta`] / tail-bound setup errors.
-pub fn fold_witness_honest_prover_linf_cap(
-    challenge: FoldChallengeNorms,
-    witness: FoldWitnessNorms,
-    r_vars: usize,
-    num_claims: usize,
-    field_bits: u32,
-    log_basis: u32,
-    cap_config: &FoldWitnessLinfCapConfig,
-) -> Result<u128, AkitaError> {
-    Ok(fold_witness_linf_digit_plan(
-        r_vars, num_claims, field_bits, log_basis, challenge, witness, cap_config,
-    )?
-    .grind_cap)
-}
-
 /// A-role committed-level coefficient-`L∞` collision bucket.
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
 /// bounds the extracted kernel by challenge mass; stage-1 digit membership
 /// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
 /// envelope is [`fold_witness_verifier_linf_bound`] at the `δ_fold` depth
-/// induced by [`fold_witness_honest_prover_linf_cap`]. MSIS accounting keeps
+/// induced by [`fold_witness_linf_digit_plan`]. MSIS accounting keeps
 /// the natural coefficient-`L∞` collision:
 ///
 /// ```text
@@ -664,16 +639,17 @@ mod tests {
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
                 .unwrap();
-        let honest_cap = fold_witness_honest_prover_linf_cap(
-            challenge,
-            witness,
+        let honest_cap = fold_witness_linf_digit_plan(
             4,
             1,
             decomposition.field_bits(),
             decomposition.log_basis,
+            challenge,
+            witness,
             &cap_config,
         )
-        .unwrap();
+        .unwrap()
+        .grind_cap;
         let delta_fold = num_digits_fold(
             4,
             1,
