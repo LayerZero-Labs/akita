@@ -489,9 +489,9 @@ mod tests {
             n_d,
             m_row_layout: MRowLayout::WithDBlock,
             n_b,
-            num_segments: 1,
+            num_groups: 1,
             rows,
-            num_polys_per_segment: vec![num_claims],
+            num_polys_per_group: vec![num_claims],
         };
         let prepared = RingSwitchDeferredRowEval {
             eq_tau1,
@@ -514,7 +514,6 @@ mod tests {
                 log_basis,
                 n_a,
                 n_b,
-                inner_width,
                 t_cols_per_vector: n_a * depth_open * num_blocks,
                 a_row_start: 1,
                 b_row_start: 1 + n_a,

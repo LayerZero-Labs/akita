@@ -45,7 +45,7 @@ pub(crate) struct SetupContributionShape {
     pub n_a: usize,
     pub n_d: usize,
     pub n_b: usize,
-    pub num_polys_per_segment: Vec<usize>,
+    pub num_polys_per_group: Vec<usize>,
     pub m_row_layout: MRowLayout,
 }
 
@@ -62,7 +62,7 @@ impl SetupContributionShape {
             n_a: 2,
             n_d: 1,
             n_b: 2,
-            num_polys_per_segment: vec![1],
+            num_polys_per_group: vec![1],
             m_row_layout: MRowLayout::WithDBlock,
         }
     }
@@ -79,7 +79,7 @@ impl SetupContributionShape {
             n_a: 2,
             n_d: 2,
             n_b: 2,
-            num_polys_per_segment: vec![3],
+            num_polys_per_group: vec![3],
             m_row_layout: MRowLayout::WithDBlock,
         }
     }
@@ -101,7 +101,7 @@ impl SetupContributionShape {
     pub fn batched_root() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_claims = 4;
-        shape.num_polys_per_segment = vec![4];
+        shape.num_polys_per_group = vec![4];
         shape
     }
 
@@ -123,8 +123,8 @@ impl SetupContributionShape {
 
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
-        let num_points = shape.num_polys_per_segment.len();
-        let num_t_vectors = shape.num_polys_per_segment.iter().sum();
+        let num_points = shape.num_polys_per_group.len();
+        let num_t_vectors = shape.num_polys_per_group.iter().sum();
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
@@ -134,7 +134,7 @@ impl SetupContributionFixture {
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
         let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
-        let n_cols_t = shape.num_polys_per_segment.iter().copied().max().unwrap() * cols_per_poly_t;
+        let n_cols_t = shape.num_polys_per_group.iter().copied().max().unwrap() * cols_per_poly_t;
 
         let e_len = shape.depth_open * total_blocks;
         let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
@@ -160,7 +160,7 @@ impl SetupContributionFixture {
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: shape.num_polys_per_segment.iter().sum(),
+                max_num_batched_polys: shape.num_polys_per_group.iter().sum(),
                 gen_ring_dim: TEST_RING_DIM,
                 max_setup_len,
                 public_matrix_seed: [7u8; 32],
@@ -185,9 +185,9 @@ impl SetupContributionFixture {
             n_d: shape.n_d,
             m_row_layout: shape.m_row_layout,
             n_b: shape.n_b,
-            num_segments: 1,
+            num_groups: 1,
             rows,
-            num_polys_per_segment: shape.num_polys_per_segment.clone(),
+            num_polys_per_group: shape.num_polys_per_group.clone(),
         };
         let chunk_layout = WitnessLayout {
             blocks_per_chunk: shape.num_blocks,
@@ -234,7 +234,6 @@ impl SetupContributionFixture {
                 log_basis: shape.log_basis,
                 n_a: shape.n_a,
                 n_b: shape.n_b,
-                inner_width,
                 t_cols_per_vector: shape.n_a * shape.depth_open * shape.num_blocks,
                 a_row_start: 1,
                 b_row_start: 1 + shape.n_a,
@@ -286,12 +285,17 @@ impl SetupContributionFixture {
             &self.prepared.chunk_layout,
         );
         match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
+            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::GroupedDirect {
+                setup: &self.setup,
+                prepared: &self.prepared,
+                alpha_pows_b: &self.alpha_pows,
+                alpha_pows_d: &self.alpha_pows,
+            })
             .unwrap()
         {
             SetupEvaluation::Direct(value) => value,
             SetupEvaluation::Recursive(_) => {
-                panic!("setup evaluator returned recursive output for direct mode")
+                panic!("setup evaluator returned recursive output for grouped direct mode")
             }
         }
     }

@@ -130,7 +130,10 @@ pub use schedule::{
     DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
     ScheduleKeyPrecommitSource, Step,
 };
-pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
+pub use setup_contribution::{
+    GroupedSetupContributionPlan, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupContributionPlanInputs,
+};
 pub use setup_geometry::{
     ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
     setup_required_for_inputs, stage3_offload_natural_field_len,

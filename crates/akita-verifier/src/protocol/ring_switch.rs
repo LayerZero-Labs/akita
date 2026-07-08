@@ -136,7 +136,6 @@ pub(crate) struct RingSwitchDeferredRowGroupEval<F: FieldCore> {
     pub(crate) log_basis: u32,
     pub(crate) n_a: usize,
     pub(crate) n_b: usize,
-    pub(crate) inner_width: usize,
     pub(crate) t_cols_per_vector: usize,
     pub(crate) a_row_start: usize,
     pub(crate) b_row_start: usize,
@@ -499,7 +498,6 @@ where
             log_basis,
             n_a,
             n_b,
-            inner_width: expected_inner_width,
             t_cols_per_vector,
             a_row_start: a_range.start,
             b_row_start: b_range.start,
@@ -524,9 +522,9 @@ where
         n_d: lp.d_key.row_len(),
         m_row_layout: relation.m_row_layout(),
         n_b: lp.b_key.row_len(),
-        num_segments: opening_batch.num_groups(),
+        num_groups: opening_batch.num_groups(),
         rows,
-        num_polys_per_segment: opening_batch.group_sizes(),
+        num_polys_per_group: opening_batch.group_sizes(),
     };
 
     Ok(RingSwitchDeferredRowEval {
@@ -668,7 +666,6 @@ where
         log_basis,
         n_a,
         n_b,
-        inner_width: setup_contribution_inputs.inner_width,
         t_cols_per_vector,
         a_row_start: 1,
         b_row_start: 1 + n_a,
@@ -1139,12 +1136,18 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     &fold_gadget,
                     layout,
                 );
-                match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
+                match evaluator.evaluate::<D>(SetupEvaluatorMode::GroupedDirect {
+                    setup,
+                    prepared: self,
+                    alpha_pows_b: &alpha_pows,
+                    alpha_pows_d: &alpha_pows,
+                })? {
                     SetupEvaluation::Direct(value) => value,
                     #[cfg(test)]
                     SetupEvaluation::Recursive(_) => {
                         return Err(AkitaError::InvalidSetup(
-                            "setup evaluator returned recursive output for direct mode".into(),
+                            "setup evaluator returned recursive output for grouped direct mode"
+                                .into(),
                         ))
                     }
                 }

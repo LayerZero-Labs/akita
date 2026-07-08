@@ -34,10 +34,10 @@ pub fn setup_required_for_inputs<E: FieldCore>(
             "setup evaluator layout has zero width".into(),
         ));
     }
-    if inputs.num_polys_per_segment.len() != inputs.num_segments {
+    if inputs.num_polys_per_group.len() != inputs.num_groups {
         return Err(AkitaError::InvalidSize {
-            expected: inputs.num_segments,
-            actual: inputs.num_polys_per_segment.len(),
+            expected: inputs.num_groups,
+            actual: inputs.num_polys_per_group.len(),
         });
     }
 
@@ -55,7 +55,7 @@ pub fn setup_required_for_inputs<E: FieldCore>(
         MRowLayout::WithoutDBlock => 0,
     };
     // Canonical row layout: consistency (1) | A | B | D.
-    let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
+    let b_rows_total = checked_mul(inputs.n_b, inputs.num_groups, "B row count")?;
     let a_end = checked_add(
         checked_add(1, inputs.n_a, "B row start")?
             .checked_add(b_rows_total)
@@ -72,7 +72,7 @@ pub fn setup_required_for_inputs<E: FieldCore>(
     let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
     let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
     let max_group_poly_count = inputs
-        .num_polys_per_segment
+        .num_polys_per_group
         .iter()
         .copied()
         .max()
@@ -246,9 +246,9 @@ mod tests {
             n_d: 0,
             m_row_layout: MRowLayout::WithoutDBlock,
             n_b: 0,
-            num_segments: num_points,
+            num_groups: num_points,
             rows: 2,
-            num_polys_per_segment: vec![0],
+            num_polys_per_group: vec![0],
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
@@ -284,9 +284,9 @@ mod tests {
             n_d: 0,
             m_row_layout: MRowLayout::WithoutDBlock,
             n_b: 0,
-            num_segments: 1,
+            num_groups: 1,
             rows: 2,
-            num_polys_per_segment: vec![2],
+            num_polys_per_group: vec![2],
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         assert!(required > 0);
@@ -333,9 +333,9 @@ mod tests {
             n_d: 1,
             m_row_layout: MRowLayout::WithDBlock,
             n_b: 2,
-            num_segments: 1,
+            num_groups: 1,
             rows: 8,
-            num_polys_per_segment: vec![1],
+            num_polys_per_group: vec![1],
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let seed = crate::AkitaSetupSeed {
@@ -368,9 +368,9 @@ mod tests {
             n_d: 1,
             m_row_layout: MRowLayout::WithDBlock,
             n_b: 2,
-            num_segments: 1,
+            num_groups: 1,
             rows: 8,
-            num_polys_per_segment: vec![1],
+            num_polys_per_group: vec![1],
         };
         let err = setup_required_for_inputs(&inputs).expect_err("non-pow2 blocks");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
