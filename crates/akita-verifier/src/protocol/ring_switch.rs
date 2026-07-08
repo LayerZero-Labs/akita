@@ -109,9 +109,6 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) groups: Vec<RingSwitchDeferredRowGroupEval<F>>,
-    pub(crate) e_setup_cols: usize,
-    pub(crate) n_d_active: usize,
-    pub(crate) d_start: usize,
     /// Batch-wide fold depth used by setup-sumcheck planning.
     pub(crate) depth_fold: usize,
     /// Batch-wide basis used by the shared r-tail.
@@ -547,9 +544,6 @@ where
     Ok(RingSwitchDeferredRowEval {
         role_dims: relation.role_dims(),
         groups,
-        e_setup_cols,
-        n_d_active,
-        d_start,
         depth_fold,
         log_basis: lp.log_basis,
         chunk_layout,
@@ -702,9 +696,6 @@ where
     Ok(RingSwitchDeferredRowEval {
         role_dims: lp.role_dims,
         groups,
-        e_setup_cols,
-        n_d_active,
-        d_start,
         depth_fold,
         log_basis,
         chunk_layout,

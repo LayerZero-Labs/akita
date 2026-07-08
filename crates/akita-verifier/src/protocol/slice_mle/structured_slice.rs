@@ -515,9 +515,6 @@ mod tests {
         let prepared = RingSwitchDeferredRowEval {
             role_dims: lp.role_dims(),
             groups,
-            e_setup_cols: total_blocks * depth_open,
-            n_d_active: n_d,
-            d_start: rows - n_d,
             depth_fold,
             log_basis,
             chunk_layout,

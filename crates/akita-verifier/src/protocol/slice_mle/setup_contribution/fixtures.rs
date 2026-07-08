@@ -246,9 +246,6 @@ impl SetupContributionFixture {
         let prepared = RingSwitchDeferredRowEval {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
-            e_setup_cols: n_cols_e,
-            n_d_active,
-            d_start: rows - n_d_active,
             depth_fold: shape.depth_fold,
             log_basis: shape.log_basis,
             chunk_layout,
@@ -286,7 +283,7 @@ impl SetupContributionFixture {
     pub fn compute_contribution(&self) -> TestField {
         let setup_contribution = self.prepared.setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
-            &setup_contribution,
+            setup_contribution,
             &self.full_vec_randomness,
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
@@ -313,7 +310,7 @@ impl SetupContributionFixture {
     pub fn recursive_contribution(&self) -> TestField {
         let setup_contribution = self.prepared.setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
-            &setup_contribution,
+            setup_contribution,
             &self.full_vec_randomness,
             None,
             None,
@@ -347,7 +344,7 @@ impl SetupContributionFixture {
     pub fn assert_eq_eval_matches_materialized(&self) {
         let setup_contribution = self.prepared.setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
-            &setup_contribution,
+            setup_contribution,
             &self.full_vec_randomness,
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),

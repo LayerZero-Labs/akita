@@ -54,7 +54,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let layout = prepared.chunk_layout();
         let setup_contribution_inputs = prepared.setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
-            &setup_contribution_inputs,
+            setup_contribution_inputs,
             x_challenges,
             None,
             None,
