@@ -352,7 +352,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .collect()
     }
 
-    /// Build the chunk-aware setup-contribution plan.    /// Build the chunk-aware setup-contribution plan.
+    /// Build the chunk-aware setup-contribution plan.
     ///
     /// The packed-scan footprint (`required`, `d_stride`, `b_stride`, `z_range`)
     /// and α-evaluation count are **independent of the chunk count**: the
@@ -758,7 +758,7 @@ where
     )
 }
 
-/// Chunk-aware `D·ê`/// Chunk-aware `D·ê` column → `(chunk_idx, low_eq_idx, high_eq_idx)` mapping.
+/// Chunk-aware `D·ê` column → `(chunk_idx, low_eq_idx, high_eq_idx)` mapping.
 ///
 /// Decodes the SIS column to its logical `(digit, global_block, claim)` as
 /// before, then routes the global block to its chunk; `high_eq_idx` is relative

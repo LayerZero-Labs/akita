@@ -5,7 +5,7 @@ use super::{
 use crate::proof::AkitaExpandedSetup;
 use crate::WitnessChunkLayout;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
@@ -247,23 +247,35 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
             });
         }
 
-        if alpha_pows_b == alpha_pows_a && alpha_pows_d == alpha_pows_a {
-            let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
-            let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
-            let setup_flat = setup_view.as_slice();
-            let mut acc = E::zero();
-            for group in &self.groups {
-                acc += group.evaluate_packed_direct::<F, D>(
-                    setup_flat,
-                    alpha_pows_a,
-                    self.d_rows,
-                    self.d_physical_cols,
-                )?;
-            }
-            return Ok(acc);
+        if alpha_pows_b.len() == D && alpha_pows_d.len() == D {
+            self.evaluate_packed_direct::<F, D>(setup, alpha_pows_a)
+        } else {
+            self.evaluate_direct_by_rows::<F, D>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
         }
+    }
 
-        self.evaluate_direct_by_rows::<F, D>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
+    fn evaluate_packed_direct<F, const D: usize>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
+        let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
+        let setup_flat = setup_view.as_slice();
+        let mut acc = E::zero();
+        for group in &self.groups {
+            acc += group.evaluate_packed_direct::<F, D>(
+                setup_flat,
+                alpha_pows,
+                self.d_rows,
+                self.d_physical_cols,
+            )?;
+        }
+        Ok(acc)
     }
 
     pub(super) fn evaluate_direct_by_rows<F, const D: usize>(
@@ -641,18 +653,18 @@ fn grouped_e_setup_weights<E: FieldCore>(
         });
     }
     let eq_low_storage;
-    let eq_low = if let Some(eq_low) = eq_low {
-        if eq_low.len() < group.blocks_per_chunk {
-            return Err(AkitaError::InvalidSize {
-                expected: group.blocks_per_chunk,
-                actual: eq_low.len(),
-            });
-        }
-        eq_low
+    let eq_low = if let Some(precomputed) = eq_low {
+        precomputed
     } else {
         eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..block_bits])?;
         &eq_low_storage
     };
+    if eq_low.len() < group.blocks_per_chunk {
+        return Err(AkitaError::InvalidSize {
+            expected: group.blocks_per_chunk,
+            actual: eq_low.len(),
+        });
+    }
     let high_challenges = &full_vec_randomness[block_bits..];
     let high_len = checked_mul(group.num_claims, group.depth_open, "grouped D high width")?;
     let eq_high_by_chunk: Vec<Vec<E>> = group
@@ -663,24 +675,6 @@ fn grouped_e_setup_weights<E: FieldCore>(
     let low_mask = group.blocks_per_chunk - 1;
     let total_blocks = checked_mul(group.num_claims, group.num_blocks, "grouped D blocks")?;
     let e_cols = checked_mul(total_blocks, group.depth_open, "grouped D columns")?;
-    if group.chunks.len() == 1 {
-        let chunk = &group.chunks[0];
-        let eq_high = &eq_high_by_chunk[0];
-        let offset_low = chunk.offset_e & low_mask;
-        return Ok(cfg_into_iter!(0..e_cols)
-            .map(|local_col| {
-                let flat_block = local_col / group.depth_open;
-                let digit = local_col % group.depth_open;
-                let claim_idx = flat_block / group.num_blocks;
-                let block_idx = flat_block % group.num_blocks;
-                let shifted = offset_low + block_idx;
-                let low_idx = shifted & low_mask;
-                let carry = shifted >> block_bits;
-                let high_idx = digit * group.num_claims + claim_idx + carry;
-                eq_low[low_idx] * eq_high[high_idx]
-            })
-            .collect());
-    }
     Ok(cfg_into_iter!(0..e_cols)
         .map(|local_col| {
             let flat_block = local_col / group.depth_open;
@@ -714,18 +708,18 @@ fn grouped_t_setup_weights<E: FieldCore>(
         });
     }
     let eq_low_storage;
-    let eq_low = if let Some(eq_low) = eq_low {
-        if eq_low.len() < group.blocks_per_chunk {
-            return Err(AkitaError::InvalidSize {
-                expected: group.blocks_per_chunk,
-                actual: eq_low.len(),
-            });
-        }
-        eq_low
+    let eq_low = if let Some(precomputed) = eq_low {
+        precomputed
     } else {
         eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..block_bits])?;
         &eq_low_storage
     };
+    if eq_low.len() < group.blocks_per_chunk {
+        return Err(AkitaError::InvalidSize {
+            expected: group.blocks_per_chunk,
+            actual: eq_low.len(),
+        });
+    }
     let high_challenges = &full_vec_randomness[block_bits..];
     let high_len = checked_mul(
         checked_mul(group.num_claims, group.depth_open, "grouped B high width")?,
@@ -741,24 +735,6 @@ fn grouped_t_setup_weights<E: FieldCore>(
     let t_compound_per_block =
         checked_mul(group.n_a, group.depth_open, "grouped B compound stride")?;
     let t_cols = checked_mul(group.num_claims, group.t_cols_per_vector, "grouped B width")?;
-    if group.chunks.len() == 1 {
-        let chunk = &group.chunks[0];
-        let eq_high = &eq_high_by_chunk[0];
-        let offset_low = chunk.offset_t & low_mask;
-        return Ok(cfg_into_iter!(0..t_cols)
-            .map(|local_col| {
-                let t_vector_idx = local_col / group.t_cols_per_vector;
-                let phys_claim_offset = local_col % group.t_cols_per_vector;
-                let block_idx = phys_claim_offset / t_compound_per_block;
-                let compound = phys_claim_offset % t_compound_per_block;
-                let shifted = offset_low + block_idx;
-                let low_idx = shifted & low_mask;
-                let carry = shifted >> block_bits;
-                let high_idx = compound * group.num_claims + t_vector_idx + carry;
-                eq_low[low_idx] * eq_high[high_idx]
-            })
-            .collect());
-    }
     Ok(cfg_into_iter!(0..t_cols)
         .map(|local_col| {
             let t_vector_idx = local_col / group.t_cols_per_vector;
@@ -841,18 +817,18 @@ where
             });
         }
         let eq_low_storage;
-        let eq_low = if let Some(z_block_low_eq) = z_block_low_eq {
-            if z_block_low_eq.len() < group.block_len {
-                return Err(AkitaError::InvalidSize {
-                    expected: group.block_len,
-                    actual: z_block_low_eq.len(),
-                });
-            }
-            z_block_low_eq
+        let eq_low = if let Some(precomputed) = z_block_low_eq {
+            precomputed
         } else {
             eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..z_bits])?;
             &eq_low_storage
         };
+        if eq_low.len() < group.block_len {
+            return Err(AkitaError::InvalidSize {
+                expected: group.block_len,
+                actual: eq_low.len(),
+            });
+        }
         let high_challenges = &full_vec_randomness[z_bits..];
         let high_len = checked_mul(group.depth_commit, group.depth_fold, "grouped Z high width")?;
         let eq_high = high_eq_window(high_challenges, offset_z >> z_bits, high_len);
@@ -975,16 +951,6 @@ where
         acc += row_weight * col_weight * eval_flat_ring_at_pows_fast::<Base, E>(coeffs, alpha_pows);
     }
     Ok(acc)
-}
-
-fn high_eq_window<E: FieldCore>(
-    high_challenges: &[E],
-    offset_high: usize,
-    hi_len: usize,
-) -> Vec<E> {
-    (0..=hi_len)
-        .map(|k| eq_eval_at_index(high_challenges, offset_high + k))
-        .collect()
 }
 
 #[inline(always)]

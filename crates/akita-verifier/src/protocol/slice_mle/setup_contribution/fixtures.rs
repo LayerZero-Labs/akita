@@ -14,7 +14,8 @@ use akita_types::{
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
 use crate::protocol::ring_switch::{
-    PreparedChallengeEvals, RingSwitchDeferredRowEval, RingSwitchDeferredRowGroupEval,
+    build_setup_contribution_groups, PreparedChallengeEvals, RingSwitchDeferredRowEval,
+    RingSwitchDeferredRowGroupEval,
 };
 
 pub(crate) type TestField = Prime128OffsetA7F7;
@@ -211,39 +212,43 @@ impl SetupContributionFixture {
             MRowLayout::WithDBlock => shape.n_d,
             MRowLayout::WithoutDBlock => 0,
         };
+        let groups = vec![RingSwitchDeferredRowGroupEval {
+            c_alphas: PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| test_scalar(41 + idx as u128))
+                    .collect(),
+            ),
+            a_evals: (0..shape.block_len)
+                .map(|idx| test_scalar(501 + idx as u128))
+                .collect(),
+            chunk_range: 0..chunk_layout.chunks.len(),
+            e_setup_offset: 0,
+            num_claims: shape.num_claims,
+            num_blocks: shape.num_blocks,
+            block_len: shape.block_len,
+            depth_open: shape.depth_open,
+            depth_commit: shape.depth_commit,
+            depth_fold: shape.depth_fold,
+            log_basis: shape.log_basis,
+            n_a: shape.n_a,
+            n_b: shape.n_b,
+            t_cols_per_vector: shape.n_a * shape.depth_open * shape.num_blocks,
+            a_row_start: 1,
+            b_row_start: 1 + shape.n_a,
+        }];
+        let setup_contribution_groups =
+            build_setup_contribution_groups(&chunk_layout, &groups).unwrap();
         let prepared = RingSwitchDeferredRowEval {
             eq_tau1,
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
-            groups: vec![RingSwitchDeferredRowGroupEval {
-                c_alphas: PreparedChallengeEvals::Flat(
-                    (0..total_blocks)
-                        .map(|idx| test_scalar(41 + idx as u128))
-                        .collect(),
-                ),
-                a_evals: (0..shape.block_len)
-                    .map(|idx| test_scalar(501 + idx as u128))
-                    .collect(),
-                chunk_range: 0..chunk_layout.chunks.len(),
-                e_setup_offset: 0,
-                num_claims: shape.num_claims,
-                num_blocks: shape.num_blocks,
-                block_len: shape.block_len,
-                depth_open: shape.depth_open,
-                depth_commit: shape.depth_commit,
-                depth_fold: shape.depth_fold,
-                log_basis: shape.log_basis,
-                n_a: shape.n_a,
-                n_b: shape.n_b,
-                t_cols_per_vector: shape.n_a * shape.depth_open * shape.num_blocks,
-                a_row_start: 1,
-                b_row_start: 1 + shape.n_a,
-            }],
+            groups,
             e_setup_cols: n_cols_e,
             n_d_active,
             d_start: rows - n_d_active,
             depth_fold: shape.depth_fold,
             log_basis: shape.log_basis,
             chunk_layout,
+            setup_contribution_groups,
             setup_contribution_inputs,
         };
 

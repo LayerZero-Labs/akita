@@ -1,9 +1,10 @@
+use crate::protocol::ring_switch::build_setup_contribution_groups;
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
-    eq_eval_at_index, eval_offset_eq_interval, summarize_pow2_block_carries,
+    eq_eval_at_index, eval_offset_eq_interval, high_eq_window, summarize_pow2_block_carries,
 };
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -21,17 +22,6 @@ pub(super) const CARRY0: usize = 0;
 
 /// Inner-sum slot for the one-carry bucket (`carry = 1`).
 pub(super) const CARRY1: usize = 1;
-
-/// Build `table[k] = eq_high(offset_high + k)` for `k ∈ [0, hi_len]`.
-pub(crate) fn high_eq_window<E: FieldCore>(
-    high_challenges: &[E],
-    offset_high: usize,
-    hi_len: usize,
-) -> Vec<E> {
-    (0..=hi_len)
-        .map(|k| eq_eval_at_index(high_challenges, offset_high + k))
-        .collect()
-}
 
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `book/src/how/verifying/matrix_evaluation.md` for the full derivation.
@@ -493,37 +483,41 @@ mod tests {
             rows,
             num_polys_per_group: vec![num_claims],
         };
+        let groups = vec![RingSwitchDeferredRowGroupEval {
+            c_alphas: PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| f(3_000 + idx as u128))
+                    .collect(),
+            ),
+            a_evals: opening_point.a.clone(),
+            chunk_range: 0..chunk_layout.chunks.len(),
+            e_setup_offset: 0,
+            num_claims,
+            num_blocks,
+            block_len,
+            depth_open,
+            depth_commit,
+            depth_fold,
+            log_basis,
+            n_a,
+            n_b,
+            t_cols_per_vector: n_a * depth_open * num_blocks,
+            a_row_start: 1,
+            b_row_start: 1 + n_a,
+        }];
+        let setup_contribution_groups =
+            build_setup_contribution_groups(&chunk_layout, &groups).unwrap();
         let prepared = RingSwitchDeferredRowEval {
             eq_tau1,
             role_dims: lp.role_dims(),
-            groups: vec![RingSwitchDeferredRowGroupEval {
-                c_alphas: PreparedChallengeEvals::Flat(
-                    (0..total_blocks)
-                        .map(|idx| f(3_000 + idx as u128))
-                        .collect(),
-                ),
-                a_evals: opening_point.a.clone(),
-                chunk_range: 0..chunk_layout.chunks.len(),
-                e_setup_offset: 0,
-                num_claims,
-                num_blocks,
-                block_len,
-                depth_open,
-                depth_commit,
-                depth_fold,
-                log_basis,
-                n_a,
-                n_b,
-                t_cols_per_vector: n_a * depth_open * num_blocks,
-                a_row_start: 1,
-                b_row_start: 1 + n_a,
-            }],
+            groups,
             e_setup_cols: total_blocks * depth_open,
             n_d_active: n_d,
             d_start: rows - n_d,
             depth_fold,
             log_basis,
             chunk_layout,
+            setup_contribution_groups,
             setup_contribution_inputs,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();

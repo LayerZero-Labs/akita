@@ -16,8 +16,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup,
     CommitmentRingDims, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingRole, RingVec, SetupContributionPlanInputs,
-    TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
+    RingOpeningPoint, RingRelationInstance, RingRole, RingVec, SetupContributionGroupInputs,
+    SetupContributionPlanInputs, TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
 };
 use std::ops::Range;
 
@@ -119,6 +119,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     /// Resolved witness column layout (one chunk for the single-chunk case,
     /// `W` chunks for the distributed-prover layout).
     pub(crate) chunk_layout: WitnessLayout,
+    pub(crate) setup_contribution_groups: Vec<SetupContributionGroupInputs>,
     pub(crate) setup_contribution_inputs: SetupContributionPlanInputs<F>,
 }
 
@@ -528,6 +529,8 @@ where
         num_polys_per_group: opening_batch.group_sizes(),
     };
 
+    let setup_contribution_groups = build_setup_contribution_groups(&chunk_layout, &groups)?;
+
     Ok(RingSwitchDeferredRowEval {
         eq_tau1,
         role_dims: relation.role_dims(),
@@ -538,6 +541,7 @@ where
         depth_fold,
         log_basis: lp.log_basis,
         chunk_layout,
+        setup_contribution_groups,
         setup_contribution_inputs,
     })
 }
@@ -672,16 +676,20 @@ where
         b_row_start: 1 + n_a,
     };
 
+    let groups = vec![group];
+    let setup_contribution_groups = build_setup_contribution_groups(&chunk_layout, &groups)?;
+
     Ok(RingSwitchDeferredRowEval {
         eq_tau1,
         role_dims: lp.role_dims,
-        groups: vec![group],
+        groups,
         e_setup_cols,
         n_d_active,
         d_start,
         depth_fold,
         log_basis,
         chunk_layout,
+        setup_contribution_groups,
         setup_contribution_inputs,
     })
 }
@@ -707,6 +715,44 @@ fn checked_slice<'a, T>(
 ) -> Result<&'a [T], AkitaError> {
     let end = checked_add(start, len, context)?;
     slice.get(start..end).ok_or(AkitaError::InvalidProof)
+}
+
+pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
+    chunk_layout: &WitnessLayout,
+    groups: &[RingSwitchDeferredRowGroupEval<F>],
+) -> Result<Vec<SetupContributionGroupInputs>, AkitaError> {
+    groups
+        .iter()
+        .map(|group| {
+            let chunks = chunk_layout
+                .chunks
+                .get(group.chunk_range.clone())
+                .ok_or(AkitaError::InvalidProof)?
+                .to_vec();
+            let blocks_per_chunk = if chunks.len() == 1 {
+                group.num_blocks
+            } else {
+                chunk_layout.blocks_per_chunk
+            };
+            Ok(SetupContributionGroupInputs {
+                e_col_offset: group.e_setup_offset,
+                num_claims: group.num_claims,
+                num_blocks: group.num_blocks,
+                block_len: group.block_len,
+                depth_open: group.depth_open,
+                depth_commit: group.depth_commit,
+                depth_fold: group.depth_fold,
+                log_basis: group.log_basis,
+                n_a: group.n_a,
+                n_b: group.n_b,
+                t_cols_per_vector: group.t_cols_per_vector,
+                a_row_start: group.a_row_start,
+                b_row_start: group.b_row_start,
+                blocks_per_chunk,
+                chunks,
+            })
+        })
+        .collect()
 }
 
 impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
@@ -1137,12 +1183,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     &fold_gadget,
                     layout,
                 );
-                match evaluator.evaluate::<D>(SetupEvaluatorMode::GroupedDirect {
-                    setup,
-                    prepared: self,
-                    alpha_pows_b: &alpha_pows,
-                    alpha_pows_d: &alpha_pows,
-                })? {
+                match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
                     SetupEvaluation::Direct(value) => value,
                     #[cfg(test)]
                     SetupEvaluation::Recursive(_) => {

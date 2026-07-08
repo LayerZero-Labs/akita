@@ -2,13 +2,16 @@
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_types::{
-    AkitaExpandedSetup, GroupedSetupContributionPlan, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupContributionPlanInputs, WitnessChunkLayout, WitnessLayout,
+    AkitaExpandedSetup, GroupedSetupContributionPlan, SetupContributionPlan,
+    SetupContributionPlanInputs, WitnessLayout,
 };
 
-use crate::protocol::ring_switch::{RingSwitchDeferredRowEval, RingSwitchDeferredRowGroupEval};
+use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 
 pub(crate) enum SetupEvaluatorMode<'a, F: FieldCore, E: FieldCore> {
+    Direct {
+        setup: &'a AkitaExpandedSetup<F>,
+    },
     GroupedDirect {
         setup: &'a AkitaExpandedSetup<F>,
         prepared: &'a RingSwitchDeferredRowEval<E>,
@@ -16,7 +19,9 @@ pub(crate) enum SetupEvaluatorMode<'a, F: FieldCore, E: FieldCore> {
         alpha_pows_d: &'a [E],
     },
     #[cfg(test)]
-    Recursive { setup: &'a AkitaExpandedSetup<F> },
+    Recursive {
+        setup: &'a AkitaExpandedSetup<F>,
+    },
 }
 
 pub(crate) enum SetupEvaluation<E> {
@@ -75,6 +80,11 @@ where
             });
         }
         match mode {
+            SetupEvaluatorMode::Direct { setup } => {
+                let plan = self.prepare()?;
+                let value = plan.evaluate_prepared_direct::<F, D>(setup, self.alpha_pows)?;
+                Ok(SetupEvaluation::Direct(value))
+            }
             SetupEvaluatorMode::GroupedDirect {
                 setup,
                 prepared,
@@ -115,57 +125,17 @@ where
         &self,
         prepared: &RingSwitchDeferredRowEval<E>,
     ) -> Result<GroupedSetupContributionPlan<E>, AkitaError> {
-        let groups = prepared
-            .groups
-            .iter()
-            .map(|group| {
-                let chunks = Self::group_chunks(prepared, group)?.to_vec();
-                let blocks_per_chunk = if chunks.len() == 1 {
-                    group.num_blocks
-                } else {
-                    prepared.chunk_layout.blocks_per_chunk
-                };
-                Ok(SetupContributionGroupInputs {
-                    e_col_offset: group.e_setup_offset,
-                    num_claims: group.num_claims,
-                    num_blocks: group.num_blocks,
-                    block_len: group.block_len,
-                    depth_open: group.depth_open,
-                    depth_commit: group.depth_commit,
-                    depth_fold: group.depth_fold,
-                    log_basis: group.log_basis,
-                    n_a: group.n_a,
-                    n_b: group.n_b,
-                    t_cols_per_vector: group.t_cols_per_vector,
-                    a_row_start: group.a_row_start,
-                    b_row_start: group.b_row_start,
-                    blocks_per_chunk,
-                    chunks,
-                })
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
         SetupContributionPlan::prepare_grouped::<F>(
             self.inputs,
             self.full_vec_randomness,
             self.eq_low,
             self.z_block_low_eq,
             (!self.fold_gadget.is_empty()).then_some(self.fold_gadget),
-            &groups,
+            &prepared.setup_contribution_groups,
             prepared.d_start,
             prepared.n_d_active,
             prepared.e_setup_cols,
         )
-    }
-
-    fn group_chunks<'b>(
-        prepared: &'b RingSwitchDeferredRowEval<E>,
-        group: &RingSwitchDeferredRowGroupEval<E>,
-    ) -> Result<&'b [WitnessChunkLayout], AkitaError> {
-        prepared
-            .chunk_layout
-            .chunks
-            .get(group.chunk_range.clone())
-            .ok_or(AkitaError::InvalidProof)
     }
 }
 
