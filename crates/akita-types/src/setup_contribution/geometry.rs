@@ -1,4 +1,4 @@
-//! Challenge-free setup product geometry shared by prover and verifier.
+//! Challenge-free setup product geometry: footprint sizing and envelope guards.
 //!
 //! [`setup_required_for_inputs`] derives the packed-scan footprint (`required`)
 //! without fold challenges so NTT sizing, prefix offload, and envelope checks
@@ -9,7 +9,8 @@ use akita_field::{AkitaError, FieldCore};
 use crate::layout::RelationMatrixRowLayout;
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
-use crate::setup_contribution::SetupContributionPlanInputs;
+
+use super::{checked_add, checked_mul, SetupContributionPlanInputs};
 
 /// Required setup ring rows for one level (challenge-free).
 ///
@@ -166,18 +167,6 @@ pub fn setup_active_ring_elems_at<F: FieldCore, E: FieldCore>(
 ) -> Result<usize, AkitaError> {
     let exec = schedule.get_execution_schedule(level)?;
     setup_active_ring_elems_for_fold(expanded, inputs, exec.params.d_a())
-}
-
-#[inline]
-fn checked_add(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_add(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
-}
-
-#[inline]
-fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_mul(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
 }
 
 #[cfg(test)]

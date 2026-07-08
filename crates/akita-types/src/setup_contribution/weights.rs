@@ -3,7 +3,7 @@ use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
-use super::bounds::{checked_add, checked_mul};
+use super::{checked_add, checked_mul};
 
 const POSSIBLE_CARRIES: usize = 2;
 

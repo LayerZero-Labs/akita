@@ -6,9 +6,9 @@ use crate::layout::{LevelParams, RelationMatrixRowLayout};
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows, scalar_powers};
+use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows_fast, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, MulBase};
+use akita_field::{AkitaError, CanonicalField, FieldCore, MulBaseUnreduced};
 use std::iter::repeat_n;
 
 /// Per-group row-count inputs for assembling the relation rhs vector.
@@ -277,14 +277,14 @@ fn accumulate_extension_rows<F, E, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
+    E: FieldCore + MulBaseUnreduced<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
     for r in rows {
         if *row_idx >= eq_tau1.len() {
             return Ok(());
         }
-        *acc += eq_tau1[*row_idx] * eval_ring_at_pows(r, &alpha_pows);
+        *acc += eq_tau1[*row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
         *row_idx += 1;
     }
     Ok(())
@@ -343,7 +343,7 @@ pub fn relation_claim_from_rows_extension<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
+    E: FieldCore + MulBaseUnreduced<F>,
 {
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
@@ -354,14 +354,14 @@ where
         if row_idx >= eq_tau1.len() {
             return Ok(acc);
         }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
+        acc += eq_tau1[row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
         row_idx += 1;
     }
     for r in v {
         if row_idx >= eq_tau1.len() {
             return Ok(acc);
         }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
+        acc += eq_tau1[row_idx] * eval_ring_at_pows_fast(r, &alpha_pows);
         row_idx += 1;
     }
     Ok(acc)
@@ -382,7 +382,7 @@ pub fn relation_claim_from_layout_extension<F, E>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
+    E: FieldCore + MulBaseUnreduced<F>,
 {
     if !v.can_decode_vec(dims.d_d()) {
         return Err(AkitaError::InvalidSize {

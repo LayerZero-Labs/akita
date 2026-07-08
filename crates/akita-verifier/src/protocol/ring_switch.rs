@@ -747,29 +747,6 @@ fn reject_mixed_d_multi_chunk<const D: usize>(
     Ok(())
 }
 
-#[inline(always)]
-fn checked_add(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_add(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
-}
-
-#[inline(always)]
-fn checked_mul(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_mul(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
-}
-
-#[inline(always)]
-fn checked_slice<'a, T>(
-    slice: &'a [T],
-    start: usize,
-    len: usize,
-    context: &'static str,
-) -> Result<&'a [T], AkitaError> {
-    let end = checked_add(start, len, context)?;
-    slice.get(start..end).ok_or(AkitaError::InvalidProof)
-}
-
 pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
     chunk_layout: &WitnessLayout,
     groups: &[RelationMatrixGroupEvaluator<F>],
@@ -959,7 +936,12 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 validate_log_basis(group.log_basis)?;
 
                 let total_blocks =
-                    checked_mul(group.num_claims, group.num_blocks, "witness block count")?;
+                    group
+                        .num_claims
+                        .checked_mul(group.num_blocks)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("witness block count overflow".into())
+                        })?;
                 if let Some(c_alphas) = group.c_alphas.as_flat() {
                     if c_alphas.len() != total_blocks {
                         return Err(AkitaError::InvalidSize {
@@ -1025,15 +1007,18 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         t_offset_high,
                         group.num_claims * group.depth_open * group.n_a,
                     );
+                    let a_row_end = group
+                        .a_row_start
+                        .checked_add(group.n_a)
+                        .ok_or_else(|| AkitaError::InvalidSetup("A rows overflow".into()))?;
                     t_structured_contribution += TStructuredSlicesEvaluator {
                         gadget_vector: &g_open,
                         challenge_block_summaries: &summaries,
-                        a_row_weights: checked_slice(
-                            &self.setup_contribution_inputs.eq_tau1,
-                            group.a_row_start,
-                            group.n_a,
-                            "A rows",
-                        )?,
+                        a_row_weights: self
+                            .setup_contribution_inputs
+                            .eq_tau1
+                            .get(group.a_row_start..a_row_end)
+                            .ok_or(AkitaError::InvalidProof)?,
                         high_eq_table: &eq_hi_t_table,
                     }
                     .evaluate();
