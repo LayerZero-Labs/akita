@@ -9,7 +9,7 @@ use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
-use crate::layout::{LevelParams, MRowLayout};
+use crate::layout::{LevelParams, RelationMatrixRowLayout};
 const POSSIBLE_CARRIES: usize = 2;
 
 #[path = "setup_contribution_grouped.rs"]
@@ -33,7 +33,7 @@ pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub inner_width: usize,
     pub n_a: usize,
     pub n_d: usize,
-    pub m_row_layout: MRowLayout,
+    pub relation_matrix_row_layout: RelationMatrixRowLayout,
     pub n_b: usize,
     pub num_groups: usize,
     pub rows: usize,
@@ -52,7 +52,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
     pub fn from_level_params(
         lp: &LevelParams,
         num_polys_per_group: &[usize],
-        m_row_layout: MRowLayout,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
         depth_fold: usize,
     ) -> Result<Self, AkitaError> {
         let num_polynomials: usize = num_polys_per_group.iter().copied().sum();
@@ -88,7 +88,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
                 "B-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let rows = lp.m_row_count_for(num_groups, m_row_layout)?;
+        let rows = lp.relation_matrix_row_count_for(num_groups, relation_matrix_row_layout)?;
         Ok(Self {
             eq_tau1: Vec::new(),
             num_t_vectors: num_polynomials,
@@ -101,7 +101,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
             inner_width,
             n_a: lp.a_key.row_len(),
             n_d: lp.d_key.row_len(),
-            m_row_layout,
+            relation_matrix_row_layout,
             n_b: lp.b_key.row_len(),
             num_groups,
             rows,
@@ -476,7 +476,9 @@ fn checked_slice<'a, T>(
 mod tests {
     use super::setup_contribution_grouped::SetupContributionGroupPlan;
     use super::*;
-    use crate::{gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout};
+    use crate::{
+        gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, RelationMatrixRowLayout,
+    };
     use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
     use akita_field::Prime128OffsetA7F7;
 
@@ -510,7 +512,7 @@ mod tests {
             inner_width: z_range,
             n_a: 1,
             n_d: 0,
-            m_row_layout: MRowLayout::WithoutDBlock,
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
             n_b: 0,
             num_groups: num_points,
             rows: 2,
@@ -610,7 +612,7 @@ mod tests {
             inner_width: z_range,
             n_a,
             n_d,
-            m_row_layout: MRowLayout::WithDBlock,
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
             n_b,
             num_groups: 1,
             rows,
@@ -1018,7 +1020,7 @@ mod tests {
         assert!(SetupContributionPlanInputs::<F>::from_level_params(
             &lp,
             &[2],
-            MRowLayout::WithoutDBlock,
+            RelationMatrixRowLayout::WithoutDBlock,
             2,
         )
         .is_err());

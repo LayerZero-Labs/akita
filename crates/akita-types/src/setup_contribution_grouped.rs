@@ -3,7 +3,7 @@ use super::{
     setup_t_col_weights, setup_z_col_weights_for_offset, SetupContributionPlanInputs,
 };
 use crate::layout::flat_matrix::FlatRingMatrixView;
-use crate::layout::MRowLayout;
+use crate::layout::RelationMatrixRowLayout;
 use crate::proof::AkitaExpandedSetup;
 use crate::WitnessChunkLayout;
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
@@ -271,9 +271,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 "single-group setup contribution requires exactly one commitment group".into(),
             ));
         }
-        let n_d_active = match inputs.m_row_layout {
-            MRowLayout::WithDBlock => inputs.n_d,
-            MRowLayout::WithoutDBlock => 0,
+        let n_d_active = match inputs.relation_matrix_row_layout {
+            RelationMatrixRowLayout::WithDBlock => inputs.n_d,
+            RelationMatrixRowLayout::WithoutDBlock => 0,
         };
         let a_row_start = 1usize;
         let b_row_start = checked_add(a_row_start, inputs.n_a, "B row start")?;
@@ -775,19 +775,23 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         let b_ratio = b_scales.ratio();
         let b_lambda = base_lambda >> b_scales.shift();
         if b_lambda < b_required {
-            let b_row = b_lambda / self.t_cols;
-            let b_start_abs = b_row * self.t_cols;
-            let scaled_weight = b_scaled_weights[b_row * b_ratio + (base_lambda & b_scales.mask())];
-            weight += scaled_weight * self.t_eq_slice[b_lambda - b_start_abs];
+            if let Some(b_row) = b_lambda.checked_div(self.t_cols) {
+                let b_start_abs = b_row * self.t_cols;
+                let scaled_weight =
+                    b_scaled_weights[b_row * b_ratio + (base_lambda & b_scales.mask())];
+                weight += scaled_weight * self.t_eq_slice[b_lambda - b_start_abs];
+            }
         }
 
         let a_ratio = a_scales.ratio();
         let a_lambda = base_lambda >> a_scales.shift();
         if a_lambda < a_required {
-            let a_row = a_lambda / self.z_cols;
-            let a_start_abs = a_row * self.z_cols;
-            let scaled_weight = a_scaled_weights[a_row * a_ratio + (base_lambda & a_scales.mask())];
-            weight += scaled_weight * self.z_eq_slice[a_lambda - a_start_abs];
+            if let Some(a_row) = a_lambda.checked_div(self.z_cols) {
+                let a_start_abs = a_row * self.z_cols;
+                let scaled_weight =
+                    a_scaled_weights[a_row * a_ratio + (base_lambda & a_scales.mask())];
+                weight += scaled_weight * self.z_eq_slice[a_lambda - a_start_abs];
+            }
         }
 
         weight

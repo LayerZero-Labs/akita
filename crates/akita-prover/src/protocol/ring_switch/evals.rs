@@ -1,10 +1,10 @@
 use akita_field::AkitaError;
 
-/// Unified singleton/grouped M-table column evaluation.
+/// Unified singleton/grouped relation matrix column evaluation.
 ///
 /// Canonical dense-table implementation lives in `akita-types`; the prover
 /// ring-switch finalize path uses it to feed stage-2 proving.
-pub use akita_types::compute_grouped_m_evals_x;
+pub use akita_types::compute_relation_matrix_col_evals;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///

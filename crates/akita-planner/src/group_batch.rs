@@ -11,8 +11,8 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims,
-    DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, Schedule, Step,
+    DecompositionParams, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
+    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
 };
 
 use crate::schedule_params::{
@@ -319,7 +319,7 @@ pub(crate) fn grouped_root_next_w_len(
     field_bits: u32,
     params: &LevelParams,
     main_num_polys: usize,
-    layout: MRowLayout,
+    layout: RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
     if params.precommitted_groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
@@ -351,7 +351,8 @@ pub(crate) fn grouped_root_next_w_len(
             .ok_or_else(|| AkitaError::InvalidSetup("grouped root witness overflow".to_string()))?;
     }
 
-    let r_rows = params.m_row_count_for(params.precommitted_groups.len() + 1, layout)?;
+    let r_rows =
+        params.relation_matrix_row_count_for(params.precommitted_groups.len() + 1, layout)?;
     let r_count = r_rows
         .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
         .ok_or_else(|| {
@@ -693,13 +694,13 @@ pub fn find_group_batch_schedule(
                 field_bits,
                 &candidate_params,
                 key.final_group.num_polynomials(),
-                MRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithDBlock,
             )?;
             let next_w_len_terminal = grouped_root_next_w_len(
                 field_bits,
                 &candidate_params,
                 key.final_group.num_polynomials(),
-                MRowLayout::WithoutDBlock,
+                RelationMatrixRowLayout::WithoutDBlock,
             )?;
             if next_w_len
                 .checked_mul(candidate_log_basis as usize)
@@ -749,7 +750,7 @@ pub fn find_group_batch_schedule(
                     Some(&suffix_fold.first_fold_params),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
@@ -784,8 +785,8 @@ mod tests {
     use crate::find_schedule;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        AkitaScheduleLookupKey, DecompositionParams, MRowLayout, PolynomialGroupLayout,
-        SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
+        AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout,
+        RelationMatrixRowLayout, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -890,7 +891,10 @@ mod tests {
 
         let runtime_next_w_len = root
             .params
-            .root_next_w_len::<Prime128OffsetA7F7>(&opening_batch, MRowLayout::WithDBlock)
+            .root_next_w_len::<Prime128OffsetA7F7>(
+                &opening_batch,
+                RelationMatrixRowLayout::WithDBlock,
+            )
             .expect("runtime next w len");
         assert_eq!(root.next_w_len, runtime_next_w_len);
 

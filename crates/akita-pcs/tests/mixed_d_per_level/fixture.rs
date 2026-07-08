@@ -18,7 +18,7 @@ use akita_types::{
     direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, MRowLayout, PolynomialGroupLayout, Schedule, Step,
+    LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
 };
 struct MixedSuffixFoldPlan {
     params: LevelParams,
@@ -406,9 +406,9 @@ where
             };
             let is_terminal_fold = level + 1 == num_fold_levels;
             let layout = if is_terminal_fold {
-                MRowLayout::WithoutDBlock
+                RelationMatrixRowLayout::WithoutDBlock
             } else {
-                MRowLayout::WithDBlock
+                RelationMatrixRowLayout::WithDBlock
             };
             let ring = w_ring_element_count_with_counts_for_layout_bits(
                 field_bits, &params, 1, 1, layout,
@@ -428,9 +428,9 @@ where
 
         for (idx, plan) in suffix_plan.iter().enumerate() {
             let layout = if plan.is_terminal {
-                MRowLayout::WithoutDBlock
+                RelationMatrixRowLayout::WithoutDBlock
             } else {
-                MRowLayout::WithDBlock
+                RelationMatrixRowLayout::WithDBlock
             };
             let next_lp = if plan.is_terminal {
                 None

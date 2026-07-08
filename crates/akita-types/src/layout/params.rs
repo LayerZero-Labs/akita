@@ -28,7 +28,7 @@ pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 /// directly. Keeping the D-block in the relation would be vestigial; this enum
 /// lets the prover, verifier, and planner agree to drop it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MRowLayout {
+pub enum RelationMatrixRowLayout {
     /// Full layout including the D-block (`v = D * e_hat` rows). Used at every
     /// intermediate fold level and at the root when stage-1 runs.
     WithDBlock,
@@ -710,26 +710,26 @@ impl LevelParams {
             })
     }
 
-    // ---- Canonical M-row layout offsets (single source of truth) ----
+    // ---- Canonical relation-matrix row layout offsets (single source of truth) ----
     //
     // Row layout: consistency (1) | A (n_a) | B (n_b · nc) | D (n_d_active).
     // Public-output rows bind through the fused trace term, not the M-matrix.
-    // Every row-offset site (prover quotient/`generate_y`, setup-contribution
+    // Every row-offset site (prover quotient/`generate_relation_rhs`, setup-contribution
     // `prepare`, the relation claim, the verifier ring-switch row eval) must
     // derive its block starts from these helpers rather than recompute inline.
 
-    /// Active D-block rows for an M-row layout (dropped at a terminal fold).
+    /// Active D-block rows for an relation-matrix row layout (dropped at a terminal fold).
     #[inline]
-    pub fn n_d_active_for(&self, layout: MRowLayout) -> usize {
+    pub fn n_d_active_for(&self, layout: RelationMatrixRowLayout) -> usize {
         match layout {
-            MRowLayout::WithDBlock => self.d_key.row_len(),
-            MRowLayout::WithoutDBlock => 0,
+            RelationMatrixRowLayout::WithDBlock => self.d_key.row_len(),
+            RelationMatrixRowLayout::WithoutDBlock => 0,
         }
     }
 
     #[inline]
     fn m_row_overflow() -> AkitaError {
-        AkitaError::InvalidSetup("M-row count overflow".to_string())
+        AkitaError::InvalidSetup("relation-matrix row count overflow".to_string())
     }
 
     /// Absolute start row of the A block (immediately after the consistency row).
@@ -816,10 +816,10 @@ impl LevelParams {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    fn grouped_m_row_count_for(
+    fn grouped_relation_matrix_row_count_for(
         &self,
         num_commitments: usize,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         if num_commitments != self.root_group_count() {
             return Err(AkitaError::InvalidSetup(
@@ -909,7 +909,7 @@ impl LevelParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         let final_group_index = self.validate_root_opening_batch(opening_batch)?;
         let a_start = self.group_a_start(opening_batch, group_index)?;
@@ -926,7 +926,7 @@ impl LevelParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         let final_group_index = self.validate_root_opening_batch(opening_batch)?;
         let start = self.group_a_start(opening_batch, group_index)?;
@@ -969,7 +969,7 @@ impl LevelParams {
     pub fn root_next_w_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         let modulus = crate::schedule::detect_field_modulus::<F>();
@@ -1019,7 +1019,7 @@ impl LevelParams {
                 .ok_or_else(|| AkitaError::InvalidSetup("root witness overflow".to_string()))?;
         }
 
-        let r_rows = self.m_row_count_for(opening_batch.num_groups(), layout)?;
+        let r_rows = self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)?;
         let r_count = r_rows
             .checked_mul(crate::sis::compute_num_digits_full_field(
                 field_bits,
@@ -1035,7 +1035,7 @@ impl LevelParams {
         })
     }
 
-    /// Row count for an explicit M-row layout.
+    /// Row count for an explicit relation-matrix row layout.
     ///
     /// Scalar layout: `consistency (1) | A (n_a) | B (n_b · num_commitments)
     /// | optional D (n_d)`.
@@ -1045,17 +1045,17 @@ impl LevelParams {
     /// not M rows.
     ///
     /// At the terminal fold the cleartext witness is shipped on the wire and
-    /// the D-block is dropped from the M-matrix; see [`MRowLayout`].
+    /// the D-block is dropped from the M-matrix; see [`RelationMatrixRowLayout`].
     #[inline]
-    pub fn m_row_count_for(
+    pub fn relation_matrix_row_count_for(
         &self,
         num_commitments: usize,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         if self.has_precommitted_groups() {
-            return self.grouped_m_row_count_for(num_commitments, layout);
+            return self.grouped_relation_matrix_row_count_for(num_commitments, layout);
         }
-        self.require_scalar_level("m_row_count_for")?;
+        self.require_scalar_level("relation_matrix_row_count_for")?;
         self.d_start(num_commitments)?
             .checked_add(self.n_d_active_for(layout))
             .ok_or_else(Self::m_row_overflow)
@@ -1329,19 +1329,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            lp.m_row_count_for(1, MRowLayout::WithDBlock).unwrap(),
+            lp.relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
+                .unwrap(),
             1 + 3 + 4 + 2
         );
         assert_eq!(
-            lp.m_row_count_for(2, MRowLayout::WithDBlock).unwrap(),
+            lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithDBlock)
+                .unwrap(),
             1 + 3 + 4 * 2 + 2
         );
         assert_eq!(
-            lp.m_row_count_for(4, MRowLayout::WithDBlock).unwrap(),
+            lp.relation_matrix_row_count_for(4, RelationMatrixRowLayout::WithDBlock)
+                .unwrap(),
             1 + 3 + 4 * 4 + 2
         );
         assert_eq!(
-            lp.m_row_count_for(2, MRowLayout::WithoutDBlock).unwrap(),
+            lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutDBlock)
+                .unwrap(),
             1 + 4 * 2 + 2
         );
     }
@@ -1356,10 +1360,13 @@ mod tests {
         let n_d = lp.d_key.row_len();
 
         for nc in [1usize, 2, 4] {
-            for layout in [MRowLayout::WithDBlock, MRowLayout::WithoutDBlock] {
+            for layout in [
+                RelationMatrixRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithoutDBlock,
+            ] {
                 let n_d_active = match layout {
-                    MRowLayout::WithDBlock => n_d,
-                    MRowLayout::WithoutDBlock => 0,
+                    RelationMatrixRowLayout::WithDBlock => n_d,
+                    RelationMatrixRowLayout::WithoutDBlock => 0,
                 };
                 let a_start = 1;
                 let b_start = a_start + n_a;
@@ -1369,7 +1376,7 @@ mod tests {
                 assert_eq!(lp.b_start().unwrap(), b_start);
                 assert_eq!(lp.d_start(nc).unwrap(), d_start);
                 assert_eq!(
-                    lp.m_row_count_for(nc, layout).unwrap(),
+                    lp.relation_matrix_row_count_for(nc, layout).unwrap(),
                     d_start + n_d_active
                 );
             }

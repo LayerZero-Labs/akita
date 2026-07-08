@@ -804,7 +804,7 @@ final/main group B rows
 for each precommitted group:
     A rows for that group
     B rows for that group
-optional D rows, present for MRowLayout::WithDBlock
+optional D rows, present for RelationMatrixRowLayout::WithDBlock
 ```
 
 This matches the scalar post-PR1 layout (`consistency | A | B | D`) extended

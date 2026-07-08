@@ -11,7 +11,7 @@
 //!
 //! `m_tau1(x) = sum_i eq(tau1, i) * M_alpha(i, x)`.
 //!
-//! The Boolean table stored in `m_evals_x` is exactly `x -> m_tau1(x)`.
+//! The Boolean table stored in `relation_matrix_col_evals` is exactly `x -> m_tau1(x)`.
 //!
 //! If
 //!
@@ -63,8 +63,8 @@
 
 use super::fold_full_prefix_pair;
 use super::two_round_prefix::{
-    build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
-    Stage2BivariateSkipState,
+    build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact,
+    can_use_stage2_two_round_prefix, Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
 use akita_algebra::poly::trim_trailing_zeros;
@@ -213,7 +213,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     split_eq: GruenSplitEq<E>,
 
     alpha_compact: Vec<E>,
-    m_compact: Vec<E>,
+    relation_matrix_col_evals_compact: Vec<E>,
     trace_table: Option<TraceTable<E>>,
     live_x_cols: usize,
     col_bits: usize,

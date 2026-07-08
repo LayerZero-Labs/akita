@@ -3,8 +3,9 @@ use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, Commitment, LevelParams, MRowLayout, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
+    AkitaCommitmentHint, Commitment, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, RelationMatrixRowLayout,
+    RingVec,
 };
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
@@ -225,7 +226,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
                 let range = params.root_commitment_row_range(
                     &opening_batch,
                     group_index,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 )?;
                 Ok((range.start, range.len(), group_index))
             })

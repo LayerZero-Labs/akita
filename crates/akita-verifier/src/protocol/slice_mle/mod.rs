@@ -1,4 +1,4 @@
-//! Evaluate the M-table MLE from its non-zero slices.
+//! Evaluate the relation matrix MLE from its non-zero slices.
 //!
 //! The verifier needs the multilinear-extension evaluation of a virtual
 //! table `M` at a random point `r`. The naive approach is to materialize
@@ -15,8 +15,8 @@ mod setup_contribution;
 mod structured_slice;
 
 pub(super) use akita_algebra::offset_eq::high_eq_window;
-pub(crate) use setup_contribution::SetupEvaluator;
-pub(crate) use setup_contribution::{SetupEvaluation, SetupEvaluatorMode};
+pub(crate) use setup_contribution::SetupContributionEvaluator;
+pub(crate) use setup_contribution::{SetupContributionEvalMode, SetupContributionEvaluation};
 pub(super) use structured_slice::{
     compute_r_contribution, EStructuredSlicesEvaluator, StructuredSliceMleEvaluator,
     TStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,

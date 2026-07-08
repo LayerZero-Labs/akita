@@ -140,7 +140,7 @@ reconstructs every shipped entry's `AjtaiKeyParams` via `try_new`.
 ## 2. DP comparator bias against `Direct` steps
 
 The suffix DP modelled a terminal-direct step as a placeholder using the parent's
-`MRowLayout::Intermediate` witness length, patched to `Terminal` only later. Two
+`RelationMatrixRowLayout::Intermediate` witness length, patched to `Terminal` only later. Two
 compounding effects resulted:
 
 - **Direct-vs-fold bias.** The local `min(...)` scored "direct now" on the

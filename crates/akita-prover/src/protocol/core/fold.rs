@@ -70,7 +70,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS,
     alpha_bits: usize,
     basis: BasisMode,
     block_order: BlockOrder,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
@@ -147,7 +147,7 @@ where
                 block_order,
                 pad_base_evals,
                 transcript,
-                m_row_layout,
+                relation_matrix_row_layout,
                 terminal_tail_t_vectors,
             })
         } else {
@@ -188,7 +188,7 @@ where
                     block_order,
                     pad_base_evals,
                     transcript,
-                    m_row_layout,
+                    relation_matrix_row_layout,
                     terminal_tail_t_vectors,
                 },
             )
@@ -207,7 +207,7 @@ where
             block_order,
             pad_base_evals,
             transcript,
-            m_row_layout,
+            relation_matrix_row_layout,
             terminal_tail_t_vectors,
         })
     }
@@ -235,7 +235,7 @@ where
     block_order: BlockOrder,
     pad_base_evals: bool,
     transcript: &'p mut T,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     terminal_tail_t_vectors: Option<usize>,
 }
 
@@ -279,7 +279,7 @@ where
         block_order,
         pad_base_evals,
         transcript,
-        m_row_layout,
+        relation_matrix_row_layout,
         terminal_tail_t_vectors,
     } = args;
     let opening = stack.opening();
@@ -380,7 +380,7 @@ where
         level_params.clone(),
         transcript,
         row_coefficient_rings,
-        m_row_layout,
+        relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
@@ -542,10 +542,10 @@ where
         build_output.terminal_artifacts,
         terminal_direct_witness_shape,
     )?;
-    let m_row_layout = if is_terminal_fold {
-        MRowLayout::WithoutDBlock
+    let relation_matrix_row_layout = if is_terminal_fold {
+        RelationMatrixRowLayout::WithoutDBlock
     } else {
-        MRowLayout::WithDBlock
+        RelationMatrixRowLayout::WithDBlock
     };
     let rs = ring_switch_finalize::<F, E, T>(
         &prepared_fold.instance,
@@ -554,17 +554,17 @@ where
         &logical_w,
         lp,
         prepared_fold.row_coefficients.as_deref(),
-        m_row_layout,
+        relation_matrix_row_layout,
     )?;
 
-    let y_layout = relation_y_layout_for(
+    let relation_rhs_layout = relation_rhs_layout_for(
         lp,
         prepared_fold.instance.opening_batch(),
-        prepared_fold.instance.m_row_layout(),
+        prepared_fold.instance.relation_matrix_row_layout(),
     )?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
         prepared_fold.instance.role_dims(),
-        &y_layout,
+        &relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
         prepared_fold.instance.v(),
@@ -885,7 +885,7 @@ where
         s_claim,
         rs.b,
         rs.alpha_evals_y,
-        rs.m_evals_x,
+        rs.relation_matrix_col_evals,
         rs.live_x_cols,
         rs.col_bits,
         rs.ring_bits,

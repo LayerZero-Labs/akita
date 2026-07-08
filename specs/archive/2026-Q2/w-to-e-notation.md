@@ -191,7 +191,7 @@ doc/comment mentions are **not** compiler-checked and need explicit grep.
 - Renaming `t_hat`, `r_hat`, or `z_folded_rings` → `z_hat`.
 - Renaming sumcheck MLE symbols or `GruenSplitEq` / `split_eq`.
 - Changing `ABSORB_PROVER_V` bytes or the opening commitment $v$.
-- Changing `MRowLayout` `d_key` / `const D` matrix-vs-ring vocabulary (Tier-2 doc follow-up).
+- Changing `RelationMatrixRowLayout` `d_key` / `const D` matrix-vs-ring vocabulary (Tier-2 doc follow-up).
 - Splitting the witness-binding label into intermediate/terminal tags (rejected above).
 - Paper edits (tracked in `lattice-jolt`, separate commit).
 

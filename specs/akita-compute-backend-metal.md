@@ -685,7 +685,7 @@ Required future coverage:
 - cached round polynomial behavior;
 - two-round-prefix materialization;
 - stage-1 tree wrapper;
-- stage-2 `live_x_cols`, `m_compact`, `alpha_compact`,
+- stage-2 `live_x_cols`, `relation_matrix_col_evals_compact`, `alpha_compact`,
   `prev_norm_claim`, and `prev_norm_poly` transitions.
 
 #### Ring/NTT Metal Kernels

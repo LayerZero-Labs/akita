@@ -221,7 +221,7 @@ where
 
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) lp: &'a LevelParams,
-    pub(in crate::protocol::core) m_row_layout: MRowLayout,
+    pub(in crate::protocol::core) relation_matrix_row_layout: RelationMatrixRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) v: RingVec<F>,
     /// Normalized opening geometry (one group for scalar/suffix folds, `G`
@@ -231,7 +231,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     /// `root_group_order`) order — the single group's rows for scalar/suffix
     /// folds, `concat_g u_g` for grouped roots. Matches the prover's
     /// `RingRelationProver` commitment-row concatenation and
-    /// `relation_y_layout_for` block order.
+    /// `relation_rhs_layout_for` block order.
     pub(in crate::protocol::core) commitment_rows: RingVec<F>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     /// Per-group ring opening points in `OpeningClaims` order.
@@ -632,7 +632,7 @@ where
         role_dims.d_a(),
         &opening_shape,
         prepared.lp,
-        prepared.m_row_layout,
+        prepared.relation_matrix_row_layout,
         prepared.fold_grind_nonce,
     )?;
     let (gamma, row_coefficient_rings) = dispatch_for_field!(
@@ -645,17 +645,26 @@ where
             )
         }
     )?;
-    let y_layout = relation_y_layout_for(prepared.lp, &opening_shape, prepared.m_row_layout)?;
-    let relation_y = assemble_relation_y::<F>(role_dims, &y_layout, &prepared.v, commitment_rows)?;
+    let relation_rhs_layout = relation_rhs_layout_for(
+        prepared.lp,
+        &opening_shape,
+        prepared.relation_matrix_row_layout,
+    )?;
+    let relation_rhs = assemble_relation_rhs::<F>(
+        role_dims,
+        &relation_rhs_layout,
+        &prepared.v,
+        commitment_rows,
+    )?;
     let relation_instance = RingRelationInstance::new(
-        prepared.m_row_layout,
+        prepared.relation_matrix_row_layout,
         group_challenges,
         prepared.group_ring_opening_points,
         prepared.group_ring_multiplier_points,
         opening_shape.clone(),
         gamma,
         row_coefficient_rings,
-        relation_y,
+        relation_rhs,
         prepared.v,
         role_dims,
     )?;
@@ -700,7 +709,7 @@ where
         )?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
         relation_instance.role_dims(),
-        &y_layout,
+        &relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
         relation_instance.v(),

@@ -1,7 +1,7 @@
 mod evaluator;
 
-pub(crate) use evaluator::SetupEvaluator;
-pub(crate) use evaluator::{SetupEvaluation, SetupEvaluatorMode};
+pub(crate) use evaluator::SetupContributionEvaluator;
+pub(crate) use evaluator::{SetupContributionEvalMode, SetupContributionEvaluation};
 
 #[cfg(test)]
 mod fixtures;

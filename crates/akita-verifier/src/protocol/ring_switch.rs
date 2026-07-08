@@ -15,17 +15,17 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup,
-    CommitmentRingDims, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingRole, RingVec, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
-    TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
+    CommitmentRingDims, FpExtEncoding, LevelParams, RelationMatrixRowLayout,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingRole, RingVec,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
 };
 use std::ops::Range;
 
 use super::slice_mle::{
-    compute_r_contribution, high_eq_window, EStructuredSlicesEvaluator, SetupEvaluation,
-    SetupEvaluator, SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
-    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, high_eq_window, EStructuredSlicesEvaluator, SetupContributionEvalMode,
+    SetupContributionEvaluation, SetupContributionEvaluator, StructuredSliceMleEvaluator,
+    TStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 use super::validate_log_basis;
 use akita_types::validate_ring_dispatch;
@@ -38,7 +38,7 @@ mod tests;
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
-    /// Prepared data for deferred ring-switch row MLE evaluation.
+    /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     /// Evaluation table of alpha powers over the ring-coordinate dimension.
     pub alpha_evals_y: Vec<E>,
@@ -99,7 +99,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
     }
 }
 
-/// Precomputed challenge-derived data for deferred ring-switch row MLE evaluation.
+/// Precomputed challenge-derived data for prepared relation-matrix MLE evaluation.
 ///
 /// Stores only data that cannot be derived from context at evaluation time:
 /// alpha-evaluated folding challenges and the tau1 eq-polynomial expansion.
@@ -181,8 +181,13 @@ where
         return Err(AkitaError::InvalidProof);
     }
     transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
-    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
-        .into_intermediate()
+    ring_switch_verifier_core::<F, E, T, D>(
+        replay,
+        w_len,
+        transcript,
+        RelationMatrixRowLayout::WithDBlock,
+    )?
+    .into_intermediate()
 }
 
 /// Terminal variant of [`ring_switch_verifier`].
@@ -194,7 +199,7 @@ where
 ///
 /// Returns an error if the claim shape is invalid, opening-point routing is
 /// inconsistent, transcript-bound challenge data has the wrong size, or
-/// ring-switch row-eval preparation fails.
+/// relation-matrix evaluator preparation fails.
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_terminal")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
@@ -209,8 +214,13 @@ where
     T: Transcript<F>,
 {
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
-    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithoutDBlock)?
-        .into_terminal_as_output()
+    ring_switch_verifier_core::<F, E, T, D>(
+        replay,
+        w_len,
+        transcript,
+        RelationMatrixRowLayout::WithoutDBlock,
+    )?
+    .into_terminal_as_output()
 }
 
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
@@ -219,7 +229,7 @@ fn ring_switch_verifier_core<F, E, T, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -266,20 +276,21 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
-    let m_rows = lp.m_row_count_for(opening_batch.num_groups(), m_row_layout)?;
+    let m_rows =
+        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0 = match m_row_layout {
-        MRowLayout::WithDBlock => Some(
+    let tau0 = match relation_matrix_row_layout {
+        RelationMatrixRowLayout::WithDBlock => Some(
             (0..num_sc_vars)
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
                 .collect(),
         ),
-        MRowLayout::WithoutDBlock => None,
+        RelationMatrixRowLayout::WithoutDBlock => None,
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -305,7 +316,7 @@ where
     })
 }
 
-/// Prepare deferred verifier ring-switch row evaluation data from a fixed
+/// Prepare relation-matrix evaluator state from a fixed
 /// [`RingRelationInstance`] and transcript-sampled row coefficients.
 ///
 /// # Errors
@@ -335,7 +346,10 @@ where
     let opening_batch = relation.opening_batch();
     let num_polys = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polys, F::modulus_bits())?;
-    let rows = lp.m_row_count_for(opening_batch.num_groups(), relation.m_row_layout())?;
+    let rows = lp.relation_matrix_row_count_for(
+        opening_batch.num_groups(),
+        relation.relation_matrix_row_layout(),
+    )?;
     if lp.has_precommitted_groups() {
         return prepare_relation_matrix_evaluator_grouped::<F, E, D>(
             replay,
@@ -359,7 +373,7 @@ where
         tau1,
         num_polys,
         replay.row_coefficients,
-        relation.m_row_layout(),
+        relation.relation_matrix_row_layout(),
         chunk_layout,
         depth_fold,
         rows,
@@ -405,17 +419,17 @@ where
     }
 
     let mut group_e_offsets = vec![0usize; opening_batch.num_groups()];
-    let mut e_setup_cols = 0usize;
+    let mut d_physical_cols = 0usize;
     for &group_index in &order {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
-        group_e_offsets[group_index] = e_setup_cols;
+        group_e_offsets[group_index] = d_physical_cols;
         let e_len = group_layout
             .num_polynomials()
             .checked_mul(group_lp.num_blocks())
             .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
             .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))?;
-        e_setup_cols = e_setup_cols
+        d_physical_cols = d_physical_cols
             .checked_add(e_len)
             .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))?;
     }
@@ -480,9 +494,16 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("grouped B vector width overflow".to_string())
             })?;
-        let a_range = lp.root_a_row_range(opening_batch, group_index, relation.m_row_layout())?;
-        let b_range =
-            lp.root_commitment_row_range(opening_batch, group_index, relation.m_row_layout())?;
+        let a_range = lp.root_a_row_range(
+            opening_batch,
+            group_index,
+            relation.relation_matrix_row_layout(),
+        )?;
+        let b_range = lp.root_commitment_row_range(
+            opening_batch,
+            group_index,
+            relation.relation_matrix_row_layout(),
+        )?;
         if a_range.len() != n_a || b_range.len() != n_b {
             return Err(AkitaError::InvalidSetup(
                 "grouped row ranges do not match group matrix heights".to_string(),
@@ -509,7 +530,7 @@ where
         });
     }
 
-    let n_d_active = lp.n_d_active_for(relation.m_row_layout());
+    let n_d_active = lp.n_d_active_for(relation.relation_matrix_row_layout());
     let d_start = rows
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
@@ -525,7 +546,7 @@ where
         inner_width: lp.a_key.col_len(),
         n_a: lp.a_key.row_len(),
         n_d: lp.d_key.row_len(),
-        m_row_layout: relation.m_row_layout(),
+        relation_matrix_row_layout: relation.relation_matrix_row_layout(),
         n_b: lp.b_key.row_len(),
         num_groups: opening_batch.num_groups(),
         rows,
@@ -538,7 +559,7 @@ where
         &setup_contribution_groups,
         d_start,
         n_d_active,
-        e_setup_cols,
+        d_physical_cols,
     )?;
 
     Ok(RelationMatrixEvaluator {
@@ -609,7 +630,7 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     tau1: &[E],
     num_polys: usize,
     gamma: &[E],
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     chunk_layout: WitnessLayout,
     depth_fold: usize,
     rows: usize,
@@ -619,9 +640,13 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
     validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
-    let setup_contribution_inputs =
-        SetupContributionPlanInputs::from_level_params(lp, &[num_polys], m_row_layout, depth_fold)?
-            .with_eq_tau1_from_tau(tau1, rows)?;
+    let setup_contribution_inputs = SetupContributionPlanInputs::from_level_params(
+        lp,
+        &[num_polys],
+        relation_matrix_row_layout,
+        depth_fold,
+    )?
+    .with_eq_tau1_from_tau(tau1, rows)?;
     reject_mixed_d_multi_chunk::<D>(
         lp.role_dims,
         &chunk_layout,
@@ -660,11 +685,11 @@ where
         .checked_mul(depth_open)
         .and_then(|len| len.checked_mul(num_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("B vector width overflow".to_string()))?;
-    let n_d_active = lp.n_d_active_for(m_row_layout);
+    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
     let d_start = rows
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
-    let e_setup_cols = num_claims
+    let d_physical_cols = num_claims
         .checked_mul(num_blocks)
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("e width overflow".to_string()))?;
@@ -694,7 +719,7 @@ where
         &setup_contribution_groups,
         d_start,
         n_d_active,
-        e_setup_cols,
+        d_physical_cols,
     )?;
 
     Ok(RelationMatrixEvaluator {
@@ -867,7 +892,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    /// Evaluate the prepared ring-switch row table at the supplied point.
+    /// Evaluate the relation matrix at a point at the supplied point.
     ///
     /// # Errors
     ///
@@ -1073,7 +1098,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             let _span = tracing::info_span!("setup_contribution").entered();
             let setup_contribution_inputs = self.setup_contribution_inputs();
             let fold_gadget = setup_fold_gadget.as_deref().unwrap_or(&[]);
-            let evaluator = SetupEvaluator::new(
+            let evaluator = SetupContributionEvaluator::new(
                 setup_contribution_inputs,
                 x_challenges,
                 setup_eq_low.as_deref(),
@@ -1082,15 +1107,15 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 fold_gadget,
                 layout,
             );
-            match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct {
+            match evaluator.evaluate::<D>(SetupContributionEvalMode::Direct {
                 setup,
-                prepared: self,
+                relation_matrix_evaluator: self,
                 alpha_pows_b: &alpha_pows_b,
                 alpha_pows_d: &alpha_pows_d,
             })? {
-                SetupEvaluation::Direct(value) => value,
+                SetupContributionEvaluation::Direct(value) => value,
                 #[cfg(test)]
-                SetupEvaluation::Recursive(_) => {
+                SetupContributionEvaluation::Recursive(_) => {
                     return Err(AkitaError::InvalidSetup(
                         "setup evaluator returned recursive output for direct mode".into(),
                     ))

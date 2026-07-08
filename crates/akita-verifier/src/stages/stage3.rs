@@ -2,7 +2,7 @@
 //! prover-side `AkitaStage3Prover`.
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use crate::protocol::SetupEvaluator;
+use crate::protocol::SetupContributionEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
@@ -37,11 +37,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     /// at `x_challenges`.
     ///
     /// Derives the setup evaluation plan (and thus the per-round shape) from
-    /// the ring-switch row evaluation; must be called before
+    /// the relation-matrix evaluation; must be called before
     /// [`verify_batched_stage3`](Self::verify_batched_stage3).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F, const D: usize>(
-        prepared: &RelationMatrixEvaluator<E>,
+        relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
         x_challenges: &[E],
         alpha: E,
     ) -> Result<Self, AkitaError>
@@ -50,10 +50,13 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F>,
     {
         let alpha_pows = scalar_powers(alpha, D);
-        let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
-        let layout = prepared.chunk_layout();
-        let setup_contribution_inputs = prepared.setup_contribution_inputs();
-        let evaluator = SetupEvaluator::new(
+        let fold_gadget = gadget_row_scalars::<F>(
+            relation_matrix_evaluator.depth_fold,
+            relation_matrix_evaluator.log_basis,
+        );
+        let layout = relation_matrix_evaluator.chunk_layout();
+        let setup_contribution_inputs = relation_matrix_evaluator.setup_contribution_inputs();
+        let evaluator = SetupContributionEvaluator::new(
             setup_contribution_inputs,
             x_challenges,
             None,
@@ -62,7 +65,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             &fold_gadget,
             layout,
         );
-        let plan = evaluator.prepare_flat()?;
+        let plan = evaluator.prepare_single_group_plan()?;
         let lambda_len = plan
             .required()?
             .checked_next_power_of_two()

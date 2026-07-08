@@ -73,7 +73,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let live_pairs = next_live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
         let alpha_compact = &self.alpha_compact;
-        let next_m_compact = Self::fold_m_prefix(&self.m_compact, r);
+        let next_relation_matrix_col_evals_compact =
+            Self::fold_m_prefix(&self.relation_matrix_col_evals_compact, r);
         let mut out = vec![E::zero(); y_len * next_live_x_cols];
         let trace_table = self.trace_table.as_ref();
 
@@ -115,8 +116,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let m0 = next_m_compact[left_next];
-                            let m1 = next_m_compact[left_next + 1];
+                            let m0 = next_relation_matrix_col_evals_compact[left_next];
+                            let m1 = next_relation_matrix_col_evals_compact[left_next + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
                             accumulate_fused_prefix_x_relation(
@@ -188,8 +189,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let m0 = next_m_compact[left_next];
-                            let m1 = next_m_compact[left_next + 1];
+                            let m0 = next_relation_matrix_col_evals_compact[left_next];
+                            let m1 = next_relation_matrix_col_evals_compact[left_next + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
                             accumulate_fused_prefix_x_relation(
@@ -217,7 +218,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
             (
                 out,
-                next_m_compact,
+                next_relation_matrix_col_evals_compact,
                 NormRoundTerms::SkipLinear(virt_coeffs),
                 rel_coeffs,
             )
@@ -261,8 +262,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let m0 = next_m_compact[left_next];
-                            let m1 = next_m_compact[left_next + 1];
+                            let m0 = next_relation_matrix_col_evals_compact[left_next];
+                            let m1 = next_relation_matrix_col_evals_compact[left_next + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
                             accumulate_fused_prefix_x_relation(
@@ -337,8 +338,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let m0 = next_m_compact[left_next];
-                            let m1 = next_m_compact[left_next + 1];
+                            let m0 = next_relation_matrix_col_evals_compact[left_next];
+                            let m1 = next_relation_matrix_col_evals_compact[left_next + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
                             accumulate_fused_prefix_x_relation(
@@ -367,7 +368,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
             (
                 out,
-                next_m_compact,
+                next_relation_matrix_col_evals_compact,
                 NormRoundTerms::Full(virt_coeffs),
                 rel_coeffs,
             )
@@ -393,10 +394,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let live_pairs = self.live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
         let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
+        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
         let trace_table = self.trace_table.as_ref();
         let y_len = alpha_compact.len();
-        debug_assert_eq!(m_compact.len(), self.current_x_len());
+        debug_assert_eq!(
+            relation_matrix_col_evals_compact.len(),
+            self.current_x_len()
+        );
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
@@ -438,8 +442,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let m0 = m_compact[left];
-                            let m1 = m_compact[left + 1];
+                            let m0 = relation_matrix_col_evals_compact[left];
+                            let m1 = relation_matrix_col_evals_compact[left + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
                             accumulate_fused_prefix_x_relation_signed(
@@ -522,8 +526,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                                 inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
                             }
 
-                            let m0 = m_compact[left];
-                            let m1 = m_compact[left + 1];
+                            let m0 = relation_matrix_col_evals_compact[left];
+                            let m1 = relation_matrix_col_evals_compact[left + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
                             accumulate_fused_prefix_x_relation_signed(
@@ -587,10 +591,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let live_pairs = self.live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
         let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
+        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
         let trace_table = self.trace_table.as_ref();
         let y_len = alpha_compact.len();
-        debug_assert_eq!(m_compact.len(), self.current_x_len());
+        debug_assert_eq!(
+            relation_matrix_col_evals_compact.len(),
+            self.current_x_len()
+        );
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
@@ -624,8 +631,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let m0 = m_compact[left];
-                            let m1 = m_compact[left + 1];
+                            let m0 = relation_matrix_col_evals_compact[left];
+                            let m1 = relation_matrix_col_evals_compact[left + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
                             accumulate_fused_prefix_x_relation(
@@ -695,8 +702,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let m0 = m_compact[left];
-                            let m1 = m_compact[left + 1];
+                            let m0 = relation_matrix_col_evals_compact[left];
+                            let m1 = relation_matrix_col_evals_compact[left + 1];
                             let p0 = alpha * m0;
                             let p1 = alpha * m1;
                             accumulate_fused_prefix_x_relation(
@@ -826,15 +833,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_m_prefix(m_compact: &[E], r: E) -> Vec<E> {
-        debug_assert!(m_compact.len().is_power_of_two());
-        debug_assert!(m_compact.len() >= 2);
-        let next_x_len = m_compact.len() >> 1;
+    pub(super) fn fold_m_prefix(relation_matrix_col_evals_compact: &[E], r: E) -> Vec<E> {
+        debug_assert!(relation_matrix_col_evals_compact.len().is_power_of_two());
+        debug_assert!(relation_matrix_col_evals_compact.len() >= 2);
+        let next_x_len = relation_matrix_col_evals_compact.len() >> 1;
         cfg_into_iter!(0..next_x_len)
             .map(|pair_x| {
                 let left = 2 * pair_x;
-                let m_0 = m_compact[left];
-                let m_1 = m_compact[left + 1];
+                let m_0 = relation_matrix_col_evals_compact[left];
+                let m_1 = relation_matrix_col_evals_compact[left + 1];
                 m_0 + r * (m_1 - m_0)
             })
             .collect()

@@ -9,8 +9,8 @@
 
 pub mod batch;
 pub mod commitment;
-pub mod grouped_m_evals;
 pub mod relation;
+pub mod relation_matrix_cols;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
@@ -50,7 +50,6 @@ pub use containers::{
 pub use direct_witness::{
     segment_typed_witness_shape, CleartextWitnessProof, CleartextWitnessShape,
 };
-pub use grouped_m_evals::compute_grouped_m_evals_x;
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
@@ -59,10 +58,11 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use relation::{
-    assemble_relation_y, generate_y, relation_claim_from_layout_extension,
-    relation_claim_from_rows, relation_claim_from_rows_extension, relation_y_coeff_len,
-    relation_y_layout_for, relation_y_row_count, RelationGroupRows, RelationYLayout,
+    assemble_relation_rhs, generate_relation_rhs, relation_claim_from_layout_extension,
+    relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
+    relation_rhs_layout_for, relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
+pub use relation_matrix_cols::compute_relation_matrix_col_evals;
 pub use ring_relation::{
     grouped_ring_relation_segment_lengths, ring_relation_segment_lengths,
     GroupedRingRelationSegmentLengths, RingRelationInstance, RingRelationOpeningCounts,

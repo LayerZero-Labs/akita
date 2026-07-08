@@ -20,7 +20,7 @@ use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    MRowLayout, RingVec,
+    RelationMatrixRowLayout, RingVec,
 };
 
 mod coeffs;
@@ -34,7 +34,7 @@ pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
-pub use evals::{build_w_evals_compact, compute_grouped_m_evals_x};
+pub use evals::{build_w_evals_compact, compute_relation_matrix_col_evals};
 pub use finalize::ring_switch_finalize;
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -45,7 +45,7 @@ pub struct RingSwitchOutput<E: FieldCore> {
     /// Physical x width before zero-extension to the next power of two.
     pub live_x_cols: usize,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
-    pub m_evals_x: Vec<E>,
+    pub relation_matrix_col_evals: Vec<E>,
     /// Evaluation table of alpha powers (y dimension).
     pub alpha_evals_y: Vec<E>,
     /// Number of upper variable bits.

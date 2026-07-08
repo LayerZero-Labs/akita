@@ -44,11 +44,13 @@ fn grouped_m_row_count_matches_canonical_layout() {
     let n_d = lp.d_key.row_len();
 
     assert_eq!(
-        lp.m_row_count_for(2, MRowLayout::WithDBlock).unwrap(),
+        lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithDBlock)
+            .unwrap(),
         1 + n_a_final + n_b_final + n_a_pre + n_b_pre + n_d
     );
     assert_eq!(
-        lp.m_row_count_for(2, MRowLayout::WithoutDBlock).unwrap(),
+        lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutDBlock)
+            .unwrap(),
         1 + n_a_final + n_b_final + n_a_pre + n_b_pre
     );
 }
@@ -60,7 +62,7 @@ fn grouped_row_offsets_match_a_before_b_layout() {
     let n_b_final = lp.b_key.row_len();
     let n_a_pre = lp.precommitted_groups[0].a_key.row_len();
     let n_b_pre = lp.precommitted_groups[0].b_key.row_len();
-    let layout = MRowLayout::WithDBlock;
+    let layout = RelationMatrixRowLayout::WithDBlock;
     let final_group = batch.root_final_group_index().expect("final group");
 
     assert_eq!(

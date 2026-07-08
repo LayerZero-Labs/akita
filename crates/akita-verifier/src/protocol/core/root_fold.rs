@@ -36,7 +36,9 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let m_row_layout = proof.fold_m_row_layout().ok_or(AkitaError::InvalidProof)?;
+    let relation_matrix_row_layout = proof
+        .fold_relation_matrix_row_layout()
+        .ok_or(AkitaError::InvalidProof)?;
     let extension_opening_reduction = proof.fold_extension_opening_reduction();
     let next_fold_level_params = match proof {
         AkitaBatchedRootProof::Fold(_) => next_fold_level_params.ok_or(AkitaError::InvalidProof)?,
@@ -105,7 +107,7 @@ where
         &opening_batch,
         shared_opening_point,
         num_claims,
-        m_row_layout,
+        relation_matrix_row_layout,
         extension_opening_reduction,
         stage3_sumcheck_proof,
         next_fold_level_params,
@@ -129,7 +131,7 @@ fn verify_root_inner<F, E, T>(
     opening_batch: &OpeningClaimsLayout,
     shared_opening_point: &[E],
     num_claims: usize,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
     next_fold_level_params: &LevelParams,
@@ -226,7 +228,7 @@ where
                 F::modulus_bits(),
                 root_lp,
                 opening_batch.num_total_polynomials(),
-                akita_types::MRowLayout::WithDBlock,
+                akita_types::RelationMatrixRowLayout::WithDBlock,
                 root_lp.witness_chunk.num_chunks,
             )?
             .checked_mul(d_a)
@@ -262,7 +264,7 @@ where
     let commitment_rows = RingVec::from_coeffs(commitment.coeffs().to_vec());
     let prepared = PreparedFoldReplay {
         lp: root_lp,
-        m_row_layout,
+        relation_matrix_row_layout,
         fold_grind_nonce,
         v: v_storage,
         opening_shape: opening_batch.clone(),
@@ -340,7 +342,7 @@ where
     if !matches!(proof, AkitaBatchedRootProof::Fold(_)) {
         return Err(AkitaError::InvalidProof);
     }
-    let m_row_layout = MRowLayout::WithDBlock;
+    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
     let role_dims = root_lp.role_dims();
     let d_a = role_dims.d_a();
     let alpha_bits = d_a.trailing_zeros() as usize;
@@ -380,7 +382,7 @@ where
 
     // Concatenate group commitment rows in M-row (final-first) order, matching
     // the prover's `RingRelationProver` commitment-row concatenation and
-    // `relation_y_layout_for` block order.
+    // `relation_rhs_layout_for` block order.
     let order = opening_batch.root_group_order()?;
     let mut commitment_coeffs = Vec::new();
     for &group_index in &order {
@@ -389,7 +391,7 @@ where
     }
     let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
 
-    let w_len = root_lp.root_next_w_len::<F>(opening_batch, m_row_layout)?;
+    let w_len = root_lp.root_next_w_len::<F>(opening_batch, relation_matrix_row_layout)?;
 
     let stage1_proof = proof.fold_stage1()?;
     let next_w_commitment = proof.fold_next_w_commitment()?;
@@ -417,7 +419,7 @@ where
 
     let prepared = PreparedFoldReplay {
         lp: root_lp,
-        m_row_layout,
+        relation_matrix_row_layout,
         fold_grind_nonce,
         v: v_storage,
         opening_shape: opening_batch.clone(),

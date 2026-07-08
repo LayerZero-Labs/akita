@@ -155,9 +155,9 @@ Public $\widehat z$ uses `num_public_rows = 1` (single opening point).
 | $\widehat e$ | `num_polynomials · num_blocks · num_digits_open` |
 | $\widehat t$ | `num_polynomials · num_blocks · n_a · num_digits_open` |
 | $\widehat z$ | `num_public_rows · inner_width · num_digits_fold` |
-| $r$ | `m_row_count_for(num_commitments = 1, 0, layout) · r_decomp_levels` |
+| $r$ | `relation_matrix_row_count_for(num_commitments = 1, 0, layout) · r_decomp_levels` |
 
-(`num_segments` in earlier drafts is the first `m_row_count_for` argument, named
+(`num_segments` in earlier drafts is the first `relation_matrix_row_count_for` argument, named
 `num_commitments` in [`params.rs`](../crates/akita-types/src/layout/params.rs);
 today's single-chunk pricing passes `1`.)
 
@@ -204,7 +204,7 @@ e_chunk = num_polynomials · blocks_per_chunk · δ_open
 t_chunk = num_polynomials · blocks_per_chunk · n_a · δ_open
 z_chunk = inner_width · δ_fold                         // full fold width, not / num_chunks
 body    = e_chunk + t_chunk + z_chunk
-r_rows  = m_row_count_for(num_commitments = 1, 0, layout)  // summed quotient: single-machine shape, UNCHANGED
+r_rows  = relation_matrix_row_count_for(num_commitments = 1, 0, layout)  // summed quotient: single-machine shape, UNCHANGED
 rings   = num_chunks · body + r_rows · r_decomp_levels
 ```
 
@@ -479,7 +479,7 @@ pub fn w_ring_element_count_for_chunks(
     field_bits: u32,
     lp: &LevelParams,
     num_polynomials: usize,
-    layout: MRowLayout,
+    layout: RelationMatrixRowLayout,
     num_chunks: usize, // 1 = single-chunk (delegates to today's helper)
 ) -> Result<usize, AkitaError>
 ```

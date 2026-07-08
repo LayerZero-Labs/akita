@@ -294,14 +294,14 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 }
 
 /// Total ring elements in a recursive witness polynomial for an explicit
-/// M-row layout. The terminal layout drops the D-block from the M-matrix,
+/// relation-matrix row layout. The terminal layout drops the D-block from the M-matrix,
 /// which shrinks the per-row `r` quotients by `n_d * r_decomp_levels` ring
 /// elements relative to the intermediate layout.
 pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     lp: &LevelParams,
     num_polynomials: usize,
     num_z_segments: usize,
-    layout: crate::layout::MRowLayout,
+    layout: crate::layout::RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
@@ -322,7 +322,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     lp: &LevelParams,
     num_polynomials: usize,
     num_z_segments: usize,
-    layout: crate::layout::MRowLayout,
+    layout: crate::layout::RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
     lp.require_scalar_level("w_ring_element_count_with_counts_for_layout_bits")?;
     let e_hat_count = num_polynomials
@@ -339,7 +339,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    let r_rows = lp.m_row_count_for(1, layout)?;
+    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -385,7 +385,7 @@ pub fn w_ring_element_count_for_chunks(
     field_bits: u32,
     lp: &LevelParams,
     num_polynomials: usize,
-    layout: crate::layout::MRowLayout,
+    layout: crate::layout::RelationMatrixRowLayout,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
     if num_chunks == 0 {
@@ -443,7 +443,7 @@ pub fn w_ring_element_count_for_chunks(
     // single-chunk layout); only the replicated ẑ grows. Pricing it with
     // `num_chunks` here would over-count the tail and break the prover's
     // `emitted == next_w_len` and the verifier's single-machine `r_len`.
-    let r_rows = lp.m_row_count_for(1, layout)?;
+    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -786,8 +786,9 @@ mod tests {
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, MRowLayout,
-        RingVec, SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof,
+        RelationMatrixRowLayout, RingVec, SisModulusFamily, TerminalLevelProof,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -810,7 +811,10 @@ mod tests {
         let field_bits = 128u32;
         let num_poly = 3usize;
 
-        for layout in [MRowLayout::WithDBlock, MRowLayout::WithoutDBlock] {
+        for layout in [
+            RelationMatrixRowLayout::WithDBlock,
+            RelationMatrixRowLayout::WithoutDBlock,
+        ] {
             let single = w_ring_element_count_with_counts_for_layout_bits(
                 field_bits, &lp, num_poly, 1, layout,
             )
@@ -847,17 +851,17 @@ mod tests {
                 .unwrap();
         // Non-power-of-two chunk count.
         assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 6),
+            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 6),
             Err(AkitaError::InvalidSetup(_))
         ));
         // num_chunks does not divide num_blocks (8 % 16 != 0).
         assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 16),
+            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 16),
             Err(AkitaError::InvalidSetup(_))
         ));
         // Zero chunks.
         assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 0),
+            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 0),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
@@ -1048,7 +1052,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -1101,7 +1105,7 @@ mod tests {
                     None,
                     next_w_len,
                     num_claims,
-                    MRowLayout::WithoutDBlock,
+                    RelationMatrixRowLayout::WithoutDBlock,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
@@ -1163,7 +1167,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 ),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"

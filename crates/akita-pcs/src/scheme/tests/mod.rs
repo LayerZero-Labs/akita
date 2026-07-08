@@ -11,7 +11,7 @@ use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::BlockOrder;
 use akita_types::ExtensionOpeningReductionProof;
-use akita_types::MRowLayout;
+use akita_types::RelationMatrixRowLayout;
 use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
@@ -163,7 +163,7 @@ fn expected_same_point_batched_shape(
             &level_params,
             1,
             1,
-            MRowLayout::WithDBlock,
+            RelationMatrixRowLayout::WithDBlock,
         )
         .unwrap()
             * level_params.ring_dimension;
@@ -192,14 +192,14 @@ fn expected_same_point_batched_shape(
         .expect("scheduled terminal fold current witness length");
     let terminal_params = terminal_scheduled.params;
     // The terminal recursive fold ships its `w` in cleartext under
-    // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
+    // RelationMatrixRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
     // count instead of the intermediate `WithDBlock` layout.
     let terminal_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
         &terminal_params,
         1,
         1,
-        akita_types::MRowLayout::WithoutDBlock,
+        akita_types::RelationMatrixRowLayout::WithoutDBlock,
     )
     .expect("terminal-layout witness count")
         * terminal_params.ring_dimension;

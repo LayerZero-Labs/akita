@@ -20,7 +20,7 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((5 * i as u64) + 37))
         .collect();
-    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((7 * i as u64) + 41))
         .collect();
     let params = Stage2Params {
@@ -35,7 +35,7 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
         F::from_u64(43),
         w_prefix.clone(),
         alpha_evals_y.clone(),
-        m_evals_x.clone(),
+        relation_matrix_col_evals.clone(),
         trace_compact.clone(),
         params,
     );
@@ -44,7 +44,7 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
         F::from_u64(43),
         w_prefix,
         alpha_evals_y,
-        m_evals_x,
+        relation_matrix_col_evals,
         trace_compact,
         params,
     );
@@ -108,7 +108,7 @@ fn stage2_sparse_trace_table_matches_dense_trace_table() {
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((53 * i as u64) + 127))
         .collect();
-    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((59 * i as u64) + 131))
         .collect();
     let params = Stage2Params {
@@ -123,7 +123,7 @@ fn stage2_sparse_trace_table_matches_dense_trace_table() {
         F::from_u64(137),
         w_prefix.clone(),
         alpha_evals_y.clone(),
-        m_evals_x.clone(),
+        relation_matrix_col_evals.clone(),
         TraceTable::ring_dense(trace_compact.clone()),
         &trace_compact,
         params,
@@ -132,7 +132,7 @@ fn stage2_sparse_trace_table_matches_dense_trace_table() {
         F::from_u64(137),
         w_prefix,
         alpha_evals_y,
-        m_evals_x,
+        relation_matrix_col_evals,
         sparse_trace,
         &trace_compact,
         params,
@@ -181,7 +181,7 @@ fn stage2_trace_two_round_prefix_matches_padded_reference() {
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((17 * i as u64) + 61))
         .collect();
-    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((19 * i as u64) + 67))
         .collect();
 
@@ -189,7 +189,7 @@ fn stage2_trace_two_round_prefix_matches_padded_reference() {
         F::from_u64(71),
         w_prefix,
         alpha_evals_y.clone(),
-        m_evals_x.clone(),
+        relation_matrix_col_evals.clone(),
         trace_compact,
         Stage2Params {
             stage1_point: &stage1_point,
@@ -203,7 +203,7 @@ fn stage2_trace_two_round_prefix_matches_padded_reference() {
         F::from_u64(71),
         w_padded,
         alpha_evals_y,
-        m_evals_x,
+        relation_matrix_col_evals,
         trace_padded,
         Stage2Params {
             stage1_point: &stage1_point,
@@ -256,7 +256,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((31 * i as u64) + 89))
         .collect();
-    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((37 * i as u64) + 97))
         .collect();
     let params = Stage2Params {
@@ -271,7 +271,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         F::from_u64(101),
         w_prefix.clone(),
         alpha_evals_y.clone(),
-        m_evals_x.clone(),
+        relation_matrix_col_evals.clone(),
         trace_compact.clone(),
         params,
     );
@@ -290,13 +290,14 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let TraceTable::RingDense(expected_trace_round2) = expected_trace else {
         panic!("expected ring-dense trace table");
     };
-    let expected_m_compact = prover.m_compact.clone();
+    let expected_relation_matrix_col_evals_compact =
+        prover.relation_matrix_col_evals_compact.clone();
 
     let mut expected = new_stage2_test_prover_with_trace(
         F::from_u64(101),
         w_prefix,
         alpha_evals_y,
-        m_evals_x,
+        relation_matrix_col_evals,
         trace_compact,
         params,
     );
@@ -315,7 +316,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     expected.alpha_compact = expected_alpha_round2.clone();
     expected.trace_table = Some(TraceTable::ring_dense(expected_trace_round2.clone()));
     expected.rounds_completed = 2;
-    expected.m_compact = expected_m_compact.clone();
+    expected.relation_matrix_col_evals_compact = expected_relation_matrix_col_evals_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
     prover.ingest_challenge(1, r1);
@@ -332,6 +333,9 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         Some(&TraceTable::ring_dense(expected_trace_round2)),
         "two-round handoff must preserve the folded trace table"
     );
-    assert_eq!(prover.m_compact, expected_m_compact);
+    assert_eq!(
+        prover.relation_matrix_col_evals_compact,
+        expected_relation_matrix_col_evals_compact
+    );
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }

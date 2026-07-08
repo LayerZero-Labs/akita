@@ -13,8 +13,8 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, MRowLayout, PolynomialGroupLayout,
-    PrecommittedLevelParams, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
+    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
 };
 
 use crate::generated::{
@@ -123,18 +123,18 @@ fn walk_scalar_generated_schedule_entry(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        MRowLayout::WithoutDBlock,
+                        RelationMatrixRowLayout::WithoutDBlock,
                         num_chunks,
                     )?;
                     let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
                     terminal_witness_field_len = Some(len);
-                    (len, None, MRowLayout::WithoutDBlock)
+                    (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {
                     let ring_len = w_ring_element_count_for_chunks(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        MRowLayout::WithDBlock,
+                        RelationMatrixRowLayout::WithDBlock,
                         num_chunks,
                     )?;
                     let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
@@ -154,7 +154,7 @@ fn walk_scalar_generated_schedule_entry(
                         1,
                     )?;
                     next_lp.witness_chunk = policy.witness_chunk_for_level(fold_level + 1);
-                    (len, Some(next_lp), MRowLayout::WithDBlock)
+                    (len, Some(next_lp), RelationMatrixRowLayout::WithDBlock)
                 };
 
                 let level_bytes = level_proof_bytes(
@@ -367,18 +367,18 @@ fn walk_grouped_generated_schedule_entry(
                         &lp,
                         1,
                         1,
-                        MRowLayout::WithoutDBlock,
+                        RelationMatrixRowLayout::WithoutDBlock,
                     )?;
                     let len = checked_ring_field_len(ring, lp.ring_dimension)?;
                     terminal_witness_field_len = Some(len);
-                    (len, None, MRowLayout::WithoutDBlock)
+                    (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {
                     let len = if fold_level == 0 {
                         grouped_root_next_w_len(
                             field_bits,
                             &lp,
                             key.final_group.num_polynomials(),
-                            MRowLayout::WithDBlock,
+                            RelationMatrixRowLayout::WithDBlock,
                         )?
                     } else {
                         let ring = w_ring_element_count_with_counts_for_layout_bits(
@@ -386,7 +386,7 @@ fn walk_grouped_generated_schedule_entry(
                             &lp,
                             1,
                             1,
-                            MRowLayout::WithDBlock,
+                            RelationMatrixRowLayout::WithDBlock,
                         )?;
                         checked_ring_field_len(ring, lp.ring_dimension)?
                     };
@@ -409,7 +409,7 @@ fn walk_grouped_generated_schedule_entry(
                         fold_challenge_shape_at_level(next_inputs),
                         1,
                     )?;
-                    (len, Some(next_lp), MRowLayout::WithDBlock)
+                    (len, Some(next_lp), RelationMatrixRowLayout::WithDBlock)
                 };
 
                 let level_bytes = level_proof_bytes(

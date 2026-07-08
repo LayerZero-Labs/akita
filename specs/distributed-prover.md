@@ -224,12 +224,12 @@ emit r̂              # decomposed shared quotient (after the last window)
 > verifier's `segment_layout` uses), so the prover's emission and the verifier's
 > reading cannot drift.
 
-### Step 3 — evaluate the modified relation MLE (`compute_m_evals_x`)
+### Step 3 — evaluate the modified relation MLE (`compute_relation_matrix_col_evals`)
 
 The relation-check sum-check links the committed witness MLE
 $\widetilde{\mathbf w}$ to the relation MLE $\widetilde{\mathbf M}$. Because the
 relation matrix is now $\mathbf M = [\mathbf M_0\mid\dots\mid\mathbf M_{W-1}]$, the
-prover-internal column evaluation `compute_m_evals_x`
+prover-internal column evaluation `compute_relation_matrix_col_evals`
 (`protocol/ring_switch/evals.rs`) must evaluate the **chunked** column layout:
 
 - the `e`/`t` rows read each column at its window's block range, with the
@@ -246,7 +246,7 @@ If the prover and verifier share the structured slice evaluators
 (`crates/akita-verifier/src/protocol/slice_mle/`), the chunked support added there
 is reused and this step is a thin fold over windows; otherwise the prover gets the
 analogous per-window fold. The **sum-check prover bodies are unchanged** — they
-consume `m_evals_x` and `w_evals_compact` exactly as before.
+consume `relation_matrix_col_evals` and `w_evals_compact` exactly as before.
 
 ### Reused unchanged
 
@@ -299,7 +299,7 @@ ordinary single-segment witness.
    step 2 ────► │ build_w_coeffs:                               │
                 │   [z_0|e_0|t_0]…[z_{W-1}|e_{W-1}|t_{W-1}] | r̂ │  (len == planner next_w_len)
                 ├──────────────────────────────────────────────┤
-   step 3 ────► │ compute_m_evals_x over the chunked columns    │
+   step 3 ────► │ compute_relation_matrix_col_evals over the chunked columns    │
                 └───────────────────────┬──────────────────────┘
                                         ▼
    UNCHANGED:  compute_relation_quotient  +  commit_next_w  +  AkitaStage{1,2,3}Prover
@@ -366,7 +366,7 @@ Produce $W$ full-ambient responses in the decompose-fold path; wire
   `inner_width`; L∞ cap satisfied per window.
 - **Tests:** `fold_responses_sum_to_global_fold` (`W ∈ {2,4,8}`).
 
-### S3 — Modified relation MLE (`compute_m_evals_x`)
+### S3 — Modified relation MLE (`compute_relation_matrix_col_evals`)
 
 Evaluate the chunked column layout (reusing the verifier's structured evaluators
 where shared). Sum-check provers unchanged.
@@ -417,7 +417,7 @@ the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
 
 1. **Layout cross-check** against `segment_layout` (`W ∈ {1,2,4,8}`).
 2. **Fold-response unit:** `fold_responses_sum_to_global_fold`.
-3. **Relation-MLE unit:** prover `compute_m_evals_x` vs the verifier-materialized
+3. **Relation-MLE unit:** prover `compute_relation_matrix_col_evals` vs the verifier-materialized
    chunked relation row.
 4. **Proof-size parity** vs the planner schedule.
 5. **End-to-end roundtrip** (gated on verifier landing).

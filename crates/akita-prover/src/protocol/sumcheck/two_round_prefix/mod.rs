@@ -41,14 +41,14 @@ mod stage2;
 mod tests;
 
 pub(crate) use common::{
-    stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, stage2_b4_w_digit,
-    stage2_b8_w_digit,
+    stage1_b4_s_digit_frorelation_matrix_col_evals_compact_s,
+    stage1_b8_s_digit_frorelation_matrix_col_evals_compact_s, stage2_b4_w_digit, stage2_b8_w_digit,
 };
 pub(crate) use stage1::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
     Stage1BivariateSkipState,
 };
 pub(crate) use stage2::{
-    build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
-    Stage2BivariateSkipState,
+    build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact,
+    can_use_stage2_two_round_prefix, Stage2BivariateSkipState,
 };

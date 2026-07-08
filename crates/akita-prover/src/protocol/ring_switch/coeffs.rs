@@ -367,8 +367,8 @@ where
                 &ring_multiplier_points,
                 instance.group_challenges(),
                 e_hat_concat.typed_planes::<D>()?,
-                instance.y_trusted::<D>()?,
-                instance.m_row_layout(),
+                instance.rhs_trusted::<D>()?,
+                instance.relation_matrix_row_layout(),
             )?;
 
             // Group-major witness: emit each group's contiguous `[z_g ‖ e_g ‖ t_g]`
@@ -385,7 +385,8 @@ where
             }
             let levels = r_decomp_levels::<F>(lp.log_basis);
             emit_r_decomposition_tail::<F, D>(&mut out, &r, levels, lp.log_basis);
-            let expected = lp.root_next_w_len::<F>(opening_batch, instance.m_row_layout())?;
+            let expected =
+                lp.root_next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
             if out.len() != expected {
                 return Err(AkitaError::InvalidSize {
                     expected,

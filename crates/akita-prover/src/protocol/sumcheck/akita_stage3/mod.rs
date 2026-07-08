@@ -419,12 +419,12 @@ where
     let opening_batch = relation.opening_batch();
     let num_polynomials = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polynomials, lp.field_bits_for_cache())?;
-    let m_row_layout = relation.m_row_layout();
-    let rows = lp.m_row_count_for(1, m_row_layout)?;
+    let relation_matrix_row_layout = relation.relation_matrix_row_layout();
+    let rows = lp.relation_matrix_row_count_for(1, relation_matrix_row_layout)?;
     SetupContributionPlanInputs::from_level_params(
         lp,
         &[num_polynomials],
-        m_row_layout,
+        relation_matrix_row_layout,
         depth_fold,
     )?
     .with_eq_tau1_from_tau(tau1, rows)

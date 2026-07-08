@@ -539,7 +539,7 @@ Current code state:
   coefficients.
 - Same-commitment multipoint openings emit singleton rows at distinct points.
 - `combine_root_y_rings`, `QuadraticEquation::new_prover`,
-  `compute_r_split_eq`, prover `compute_m_evals_x`, verifier
+  `compute_r_split_eq`, prover `compute_relation_matrix_col_evals`, verifier
   `RingSwitchVerifier`, and relation-claim replay consume the same row-package
   semantics.
 - The current `tau1` row combination remains unchanged:

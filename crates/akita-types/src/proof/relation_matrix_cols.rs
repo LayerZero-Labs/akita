@@ -1,7 +1,7 @@
-//! Shared grouped/singleton M-table column evaluation.
+//! Shared grouped/singleton relation matrix column evaluation.
 //!
-//! [`compute_grouped_m_evals_x`] materializes the tau1-weighted M-row column
-//! vector `m_evals_x` that the fused stage-2 sumcheck treats as the row
+//! [`compute_relation_matrix_col_evals`] materializes the tau1-weighted relation-matrix column
+//! vector `relation_matrix_col_evals` that the fused stage-2 sumcheck treats as the row
 //! polynomial. The prover still materializes this table for stage-2 proving.
 //! The verifier replays the same group-major geometry with its structured
 //! `RelationMatrixEvaluator` path instead of rebuilding the dense vector.
@@ -9,7 +9,8 @@
 use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;
 use crate::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams, MRowLayout,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RelationMatrixRowLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_flat_ring_at_pows, scalar_powers};
@@ -17,7 +18,7 @@ use akita_challenges::Challenges;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase};
 
-/// Unified M-table column evaluation for singleton and grouped root relations.
+/// Unified relation matrix column evaluation for singleton and grouped root relations.
 ///
 /// Singleton roots use the scalar/chunked witness layout. Grouped roots use the
 /// group-major layout and still reject multi-chunk witness emission.
@@ -27,8 +28,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftB
 /// Returns an error if the batch shape, opening-point layout, challenge count,
 /// chunking configuration, or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_grouped_m_evals_x")]
-pub fn compute_grouped_m_evals_x<F, E>(
+#[tracing::instrument(skip_all, name = "compute_relation_matrix_col_evals")]
+pub fn compute_relation_matrix_col_evals<F, E>(
     setup: &AkitaExpandedSetup<F>,
     instance: &RingRelationInstance<F>,
     alpha: E,
@@ -37,7 +38,7 @@ pub fn compute_grouped_m_evals_x<F, E>(
     lp: &LevelParams,
     tau1: &[E],
     gamma: &[E],
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -45,7 +46,7 @@ where
 {
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
-    lp.reject_grouped_multi_chunk("compute_grouped_m_evals_x")?;
+    lp.reject_grouped_multi_chunk("compute_relation_matrix_col_evals")?;
     lp.validate_root_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
@@ -62,7 +63,8 @@ where
     let alpha_pows_a = alpha_pows;
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
-    let rows = lp.m_row_count_for(opening_batch.num_groups(), m_row_layout)?;
+    let rows =
+        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -70,7 +72,7 @@ where
             actual: eq_tau1.len(),
         });
     }
-    let n_d_active = lp.n_d_active_for(m_row_layout);
+    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
     let levels = r_decomp_levels::<F>(lp.log_basis);
     let order = opening_batch.root_group_order()?;
     let num_chunks = lp.witness_chunk.num_chunks;
@@ -216,8 +218,10 @@ where
         let b_rows: Vec<&[F]> = (0..n_b)
             .map(|r| b_view.row_flat(r))
             .collect::<Result<_, _>>()?;
-        let a_range = lp.root_a_row_range(opening_batch, group_index, m_row_layout)?;
-        let b_range = lp.root_commitment_row_range(opening_batch, group_index, m_row_layout)?;
+        let a_range =
+            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let b_range =
+            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let a_weights = &eq_tau1[a_range];
         let b_weights = &eq_tau1[b_range];
         let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis)

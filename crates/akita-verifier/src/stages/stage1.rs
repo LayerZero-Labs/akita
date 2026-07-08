@@ -18,7 +18,7 @@ use akita_types::{
     combine_polys, linear_combination, sis::FoldWitnessGrindContract,
     stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
     stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
-    MRowLayout, OpeningClaimsLayout,
+    OpeningClaimsLayout, RelationMatrixRowLayout,
 };
 
 type Stage1VerifyOutput<E> = Vec<E>;
@@ -59,14 +59,17 @@ pub(crate) fn derive_grouped_stage1_challenges<F, T>(
     ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &LevelParams,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     grind_nonce: u32,
 ) -> Result<Vec<Challenges>, AkitaError>
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
     T: Transcript<F>,
 {
-    if matches!(m_row_layout, MRowLayout::WithDBlock) {
+    if matches!(
+        relation_matrix_row_layout,
+        RelationMatrixRowLayout::WithDBlock
+    ) {
         append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, ring_d, transcript)?;
     }
     let labels = witness_fold_challenge_labels();

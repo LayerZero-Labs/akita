@@ -2,7 +2,7 @@ use super::utils::{
     accumulate_left_round, accumulate_left_round_compact, accumulate_right_round,
     accumulate_right_round_compact, accumulate_second_right_round_compact, fold_compact_left_round,
     fold_compact_right_round, fold_compact_right_two_rounds, fold_factor_in_place, fold_left_round,
-    fold_right_round, product_claim, product_claim_compact,
+    fold_right_round, product_claim, product_clairelation_matrix_col_evals_compact,
 };
 use akita_algebra::uni_poly::UniPoly;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
@@ -150,7 +150,12 @@ impl<E: FieldCore + FromPrimitiveInt> ProductTable<E> {
             Self::Dense(table) => product_claim(table, left_factor, right_factor),
             Self::CompactWitness {
                 digits, padded_len, ..
-            } => product_claim_compact(digits, *padded_len, left_factor, right_factor),
+            } => product_clairelation_matrix_col_evals_compact(
+                digits,
+                *padded_len,
+                left_factor,
+                right_factor,
+            ),
         }
     }
 

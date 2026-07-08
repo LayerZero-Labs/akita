@@ -521,14 +521,14 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Polyn
     for (idx, fold) in schedule.fold_steps().enumerate() {
         // The last fold in a fold-then-direct schedule is the terminal
         // recursive fold and ships its W in cleartext under
-        // MRowLayout::Terminal (drops the D-block from the per-row `r`
+        // RelationMatrixRowLayout::Terminal (drops the D-block from the per-row `r`
         // quotients), so its `next_w_len` is smaller than what the
         // intermediate-layout helper would report.
         let is_terminal_fold = idx + 1 == num_fold_levels;
         let layout = if is_terminal_fold {
-            akita_types::MRowLayout::WithoutDBlock
+            akita_types::RelationMatrixRowLayout::WithoutDBlock
         } else {
-            akita_types::MRowLayout::WithDBlock
+            akita_types::RelationMatrixRowLayout::WithDBlock
         };
         // Root-level batched witnesses fan out over the key's polynomial
         // count; recursive levels collapse back to singleton-by-construction.

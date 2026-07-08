@@ -49,7 +49,7 @@ where
     let role_dims = lp.role_dims();
     let commit_d = role_dims.d_b();
     let next_fold_level_params = (!scheduled.is_terminal).then_some(&scheduled.next_params);
-    let m_row_layout = proof.m_row_layout();
+    let relation_matrix_row_layout = proof.relation_matrix_row_layout();
     let alpha_bits = role_dims.d_a().trailing_zeros() as usize;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
@@ -103,7 +103,7 @@ where
                     F::modulus_bits(),
                     lp,
                     num_claims,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                     nc,
                 )?
             } else {
@@ -111,7 +111,7 @@ where
                     lp,
                     num_claims,
                     num_claims,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 )?
             };
             ring.checked_mul(role_dims.d_a()).ok_or_else(|| {
@@ -157,7 +157,7 @@ where
     let commitment_rows = RingVec::from_coeffs(current_state.commitment.coeffs().to_vec());
     Ok(PreparedFoldReplay {
         lp,
-        m_row_layout,
+        relation_matrix_row_layout,
         fold_grind_nonce,
         v: v_storage,
         opening_shape: opening_batch,
@@ -265,7 +265,7 @@ where
                         F::modulus_bits(),
                         current_lp,
                         1,
-                        MRowLayout::WithDBlock,
+                        RelationMatrixRowLayout::WithDBlock,
                         next_chunks,
                     )?
                 } else {
@@ -273,7 +273,7 @@ where
                         current_lp,
                         1,
                         1,
-                        MRowLayout::WithDBlock,
+                        RelationMatrixRowLayout::WithDBlock,
                     )?
                 };
                 let computed_next_w_len =

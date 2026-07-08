@@ -176,7 +176,7 @@ fn stage1_norm_round_values(s_quad: [F; 4], tau0: F, tau1: F, r0: F, b: usize) -
     out
 }
 
-fn build_stage1_bivariate_skip_proof_from_compact_reference(
+fn build_stage1_bivariate_skip_proof_frorelation_matrix_col_evals_compact_reference(
     w_compact: &[i8],
     tau0: &[F],
     b: usize,
@@ -228,10 +228,10 @@ fn build_stage1_bivariate_skip_proof_from_compact_reference(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_stage2_bivariate_skip_proof_from_compact_reference(
+fn build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact_reference(
     w_compact: &[i8],
     alpha_evals_y: &[F],
-    m_evals_x: &[F],
+    relation_matrix_col_evals: &[F],
     trace_compact: Option<&[F]>,
     stage1_point: &[F],
     b: usize,
@@ -244,7 +244,7 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
     }
 
     let y_len = 1usize << ring_bits;
-    assert_eq!(m_evals_x.len(), 1usize << col_bits);
+    assert_eq!(relation_matrix_col_evals.len(), 1usize << col_bits);
     if let Some(trace) = trace_compact {
         assert_eq!(trace.len(), live_x_cols * y_len);
     }
@@ -260,7 +260,7 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
     for x_idx in 0..live_x_cols {
         let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
         let trace_column = trace_compact.map(|trace| &trace[x_idx * y_len..(x_idx + 1) * y_len]);
-        let row_val = m_evals_x[x_idx];
+        let row_val = relation_matrix_col_evals[x_idx];
         let eq_x_weight = eq_x[x_idx];
         for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate().take(y_quads) {
             let base = 4 * y_quad;
@@ -412,10 +412,10 @@ fn stage1_bivariate_skip_proof_builder_matches_reference() {
     ];
     let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
     assert_eq!(
-        build_stage1_bivariate_skip_proof_from_compact(
+        build_stage1_bivariate_skip_proof_frorelation_matrix_col_evals_compact(
             &w_compact, &tau0, 8, 5, col_bits, ring_bits
         ),
-        build_stage1_bivariate_skip_proof_from_compact_reference(
+        build_stage1_bivariate_skip_proof_frorelation_matrix_col_evals_compact_reference(
             &w_compact, &tau0, 8, 5, col_bits, ring_bits,
         ),
     );
@@ -425,7 +425,7 @@ fn stage1_bivariate_skip_proof_builder_matches_reference() {
 fn stage2_bivariate_skip_proof_builder_matches_reference() {
     let w_compact = vec![1, -2, 0, 2, 1, -1, 2, 1, 0, 2];
     let alpha_evals_y = [F::from_u64(3), F::from_u64(5)];
-    let m_evals_x = [
+    let relation_matrix_col_evals = [
         F::from_u64(7),
         F::from_u64(11),
         F::from_u64(13),
@@ -442,10 +442,10 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
         F::from_u64(11),
     ];
     assert_eq!(
-        build_stage2_bivariate_skip_proof_from_compact(
+        build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact(
             &w_compact,
             &alpha_evals_y,
-            &m_evals_x,
+            &relation_matrix_col_evals,
             None,
             &stage1_point,
             8,
@@ -453,10 +453,10 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
             3,
             1,
         ),
-        build_stage2_bivariate_skip_proof_from_compact_reference(
+        build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact_reference(
             &w_compact,
             &alpha_evals_y,
-            &m_evals_x,
+            &relation_matrix_col_evals,
             None,
             &stage1_point,
             8,
@@ -482,7 +482,7 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((13 * i as u64) + 17))
         .collect();
-    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((19 * i as u64) + 23))
         .collect();
     let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
@@ -492,10 +492,10 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
     assert_eq!(
         {
             let trace_table = TraceTable::ring_dense(trace_compact.clone());
-            build_stage2_bivariate_skip_proof_from_compact(
+            build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact(
                 &w_compact,
                 &alpha_evals_y,
-                &m_evals_x,
+                &relation_matrix_col_evals,
                 Some(&trace_table),
                 &stage1_point,
                 8,
@@ -504,10 +504,10 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
                 ring_bits,
             )
         },
-        build_stage2_bivariate_skip_proof_from_compact_reference(
+        build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact_reference(
             &w_compact,
             &alpha_evals_y,
-            &m_evals_x,
+            &relation_matrix_col_evals,
             Some(&trace_compact),
             &stage1_point,
             8,
@@ -543,17 +543,17 @@ fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((17 * i as u64) + 19))
         .collect();
-    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
         .map(|i| F::from_u64((23 * i as u64) + 29))
         .collect();
     let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((31 * i as u64) + 37))
         .collect();
     assert_eq!(
-        build_stage2_bivariate_skip_proof_from_compact(
+        build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact(
             &w_compact,
             &alpha_evals_y,
-            &m_evals_x,
+            &relation_matrix_col_evals,
             Some(&sparse_trace),
             &stage1_point,
             8,
@@ -561,10 +561,10 @@ fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
             col_bits,
             ring_bits,
         ),
-        build_stage2_bivariate_skip_proof_from_compact_reference(
+        build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact_reference(
             &w_compact,
             &alpha_evals_y,
-            &m_evals_x,
+            &relation_matrix_col_evals,
             Some(&trace_compact),
             &stage1_point,
             8,
@@ -593,7 +593,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             )
         })
         .collect();
-    let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
         .map(|i| {
             F::from_u64(
                 (i as u64)
@@ -612,10 +612,10 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
         })
         .collect();
     assert_eq!(
-        build_stage2_bivariate_skip_proof_from_compact(
+        build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact(
             &w_compact,
             &alpha_evals_y,
-            &m_evals_x,
+            &relation_matrix_col_evals,
             None,
             &stage1_point,
             8,
@@ -623,10 +623,10 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             col_bits,
             ring_bits,
         ),
-        build_stage2_bivariate_skip_proof_from_compact_reference(
+        build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact_reference(
             &w_compact,
             &alpha_evals_y,
-            &m_evals_x,
+            &relation_matrix_col_evals,
             None,
             &stage1_point,
             8,
@@ -828,7 +828,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
     ];
     let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
 
-    let proof = build_stage1_bivariate_skip_proof_from_compact(
+    let proof = build_stage1_bivariate_skip_proof_frorelation_matrix_col_evals_compact(
         &w_compact,
         &tau0,
         b,

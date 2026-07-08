@@ -802,7 +802,7 @@ pub struct WitnessLayout {
 pub struct SegmentLayoutInputs {
     pub num_claims: usize,
     pub num_t_vectors: usize,
-    pub m_row_layout: MRowLayout,
+    pub relation_matrix_row_layout: RelationMatrixRowLayout,
     pub witness_ring_len: usize,
 }
 ```
@@ -918,7 +918,7 @@ let witness_ring_len = w_len / D;
 let chunk_layout = relation.segment_layout(&lp, &SegmentLayoutInputs {
     num_claims,
     num_t_vectors,
-    m_row_layout,
+    relation_matrix_row_layout,
     witness_ring_len,
 })?;
 ```
@@ -1224,8 +1224,8 @@ for w in [1, 2, 4, 8] {
 Run this matrix:
 
 - pow2 `block_len` (`512`) and dense fallback `block_len` (`510`).
-- with and without the D block (`MRowLayout::WithDBlock` /
-  `MRowLayout::WithoutDBlock`) where fixtures exist.
+- with and without the D block (`RelationMatrixRowLayout::WithDBlock` /
+  `RelationMatrixRowLayout::WithoutDBlock`) where fixtures exist.
 - `W = 1` plus every power-of-two divisor of `num_blocks`.
 - negative malformed layouts: non-power-of-two `num_chunks`, `W ∤ num_blocks`,
   `W > num_blocks`, and too-small witness capacity.

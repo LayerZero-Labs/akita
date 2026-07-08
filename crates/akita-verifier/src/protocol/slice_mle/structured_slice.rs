@@ -339,9 +339,10 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningClaimsLayout,
-        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SetupContributionPlan,
-        SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
+        gadget_row_scalars, r_decomp_levels, LevelParams, OpeningClaimsLayout,
+        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
+        RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SisModulusFamily,
+        WitnessLayout,
     };
 
     use crate::protocol::ring_switch::{
@@ -385,7 +386,7 @@ mod tests {
 
     fn ring_relation_segment_layout_for_opening_shape(
         lp: &LevelParams,
-        m_row_layout: MRowLayout,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
         num_polys: usize,
     ) -> Result<WitnessLayout, AkitaError> {
         let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
@@ -403,22 +404,23 @@ mod tests {
         let v = vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()];
         let commitment_rows = vec![CyclotomicRing::<F, D>::zero(); lp.b_key.row_len()];
         let row_coefficient_rings = vec![CyclotomicRing::<F, D>::zero(); num_claims];
-        let y_layout = akita_types::relation_y_layout_for(lp, &opening_batch, m_row_layout)?;
-        let y = akita_types::assemble_relation_y::<F>(
+        let relation_rhs_layout =
+            akita_types::relation_rhs_layout_for(lp, &opening_batch, relation_matrix_row_layout)?;
+        let relation_rhs = akita_types::assemble_relation_rhs::<F>(
             lp.role_dims(),
-            &y_layout,
+            &relation_rhs_layout,
             &akita_types::RingVec::from_ring_elems(&v),
             &akita_types::RingVec::from_ring_elems(&commitment_rows),
         )?;
         let instance = RingRelationInstance::<F>::new(
-            m_row_layout,
+            relation_matrix_row_layout,
             vec![challenges],
             vec![opening_point],
             vec![ring_multiplier_point],
             opening_batch,
             vec![F::zero(); num_claims],
             akita_types::RingVec::from_ring_elems(&row_coefficient_rings),
-            y,
+            relation_rhs,
             akita_types::RingVec::from_ring_elems(&v),
             lp.role_dims(),
         )?;
@@ -445,9 +447,12 @@ mod tests {
 
         let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
-        let chunk_layout =
-            ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
-                .expect("witness segment layout");
+        let chunk_layout = ring_relation_segment_layout_for_opening_shape(
+            &lp,
+            RelationMatrixRowLayout::WithDBlock,
+            num_claims,
+        )
+        .expect("witness segment layout");
         let chunk0 = chunk_layout.chunks[0];
         let offset_e = chunk0.offset_e;
         let offset_t = chunk0.offset_t;
@@ -474,7 +479,7 @@ mod tests {
             inner_width,
             n_a,
             n_d,
-            m_row_layout: MRowLayout::WithDBlock,
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
             n_b,
             num_groups: 1,
             rows,

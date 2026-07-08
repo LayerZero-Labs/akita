@@ -6,7 +6,7 @@
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::MRowLayout;
+use crate::layout::RelationMatrixRowLayout;
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
 use crate::setup_contribution::SetupContributionPlanInputs;
@@ -50,9 +50,9 @@ pub fn setup_required_for_inputs<E: FieldCore>(
         });
     }
 
-    let n_d_active = match inputs.m_row_layout {
-        MRowLayout::WithDBlock => inputs.n_d,
-        MRowLayout::WithoutDBlock => 0,
+    let n_d_active = match inputs.relation_matrix_row_layout {
+        RelationMatrixRowLayout::WithDBlock => inputs.n_d,
+        RelationMatrixRowLayout::WithoutDBlock => 0,
     };
     // Canonical row layout: consistency (1) | A | B | D.
     let b_rows_total = checked_mul(inputs.n_b, inputs.num_groups, "B row count")?;
@@ -65,7 +65,7 @@ pub fn setup_required_for_inputs<E: FieldCore>(
     )?;
     if a_end > inputs.rows {
         return Err(AkitaError::InvalidSetup(
-            "M-row weights are inconsistent with setup evaluator layout".into(),
+            "relation-matrix row weights are inconsistent with setup evaluator layout".into(),
         ));
     }
 
@@ -183,7 +183,7 @@ fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, Akit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{gadget_row_scalars, MRowLayout, SetupContributionPlan};
+    use crate::{gadget_row_scalars, RelationMatrixRowLayout, SetupContributionPlan};
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -242,7 +242,7 @@ mod tests {
             inner_width: z_range,
             n_a: 1,
             n_d: 0,
-            m_row_layout: MRowLayout::WithoutDBlock,
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
             n_b: 0,
             num_groups: num_points,
             rows: 2,
@@ -280,7 +280,7 @@ mod tests {
             inner_width: z_range,
             n_a: 1,
             n_d: 0,
-            m_row_layout: MRowLayout::WithoutDBlock,
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
             n_b: 0,
             num_groups: 1,
             rows: 2,
@@ -329,7 +329,7 @@ mod tests {
             inner_width: 32,
             n_a: 2,
             n_d: 1,
-            m_row_layout: MRowLayout::WithDBlock,
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
             n_b: 2,
             num_groups: 1,
             rows: 8,
@@ -364,7 +364,7 @@ mod tests {
             inner_width: 32,
             n_a: 2,
             n_d: 1,
-            m_row_layout: MRowLayout::WithDBlock,
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
             n_b: 2,
             num_groups: 1,
             rows: 8,

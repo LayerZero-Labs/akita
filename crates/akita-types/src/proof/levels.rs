@@ -1,7 +1,7 @@
 use super::shapes::level_proof_shape;
 use super::shapes::sumcheck_shape;
 use super::*;
-use crate::{LevelParams, MRowLayout, SetupContributionMode};
+use crate::{LevelParams, RelationMatrixRowLayout, SetupContributionMode};
 
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -327,11 +327,11 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
         }
     }
 
-    /// M-row layout implied by this recursive proof level.
-    pub fn m_row_layout(&self) -> MRowLayout {
+    /// relation-matrix row layout implied by this recursive proof level.
+    pub fn relation_matrix_row_layout(&self) -> RelationMatrixRowLayout {
         match self {
-            Self::Intermediate { .. } => MRowLayout::WithDBlock,
-            Self::Terminal { .. } => MRowLayout::WithoutDBlock,
+            Self::Intermediate { .. } => RelationMatrixRowLayout::WithDBlock,
+            Self::Terminal { .. } => RelationMatrixRowLayout::WithoutDBlock,
         }
     }
 
@@ -598,7 +598,7 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
 /// Drops the redundant proof components at the terminal: `stage1`
 /// (segment-typed tail encodes digit range), `next_w_commitment`
 /// (replaced by `final_witness`), and `next_w_eval` (verifier computes
-/// directly from `final_witness`). The terminal M-row layout also drops the
+/// directly from `final_witness`). The terminal relation-matrix row layout also drops the
 /// D-row block, so `v` is not serialized at the terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
@@ -802,10 +802,10 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedRootProof<F, E> {
     }
 
     /// Row layout used by the root fold verifier for fold and terminal-root proofs.
-    pub fn fold_m_row_layout(&self) -> Option<MRowLayout> {
+    pub fn fold_relation_matrix_row_layout(&self) -> Option<RelationMatrixRowLayout> {
         match self {
-            Self::Fold(_) => Some(MRowLayout::WithDBlock),
-            Self::Terminal(_) => Some(MRowLayout::WithoutDBlock),
+            Self::Fold(_) => Some(RelationMatrixRowLayout::WithDBlock),
+            Self::Terminal(_) => Some(RelationMatrixRowLayout::WithoutDBlock),
             Self::ZeroFold { .. } => None,
         }
     }

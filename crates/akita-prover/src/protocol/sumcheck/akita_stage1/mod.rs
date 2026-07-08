@@ -36,7 +36,8 @@
 use super::fold_full_prefix_pair;
 use super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
-    stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
+    stage1_b4_s_digit_frorelation_matrix_col_evals_compact_s,
+    stage1_b8_s_digit_frorelation_matrix_col_evals_compact_s, Stage1BivariateSkipState,
 };
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;

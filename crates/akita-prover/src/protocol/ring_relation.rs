@@ -19,8 +19,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
-use akita_types::{assemble_relation_y, relation_y_layout_for, RingVec, RingView};
-use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, MRowLayout};
+use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingView};
+use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationMatrixRowLayout};
 use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
@@ -351,7 +351,7 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     d_row_len: usize,
     log_basis: u32,
     e_hat: &DigitBlocks,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -360,8 +360,8 @@ where
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    match m_row_layout {
-        MRowLayout::WithDBlock => {
+    match relation_matrix_row_layout {
+        RelationMatrixRowLayout::WithDBlock => {
             let _span = tracing::info_span!(
                 "compute_relation_v",
                 e_hat_planes = e_hat.typed_planes::<D>()?.len()
@@ -377,7 +377,7 @@ where
             )?;
             Ok(v)
         }
-        MRowLayout::WithoutDBlock => Ok(Vec::new()),
+        RelationMatrixRowLayout::WithoutDBlock => Ok(Vec::new()),
     }
 }
 
@@ -480,7 +480,7 @@ impl RingRelationProver {
         lp: LevelParams,
         transcript: &mut T,
         row_coefficient_rings: RingVec<F>,
-        m_row_layout: MRowLayout,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
         terminal_tail_t_vectors: Option<usize>,
     ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F>), AkitaError>
     where
@@ -663,7 +663,7 @@ impl RingRelationProver {
                     d_row_len,
                     log_basis,
                     &e_hat,
-                    m_row_layout,
+                    relation_matrix_row_layout,
                 )?;
                 Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
             }
@@ -678,7 +678,10 @@ impl RingRelationProver {
                 .flat_map(|block| block.coeffs().iter().copied())
                 .collect(),
         );
-        if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
+        if matches!(
+            relation_matrix_row_layout,
+            RelationMatrixRowLayout::WithoutDBlock
+        ) {
             absorb_terminal_e_folded_fields::<F, T>(transcript, &e_folded)?;
         }
         // Distributed-prover chunked layout: the grind emits one folded response
@@ -715,21 +718,23 @@ impl RingRelationProver {
         }
         let fold_grind_nonce = accepted_nonce.ok_or(AkitaError::InvalidProof)?;
 
-        // `y` spans roles (consistency | [A | B | B_inner]* | D).
+        // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
-        let y_layout = relation_y_layout_for(&lp, &opening_batch, m_row_layout)?;
-        let y = assemble_relation_y::<F>(dims, &y_layout, &v, &commitment_rows)?;
+        let relation_rhs_layout =
+            relation_rhs_layout_for(&lp, &opening_batch, relation_matrix_row_layout)?;
+        let relation_rhs =
+            assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)?;
 
         let instance = RingRelationInstance::new(
-            m_row_layout,
+            relation_matrix_row_layout,
             group_challenges,
             group_opening_points,
             group_ring_multiplier_points,
             opening_batch.clone(),
             gamma,
             row_coefficient_rings,
-            y,
+            relation_rhs,
             v,
             dims,
         )?;

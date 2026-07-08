@@ -212,7 +212,7 @@ Definitions:
   `is_terminal`.
 - In the planner, the dynamic program already distinguishes the branch whose
   suffix is `Direct` and computes a `next_witness_len_terminal` with today's
-  `MRowLayout::WithoutDBlock`.
+  `RelationMatrixRowLayout::WithoutDBlock`.
 
 The PR2 policy should be:
 
@@ -238,7 +238,7 @@ A fold is penultimate exactly when the chosen suffix after that fold is
 `Direct`. In the suffix dynamic program this is the "current step is `Fold`,
 successor is `Direct`" branch. In the current planner this is also the branch
 that uses `next_witness_len_terminal`, computed under today's
-`MRowLayout::WithoutDBlock`.
+`RelationMatrixRowLayout::WithoutDBlock`.
 
 Use that local branch fact directly:
 
@@ -288,13 +288,13 @@ That spec describes the terminal `t`-state direction and notes that tiered
 terminal layouts must reject or route through the same `t` path. Removing
 tiered first makes the terminal optimization cleaner.
 
-Today's enum name `MRowLayout::WithoutDBlock` is not precise enough after PR3.
+Today's enum name `RelationMatrixRowLayout::WithoutDBlock` is not precise enough after PR3.
 It currently means "drop D but keep B." The terminal-tail cutover should replace
 it with a layout whose name and row offsets say what happens after the full
 cutover. The locked target names are:
 
 ```rust
-enum MRowLayout {
+enum RelationMatrixRowLayout {
     WithCommitmentBlocks,
     WithoutCommitmentBlocks,
 }
@@ -638,7 +638,7 @@ trace term in stage-2 sumcheck, not through `M` rows) and renames the witness
 public block in `M`. Public openings bind via the fused trace term in stage-2
 sumcheck ([`specs/y-ring-trace-internalization.md`](y-ring-trace-internalization.md)).
 
-**Terminal fold (`MRowLayout::WithoutDBlock`):** `consistency | A | B` (the
+**Terminal fold (`RelationMatrixRowLayout::WithoutDBlock`):** `consistency | A | B` (the
 trailing `D` block is dropped). This aligns with PR3's direction of shrinking
 terminal rows toward `consistency | A`.
 
@@ -664,16 +664,16 @@ Expected implementation surface:
   - remove `LevelParams::tier_split` and `f_key`;
   - delete `effective_commit_rows()`, `b_inner_rows_per_group()`,
     `u_concat_ring_len_per_group()`; use `b_key.row_len()` at call sites;
-  - simplify `m_row_count_for` and row-offset helpers to
+  - simplify `relation_matrix_row_count_for` and row-offset helpers to
     `consistency | A | B | D` (drop `num_public_outputs` parameter);
-  - update `generate_y`, quotient row dispatch, `relation_claim_from_rows*`,
+  - update `generate_relation_rhs`, quotient row dispatch, `relation_claim_from_rows*`,
     setup-contribution `eq_tau1` slicing, and verifier hardcoded offsets to match;
   - rename witness-sizing `num_public_rows` → `num_z_segments` in schedule,
     tail, and terminal witness helpers;
   - delete `SetupContributionPlanInputs.num_public_rows`; `d_start = 1`;
   - delete `RingRelationSegmentLayout.offset_u` and tiered `u_len`;
   - remove tiered SIS norm helpers and descriptor bindings;
-  - fix `layout/proof_size.rs` `r_count` to use the simplified `m_row_count_for`
+  - fix `layout/proof_size.rs` `r_count` to use the simplified `relation_matrix_row_count_for`
     (drops the spurious extra row still priced today).
 - `akita-prover`:
   - delete `tiered_commit_u_final`;
@@ -830,19 +830,19 @@ shrinking the terminal relation rows accordingly.
 Expected implementation surface:
 
 - M-row layout:
-  - replace `MRowLayout::WithoutDBlock` with
-    `MRowLayout::WithoutCommitmentBlocks`;
-  - replace `MRowLayout::WithDBlock` with
-    `MRowLayout::WithCommitmentBlocks`;
+  - replace `RelationMatrixRowLayout::WithoutDBlock` with
+    `RelationMatrixRowLayout::WithoutCommitmentBlocks`;
+  - replace `RelationMatrixRowLayout::WithDBlock` with
+    `RelationMatrixRowLayout::WithCommitmentBlocks`;
   - `WithCommitmentBlocks` means `consistency | A | B | D`;
   - `WithoutCommitmentBlocks` means `consistency | A`;
   - update `n_d_active_for`, `b_start`, `d_start`, `a_start`, and
-    `m_row_count_for` so the terminal layout is:
+    `relation_matrix_row_count_for` so the terminal layout is:
     `consistency | A`;
   - do not leave call sites locally subtracting B rows.
 - Planner/schedules:
   - change `next_witness_len_terminal` to use
-    `MRowLayout::WithoutCommitmentBlocks`;
+    `RelationMatrixRowLayout::WithoutCommitmentBlocks`;
   - update DP proof-size scoring to remove raw final `u` bytes;
   - regenerate schedules and descriptor digest pins.
 - Tail witness:
@@ -853,7 +853,7 @@ Expected implementation surface:
 - Prover:
   - penultimate fold no longer computes/absorbs/sends next-witness `u`;
   - terminal witness assembly exposes `t` in the terminal segment;
-  - ring-switch finalize paths use `MRowLayout::WithoutCommitmentBlocks` for
+  - ring-switch finalize paths use `RelationMatrixRowLayout::WithoutCommitmentBlocks` for
     terminal quotient rows.
 - Verifier:
   - penultimate replay does not expect `next_w_commitment`;
