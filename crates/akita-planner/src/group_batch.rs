@@ -5,7 +5,7 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     committed_fold_a_role_rank, compute_num_digits_full_field, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_fold,
-    num_digits_open, num_digits_s_commit, rounded_up_collision_linf_t, rounded_up_collision_linf_w,
+    num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
     AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
@@ -95,7 +95,7 @@ pub(crate) fn group_root_params_from_layout(
     } else {
         layout.log_basis
     };
-    let norm_t = rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, b_norm_basis)
+    let norm_t = rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, b_norm_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("no grouped B-role norm".to_string()))?;
     let width_t = decomposed_t_ring_count(
         layout.n_a,
@@ -420,7 +420,7 @@ fn grouped_root_main_level_params_candidate(
     )?;
 
     let Some(norm_t) =
-        rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -448,7 +448,7 @@ fn grouped_root_main_level_params_candidate(
         .checked_add(ctx.precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("grouped D width overflow".to_string()))?;
     let Some(norm_w) =
-        rounded_up_collision_linf_w(policy.min_sis_security_bits, family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
     else {
         return Ok(None);
     };

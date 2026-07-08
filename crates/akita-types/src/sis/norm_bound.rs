@@ -1,7 +1,7 @@
 //! Weak-binding collision norms (Hachi paper, Lemma 7) and the folded-witness
 //! bound, per witness role.
 //!
-//! `rounded_up_collision_linf_{s,t,w}` return the audited SIS coefficient
+//! [`rounded_up_collision_inf_norm`] returns the audited SIS coefficient
 //! `L∞` bucket ready to feed [`super::ajtai_key::min_secure_rank`]. The folded witness `z`
 //! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
@@ -23,6 +23,19 @@ pub use super::fold_linf_cap::{
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
 };
+
+/// Rounded-up SIS infinity norm when adding/subtracting two small digits. A
+/// small digit is a digit that is between `-(basis/2)` and `basis/2 - 1`.
+/// Therefore, the largest abs value of their subtraction is `basis - 1`.
+pub fn rounded_up_collision_inf_norm(
+    min_security_bits: u16,
+    sis_family: SisModulusFamily,
+    ring_dimension: usize,
+    log_basis: u32,
+) -> Option<u128> {
+    let linf = 1u128.checked_shl(log_basis)?.checked_sub(1)?;
+    ceil_supported_linf_bound(min_security_bits, sis_family, ring_dimension as u32, linf)
+}
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
 /// per-operand L1/L∞ bounds:
@@ -442,29 +455,6 @@ pub fn fold_level_witness_scoring_cost(
         .saturating_mul(delta_fold)
         .saturating_mul(m_eff);
     Some(opening_cost.saturating_add(folding_cost))
-}
-
-/// B-role (`t̂`) rounded-up SIS coefficient-`L∞` collision bucket.
-///
-/// The natural coefficient-`L∞` opening-digit collision is `2^lb − 1`.
-pub fn rounded_up_collision_linf_t(
-    min_security_bits: u16,
-    sis_family: SisModulusFamily,
-    d: usize,
-    log_basis: u32,
-) -> Option<u128> {
-    let linf = 1u128.checked_shl(log_basis)?.checked_sub(1)?;
-    ceil_supported_linf_bound(min_security_bits, sis_family, d as u32, linf)
-}
-
-/// D-role (`ŵ`) rounded-up SIS coefficient-`L∞` bucket. Identical bound to the B role.
-pub fn rounded_up_collision_linf_w(
-    min_security_bits: u16,
-    sis_family: SisModulusFamily,
-    d: usize,
-    log_basis: u32,
-) -> Option<u128> {
-    rounded_up_collision_linf_t(min_security_bits, sis_family, d, log_basis)
 }
 
 /// Deterministic coefficient-`L∞` envelope on the folded witness sum
