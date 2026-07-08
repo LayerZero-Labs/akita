@@ -728,7 +728,7 @@ impl LevelParams {
     }
 
     #[inline]
-    fn m_row_overflow() -> AkitaError {
+    fn relation_matrix_row_overflow() -> AkitaError {
         AkitaError::InvalidSetup("relation-matrix row count overflow".to_string())
     }
 
@@ -743,7 +743,7 @@ impl LevelParams {
     pub fn b_start(&self) -> Result<usize, AkitaError> {
         self.a_start()
             .checked_add(self.a_key.row_len())
-            .ok_or_else(Self::m_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
     /// Absolute start row of the D block.
@@ -753,10 +753,10 @@ impl LevelParams {
             .b_key
             .row_len()
             .checked_mul(num_commitments)
-            .ok_or_else(Self::m_row_overflow)?;
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         self.b_start()?
             .checked_add(b_rows)
-            .ok_or_else(Self::m_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
     fn root_group_count(&self) -> usize {
@@ -831,15 +831,15 @@ impl LevelParams {
             .a_start()
             .checked_add(self.a_key.row_len())
             .and_then(|n| n.checked_add(self.b_key.row_len()))
-            .ok_or_else(Self::m_row_overflow)?;
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         for group in &self.precommitted_groups {
             rows = rows
                 .checked_add(group.a_key.row_len())
                 .and_then(|n| n.checked_add(group.b_key.row_len()))
-                .ok_or_else(Self::m_row_overflow)?;
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         rows.checked_add(self.n_d_active_for(layout))
-            .ok_or_else(Self::m_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
     /// Absolute start row of one group's A block in the multi-group root layout
@@ -860,12 +860,12 @@ impl LevelParams {
         let mut start = self
             .b_start()?
             .checked_add(self.b_key.row_len())
-            .ok_or_else(Self::m_row_overflow)?;
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         for prior in &self.precommitted_groups[..group_index] {
             start = start
                 .checked_add(prior.a_key.row_len())
                 .and_then(|n| n.checked_add(prior.b_key.row_len()))
-                .ok_or_else(Self::m_row_overflow)?;
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         Ok(start)
     }
@@ -915,8 +915,12 @@ impl LevelParams {
         let a_start = self.group_a_start(opening_batch, group_index)?;
         let n_a = self.group_a_rows(group_index, final_group_index)?;
         let n_b = self.group_b_rows(group_index, final_group_index)?;
-        let start = a_start.checked_add(n_a).ok_or_else(Self::m_row_overflow)?;
-        let end = start.checked_add(n_b).ok_or_else(Self::m_row_overflow)?;
+        let start = a_start
+            .checked_add(n_a)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
+        let end = start
+            .checked_add(n_b)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         let _ = layout;
         Ok(start..end)
     }
@@ -931,7 +935,9 @@ impl LevelParams {
         let final_group_index = self.validate_root_opening_batch(opening_batch)?;
         let start = self.group_a_start(opening_batch, group_index)?;
         let rows = self.group_a_rows(group_index, final_group_index)?;
-        let end = start.checked_add(rows).ok_or_else(Self::m_row_overflow)?;
+        let end = start
+            .checked_add(rows)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         let _ = layout;
         Ok(start..end)
     }
@@ -1058,7 +1064,7 @@ impl LevelParams {
         self.require_scalar_level("relation_matrix_row_count_for")?;
         self.d_start(num_commitments)?
             .checked_add(self.n_d_active_for(layout))
-            .ok_or_else(Self::m_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
     /// Fill in the layout-derived fields from explicit decomposition parameters.
@@ -1323,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn m_row_count_values() {
+    fn relation_matrix_row_count_values() {
         let lp = sample_params_only()
             .with_layout(&sample_layout_lp(), 128)
             .unwrap();

@@ -209,10 +209,10 @@ pub(crate) fn can_use_stage2_two_round_prefix(ring_bits: usize, b: usize) -> boo
 /// Returns `None` when there are fewer than two y-rounds to batch.
 #[tracing::instrument(
     skip_all,
-    name = "two_round_prefix::build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact"
+    name = "two_round_prefix::build_stage2_bivariate_skip_proof_from_m_compact"
 )]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact<
+pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     w_compact: &[i8],

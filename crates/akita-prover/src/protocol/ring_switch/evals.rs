@@ -1,6 +1,6 @@
 use akita_field::AkitaError;
 
-/// Unified singleton/grouped relation matrix column evaluation.
+/// Unified singleton/multi-group relation matrix column evaluation.
 ///
 /// Canonical dense-table implementation lives in `akita-types`; the prover
 /// ring-switch finalize path uses it to feed stage-2 proving.

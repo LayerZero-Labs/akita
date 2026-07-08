@@ -80,7 +80,7 @@ where
                 alpha_pows_b,
                 alpha_pows_d,
             } => {
-                validate_multi_group_role_alpha_pows(
+                validate_role_alpha_pows(
                     relation_matrix_evaluator,
                     self.alpha_pows,
                     alpha_pows_b,
@@ -126,7 +126,7 @@ where
     }
 }
 
-fn validate_multi_group_role_alpha_pows<E: FieldCore>(
+fn validate_role_alpha_pows<E: FieldCore>(
     relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
     alpha_pows_a: &[E],
     alpha_pows_b: &[E],

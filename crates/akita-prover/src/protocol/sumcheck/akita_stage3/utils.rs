@@ -18,7 +18,7 @@ pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_
     )
 }
 
-pub(super) fn product_clairelation_matrix_col_evals_compact<E: FieldCore + FromPrimitiveInt>(
+pub(super) fn product_claim_from_m_compact<E: FieldCore + FromPrimitiveInt>(
     digits: &[i8],
     padded_len: usize,
     left_factor: &[E],

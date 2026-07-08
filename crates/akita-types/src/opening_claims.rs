@@ -24,11 +24,6 @@ pub const MULTI_GROUP_ROOT_DENSE_UNSUPPORTED: &str =
 pub const MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED: &str =
     "multi-chunk witness layout with precommitted groups is not supported; see specs/multi-group-batching.md";
 
-/// Legacy multi-group-root unsupported message kept for stale-proof diagnostics.
-#[deprecated(note = "multi-group root-direct opening is supported for one-hot Direct setup")]
-pub const MULTI_GROUP_ROOT_UNSUPPORTED: &str =
-    "multi-group root batching is not supported yet; see specs/multi-group-batching.md";
-
 /// Return the multi-group-root rejection message, if the layout should be rejected.
 ///
 /// `includes_dense_polynomial` is `Some(true)` when the prover knows the batch

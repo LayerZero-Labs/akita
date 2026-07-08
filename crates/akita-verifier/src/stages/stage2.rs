@@ -309,7 +309,7 @@ where
         };
         let relation_oracle = w_eval * alpha_val * row_val;
         let trace_oracle = if let Some(trace) = &self.trace {
-            // Grouped roots carry the dense trace-weight table (per-group block
+            // Multi-group roots carry the dense trace-weight table (per-group block
             // geometry the closed form cannot express); scalar/recursive folds
             // use the succinct per-claim closed form.
             let trace_weight = if let Some(dense_evals) = &trace.dense_evals {

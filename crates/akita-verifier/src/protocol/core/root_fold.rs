@@ -299,7 +299,7 @@ where
 /// reduction and never terminates at the root. This builds one prepared opening
 /// point per group (mirroring the prover's `finish_prepared_fold` loop and its
 /// per-group padded-point absorbs), concatenates the group commitment rows in
-/// M-row (final-first) order, sizes the next witness from the grouped witness
+/// relation-matrix row (final-first) order, sizes the next witness from the grouped witness
 /// layout, and hands a per-group `PreparedFoldReplay` to [`verify_fold`].
 ///
 /// # Errors
@@ -380,7 +380,7 @@ where
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
 
-    // Concatenate group commitment rows in M-row (final-first) order, matching
+    // Concatenate group commitment rows in relation-matrix row (final-first) order, matching
     // the prover's `RingRelationProver` commitment-row concatenation and
     // `relation_rhs_layout_for` block order.
     let order = opening_batch.root_group_order()?;

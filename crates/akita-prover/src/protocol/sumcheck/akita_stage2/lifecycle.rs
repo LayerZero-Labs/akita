@@ -252,7 +252,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 WTable::Compact(w_compact) => w_compact,
                 WTable::Full(_) => panic!("two-round prefix can only build from compact witness"),
             };
-            let proof = build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact(
+            let proof = build_stage2_bivariate_skip_proof_from_m_compact(
                 w_compact,
                 &self.alpha_compact,
                 &self.relation_matrix_col_evals_compact,

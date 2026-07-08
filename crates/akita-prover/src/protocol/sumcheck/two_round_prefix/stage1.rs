@@ -116,10 +116,10 @@ pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> boo
 /// Returns `None` when there are fewer than two leading y-rounds to batch.
 #[tracing::instrument(
     skip_all,
-    name = "two_round_prefix::build_stage1_bivariate_skip_proof_frorelation_matrix_col_evals_compact"
+    name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_m_compact"
 )]
 #[cfg(test)]
-pub(crate) fn build_stage1_bivariate_skip_proof_frorelation_matrix_col_evals_compact<
+pub(crate) fn build_stage1_bivariate_skip_proof_from_m_compact<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     w_compact: &[i8],
@@ -196,10 +196,10 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                     for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
                         let base = 4 * y_quad;
                         let lookup_idx = stage1_b4_lookup_index_from_digits([
-                            stage1_b4_s_digit_frorelation_matrix_col_evals_compact_s(col[base]),
-                            stage1_b4_s_digit_frorelation_matrix_col_evals_compact_s(col[base + 1]),
-                            stage1_b4_s_digit_frorelation_matrix_col_evals_compact_s(col[base + 2]),
-                            stage1_b4_s_digit_frorelation_matrix_col_evals_compact_s(col[base + 3]),
+                            stage1_b4_s_digit_from_m_compact_s(col[base]),
+                            stage1_b4_s_digit_from_m_compact_s(col[base + 1]),
+                            stage1_b4_s_digit_from_m_compact_s(col[base + 2]),
+                            stage1_b4_s_digit_from_m_compact_s(col[base + 3]),
                         ]);
                         let weight = eq_x_weight * eq_y_weight;
                         accum_lookup_vector_signed(
@@ -240,10 +240,10 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                     for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
                         let base = 4 * y_quad;
                         let lookup_idx = stage1_b8_lookup_index_from_digits([
-                            stage1_b8_s_digit_frorelation_matrix_col_evals_compact_s(col[base]),
-                            stage1_b8_s_digit_frorelation_matrix_col_evals_compact_s(col[base + 1]),
-                            stage1_b8_s_digit_frorelation_matrix_col_evals_compact_s(col[base + 2]),
-                            stage1_b8_s_digit_frorelation_matrix_col_evals_compact_s(col[base + 3]),
+                            stage1_b8_s_digit_from_m_compact_s(col[base]),
+                            stage1_b8_s_digit_from_m_compact_s(col[base + 1]),
+                            stage1_b8_s_digit_from_m_compact_s(col[base + 2]),
+                            stage1_b8_s_digit_from_m_compact_s(col[base + 3]),
                         ]);
                         let weight = eq_x_weight * eq_y_weight;
                         accum_lookup_vector_signed(

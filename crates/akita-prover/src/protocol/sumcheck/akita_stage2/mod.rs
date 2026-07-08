@@ -63,8 +63,8 @@
 
 use super::fold_full_prefix_pair;
 use super::two_round_prefix::{
-    build_stage2_bivariate_skip_proof_frorelation_matrix_col_evals_compact,
-    can_use_stage2_two_round_prefix, Stage2BivariateSkipState,
+    build_stage2_bivariate_skip_proof_from_m_compact, can_use_stage2_two_round_prefix,
+    Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
 use akita_algebra::poly::trim_trailing_zeros;

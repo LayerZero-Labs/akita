@@ -17,10 +17,7 @@ pub(super) struct Stage2Params<'a> {
     ring_bits: usize,
 }
 
-fn s_claim_frorelation_matrix_col_evals_compact_rows(
-    w_compact: &[i8],
-    params: &Stage2Params<'_>,
-) -> F {
+fn s_claim_from_m_compact_rows(w_compact: &[i8], params: &Stage2Params<'_>) -> F {
     let padded = if params.live_x_cols == (1usize << params.col_bits) {
         w_compact.to_vec()
     } else {
@@ -41,7 +38,7 @@ fn s_claim_frorelation_matrix_col_evals_compact_rows(
     multilinear_eval(&s_evals, params.stage1_point).expect("valid stage-2 witness shape")
 }
 
-fn relation_claim_frorelation_matrix_col_evals_compact_rows(
+fn relation_claim_from_m_compact_rows(
     w_compact: &[i8],
     alpha_evals_y: &[F],
     relation_matrix_col_evals: &[F],
@@ -62,7 +59,7 @@ fn relation_claim_frorelation_matrix_col_evals_compact_rows(
     claim
 }
 
-fn trace_claim_frorelation_matrix_col_evals_compact_rows(
+fn trace_claim_from_m_compact_rows(
     w_compact: &[i8],
     trace_compact: &[F],
     params: &Stage2Params<'_>,
@@ -87,8 +84,8 @@ fn new_stage2_test_prover(
     relation_matrix_col_evals: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let s_claim = s_claim_frorelation_matrix_col_evals_compact_rows(&w_compact, &params);
-    let relation_claim = relation_claim_frorelation_matrix_col_evals_compact_rows(
+    let s_claim = s_claim_from_m_compact_rows(&w_compact, &params);
+    let relation_claim = relation_claim_from_m_compact_rows(
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
@@ -120,15 +117,14 @@ pub(super) fn new_stage2_test_prover_with_trace(
     trace_compact: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let s_claim = s_claim_frorelation_matrix_col_evals_compact_rows(&w_compact, &params);
-    let relation_claim = relation_claim_frorelation_matrix_col_evals_compact_rows(
+    let s_claim = s_claim_from_m_compact_rows(&w_compact, &params);
+    let relation_claim = relation_claim_from_m_compact_rows(
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
         &params,
     );
-    let trace_opening_claim =
-        trace_claim_frorelation_matrix_col_evals_compact_rows(&w_compact, &trace_compact, &params);
+    let trace_opening_claim = trace_claim_from_m_compact_rows(&w_compact, &trace_compact, &params);
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,
@@ -156,18 +152,15 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
     trace_claim_table: &[F],
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let s_claim = s_claim_frorelation_matrix_col_evals_compact_rows(&w_compact, &params);
-    let relation_claim = relation_claim_frorelation_matrix_col_evals_compact_rows(
+    let s_claim = s_claim_from_m_compact_rows(&w_compact, &params);
+    let relation_claim = relation_claim_from_m_compact_rows(
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
         &params,
     );
-    let trace_opening_claim = trace_claim_frorelation_matrix_col_evals_compact_rows(
-        &w_compact,
-        trace_claim_table,
-        &params,
-    );
+    let trace_opening_claim =
+        trace_claim_from_m_compact_rows(&w_compact, trace_claim_table, &params);
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,

@@ -27,7 +27,7 @@ same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
 - `num_polynomials`: the number of polynomials in the single commitment group,
   opened at the shared point (one claim per polynomial).
 
-Grouped roots use the same lookup key with any earlier groups recorded as
+Multi-group roots use the same lookup key with any earlier groups recorded as
 `PrecommittedGroupParams` in `precommitteds`. For the scalar same-point batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from

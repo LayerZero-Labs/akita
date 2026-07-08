@@ -20,7 +20,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftB
 
 /// Unified relation matrix column evaluation for singleton and multi-group root relations.
 ///
-/// Singleton roots use the scalar/chunked witness layout. Grouped roots use the
+/// Singleton roots use the scalar/chunked witness layout. Multi-group roots use the
 /// group-major layout and still reject multi-chunk witness emission.
 ///
 /// # Errors

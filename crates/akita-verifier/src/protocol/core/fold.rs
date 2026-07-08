@@ -389,7 +389,7 @@ enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
         trace_claim_scales: Option<Vec<E>>,
         opening_batch: OpeningClaimsLayout,
     },
-    GroupedRoot {
+    MultiGroupRoot {
         lp: &'a LevelParams,
         layout: akita_types::TraceWeightLayout,
         prepared_points: Vec<PreparedOpeningPoint<F, E>>,
@@ -452,7 +452,7 @@ where
                 trace_eval_target,
                 trace_claim_scales.as_deref(),
             ),
-            Self::GroupedRoot {
+            Self::MultiGroupRoot {
                 lp,
                 layout,
                 prepared_points,
@@ -792,7 +792,7 @@ where
             .as_ref()
             .ok_or(AkitaError::InvalidProof)?
             .clone();
-        Some(TraceWireAtRoleA::GroupedRoot {
+        Some(TraceWireAtRoleA::MultiGroupRoot {
             lp: prepared.lp,
             layout,
             prepared_points,
