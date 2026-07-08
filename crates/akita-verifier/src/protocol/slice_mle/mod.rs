@@ -16,7 +16,7 @@ mod structured_slice;
 
 pub(super) use akita_algebra::offset_eq::high_eq_window;
 pub(crate) use setup_contribution::SetupEvaluator;
-pub(crate) use setup_contribution::{SetupEvalPlan, SetupEvaluation, SetupEvaluatorMode};
+pub(crate) use setup_contribution::{SetupEvaluation, SetupEvaluatorMode};
 pub(super) use structured_slice::{
     compute_r_contribution, EStructuredSlicesEvaluator, StructuredSliceMleEvaluator,
     TStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,

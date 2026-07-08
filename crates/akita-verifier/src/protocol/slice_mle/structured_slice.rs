@@ -488,7 +488,7 @@ mod tests {
             ),
             a_evals: opening_point.a.clone(),
             chunk_range: 0..chunk_layout.chunks.len(),
-            e_setup_offset: 0,
+            e_col_offset: 0,
             num_claims,
             num_blocks,
             block_len,

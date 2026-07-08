@@ -2,7 +2,7 @@
 //! prover-side `AkitaStage3Prover`.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use crate::protocol::{SetupEvalPlan, SetupEvaluator};
+use crate::protocol::SetupEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
@@ -15,7 +15,7 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
     stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
-    SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    SetupContributionPlan, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -26,7 +26,7 @@ use akita_types::{
 /// evaluation, then call [`verify_batched_stage3`](Self::verify_batched_stage3)
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
-    plan: SetupEvalPlan<E>,
+    plan: SetupContributionPlan<E>,
     alpha_pows: Vec<E>,
     ring_bits: usize,
     rounds: usize,

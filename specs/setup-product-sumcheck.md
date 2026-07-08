@@ -161,7 +161,7 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
   evaluation, and call `verify(...)`. The verifier replays the
   `ExtensionOpeningReductionSumcheck`, then closes the final claim against
   `setup_val * omega * alpha_val`, where `omega` is the succinct `omega_S`
-  evaluation (`SetupEvalPlan::evaluate_bar_omega_with_eq`).
+  evaluation (`SetupContributionPlan::evaluate_bar_omega_with_eq`).
 - **Types** (`akita-types`): `SETUP_SUMCHECK_DEGREE` and the
   `SetupContributionMode` enum.
 - **Recursion harness** (`profile/akita-recursion`): the `--setup-mode` CLI flag

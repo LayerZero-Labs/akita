@@ -126,7 +126,7 @@ pub(crate) struct RingSwitchDeferredRowGroupEval<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
     pub(crate) a_evals: Vec<F>,
     pub(crate) chunk_range: Range<usize>,
-    pub(crate) e_setup_offset: usize,
+    pub(crate) e_col_offset: usize,
     pub(crate) num_claims: usize,
     pub(crate) num_blocks: usize,
     pub(crate) block_len: usize,
@@ -493,7 +493,7 @@ where
             c_alphas,
             a_evals,
             chunk_range: order_pos..order_pos + 1,
-            e_setup_offset: group_e_offsets[group_index],
+            e_col_offset: group_e_offsets[group_index],
             num_claims: k_g,
             num_blocks,
             block_len,
@@ -668,7 +668,7 @@ where
         c_alphas,
         a_evals,
         chunk_range: 0..chunk_layout.chunks.len(),
-        e_setup_offset: 0,
+        e_col_offset: 0,
         num_claims,
         num_blocks,
         block_len,
@@ -759,7 +759,7 @@ pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
                 chunk_layout.blocks_per_chunk
             };
             Ok(SetupContributionGroupInputs {
-                e_col_offset: group.e_setup_offset,
+                e_col_offset: group.e_col_offset,
                 num_claims: group.num_claims,
                 num_blocks: group.num_blocks,
                 block_len: group.block_len,
