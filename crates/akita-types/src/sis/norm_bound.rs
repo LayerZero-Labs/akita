@@ -337,7 +337,8 @@ pub fn committed_fold_collision_linf_bound(
         *cap_config,
     )
     .ok()?;
-    let z_verifier_linf_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
+    let z_verifier_linf_bound =
+        fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
     rounded_up_weak_binding_inf_norm(
         min_security_bits,
         sis_family,
