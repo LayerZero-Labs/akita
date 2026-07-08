@@ -430,8 +430,42 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 "setup contribution role alpha powers must be non-empty".into(),
             ));
         }
+        if d_a == d_b && d_b == d_d && alpha_pows_a == alpha_pows_b && alpha_pows_a == alpha_pows_d
+        {
+            return self.evaluate_uniform_direct(setup, alpha_pows_a, d_a);
+        }
 
         self.evaluate_packed_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d, d_a)
+    }
+
+    fn evaluate_uniform_direct<F>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        alpha_pows: &[E],
+        ring_d: usize,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let required = self.required()?;
+        let setup_len = setup.shared_matrix().total_ring_elements_at_dyn(ring_d)?;
+        if required > setup_len {
+            return Err(AkitaError::InvalidSetup(
+                "shared matrix is too small for selected verifier layout".into(),
+            ));
+        }
+        let setup_view = setup.shared_matrix().ring_view_dyn(1, setup_len, ring_d)?;
+        let mut acc = E::zero();
+        for group in &self.groups {
+            acc += group.evaluate_uniform_packed_direct(
+                &setup_view,
+                alpha_pows,
+                self.d_rows,
+                self.d_physical_cols,
+            )?;
+        }
+        Ok(acc)
     }
 
     fn evaluate_packed_direct<F>(
@@ -540,6 +574,60 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
+    fn evaluate_uniform_packed_direct<F>(
+        &self,
+        setup_view: &FlatRingMatrixView<'_, F>,
+        alpha_pows: &[E],
+        d_rows: usize,
+        d_physical_cols: usize,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let (required, segments) = self.packed_segments(d_rows, d_physical_cols)?;
+        if required > 0 {
+            setup_view.elem(0, required - 1)?;
+        }
+
+        let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
+            .map(|idx| {
+                let segment = &segments[idx];
+                macro_rules! segment_sum {
+                    ($has_d:literal, $has_b:literal, $has_a:literal) => {
+                        packed_uniform_group_slice_inner_sum::<F, E, $has_d, $has_b, $has_a>(
+                            segment.lo..segment.hi,
+                            setup_view,
+                            alpha_pows,
+                            segment.d_start_abs,
+                            segment.d_weight,
+                            &self.e_eq_slice,
+                            segment.b_start_abs,
+                            segment.b_weight,
+                            &self.t_eq_slice,
+                            segment.a_start_abs,
+                            segment.a_weight,
+                            &self.z_eq_slice,
+                        )
+                    };
+                }
+
+                match (segment.has_d, segment.has_b, segment.has_a) {
+                    (true, true, true) => segment_sum!(true, true, true),
+                    (true, true, false) => segment_sum!(true, true, false),
+                    (true, false, true) => segment_sum!(true, false, true),
+                    (false, true, true) => segment_sum!(false, true, true),
+                    (true, false, false) => segment_sum!(true, false, false),
+                    (false, true, false) => segment_sum!(false, true, false),
+                    (false, false, true) => segment_sum!(false, false, true),
+                    (false, false, false) => E::zero(),
+                }
+            })
+            .collect();
+
+        Ok(segment_sums.into_iter().sum())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn evaluate_packed_direct<F>(
         &self,
@@ -873,6 +961,56 @@ where
             }
             if !weight.is_zero() {
                 acc += eq_lambda[lambda] * weight;
+            }
+            acc
+        },
+        |lhs, rhs| lhs + rhs
+    )
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn packed_uniform_group_slice_inner_sum<
+    F,
+    E,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+>(
+    range: std::ops::Range<usize>,
+    setup_view: &FlatRingMatrixView<'_, F>,
+    alpha_pows: &[E],
+    d_start: usize,
+    d_weight: E,
+    e_eq: &[E],
+    b_start: usize,
+    b_weight: E,
+    t_eq: &[E],
+    a_start: usize,
+    a_weight: E,
+    z_eq: &[E],
+) -> E
+where
+    F: FieldCore,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    cfg_fold_reduce!(
+        range,
+        E::zero,
+        |mut acc, lambda| {
+            let mut weight = E::zero();
+            if HAS_D {
+                weight += d_weight * e_eq[lambda - d_start];
+            }
+            if HAS_B {
+                weight += b_weight * t_eq[lambda - b_start];
+            }
+            if HAS_A {
+                weight += a_weight * z_eq[lambda - a_start];
+            }
+            if !weight.is_zero() {
+                let coeffs = setup_view.elem_in_band(0, lambda);
+                acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, alpha_pows) * weight;
             }
             acc
         },
