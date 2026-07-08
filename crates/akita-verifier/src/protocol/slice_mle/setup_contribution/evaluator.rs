@@ -1,5 +1,3 @@
-#[cfg(test)]
-use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_types::{AkitaExpandedSetup, SetupContributionPlan};
 
@@ -44,37 +42,6 @@ where
     plan.evaluate_direct::<F>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
 }
 
-#[cfg(test)]
-pub(crate) fn evaluate_setup_contribution_recursive<F, E, const D: usize>(
-    relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
-    full_vec_randomness: &[E],
-    eq_low: Option<&[E]>,
-    z_block_low_eq: Option<&[E]>,
-    alpha_pows: &[E],
-    fold_gadget: &[F],
-    setup: &AkitaExpandedSetup<F>,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    if alpha_pows.len() != D {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: alpha_pows.len(),
-        });
-    }
-    let plan = SetupContributionPlan::prepare_single_group(
-        &relation_matrix_evaluator.setup_contribution_inputs,
-        full_vec_randomness,
-        eq_low,
-        z_block_low_eq,
-        fold_gadget,
-        &relation_matrix_evaluator.chunk_layout,
-    )?;
-    recursive_inner_product::<F, E, D>(&plan, setup, alpha_pows)
-}
-
 fn validate_role_alpha_pows<E: FieldCore>(
     relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
     alpha_pows_a: &[E],
@@ -103,31 +70,4 @@ fn validate_role_alpha_pows<E: FieldCore>(
         });
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn recursive_inner_product<F, E, const D: usize>(
-    plan: &SetupContributionPlan<E>,
-    setup: &AkitaExpandedSetup<F>,
-    alpha_pows: &[E],
-) -> Result<E, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let bar_omega = plan.materialize_bar_omega()?;
-    let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
-    if setup_len < bar_omega.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: bar_omega.len(),
-            actual: setup_len,
-        });
-    }
-    let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
-    Ok(setup_view
-        .as_slice()
-        .iter()
-        .zip(bar_omega)
-        .map(|(ring, weight)| eval_ring_at_pows(ring, alpha_pows) * weight)
-        .sum())
 }

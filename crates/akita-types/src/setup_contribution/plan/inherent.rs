@@ -64,6 +64,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         F: FieldCore + CanonicalField,
         E: MulBase<F>,
     {
+        let _span = tracing::info_span!("setup_prepare_plan").entered();
         if static_plan.groups.len() != groups.len() {
             return Err(AkitaError::InvalidSize {
                 expected: groups.len(),
@@ -75,28 +76,34 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .iter()
             .zip(groups)
             .map(|(static_group, group)| {
-                let e_eq_slice = setup_e_col_weights::<E>(
-                    &group.chunks,
-                    group.blocks_per_chunk,
-                    group.num_blocks,
-                    group.num_claims,
-                    group.depth_open,
-                    full_vec_randomness,
-                    eq_low,
-                )?;
-                let t_eq_slice = setup_t_col_weights::<E>(
-                    &group.chunks,
-                    group.blocks_per_chunk,
-                    group.depth_open,
-                    group.n_a,
-                    group.t_cols_per_vector,
-                    group.num_claims,
-                    group.num_claims,
-                    0,
-                    group.num_claims,
-                    full_vec_randomness,
-                    eq_low,
-                )?;
+                let e_eq_slice = {
+                    let _span = tracing::info_span!("setup_prepare_e_weights").entered();
+                    setup_e_col_weights::<E>(
+                        &group.chunks,
+                        group.blocks_per_chunk,
+                        group.num_blocks,
+                        group.num_claims,
+                        group.depth_open,
+                        full_vec_randomness,
+                        eq_low,
+                    )?
+                };
+                let t_eq_slice = {
+                    let _span = tracing::info_span!("setup_prepare_t_weights").entered();
+                    setup_t_col_weights::<E>(
+                        &group.chunks,
+                        group.blocks_per_chunk,
+                        group.depth_open,
+                        group.n_a,
+                        group.t_cols_per_vector,
+                        group.num_claims,
+                        group.num_claims,
+                        0,
+                        group.num_claims,
+                        full_vec_randomness,
+                        eq_low,
+                    )?
+                };
                 let fold_gadget_storage;
                 let fold_gadget = if let Some(fold_gadget) = fold_gadget {
                     if fold_gadget.len() < group.depth_fold {
@@ -113,8 +120,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 };
                 let z_range = checked_mul(group.block_len, group.depth_commit, "setup Z range")?;
                 let mut z_eq_slice = vec![E::zero(); z_range];
-                for chunk in &group.chunks {
-                    let per_chunk = setup_z_col_weights_for_offset::<F, E>(
+                {
+                    let _span = tracing::info_span!("setup_prepare_z_weights").entered();
+                    setup_z_col_weights::<F, E>(
+                        &group.chunks,
                         group.block_len,
                         group.depth_commit,
                         group.depth_fold,
@@ -122,25 +131,39 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         full_vec_randomness,
                         z_block_low_eq,
                         fold_gadget,
-                        chunk.offset_z,
-                        z_range,
+                        &mut z_eq_slice,
                     )?;
-                    for (dst, src) in z_eq_slice.iter_mut().zip(per_chunk) {
-                        *dst += src;
-                    }
                 }
+                let a_weights = static_group.a_weights.clone();
+                let b_weights = static_group.b_weights.clone();
+                let d_weights = static_plan.d_weights.clone();
+                let (required, segments) = build_packed_segments(
+                    static_group.e_col_offset,
+                    e_eq_slice.len(),
+                    static_group.t_cols,
+                    static_group.z_cols,
+                    static_group.n_a,
+                    static_group.n_b,
+                    &a_weights,
+                    &b_weights,
+                    &d_weights,
+                    static_plan.d_rows,
+                    static_plan.d_physical_cols,
+                )?;
                 Ok(SetupContributionGroupPlan {
                     e_col_offset: static_group.e_col_offset,
                     t_cols: static_group.t_cols,
                     z_cols: static_group.z_cols,
                     n_a: static_group.n_a,
                     n_b: static_group.n_b,
+                    required,
+                    segments,
                     e_eq_slice,
                     t_eq_slice,
                     z_eq_slice,
-                    a_weights: static_group.a_weights.clone(),
-                    b_weights: static_group.b_weights.clone(),
-                    d_weights: static_plan.d_weights.clone(),
+                    a_weights,
+                    b_weights,
+                    d_weights,
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -223,13 +246,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     /// Packed-scan footprint length: max over groups of each role's `rows * cols`.
     /// `D` rows/cols are plan-level (shared); `B`/`A` are per-group.
     pub fn required(&self) -> Result<usize, AkitaError> {
-        let mut required = checked_mul(self.d_rows, self.d_physical_cols, "setup D footprint")?;
-        for group in &self.groups {
-            let b_required = checked_mul(group.n_b, group.t_cols, "setup B footprint")?;
-            let a_required = checked_mul(group.n_a, group.z_cols, "setup A footprint")?;
-            required = required.max(b_required).max(a_required);
-        }
-        Ok(required)
+        self.groups
+            .iter()
+            .map(|group| group.required)
+            .max()
+            .ok_or_else(|| AkitaError::InvalidSetup("setup contribution has no groups".into()))
     }
 
     /// Dense per-position setup weights over the shared setup vector. Each group
@@ -241,10 +262,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let mut bar_omega = vec![E::zero(); required];
         for group in &self.groups {
             let (_, segments) = group.packed_segments(self.d_rows, self.d_physical_cols)?;
-            let segment_values = cfg_into_iter!(segments)
-                .map(|segment| {
+            let segment_values = cfg_into_iter!(0..segments.len())
+                .map(|idx| {
+                    let segment = &segments[idx];
                     let values = (segment.lo..segment.hi)
-                        .map(|lambda| group.weight_at(lambda, &segment))
+                        .map(|lambda| group.weight_at(lambda, segment))
                         .collect::<Vec<_>>();
                     (segment.lo, values)
                 })
@@ -900,7 +922,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             self.n_a,
             self.z_cols,
             a_flat.len(),
-            &segments,
+            segments,
         )?;
 
         let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
@@ -971,137 +993,195 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         weight
     }
 
+    #[cfg(test)]
+    pub(crate) fn refresh_cached_segments(
+        &mut self,
+        d_rows: usize,
+        d_physical_cols: usize,
+    ) -> Result<(), AkitaError> {
+        let (required, segments) = build_packed_segments(
+            self.e_col_offset,
+            self.e_eq_slice.len(),
+            self.t_cols,
+            self.z_cols,
+            self.n_a,
+            self.n_b,
+            &self.a_weights,
+            &self.b_weights,
+            &self.d_weights,
+            d_rows,
+            d_physical_cols,
+        )?;
+        self.required = required;
+        self.segments = segments;
+        Ok(())
+    }
+
     fn packed_segments(
         &self,
         d_rows: usize,
         d_physical_cols: usize,
-    ) -> Result<(usize, Vec<GroupSetupSegment<E>>), AkitaError> {
-        if self.d_weights.len() != d_rows {
-            return Err(AkitaError::InvalidSize {
-                expected: d_rows,
-                actual: self.d_weights.len(),
-            });
-        }
-        if self.a_weights.len() != self.n_a {
-            return Err(AkitaError::InvalidSize {
-                expected: self.n_a,
-                actual: self.a_weights.len(),
-            });
-        }
-        if self.b_weights.len() != self.n_b {
-            return Err(AkitaError::InvalidSize {
-                expected: self.n_b,
-                actual: self.b_weights.len(),
-            });
-        }
-        if self.t_eq_slice.len() != self.t_cols {
-            return Err(AkitaError::InvalidSize {
-                expected: self.t_cols,
-                actual: self.t_eq_slice.len(),
-            });
-        }
-        if self.z_eq_slice.len() != self.z_cols {
-            return Err(AkitaError::InvalidSize {
-                expected: self.z_cols,
-                actual: self.z_eq_slice.len(),
-            });
-        }
-        let e_end = checked_add(
-            self.e_col_offset,
-            self.e_eq_slice.len(),
-            "setup D footprint",
-        )?;
-        if e_end > d_physical_cols {
-            return Err(AkitaError::InvalidSetup(
-                "setup D weights exceed physical D width".into(),
-            ));
-        }
-
-        let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
-        let b_required = checked_mul(self.n_b, self.t_cols, "setup B footprint")?;
-        let a_required = checked_mul(self.n_a, self.z_cols, "setup A footprint")?;
-        let required = d_required.max(b_required).max(a_required);
-
-        let mut endpoints = Vec::new();
-        endpoints.push(0);
-        endpoints.push(required);
-        push_group_d_boundaries(
-            &mut endpoints,
-            d_rows,
-            d_physical_cols,
-            self.e_col_offset,
-            self.e_eq_slice.len(),
-        )?;
-        push_role_boundaries(&mut endpoints, self.n_b, self.t_cols, "B")?;
-        push_role_boundaries(&mut endpoints, self.n_a, self.z_cols, "A")?;
-        endpoints.sort_unstable();
-        endpoints.dedup();
-
-        let segments = (0..endpoints.len().saturating_sub(1))
-            .filter_map(|idx| {
-                let lo = endpoints[idx];
-                let hi = endpoints[idx + 1];
-                if lo == hi {
-                    return None;
-                }
-
-                let has_d =
-                    if d_physical_cols == 0 || self.e_eq_slice.is_empty() || lo >= d_required {
-                        false
-                    } else {
-                        let d_col = lo % d_physical_cols;
-                        d_col >= self.e_col_offset && d_col < e_end
-                    };
-                let d_row = if has_d { lo / d_physical_cols } else { 0 };
-                let d_start_abs = if has_d {
-                    d_row * d_physical_cols + self.e_col_offset
-                } else {
-                    0
-                };
-                let d_weight = if has_d {
-                    self.d_weights[d_row]
-                } else {
-                    E::zero()
-                };
-
-                let has_b = self.t_cols != 0 && lo < b_required;
-                let b_row = if has_b { lo / self.t_cols } else { 0 };
-                let b_start_abs = if has_b { b_row * self.t_cols } else { 0 };
-                let b_weight = if has_b {
-                    self.b_weights[b_row]
-                } else {
-                    E::zero()
-                };
-
-                let has_a = self.z_cols != 0 && lo < a_required;
-                let a_row = if has_a { lo / self.z_cols } else { 0 };
-                let a_start_abs = if has_a { a_row * self.z_cols } else { 0 };
-                let a_weight = if has_a {
-                    self.a_weights[a_row]
-                } else {
-                    E::zero()
-                };
-
-                if !has_d && !has_b && !has_a {
-                    return None;
-                }
-
-                Some(GroupSetupSegment {
-                    lo,
-                    hi,
-                    has_d,
-                    d_start_abs,
-                    d_weight,
-                    has_b,
-                    b_start_abs,
-                    b_weight,
-                    has_a,
-                    a_start_abs,
-                    a_weight,
-                })
-            })
-            .collect();
-
-        Ok((required, segments))
+    ) -> Result<(usize, &[GroupSetupSegment<E>]), AkitaError> {
+        debug_assert_eq!(self.d_weights.len(), d_rows);
+        debug_assert_eq!(self.a_weights.len(), self.n_a);
+        debug_assert_eq!(self.b_weights.len(), self.n_b);
+        debug_assert_eq!(self.t_eq_slice.len(), self.t_cols);
+        debug_assert_eq!(self.z_eq_slice.len(), self.z_cols);
+        debug_assert!(
+            self.e_col_offset.saturating_add(self.e_eq_slice.len()) <= d_physical_cols
+        );
+        debug_assert_eq!(
+            self.required,
+            setup_group_required(
+                d_rows,
+                d_physical_cols,
+                self.n_b,
+                self.t_cols,
+                self.n_a,
+                self.z_cols,
+            )?
+        );
+        Ok((self.required, &self.segments))
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn setup_group_required(
+    d_rows: usize,
+    d_physical_cols: usize,
+    n_b: usize,
+    t_cols: usize,
+    n_a: usize,
+    z_cols: usize,
+) -> Result<usize, AkitaError> {
+    let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
+    let b_required = checked_mul(n_b, t_cols, "setup B footprint")?;
+    let a_required = checked_mul(n_a, z_cols, "setup A footprint")?;
+    Ok(d_required.max(b_required).max(a_required))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_packed_segments<E: FieldCore>(
+    e_col_offset: usize,
+    e_eq_len: usize,
+    t_cols: usize,
+    z_cols: usize,
+    n_a: usize,
+    n_b: usize,
+    a_weights: &[E],
+    b_weights: &[E],
+    d_weights: &[E],
+    d_rows: usize,
+    d_physical_cols: usize,
+) -> Result<(usize, Vec<GroupSetupSegment<E>>), AkitaError> {
+    if d_weights.len() != d_rows {
+        return Err(AkitaError::InvalidSize {
+            expected: d_rows,
+            actual: d_weights.len(),
+        });
+    }
+    if a_weights.len() != n_a {
+        return Err(AkitaError::InvalidSize {
+            expected: n_a,
+            actual: a_weights.len(),
+        });
+    }
+    if b_weights.len() != n_b {
+        return Err(AkitaError::InvalidSize {
+            expected: n_b,
+            actual: b_weights.len(),
+        });
+    }
+    let e_end = checked_add(e_col_offset, e_eq_len, "setup D footprint")?;
+    if e_end > d_physical_cols {
+        return Err(AkitaError::InvalidSetup(
+            "setup D weights exceed physical D width".into(),
+        ));
+    }
+
+    let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
+    let b_required = checked_mul(n_b, t_cols, "setup B footprint")?;
+    let a_required = checked_mul(n_a, z_cols, "setup A footprint")?;
+    let required = d_required.max(b_required).max(a_required);
+
+    let mut endpoints = Vec::new();
+    endpoints.push(0);
+    endpoints.push(required);
+    push_group_d_boundaries(
+        &mut endpoints,
+        d_rows,
+        d_physical_cols,
+        e_col_offset,
+        e_eq_len,
+    )?;
+    push_role_boundaries(&mut endpoints, n_b, t_cols, "B")?;
+    push_role_boundaries(&mut endpoints, n_a, z_cols, "A")?;
+    endpoints.sort_unstable();
+    endpoints.dedup();
+
+    let segments = (0..endpoints.len().saturating_sub(1))
+        .filter_map(|idx| {
+            let lo = endpoints[idx];
+            let hi = endpoints[idx + 1];
+            if lo == hi {
+                return None;
+            }
+
+            let has_d = if d_physical_cols == 0 || e_eq_len == 0 || lo >= d_required {
+                false
+            } else {
+                let d_col = lo % d_physical_cols;
+                d_col >= e_col_offset && d_col < e_end
+            };
+            let d_row = if has_d { lo / d_physical_cols } else { 0 };
+            let d_start_abs = if has_d {
+                d_row * d_physical_cols + e_col_offset
+            } else {
+                0
+            };
+            let d_weight = if has_d {
+                d_weights[d_row]
+            } else {
+                E::zero()
+            };
+
+            let has_b = t_cols != 0 && lo < b_required;
+            let b_row = if has_b { lo / t_cols } else { 0 };
+            let b_start_abs = if has_b { b_row * t_cols } else { 0 };
+            let b_weight = if has_b {
+                b_weights[b_row]
+            } else {
+                E::zero()
+            };
+
+            let has_a = z_cols != 0 && lo < a_required;
+            let a_row = if has_a { lo / z_cols } else { 0 };
+            let a_start_abs = if has_a { a_row * z_cols } else { 0 };
+            let a_weight = if has_a {
+                a_weights[a_row]
+            } else {
+                E::zero()
+            };
+
+            if !has_d && !has_b && !has_a {
+                return None;
+            }
+
+            Some(GroupSetupSegment {
+                lo,
+                hi,
+                has_d,
+                d_start_abs,
+                d_weight,
+                has_b,
+                b_start_abs,
+                b_weight,
+                has_a,
+                a_start_abs,
+                a_weight,
+            })
+        })
+        .collect();
+
+    Ok((required, segments))
 }

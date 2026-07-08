@@ -15,6 +15,15 @@ fn test_scalar(value: u128) -> F {
     F::from_canonical_u128(value)
 }
 
+fn finalize_test_plan(mut plan: SetupContributionPlan<F>) -> SetupContributionPlan<F> {
+    for group in &mut plan.groups {
+        group
+            .refresh_cached_segments(plan.d_rows, plan.d_physical_cols)
+            .expect("valid cached setup scan segments");
+    }
+    plan
+}
+
 #[test]
 fn dense_z_eq_slice_uses_relative_high_carry() {
     let block_len = 12;
@@ -224,7 +233,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
 
 #[test]
 fn packed_direct_matches_row_fallback_with_d_offset() {
-    let plan = SetupContributionPlan {
+    let plan = finalize_test_plan(SetupContributionPlan {
         d_rows: 2,
         d_physical_cols: 5,
         groups: vec![SetupContributionGroupPlan {
@@ -233,6 +242,8 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
             z_cols: 3,
             n_a: 2,
             n_b: 2,
+            required: 0,
+            segments: Vec::new(),
             e_eq_slice: vec![test_scalar(2), test_scalar(3)],
             t_eq_slice: vec![
                 test_scalar(5),
@@ -245,7 +256,7 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
             b_weights: vec![test_scalar(37), test_scalar(41)],
             d_weights: vec![test_scalar(43), test_scalar(47)],
         }],
-    };
+    });
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -274,7 +285,7 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
 
 #[test]
 fn multi_group_packed_direct_matches_row_fallback() {
-    let plan = SetupContributionPlan {
+    let plan = finalize_test_plan(SetupContributionPlan {
         d_rows: 2,
         d_physical_cols: 5,
         groups: vec![
@@ -284,6 +295,8 @@ fn multi_group_packed_direct_matches_row_fallback() {
                 z_cols: 3,
                 n_a: 2,
                 n_b: 2,
+                required: 0,
+                segments: Vec::new(),
                 e_eq_slice: vec![test_scalar(2), test_scalar(3)],
                 t_eq_slice: vec![
                     test_scalar(5),
@@ -302,6 +315,8 @@ fn multi_group_packed_direct_matches_row_fallback() {
                 z_cols: 3,
                 n_a: 2,
                 n_b: 2,
+                required: 0,
+                segments: Vec::new(),
                 e_eq_slice: vec![test_scalar(53), test_scalar(59)],
                 t_eq_slice: vec![
                     test_scalar(61),
@@ -315,7 +330,7 @@ fn multi_group_packed_direct_matches_row_fallback() {
                 d_weights: vec![test_scalar(109), test_scalar(113)],
             },
         ],
-    };
+    });
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -356,7 +371,7 @@ fn multi_group_packed_direct_matches_row_fallback() {
 
 #[test]
 fn packed_direct_matches_row_fallback_with_nested_role_dims() {
-    let plan = SetupContributionPlan {
+    let plan = finalize_test_plan(SetupContributionPlan {
         d_rows: 2,
         d_physical_cols: 5,
         groups: vec![SetupContributionGroupPlan {
@@ -365,6 +380,8 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
             z_cols: 3,
             n_a: 2,
             n_b: 2,
+            required: 0,
+            segments: Vec::new(),
             e_eq_slice: vec![test_scalar(2), test_scalar(3)],
             t_eq_slice: vec![
                 test_scalar(5),
@@ -377,7 +394,7 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
             b_weights: vec![test_scalar(37), test_scalar(41)],
             d_weights: vec![test_scalar(43), test_scalar(47)],
         }],
-    };
+    });
     const D: usize = 64;
     const D_B: usize = 32;
     const D_D: usize = 32;
@@ -415,7 +432,7 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
     // D-role columns are counted at d_d; comparing `required` against
     // total_ring_elements_at_dyn(d_a) falsely rejects valid setups when
     // d_d < d_a and the D footprint dominates.
-    let plan = SetupContributionPlan {
+    let plan = finalize_test_plan(SetupContributionPlan {
         d_rows: 2,
         d_physical_cols: 11,
         groups: vec![SetupContributionGroupPlan {
@@ -424,6 +441,8 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
             z_cols: 3,
             n_a: 2,
             n_b: 2,
+            required: 0,
+            segments: Vec::new(),
             e_eq_slice: vec![test_scalar(2), test_scalar(3)],
             t_eq_slice: vec![
                 test_scalar(5),
@@ -436,7 +455,7 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
             b_weights: vec![test_scalar(37), test_scalar(41)],
             d_weights: vec![test_scalar(43), test_scalar(47)],
         }],
-    };
+    });
     const D_A: usize = 64;
     const D_B: usize = 64;
     const D_D: usize = 32;
@@ -471,7 +490,7 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
 
 #[test]
 fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
-    let plan = SetupContributionPlan {
+    let plan = finalize_test_plan(SetupContributionPlan {
         d_rows: 2,
         d_physical_cols: 5,
         groups: vec![
@@ -481,6 +500,8 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                 z_cols: 3,
                 n_a: 2,
                 n_b: 2,
+                required: 0,
+                segments: Vec::new(),
                 e_eq_slice: vec![test_scalar(2), test_scalar(3)],
                 t_eq_slice: vec![
                     test_scalar(5),
@@ -499,6 +520,8 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                 z_cols: 3,
                 n_a: 2,
                 n_b: 2,
+                required: 0,
+                segments: Vec::new(),
                 e_eq_slice: vec![test_scalar(53), test_scalar(59)],
                 t_eq_slice: vec![
                     test_scalar(61),
@@ -514,7 +537,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                 d_weights: vec![test_scalar(127), test_scalar(131)],
             },
         ],
-    };
+    });
     let setup_len = 12;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {

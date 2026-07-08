@@ -9,7 +9,7 @@ use akita_field::{
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
-    CleartextWitnessProof, FpExtEncoding, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
+    CleartextWitnessProof, FpExtEncoding, TraceClaim,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -166,8 +166,6 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
-    opening_point: &'a RingOpeningPoint<F>,
-    ring_multiplier_point: &'a RingMultiplierOpeningPoint<F>,
     alpha: E,
     col_bits: usize,
     ring_bits: usize,
@@ -194,8 +192,6 @@ where
         relation_matrix_evaluator: RelationMatrixEvaluator<E>,
         setup_claim: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
-        opening_point: &'a RingOpeningPoint<F>,
-        ring_multiplier_point: &'a RingMultiplierOpeningPoint<F>,
         relation_claim: E,
         alpha: E,
         col_bits: usize,
@@ -234,8 +230,6 @@ where
             relation_matrix_evaluator,
             setup_claim,
             setup,
-            opening_point,
-            ring_multiplier_point,
             alpha,
             col_bits,
             ring_bits,
@@ -265,8 +259,6 @@ where
         self.relation_matrix_evaluator.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
-            self.opening_point,
-            self.ring_multiplier_point,
             self.alpha,
             self.setup_claim,
         )

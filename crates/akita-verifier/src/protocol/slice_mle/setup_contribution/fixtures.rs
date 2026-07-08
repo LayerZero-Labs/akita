@@ -3,7 +3,7 @@
 #![allow(unreachable_pub)]
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::scalar_powers;
+use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
@@ -12,14 +12,14 @@ use akita_types::{
     WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
 
-use super::{evaluate_setup_contribution_direct, evaluate_setup_contribution_recursive};
+use super::evaluate_setup_contribution_direct;
 use crate::protocol::ring_switch::{
     build_setup_contribution_groups, PreparedChallengeEvals, RelationMatrixEvaluator,
     RelationMatrixGroupEvaluator,
 };
 
 pub(crate) type TestField = Prime128OffsetA7F7;
-pub(crate) const TEST_RING_DIM: usize = 32;
+pub(crate) const TEST_RING_DIM: usize = 64;
 
 pub(crate) fn test_scalar(value: u128) -> TestField {
     TestField::from_canonical_u128_reduced(value)
@@ -295,25 +295,45 @@ impl SetupContributionFixture {
         .unwrap()
     }
 
-    pub fn recursive_contribution(&self) -> TestField {
-        evaluate_setup_contribution_recursive::<TestField, TestField, TEST_RING_DIM>(
-            &self.relation_matrix_evaluator,
+    pub fn materialized_contribution(&self) -> TestField {
+        let plan = SetupContributionPlan::finish_plan::<TestField>(
+            &self.relation_matrix_evaluator.setup_contribution_static,
             &self.full_vec_randomness,
-            None,
-            None,
-            &self.alpha_pows,
-            &self.fold_gadget,
-            &self.setup,
+            Some(&self.eq_low),
+            Some(&self.z_block_low_eq),
+            Some(&self.fold_gadget),
+            &self.relation_matrix_evaluator.setup_contribution_groups,
         )
-        .unwrap()
+        .unwrap();
+        let bar_omega = plan.materialize_bar_omega().unwrap();
+        let setup_len = self
+            .setup
+            .shared_matrix()
+            .total_ring_elements_at::<TEST_RING_DIM>()
+            .unwrap();
+        assert!(
+            setup_len >= bar_omega.len(),
+            "fixture setup must cover materialized setup weights"
+        );
+        let setup_view = self
+            .setup
+            .shared_matrix()
+            .ring_view::<TEST_RING_DIM>(1, setup_len)
+            .unwrap();
+        setup_view
+            .as_slice()
+            .iter()
+            .zip(bar_omega)
+            .map(|(ring, weight)| eval_ring_at_pows(ring, &self.alpha_pows) * weight)
+            .sum()
     }
 
-    pub fn assert_direct_matches_recursive(&self) {
+    pub fn assert_direct_matches_materialized(&self) {
         let got = self.compute_contribution();
-        let recursive = self.recursive_contribution();
+        let expected = self.materialized_contribution();
         assert_eq!(
-            got, recursive,
-            "packed setup contribution must equal recursive setup contribution"
+            got, expected,
+            "packed setup contribution must equal materialized setup contribution"
         );
     }
 

@@ -1,3 +1,4 @@
+use super::segment::GroupSetupSegment;
 use crate::WitnessChunkLayout;
 
 #[derive(Clone)]
@@ -51,6 +52,8 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
     pub(crate) n_b: usize,
+    pub(crate) required: usize,
+    pub(crate) segments: Vec<GroupSetupSegment<E>>,
     pub(crate) e_eq_slice: Vec<E>,
     pub(crate) t_eq_slice: Vec<E>,
     pub(crate) z_eq_slice: Vec<E>,

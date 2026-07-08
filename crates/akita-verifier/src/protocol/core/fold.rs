@@ -332,8 +332,6 @@ fn verify_stage2<F, E, T>(
     lp: &LevelParams,
     num_segments: usize,
     setup_claim: Option<E>,
-    ring_opening_point: &RingOpeningPoint<F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     trace: Option<TraceWireAtRoleA<'_, F, E>>,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -360,8 +358,6 @@ where
             relation_claim,
             witness_oracle,
             setup_claim,
-            ring_opening_point,
-            ring_multiplier_point,
             trace.map(|wire| wire.into_claim::<D>()).transpose()?,
         )
     })
@@ -487,8 +483,6 @@ fn verify_stage2_kernel<F, E, T, const D: usize>(
     relation_claim: E,
     witness_oracle: Stage2WitnessOracle<'_, F, E>,
     setup_claim: Option<E>,
-    ring_opening_point: &RingOpeningPoint<F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     trace: Option<TraceClaim<F, E, D>>,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -505,8 +499,6 @@ where
         rs.relation_matrix_evaluator.clone(),
         setup_claim,
         &setup.expanded,
-        ring_opening_point,
-        ring_multiplier_point,
         relation_claim,
         rs.alpha,
         rs.col_bits,
@@ -851,8 +843,6 @@ where
         prepared.lp,
         num_groups,
         setup_claim,
-        relation_instance.group_opening_point(0)?,
-        relation_instance.group_ring_multiplier_point(0)?,
         trace_wire,
     )?;
     let stage2_next_w_eval = if prepared.stage3.is_some() {

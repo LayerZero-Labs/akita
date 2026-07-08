@@ -12,6 +12,7 @@ const POSSIBLE_CARRIES: usize = 2;
 /// per-chunk high-eq window based at each chunk's `ê` offset. The `ê` block is
 /// setup-shared across commitment groups, so callers pass the same scalars
 /// regardless of group layout.
+#[inline(always)]
 pub(crate) fn setup_e_col_weights<E: FieldCore>(
     chunks: &[crate::WitnessChunkLayout],
     blocks_per_chunk: usize,
@@ -79,6 +80,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
 /// while the multi-group builder is per-group (`vector_base = 0`, stride = the
 /// group's t-vector count).
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 pub(crate) fn setup_t_col_weights<E: FieldCore>(
     chunks: &[crate::WitnessChunkLayout],
     blocks_per_chunk: usize,
@@ -148,15 +150,16 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
         .collect())
 }
 
-/// Canonical `A·ẑ` column eq-weights for one chunk's replicated `ẑ` placed at
-/// `offset_z`, shared by the single-group and multi-group setup builders. Callers sum the
-/// result over chunks into `Z_comb`. `num_fold_groups` is the number of
+/// Canonical `A·ẑ` column eq-weights for chunk-replicated `ẑ`, shared by the
+/// single-group and multi-group setup builders. `num_fold_groups` is the number of
 /// point-blocks folded into a single `ẑ` slice: the single-group path folds all
 /// commitment groups (`num_fold_groups = num_groups`), the multi-group builder is
 /// per-group (`num_fold_groups = 1`). Handles both the power-of-two `block_len`
 /// fast path and the dense fallback.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn setup_z_col_weights_for_offset<F, E>(
+#[inline(always)]
+pub(crate) fn setup_z_col_weights<F, E>(
+    chunks: &[crate::WitnessChunkLayout],
     block_len: usize,
     depth_commit: usize,
     depth_fold: usize,
@@ -164,13 +167,24 @@ pub(crate) fn setup_z_col_weights_for_offset<F, E>(
     full_vec_randomness: &[E],
     z_block_low_eq: Option<&[E]>,
     fold_gadget: &[F],
-    offset_z: usize,
-    z_range: usize,
-) -> Result<Vec<E>, AkitaError>
+    z_weights: &mut [E],
+) -> Result<(), AkitaError>
 where
     F: FieldCore,
     E: MulBase<F>,
 {
+    if chunks.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "setup Z weights require at least one witness chunk".into(),
+        ));
+    }
+    let z_range = checked_mul(block_len, depth_commit, "setup Z range")?;
+    if z_weights.len() != z_range {
+        return Err(AkitaError::InvalidSize {
+            expected: z_range,
+            actual: z_weights.len(),
+        });
+    }
     if block_len.is_power_of_two() {
         let z_bits = block_len.trailing_zeros() as usize;
         if z_bits > full_vec_randomness.len() {
@@ -198,40 +212,48 @@ where
             num_fold_groups,
             "Z high width",
         )?;
-        let eq_high = high_eq_window(high_challenges, offset_z >> z_bits, high_len);
         let low_mask = block_len - 1;
-        let offset_low = offset_z & low_mask;
-        let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = (0..depth_commit)
-            .map(|dc| {
-                let mut s = [E::zero(); POSSIBLE_CARRIES];
-                for (carry_slot, slot) in s.iter_mut().enumerate() {
-                    let mut acc = E::zero();
-                    for (df, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
-                        for pt in 0..num_fold_groups {
-                            let high_idx = pt
-                                + num_fold_groups * df
-                                + num_fold_groups * depth_fold * dc
-                                + carry_slot;
-                            acc += eq_high[high_idx].mul_base(fold);
+        let chunk_summaries: Vec<(usize, Vec<[E; POSSIBLE_CARRIES]>)> = chunks
+            .iter()
+            .map(|chunk| {
+                let eq_high = high_eq_window(high_challenges, chunk.offset_z >> z_bits, high_len);
+                let s_per_dc_per_carry = (0..depth_commit)
+                    .map(|dc| {
+                        let mut s = [E::zero(); POSSIBLE_CARRIES];
+                        for (carry_slot, slot) in s.iter_mut().enumerate() {
+                            let mut acc = E::zero();
+                            for (df, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
+                                for pt in 0..num_fold_groups {
+                                    let high_idx = pt
+                                        + num_fold_groups * df
+                                        + num_fold_groups * depth_fold * dc
+                                        + carry_slot;
+                                    acc += eq_high[high_idx].mul_base(fold);
+                                }
+                            }
+                            *slot = -acc;
                         }
-                    }
-                    *slot = -acc;
-                }
-                s
+                        s
+                    })
+                    .collect();
+                (chunk.offset_z & low_mask, s_per_dc_per_carry)
             })
             .collect();
-        Ok(cfg_into_iter!(0..z_range)
-            .map(|k| {
+        cfg_iter_mut!(z_weights)
+            .enumerate()
+            .try_for_each(|(k, dst)| {
                 let block_idx = k / depth_commit;
                 let dc = k % depth_commit;
-                let shifted = offset_low + block_idx;
-                let low_idx = shifted & low_mask;
-                let carry = shifted >> z_bits;
-                let low = eq_low[low_idx];
-                let high = s_per_dc_per_carry[dc][carry];
-                low * high
+                let mut weight = E::zero();
+                for (offset_low, s_per_dc_per_carry) in &chunk_summaries {
+                    let shifted = *offset_low + block_idx;
+                    let low_idx = shifted & low_mask;
+                    let carry = shifted >> z_bits;
+                    weight += eq_low[low_idx] * s_per_dc_per_carry[dc][carry];
+                }
+                *dst += weight;
+                Ok(())
             })
-            .collect())
     } else {
         let z_len = checked_mul(
             checked_mul(depth_fold, depth_commit, "dense Z length")?,
@@ -255,53 +277,41 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("dense Z eq width overflow".into()))?
             - 1;
         let eq_low = EqPolynomial::evals(&full_vec_randomness[..low_bits])?;
-        let offset_low = offset_z & low_mask;
-        let offset_high = offset_z >> low_bits;
-        let max_high = checked_add(offset_z, z_len, "dense Z end")?
-            .checked_sub(1)
-            .ok_or(AkitaError::InvalidProof)?
-            >> low_bits;
-        let eq_high: Vec<E> = (offset_high..=max_high)
-            .map(|idx| eq_eval_at_index(&full_vec_randomness[low_bits..], idx))
-            .collect();
-        cfg_into_iter!(0..z_range)
-            .map(|k| {
+        let chunk_tables: Vec<(usize, Vec<E>)> = chunks
+            .iter()
+            .map(|chunk| {
+                let offset_low = chunk.offset_z & low_mask;
+                let offset_high = chunk.offset_z >> low_bits;
+                let max_high = checked_add(chunk.offset_z, z_len, "dense Z end")?
+                    .checked_sub(1)
+                    .ok_or(AkitaError::InvalidProof)?
+                    >> low_bits;
+                let eq_high = (offset_high..=max_high)
+                    .map(|idx| eq_eval_at_index(&full_vec_randomness[low_bits..], idx))
+                    .collect();
+                Ok((offset_low, eq_high))
+            })
+            .collect::<Result<_, AkitaError>>()?;
+        cfg_iter_mut!(z_weights)
+            .enumerate()
+            .try_for_each(|(k, dst)| {
                 let block_idx = k / depth_commit;
                 let dc = k % depth_commit;
                 let mut weight = E::zero();
-                for pt in 0..num_fold_groups {
-                    for (df, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
-                        let x = checked_add(
-                            block_idx,
-                            checked_mul(
-                                block_len,
-                                checked_add(
-                                    pt,
-                                    checked_mul(
-                                        num_fold_groups,
-                                        checked_add(
-                                            df,
-                                            checked_mul(depth_fold, dc, "dense Z df")?,
-                                            "dense Z pt",
-                                        )?,
-                                        "dense Z df stride",
-                                    )?,
-                                    "dense Z pt stride",
-                                )?,
-                                "dense Z block stride",
-                            )?,
-                            "dense Z x",
-                        )?;
-                        let shifted = checked_add(offset_low, x, "dense Z low")?;
-                        let low_idx = shifted & low_mask;
-                        let high_carry = shifted >> low_bits;
-                        let low = *eq_low.get(low_idx).ok_or(AkitaError::InvalidProof)?;
-                        let high = *eq_high.get(high_carry).ok_or(AkitaError::InvalidProof)?;
-                        weight -= (low * high).mul_base(fold);
+                for (offset_low, eq_high) in &chunk_tables {
+                    for pt in 0..num_fold_groups {
+                        for (df, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
+                            let x = block_idx
+                                + block_len * (pt + num_fold_groups * (df + depth_fold * dc));
+                            let shifted = *offset_low + x;
+                            let low_idx = shifted & low_mask;
+                            let high_carry = shifted >> low_bits;
+                            weight -= (eq_low[low_idx] * eq_high[high_carry]).mul_base(fold);
+                        }
                     }
                 }
-                Ok(weight)
+                *dst += weight;
+                Ok(())
             })
-            .collect()
     }
 }

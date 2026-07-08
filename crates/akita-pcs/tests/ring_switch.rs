@@ -734,14 +734,7 @@ mod tests {
             .expect("prepare_relation_matrix_evaluator");
 
         let got = prepared
-            .eval_at_point::<F, D>(
-                &x_challenges,
-                &setup.expanded,
-                &ring_opening_point,
-                &ring_multiplier_point,
-                alpha,
-                None,
-            )
+            .eval_at_point::<F, D>(&x_challenges, &setup.expanded, alpha, None)
             .expect("eval_at_point");
 
         assert_eq!(
@@ -842,14 +835,7 @@ mod tests {
                 prepare_relation_matrix_evaluator::<F, F, D>(&replay_w, alpha, &tau1, None)
                     .expect("prepare chunked row eval");
             let got_w = prepared_w
-                .eval_at_point::<F, D>(
-                    &x_challenges_w,
-                    &setup.expanded,
-                    &ring_opening_point,
-                    &ring_multiplier_point,
-                    alpha,
-                    None,
-                )
+                .eval_at_point::<F, D>(&x_challenges_w, &setup.expanded, alpha, None)
                 .expect("chunked eval_at_point");
             assert_eq!(
                 got_w, expected_w,

@@ -4,15 +4,13 @@ mod types;
 pub use types::{SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic};
 pub(crate) use types::{SetupContributionGroupPlan, SetupContributionGroupStatic};
 
-use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights_for_offset};
+use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
 use super::{
     checked_add, checked_mul, checked_slice, push_role_boundaries, SetupContributionPlanInputs,
 };
 use crate::dispatch_for_field;
 use crate::layout::{RelationMatrixRowLayout, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
-#[cfg(test)]
-use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};

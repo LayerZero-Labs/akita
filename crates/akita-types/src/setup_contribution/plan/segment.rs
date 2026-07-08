@@ -7,7 +7,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
 
-pub(super) struct GroupSetupSegment<E> {
+#[derive(Clone)]
+pub(crate) struct GroupSetupSegment<E> {
     pub(super) lo: usize,
     pub(super) hi: usize,
     pub(super) has_d: bool,
