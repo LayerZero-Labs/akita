@@ -26,14 +26,14 @@ pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FoldWitnessLinfCapPolicy {
-    /// Proved sub-Gaussian tail: flat `ExactShell` at `D = 64` or
-    /// `Uniform{[-1,1]}` at `D ∈ {128, 256}`; `cap = min(β_inf, t*)` and grind allowed.
+    /// Proved sub-Gaussian tail: production signed-sparse at `D = 64`, or a
+    /// production pm1-only ladder entry at `D ≥ 128`; `cap = min(β_inf, t*)` and grind allowed.
     TailBoundWithGrind,
     /// Proved second-order tensor tail for tensor folds whose factors use the
     /// same certified sign-symmetric families as [`Self::TailBoundWithGrind`].
     TensorTailBoundWithGrind,
-    /// No tail certificate yet: `BoundedL1Norm`, uncertified flat presets;
-    /// `cap = β_inf` only and grind nonce must be zero.
+    /// No tail certificate yet: uncertified flat presets; `cap = β_inf` only
+    /// and grind nonce must be zero.
     WorstCaseBetaOnly,
 }
 
@@ -50,17 +50,15 @@ impl FoldWitnessLinfCapPolicy {
 #[inline]
 #[must_use]
 pub fn fold_witness_linf_cap_policy(
-    stage1_config: &SparseChallengeConfig,
+    fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
     ring_dimension: usize,
 ) -> FoldWitnessLinfCapPolicy {
-    let flat_certified = match stage1_config {
-        SparseChallengeConfig::ExactShell { .. } if ring_dimension == 64 => true,
-        SparseChallengeConfig::Uniform { nonzero_coeffs, .. }
-            if (ring_dimension == 128 || ring_dimension == 256)
-                && nonzero_coeffs.iter().all(|c| c.unsigned_abs() == 1) =>
-        {
-            true
+    let flat_certified = match (ring_dimension, fold_challenge_config.count_pm2) {
+        (64, pm2) if pm2 > 0 => true,
+        (d, 0) => {
+            SparseChallengeConfig::production_for_ring_dim(d).as_ref()
+                == Some(fold_challenge_config)
         }
         _ => false,
     };
@@ -402,18 +400,21 @@ impl FoldWitnessLinfCapConfig {
     /// ring degree, and inner A-matrix width (`block_len · δ_commit`).
     #[inline]
     pub fn for_fold_level(
-        stage1_config: &SparseChallengeConfig,
+        fold_challenge_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
         ring_dimension: usize,
         inner_width: usize,
     ) -> Result<Self, AkitaError> {
         let (grind_target_accept_num, grind_target_accept_den) =
             crate::FoldLinfProtocolBinding::CURRENT.grind_target_accept_prob();
-        let policy =
-            fold_witness_linf_cap_policy(stage1_config, fold_challenge_shape, ring_dimension);
+        let policy = fold_witness_linf_cap_policy(
+            fold_challenge_config,
+            fold_challenge_shape,
+            ring_dimension,
+        );
         Self::assemble(
             policy,
-            stage1_config,
+            fold_challenge_config,
             fold_challenge_shape,
             ring_dimension,
             inner_width,
@@ -427,7 +428,7 @@ impl FoldWitnessLinfCapConfig {
     #[inline]
     pub fn for_fold_level_scoring(
         policy: FoldWitnessLinfCapPolicy,
-        stage1_config: &SparseChallengeConfig,
+        fold_challenge_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
         ring_dimension: usize,
         inner_width: usize,
@@ -436,7 +437,7 @@ impl FoldWitnessLinfCapConfig {
     ) -> Result<Self, AkitaError> {
         Self::assemble(
             policy,
-            stage1_config,
+            fold_challenge_config,
             fold_challenge_shape,
             ring_dimension,
             inner_width,
@@ -448,7 +449,7 @@ impl FoldWitnessLinfCapConfig {
     #[allow(clippy::too_many_arguments)]
     fn assemble(
         policy: FoldWitnessLinfCapPolicy,
-        stage1_config: &SparseChallengeConfig,
+        fold_challenge_config: &SparseChallengeConfig,
         fold_challenge_shape: TensorChallengeShape,
         ring_dimension: usize,
         inner_width: usize,
@@ -473,14 +474,14 @@ impl FoldWitnessLinfCapConfig {
         };
         Ok(Self {
             policy,
-            challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(stage1_config),
+            challenge_l2_sq_max: fold_challenge_shape.effective_l2_sq_max(fold_challenge_config),
             tensor_factor_l2_sq_max: match fold_challenge_shape {
                 TensorChallengeShape::Flat => 0,
-                TensorChallengeShape::Tensor => stage1_config.challenge_l2_sq_max(),
+                TensorChallengeShape::Tensor => fold_challenge_config.challenge_l2_sq_max(),
             },
             tensor_factor_nonzero_count_max: match fold_challenge_shape {
                 TensorChallengeShape::Flat => 0,
-                TensorChallengeShape::Tensor => stage1_config.nonzero_count_max() as u128,
+                TensorChallengeShape::Tensor => fold_challenge_config.nonzero_count_max() as u128,
             },
             num_fold_coeffs,
             grind_target_accept_num,
@@ -505,9 +506,9 @@ mod tests {
 
     #[test]
     fn fold_witness_linf_cap_policy_certifies_production_flat_and_tensor_families() {
-        let shell = SparseChallengeConfig::ExactShell {
-            count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
-            count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
+        let shell = SparseChallengeConfig {
+            count_pm1: akita_challenges::D64_PRODUCTION_PM1_COUNT,
+            count_pm2: akita_challenges::D64_PRODUCTION_PM2_COUNT,
         };
         assert_eq!(
             fold_witness_linf_cap_policy(&shell, TensorChallengeShape::Flat, 64),
@@ -517,10 +518,7 @@ mod tests {
             fold_witness_linf_cap_policy(&shell, TensorChallengeShape::Tensor, 64),
             FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
         );
-        let uni = SparseChallengeConfig::Uniform {
-            weight: 31,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        let uni = SparseChallengeConfig::pm1_only(31);
         assert_eq!(
             fold_witness_linf_cap_policy(&uni, TensorChallengeShape::Flat, 128),
             FoldWitnessLinfCapPolicy::TailBoundWithGrind,
@@ -529,20 +527,18 @@ mod tests {
             fold_witness_linf_cap_policy(&uni, TensorChallengeShape::Tensor, 128),
             FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
         );
+        let ladder512 = SparseChallengeConfig::production_for_ring_dim(512).expect("ladder");
         assert_eq!(
-            fold_witness_linf_cap_policy(
-                &SparseChallengeConfig::BoundedL1Norm,
-                TensorChallengeShape::Flat,
-                32
-            ),
+            fold_witness_linf_cap_policy(&ladder512, TensorChallengeShape::Flat, 512),
+            FoldWitnessLinfCapPolicy::TailBoundWithGrind,
+        );
+        let uncertified = SparseChallengeConfig::pm1_only(31);
+        assert_eq!(
+            fold_witness_linf_cap_policy(&uncertified, TensorChallengeShape::Flat, 64),
             FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
         );
         assert_eq!(
-            fold_witness_linf_cap_policy(
-                &SparseChallengeConfig::BoundedL1Norm,
-                TensorChallengeShape::Tensor,
-                32
-            ),
+            fold_witness_linf_cap_policy(&uncertified, TensorChallengeShape::Tensor, 64),
             FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
         );
     }

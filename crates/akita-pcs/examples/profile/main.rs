@@ -48,9 +48,8 @@ fn main() {
     let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
     // Keep the default explicit: old adaptive `full`/`onehot` selectors are
-    // intentionally not part of the profile surface. D=32/D64 are the planner
-    // proof-size optima under committed-fold A-role pricing; D64 is the default
-    // profile preset (D32 is marginally smaller; use best_*_schedule to compare).
+    // intentionally not part of the profile surface. D64 is the default fp128
+    // profile preset (`onehot_fp128_d64`); use best_*_schedule to compare D64 vs D128.
     let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "onehot_fp128_d64".to_string());
     let enable_trace = env_flag("AKITA_PROFILE_TRACE", true);
     let enable_ansi = env_flag("AKITA_PROFILE_ANSI", true);

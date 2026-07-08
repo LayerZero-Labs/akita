@@ -149,6 +149,11 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
 
 type Scheme = AkitaCommitmentScheme<MixedD128To64>;
 
+fn make_envelope_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
+    let evals = dense_field_evals(nv, seed);
+    DensePoly::<F>::from_field_evals(nv, ENVELOPE_D, &evals).expect("dense poly")
+}
+
 fn mixed_schedule() -> Schedule {
     mixed_d_per_level_schedule::<Envelope, Suffix>(NUM_VARS, 1, MIXED_D_SWITCH_FOLD)
         .expect("mixed-D schedule")
@@ -191,9 +196,9 @@ fn prove_mixed_fixture() -> MixedDFixture {
         )
         .expect("commit layout");
 
-    let poly = make_dense_poly(NUM_VARS, 0xcede_0001);
+    let poly = make_envelope_dense_poly(NUM_VARS, 0xcede_0001);
     let point = random_point(NUM_VARS, 0xcede_0002);
-    let opening = opening_from_poly::<DENSE_D, _>(&poly, &point, &layout);
+    let opening = opening_from_poly::<ENVELOPE_D, _>(&poly, &point, &layout);
 
     let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
     assert_eq!(setup.expanded.seed().gen_ring_dim, ENVELOPE_D);
@@ -489,7 +494,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
 fn mixed_d_malformed_hint_digit_length_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let poly = make_dense_poly(NUM_VARS, 0xcede_0001);
+        let poly = make_envelope_dense_poly(NUM_VARS, 0xcede_0001);
         let point = random_point(NUM_VARS, 0xcede_0002);
 
         let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
@@ -547,9 +552,9 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
             get_params_for_batched_commitment(&opening_batch)
         .expect("commit layout (root level params are untouched)");
 
-        let poly = make_dense_poly(NUM_VARS, 0xcede_0001);
+        let poly = make_envelope_dense_poly(NUM_VARS, 0xcede_0001);
         let point = random_point(NUM_VARS, 0xcede_0002);
-        let opening = opening_from_poly::<DENSE_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly::<ENVELOPE_D, _>(&poly, &point, &layout);
 
         let setup = BadScheme::setup_prover(NUM_VARS, 1).expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");

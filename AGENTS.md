@@ -15,6 +15,18 @@ cargo test
 ./scripts/check-doc-guardrails.sh   # when changing book, specs, or docs/
 ```
 
+## RTK (token-optimized shell)
+
+Use [`rtk`](https://github.com/rtk-ai/rtk) for verbose dev commands (`rtk cargo test`, `rtk git diff`, etc.) to keep agent context small. Cursor auto-rewrites allowed shell commands via `~/.cursor/cli-config.json`.
+
+**Nextest is not auto-rewritten** — always prefix explicitly:
+
+```bash
+rtk cargo nextest run --profile ci --no-default-features --features parallel,disk-persistence
+```
+
+For a focused crate or test filter, append the usual `cargo nextest run` args after that prefix.
+
 ## Documentation
 
 Canonical policy: [`docs/documentation.md`](docs/documentation.md).

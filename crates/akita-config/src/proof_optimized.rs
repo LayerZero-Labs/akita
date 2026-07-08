@@ -5,7 +5,6 @@
 
 use super::CommitmentConfig;
 use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
-use akita_challenges::MIN_FOLD_CHALLENGE_ENTROPY_BITS;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
@@ -23,66 +22,20 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 
 /// Shared short ring-challenge policy for every proof-optimized preset.
 ///
-/// "Short" means bounded norm, which is the property that keeps the folded
-/// witness short enough for SIS binding. It does not mean sparse: at `d == 32`
-/// the family is `BoundedL1Norm`, a low-norm ball (`||c||_1 <= 121`,
-/// `||c||_inf <= 8`) whose elements can be fully dense. The larger degrees use
-/// fixed-weight sparse families (`ExactShell` at `d == 64`, `Uniform` at
-/// `d >= 128`), where shortness happens to coincide with sparsity.
-///
-/// The family is keyed only on the ring degree `d`. A preset's `D` is fixed
-/// across all schedule levels, so both the planner DP and the generated-table
-/// expansion call the per-`Cfg` hook with `d == Cfg::D` (see
-/// `akita_planner::find_schedule` and `generated::expand`). Every family
-/// returned here has at least 128 bits of Fiat-Shamir support, which is the
-/// soundness floor for the witness-folding ring challenge; presets must not
-/// pick a lower-support family. fp128 only reaches `d in {32, 64, 128}`; the
-/// small-field presets additionally reach `d == 256`.
+/// Fixed-weight sparse families keyed on ring degree `d` via
+/// [`akita_challenges::SparseChallengeConfig::production_for_ring_dim`].
+/// A preset's `D` is fixed across all schedule levels, so both the planner DP
+/// and the generated-table expansion call the per-`Cfg` hook with `d == Cfg::D`.
 pub(crate) fn proof_optimized_ring_challenge_config(
     d: usize,
 ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-    let cfg = match d {
-        32 => akita_challenges::SparseChallengeConfig::BoundedL1Norm,
-        64 => akita_challenges::SparseChallengeConfig::ExactShell {
-            count_mag1: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG1,
-            count_mag2: akita_challenges::D64_PRODUCTION_EXACT_SHELL_MAG2,
-        },
-        128 => akita_challenges::SparseChallengeConfig::Uniform {
-            weight: 31,
-            nonzero_coeffs: vec![-1, 1],
-        },
-        256 => akita_challenges::SparseChallengeConfig::Uniform {
-            weight: 23,
-            nonzero_coeffs: vec![-1, 1],
-        },
-        _ => {
-            return Err(AkitaError::InvalidSetup(format!(
-                "unsupported proof-optimized ring dim {d}"
-            )));
-        }
-    };
-    validate_proof_optimized_fold_entropy(&cfg, d)?;
+    let cfg =
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!("unsupported proof-optimized ring dim {d}"))
+        })?;
+    cfg.validate_for_ring_dim(d)
+        .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(cfg)
-}
-
-fn validate_proof_optimized_fold_entropy(
-    cfg: &akita_challenges::SparseChallengeConfig,
-    d: usize,
-) -> Result<(), AkitaError> {
-    match d {
-        32 => cfg.validate::<32>(),
-        64 => cfg.validate::<64>(),
-        128 => cfg.validate::<128>(),
-        256 => cfg.validate::<256>(),
-        _ => {
-            return Err(AkitaError::InvalidSetup(format!(
-                "unsupported proof-optimized ring dim {d}"
-            )));
-        }
-    }
-    .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
-    cfg.validate_min_entropy_for_ring_dim(d, MIN_FOLD_CHALLENGE_ENTROPY_BITS)
-        .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))
 }
 
 // ---------------------------------------------------------------------------

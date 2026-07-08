@@ -19,7 +19,7 @@ use crate::kernels::linear::{
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -128,7 +128,7 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
 ) -> Result<crate::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
-    akita_types::dispatch_ring_dim_result!(key.ring_d, |RING_D| {
+    dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
         let view = expanded
             .shared_matrix()
             .ring_view::<RING_D>(1, key.num_ring_elements)?;
@@ -154,7 +154,7 @@ fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    let profile = akita_types::dispatch_ring_dim_result!(key.ring_d, |RING_D| {
+    let profile = dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
         selected_crt_i8_capacity_profile::<F, RING_D>()
     })?;
     if prepared
@@ -616,12 +616,12 @@ mod tests {
     };
     use crate::validation::MAX_I8_LOG_BASIS;
     use crate::AkitaProverSetup;
-    use akita_field::Fp64;
+    use akita_field::Prime64Offset59;
     use akita_types::SetupMatrixEnvelope;
     use std::sync::Arc;
 
-    type F = Fp64<4294967197>;
-    const D: usize = 32;
+    type F = Prime64Offset59;
+    const D: usize = 64;
 
     fn setup_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
         SetupMatrixEnvelope { max_setup_len }
@@ -629,16 +629,16 @@ mod tests {
 
     fn prepared() -> CpuPreparedSetup<F> {
         let setup =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         CpuBackend.prepare_setup(&setup).unwrap()
     }
 
     #[test]
     fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
         let setup_a =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         let setup_b =
-            AkitaProverSetup::<F>::generate_with_capacity(9, 1, D, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(9, 1, D, setup_envelope(D)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
 
         CpuBackend
@@ -655,9 +655,9 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
         let setup_a =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         let setup_b =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
@@ -672,8 +672,8 @@ mod tests {
         let prepared = prepared();
         let profile = prepared.shared_ntt_profile::<D>().expect("profile");
 
-        assert_eq!(profile.profile_id, "Q32/2xi32");
-        assert_eq!(profile.num_primes, 2);
+        assert_eq!(profile.profile_id, "Q64/3xi32");
+        assert_eq!(profile.num_primes, 3);
         assert_eq!(profile.limb_bits, 32);
         assert_eq!(profile.max_i8_log_basis, MAX_I8_LOG_BASIS);
         assert!(profile.balanced_digit_safe_width > 0);
@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn prepare_setup_registers_envelope_ntt_contract() {
         let setup =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let envelope_key =
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn prepare_expanded_with_envelope_ntt_builds_envelope_slot() {
         let setup =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         let prepared = CpuBackend
             .prepare_expanded_with_envelope_ntt::<D>(setup.expanded.clone())
             .expect("prepared");
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn cpu_prepared_setup_warms_multiple_ntt_slots() {
         let setup =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(32)).unwrap();
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");

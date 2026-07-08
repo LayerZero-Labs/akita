@@ -3,9 +3,8 @@ use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    padded_scalar_batch_num_vars, validate_scalar_point_matches_poly_arity, AkitaCommitmentHint,
-    Commitment, LevelParams, MRowLayout, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, RingVec,
+    AkitaCommitmentHint, Commitment, LevelParams, MRowLayout, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
 };
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
@@ -63,10 +62,11 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         P: RootPolyMeta<PolyF>,
     {
         self.check_alignment()?;
-        let num_vars = self.num_vars::<PolyF>()?;
-        if self.opening_claims.num_vars() != num_vars {
+        let layout = self.opening_layout::<PolyF>()?;
+        let max_num_vars = layout.max_num_vars();
+        if self.opening_claims.num_vars() != max_num_vars {
             return Err(AkitaError::InvalidInput(format!(
-                "opening point length {} does not match padded batch domain {num_vars}",
+                "opening point length {} does not match max group arity {max_num_vars}",
                 self.opening_claims.num_vars()
             )));
         }
@@ -106,18 +106,27 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         PolyF: FieldCore,
         P: RootPolyMeta<PolyF>,
     {
-        let padded_num_vars = padded_scalar_batch_num_vars(
-            self.polynomials
-                .iter()
-                .flat_map(|group| group.iter().map(|poly| poly.num_vars())),
-        )?;
-        validate_scalar_point_matches_poly_arity(self.point().len(), padded_num_vars)?;
-        let group_sizes = self
-            .polynomials
-            .iter()
-            .map(|group| group.len())
-            .collect::<Vec<_>>();
-        OpeningClaimsLayout::from_group_sizes(padded_num_vars, &group_sizes)
+        let mut groups = Vec::with_capacity(self.polynomials.len());
+        for (group_index, group) in self.polynomials.iter().enumerate() {
+            let first_poly = group.first().ok_or_else(|| {
+                AkitaError::InvalidInput("opening polynomial groups must be nonempty".to_string())
+            })?;
+            let group_num_vars = first_poly.num_vars();
+            if group.iter().any(|poly| poly.num_vars() != group_num_vars) {
+                return Err(AkitaError::InvalidInput(
+                    "opening polynomial groups must have uniform arity".to_string(),
+                ));
+            }
+            let point_vars = self.opening_claims.group_point_vars(group_index)?;
+            if point_vars.num_vars() != group_num_vars {
+                return Err(AkitaError::InvalidPointDimension {
+                    expected: group_num_vars,
+                    actual: point_vars.num_vars(),
+                });
+            }
+            groups.push(PolynomialGroupLayout::new(group_num_vars, group.len()));
+        }
+        OpeningClaimsLayout::from_groups(groups)
     }
 
     /// Prover-only hints, one per polynomial group.
@@ -167,6 +176,11 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         P: RootPolyMeta<CommitF>,
         T: Transcript<CommitF>,
     {
+        // Bind each group's active arity rather than collapsing every group to
+        // the shared padded domain. `opening_layout` also validates that the
+        // public point-variable selection matches the prover's polynomial shape,
+        // which keeps this byte-identical to the verifier's `claims.layout()`
+        // absorb for well-formed inputs.
         let layout = self.opening_layout::<CommitF>()?;
         layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
         for commitment in self.commitments() {
@@ -280,5 +294,147 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
             vec![commitment.1],
             vec![polynomials],
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp32;
+    use akita_transcript::labels::ABSORB_COMMITMENT;
+    use akita_transcript::AkitaTranscript;
+
+    type F = Fp32<251>;
+
+    #[derive(Clone)]
+    struct MockPoly {
+        num_vars: usize,
+    }
+
+    impl RootPolyMeta<F> for MockPoly {
+        fn num_ring_elems(&self) -> usize {
+            0
+        }
+
+        fn num_vars(&self) -> usize {
+            self.num_vars
+        }
+    }
+
+    fn empty_hint() -> AkitaCommitmentHint<F> {
+        AkitaCommitmentHint::new(Vec::new())
+    }
+
+    fn commitment() -> Commitment<F> {
+        Commitment::new(RingVec::from_coeffs(vec![F::zero()]))
+    }
+
+    fn grouped_data<'a>(
+        pre_refs: &'a [&'a MockPoly],
+        final_refs: &'a [&'a MockPoly],
+    ) -> ProverOpeningData<'a, F, MockPoly, F> {
+        let claims = OpeningClaims::from_groups(
+            vec![F::zero(); 4],
+            vec![
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(2, 4).expect("pre point vars"),
+                    vec![F::zero()],
+                    commitment(),
+                )
+                .expect("pre group"),
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(4, 4).expect("final point vars"),
+                    vec![F::zero(), F::zero()],
+                    commitment(),
+                )
+                .expect("final group"),
+            ],
+        )
+        .expect("claims");
+        ProverOpeningData::new(
+            claims,
+            vec![empty_hint(), empty_hint()],
+            vec![pre_refs, final_refs],
+        )
+        .expect("prover data")
+    }
+
+    #[test]
+    fn opening_layout_preserves_precise_group_arities() {
+        let pre_poly = MockPoly { num_vars: 2 };
+        let final_a = MockPoly { num_vars: 4 };
+        let final_b = MockPoly { num_vars: 4 };
+        let pre_refs = [&pre_poly];
+        let final_refs = [&final_a, &final_b];
+        let data = grouped_data(&pre_refs, &final_refs);
+
+        let layout = data.opening_layout::<F>().expect("precise layout");
+
+        assert_eq!(
+            layout.groups(),
+            &[
+                PolynomialGroupLayout::new(2, 1),
+                PolynomialGroupLayout::new(4, 2)
+            ]
+        );
+    }
+
+    #[test]
+    fn opening_layout_rejects_group_arity_mismatch() {
+        let pre_poly = MockPoly { num_vars: 3 };
+        let final_a = MockPoly { num_vars: 4 };
+        let final_b = MockPoly { num_vars: 4 };
+        let pre_refs = [&pre_poly];
+        let final_refs = [&final_a, &final_b];
+        let data = grouped_data(&pre_refs, &final_refs);
+
+        let err = data
+            .opening_layout::<F>()
+            .expect_err("pre group point vars claim two variables");
+
+        assert!(matches!(
+            err,
+            AkitaError::InvalidPointDimension {
+                expected: 3,
+                actual: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn append_to_transcript_binds_precise_group_shape_not_padded_max() {
+        let pre_poly = MockPoly { num_vars: 2 };
+        let final_a = MockPoly { num_vars: 4 };
+        let final_b = MockPoly { num_vars: 4 };
+        let pre_refs = [&pre_poly];
+        let final_refs = [&final_a, &final_b];
+        let data = grouped_data(&pre_refs, &final_refs);
+
+        let mut precise = AkitaTranscript::<F>::new(b"test/precise-group-shape");
+        data.append_to_transcript(1, &mut precise)
+            .expect("precise transcript absorb");
+        let precise_challenge = precise.challenge_scalar(b"after-shape");
+
+        let padded_layout =
+            OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("old padded layout");
+        let mut padded = AkitaTranscript::<F>::new(b"test/precise-group-shape");
+        padded_layout
+            .append_batch_shape_to_transcript::<F, _>(&mut padded)
+            .expect("padded shape absorb");
+        for commitment in data.commitments() {
+            commitment
+                .append_to_transcript(ABSORB_COMMITMENT, 1, &mut padded)
+                .expect("commitment absorb");
+        }
+        for coord in data.point() {
+            akita_transcript::append_ext_field::<F, F, _>(
+                &mut padded,
+                akita_transcript::labels::ABSORB_EVALUATION_CLAIMS,
+                coord,
+            );
+        }
+        let padded_challenge = padded.challenge_scalar(b"after-shape");
+
+        assert_ne!(precise_challenge, padded_challenge);
     }
 }

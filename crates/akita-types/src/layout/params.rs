@@ -7,12 +7,14 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::descriptor_bytes::{push_i8, push_u128, push_u32, push_usize};
+use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
-use crate::schedule::PrecommittedGroupParams;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
+
+mod precommitted;
+pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
 /// Per-level M-matrix row layout selector.
 ///
@@ -33,69 +35,6 @@ pub enum MRowLayout {
     /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
     /// the terminal fold level where `final_witness` ships on the wire.
     WithoutDBlock,
-}
-
-/// Group-local root parameters for a precommitted commitment group.
-///
-/// These fields mirror the group-local pieces of [`LevelParams`]. Widths are
-/// derived from the Ajtai keys and block geometry rather than stored twice.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrecommittedLevelParams {
-    /// Frozen standalone group layout bound into the grouped root key.
-    pub layout: PrecommittedGroupParams,
-    /// Inner Ajtai matrix (A) used by this group.
-    pub a_key: AjtaiKeyParams,
-    /// Outer commitment matrix (B) used by this group.
-    pub b_key: AjtaiKeyParams,
-    /// Number of committed blocks (`2^r_vars`) for this group.
-    pub num_blocks: usize,
-    /// Number of ring elements per block (`2^m_vars`) for this group.
-    pub block_len: usize,
-    /// Gadget decomposition depth for committed coefficients.
-    pub num_digits_commit: usize,
-    /// Gadget decomposition depth for opening-side values.
-    pub num_digits_open: usize,
-    /// Cached folded-witness digit count for a singleton group relation.
-    pub num_digits_fold_one: usize,
-}
-
-impl PrecommittedLevelParams {
-    /// Width of this group's A matrix.
-    #[inline]
-    pub fn inner_width(&self) -> usize {
-        self.a_key.col_len()
-    }
-
-    /// Width of this group's B matrix.
-    #[inline]
-    pub fn outer_width(&self) -> usize {
-        self.b_key.col_len()
-    }
-
-    /// Width contribution to the shared D matrix (`w_hat_g` segment).
-    pub fn d_segment_width(&self) -> Result<usize, AkitaError> {
-        self.num_digits_open
-            .checked_mul(self.num_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("group D segment width overflow".to_string()))
-    }
-
-    /// Width contribution of this group's decomposed folded response.
-    pub fn z_segment_width(&self, num_digits_fold: usize) -> Result<usize, AkitaError> {
-        self.inner_width()
-            .checked_mul(num_digits_fold)
-            .ok_or_else(|| AkitaError::InvalidSetup("group z segment width overflow".to_string()))
-    }
-
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        self.layout.append_descriptor_bytes(bytes);
-        self.a_key.append_descriptor_bytes(bytes);
-        self.b_key.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.num_blocks);
-        push_usize(bytes, self.block_len);
-        push_usize(bytes, self.num_digits_commit);
-        push_usize(bytes, self.num_digits_open);
-        push_usize(bytes, self.num_digits_fold_one);
-    }
 }
 
 /// Unified per-level parameters for one Akita recursion level.
@@ -127,7 +66,7 @@ pub struct LevelParams {
     /// Per-block variable count. Stored explicitly because at recursive
     /// levels `block_len` is not necessarily `2^r_vars`.
     pub r_vars: usize,
-    pub stage1_config: SparseChallengeConfig,
+    pub fold_challenge_config: SparseChallengeConfig,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
     /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
@@ -170,89 +109,6 @@ pub struct LevelParams {
     pub precommitted_groups: Vec<PrecommittedLevelParams>,
     /// Per-role ring dimensions at this level (`d_a`, `d_b`, `d_d`).
     pub role_dims: CommitmentRingDims,
-}
-
-/// Common view over full and precommitted level parameters.
-///
-/// Use this trait when code only needs the shared commitment geometry carried
-/// by both [`LevelParams`] and [`PrecommittedLevelParams`].
-pub trait LevelParamsLike {
-    fn a_rows_len(&self) -> usize;
-    fn a_col_len(&self) -> usize;
-    fn b_rows_len(&self) -> usize;
-    fn num_blocks(&self) -> usize;
-    fn block_len(&self) -> usize;
-    fn num_digits_commit(&self) -> usize;
-    fn num_digits_open(&self) -> usize;
-    fn log_basis(&self) -> u32;
-}
-
-impl LevelParamsLike for LevelParams {
-    fn a_rows_len(&self) -> usize {
-        self.a_key.row_len()
-    }
-
-    fn a_col_len(&self) -> usize {
-        self.a_key.col_len()
-    }
-
-    fn b_rows_len(&self) -> usize {
-        self.b_key.row_len()
-    }
-
-    fn num_blocks(&self) -> usize {
-        self.num_blocks
-    }
-
-    fn block_len(&self) -> usize {
-        self.block_len
-    }
-
-    fn num_digits_commit(&self) -> usize {
-        self.num_digits_commit
-    }
-
-    fn num_digits_open(&self) -> usize {
-        self.num_digits_open
-    }
-
-    fn log_basis(&self) -> u32 {
-        self.log_basis
-    }
-}
-
-impl LevelParamsLike for PrecommittedLevelParams {
-    fn a_rows_len(&self) -> usize {
-        self.a_key.row_len()
-    }
-
-    fn a_col_len(&self) -> usize {
-        self.a_key.col_len()
-    }
-
-    fn b_rows_len(&self) -> usize {
-        self.b_key.row_len()
-    }
-
-    fn num_blocks(&self) -> usize {
-        self.num_blocks
-    }
-
-    fn block_len(&self) -> usize {
-        self.block_len
-    }
-
-    fn num_digits_commit(&self) -> usize {
-        self.num_digits_commit
-    }
-
-    fn num_digits_open(&self) -> usize {
-        self.num_digits_open
-    }
-
-    fn log_basis(&self) -> u32 {
-        self.layout.log_basis
-    }
 }
 
 impl LevelParams {
@@ -313,9 +169,9 @@ impl LevelParams {
             block_len: 0,
             m_vars: 0,
             r_vars: 0,
-            stage1_config: SparseChallengeConfig::Uniform {
-                weight: 0,
-                nonzero_coeffs: Vec::new(),
+            fold_challenge_config: SparseChallengeConfig {
+                count_pm1: 0,
+                count_pm2: 0,
             },
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
@@ -334,7 +190,7 @@ impl LevelParams {
 
     /// Build a params-only `LevelParams` with zeroed layout fields.
     ///
-    /// Only ring dimension, matrix row counts, log_basis, and stage1_config
+    /// Only ring dimension, matrix row counts, log_basis, and fold_challenge_config
     /// are populated. Column counts, block geometry, and digit depths are
     /// zeroed. Call `with_layout` to fill them from a derived layout.
     pub fn params_only(
@@ -344,7 +200,7 @@ impl LevelParams {
         n_a: usize,
         n_b: usize,
         n_d: usize,
-        stage1_config: SparseChallengeConfig,
+        fold_challenge_config: SparseChallengeConfig,
     ) -> Self {
         Self {
             ring_dimension,
@@ -377,7 +233,7 @@ impl LevelParams {
             block_len: 0,
             m_vars: 0,
             r_vars: 0,
-            stage1_config,
+            fold_challenge_config,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
@@ -409,11 +265,22 @@ impl LevelParams {
         Ok(())
     }
 
+    /// Reject grouped-root params combined with multi-chunk witness layout.
+    pub fn reject_grouped_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
+        if self.has_precommitted_groups() && self.witness_chunk.num_chunks > 1 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{context}: {}",
+                crate::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED
+            )));
+        }
+        Ok(())
+    }
+
     /// Worst-case L1 mass of the fold-round challenge.
     #[inline]
     pub fn challenge_l1_mass(&self) -> usize {
         self.fold_challenge_shape
-            .effective_l1_mass(&self.stage1_config)
+            .effective_l1_mass(&self.fold_challenge_config)
     }
 
     /// Per-row committed-witness `(||s||_inf, ||s||_1)` for the folded
@@ -429,19 +296,34 @@ impl LevelParams {
         )
     }
 
+    /// Per-row folded-witness norms using group-local gadget geometry.
+    #[inline]
+    pub fn fold_witness_norms_for_params(
+        &self,
+        params: &(impl LevelParamsLike + ?Sized),
+    ) -> crate::sis::FoldWitnessNorms {
+        let is_onehot = self.onehot_chunk_size > 0;
+        crate::sis::FoldWitnessNorms::new(
+            params.log_basis(),
+            self.ring_dimension,
+            if is_onehot { self.onehot_chunk_size } else { 1 },
+            is_onehot,
+        )
+    }
+
     /// Effective fold-round challenge L∞ norm `||c||_inf` at this level,
     /// accounting for the challenge shape (flat vs tensor).
     #[inline]
     pub fn challenge_infinity_norm(&self) -> usize {
         self.fold_challenge_shape
-            .effective_infinity_norm(&self.stage1_config)
+            .effective_infinity_norm(&self.fold_challenge_config)
     }
 
     /// Effective per-block worst-case `‖c‖_2²` upper bound at this fold level.
     #[inline]
     pub fn challenge_l2_sq_max(&self) -> u128 {
         self.fold_challenge_shape
-            .effective_l2_sq_max(&self.stage1_config)
+            .effective_l2_sq_max(&self.fold_challenge_config)
     }
 
     /// Fold-challenge coefficient count `inner_width · D` (single shared opening point).
@@ -465,7 +347,7 @@ impl LevelParams {
     #[inline]
     pub fn fold_witness_linf_cap_policy(&self) -> crate::sis::FoldWitnessLinfCapPolicy {
         crate::sis::fold_witness_linf_cap_policy(
-            &self.stage1_config,
+            &self.fold_challenge_config,
             self.fold_challenge_shape,
             self.ring_dimension,
         )
@@ -497,13 +379,15 @@ impl LevelParams {
     ) -> Result<Self, AkitaError> {
         self.field_bits_hint = field_bits;
         self.fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            &self.stage1_config,
+            &self.fold_challenge_config,
             self.fold_challenge_shape,
             self.ring_dimension,
             self.inner_width(),
         )?;
-        let challenge =
-            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
+        let challenge = crate::sis::fold_challenge_norms(
+            &self.fold_challenge_config,
+            self.fold_challenge_shape,
+        );
         let witness = self.fold_witness_norms();
         self.num_digits_fold_one = crate::sis::num_digits_fold(
             self.r_vars,
@@ -546,7 +430,10 @@ impl LevelParams {
             num_claims,
             self.field_bits_for_cache(),
             self.log_basis,
-            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape),
+            crate::sis::fold_challenge_norms(
+                &self.fold_challenge_config,
+                self.fold_challenge_shape,
+            ),
             self.fold_witness_norms(),
             &self.fold_linf_cap_config,
         )
@@ -642,8 +529,10 @@ impl LevelParams {
         {
             return Ok(self.cached_num_digits_fold_value);
         }
-        let challenge =
-            crate::sis::fold_challenge_norms(&self.stage1_config, self.fold_challenge_shape);
+        let challenge = crate::sis::fold_challenge_norms(
+            &self.fold_challenge_config,
+            self.fold_challenge_shape,
+        );
         crate::sis::num_digits_fold(
             self.r_vars,
             num_claims,
@@ -651,6 +540,31 @@ impl LevelParams {
             self.log_basis,
             challenge,
             self.fold_witness_norms(),
+            self.fold_linf_cap_config,
+        )
+    }
+
+    /// Gadget depth for a root group using group-local geometry and root policy.
+    pub fn num_digits_fold_for_params(
+        &self,
+        params: &(impl LevelParamsLike + ?Sized),
+        num_claims: usize,
+        field_bits: u32,
+    ) -> Result<usize, AkitaError> {
+        if num_claims == 1 {
+            return Ok(params.num_digits_fold_one());
+        }
+        let challenge = crate::sis::fold_challenge_norms(
+            &self.fold_challenge_config,
+            self.fold_challenge_shape,
+        );
+        crate::sis::num_digits_fold(
+            params.r_vars(),
+            num_claims,
+            field_bits,
+            params.log_basis(),
+            challenge,
+            self.fold_witness_norms_for_params(params),
             self.fold_linf_cap_config,
         )
     }
@@ -737,7 +651,7 @@ impl LevelParams {
         push_usize(bytes, self.block_len);
         push_usize(bytes, self.m_vars);
         push_usize(bytes, self.r_vars);
-        append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
+        append_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
         push_u128(bytes, self.challenge_l2_sq_max());
@@ -886,6 +800,22 @@ impl LevelParams {
             .ok_or(AkitaError::InvalidProof)
     }
 
+    /// Group-local parameter view for root folded opening work.
+    pub fn root_group_params<'a>(
+        &'a self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        if group_index == final_group_index {
+            return Ok(self);
+        }
+        self.precommitted_groups
+            .get(group_index)
+            .map(|group| group as &dyn LevelParamsLike)
+            .ok_or(AkitaError::InvalidProof)
+    }
+
     fn grouped_m_row_count_for(
         &self,
         num_commitments: usize,
@@ -1015,8 +945,9 @@ impl LevelParams {
         num_digits_open: usize,
         num_digits_fold: usize,
     ) -> Result<usize, AkitaError> {
-        let e_hat = num_blocks
-            .checked_mul(num_digits_open)
+        let e_hat = num_polys
+            .checked_mul(num_blocks)
+            .and_then(|n| n.checked_mul(num_digits_open))
             .ok_or_else(|| AkitaError::InvalidSetup("root e-hat witness overflow".to_string()))?;
         let t_hat = num_polys
             .checked_mul(num_blocks)
@@ -1205,7 +1136,7 @@ impl LevelParams {
             block_len,
             m_vars,
             r_vars,
-            stage1_config: self.stage1_config.clone(),
+            fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
             num_digits_open,
@@ -1271,7 +1202,7 @@ impl LevelParams {
             block_len: other.block_len,
             m_vars: other.m_vars,
             r_vars: other.r_vars,
-            stage1_config: self.stage1_config.clone(),
+            fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
@@ -1292,30 +1223,9 @@ impl LevelParams {
 }
 
 fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &SparseChallengeConfig) {
-    match config {
-        SparseChallengeConfig::Uniform {
-            weight,
-            nonzero_coeffs,
-        } => {
-            bytes.push(0);
-            push_usize(bytes, *weight);
-            push_usize(bytes, nonzero_coeffs.len());
-            for &coeff in nonzero_coeffs {
-                push_i8(bytes, coeff);
-            }
-        }
-        SparseChallengeConfig::ExactShell {
-            count_mag1,
-            count_mag2,
-        } => {
-            bytes.push(1);
-            push_usize(bytes, *count_mag1);
-            push_usize(bytes, *count_mag2);
-        }
-        SparseChallengeConfig::BoundedL1Norm => {
-            bytes.push(2);
-        }
-    }
+    bytes.push(0);
+    push_usize(bytes, config.count_pm1);
+    push_usize(bytes, config.count_pm2);
 }
 
 fn append_fold_linf_policy_descriptor_bytes(
@@ -1352,10 +1262,7 @@ mod tests {
             2,
             4,
             3,
-            SparseChallengeConfig::Uniform {
-                weight: 3,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            SparseChallengeConfig::pm1_only(3),
         )
     }
 
@@ -1396,10 +1303,7 @@ mod tests {
     #[test]
     fn with_fold_linf_cap_config_propagates_fold_digit_errors() {
         let mut lp = sample_layout_lp();
-        lp.stage1_config = SparseChallengeConfig::Uniform {
-            weight: 0,
-            nonzero_coeffs: vec![-1, 1],
-        };
+        lp.fold_challenge_config = SparseChallengeConfig::pm1_only(0);
 
         let err = lp
             .with_fold_linf_cap_config(128, 1)

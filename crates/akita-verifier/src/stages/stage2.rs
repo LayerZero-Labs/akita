@@ -4,11 +4,12 @@ use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
+    MulBaseUnreduced,
 };
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    eval_trace_terms_closed, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
-    RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
+    dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
+    CleartextWitnessProof, FpExtEncoding, RingMultiplierOpeningPoint, RingOpeningPoint, TraceClaim,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -132,9 +133,10 @@ where
     let d_a = lp.role_dims().d_a();
     let source = match witness {
         CleartextWitnessProof::SegmentTyped(_) => {
-            let digits = akita_types::dispatch_ring_dim_result!(d_a, |D| {
-                witness.logical_i8_digits::<D>(lp, num_segments)
-            })?;
+            let digits =
+                dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+                    witness.logical_i8_digits::<D>(lp, num_segments)
+                })?;
             if digits.len() != physical_w_len {
                 return Err(AkitaError::InvalidProof);
             }
@@ -177,7 +179,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
@@ -274,7 +276,7 @@ where
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
@@ -307,12 +309,19 @@ where
         };
         let relation_oracle = w_eval * alpha_val * row_val;
         let trace_oracle = if let Some(trace) = &self.trace {
-            let trace_weight = eval_trace_terms_closed::<F, E, D>(
-                &trace.layout,
-                y_challenges,
-                x_challenges,
-                &trace.trace_terms,
-            )?;
+            // Grouped roots carry the dense trace-weight table (per-group block
+            // geometry the closed form cannot express); scalar/recursive folds
+            // use the succinct per-claim closed form.
+            let trace_weight = if let Some(dense_evals) = &trace.dense_evals {
+                eval_dense_trace_table::<E>(dense_evals, y_challenges, x_challenges)?
+            } else {
+                eval_trace_terms_closed::<F, E, D>(
+                    &trace.layout,
+                    y_challenges,
+                    x_challenges,
+                    &trace.trace_terms,
+                )?
+            };
             trace.trace_coeff * w_eval * trace_weight
         } else {
             E::zero()

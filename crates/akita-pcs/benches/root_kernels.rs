@@ -15,7 +15,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 type F = fp128::Field;
-type Cfg = fp128::D32Full;
+type Cfg = fp128::D64Full;
 const D: usize = Cfg::D;
 const NV: usize = 25;
 

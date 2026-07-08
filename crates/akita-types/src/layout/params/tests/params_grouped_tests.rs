@@ -81,3 +81,19 @@ fn grouped_row_offsets_match_a_before_b_layout() {
         1 + n_a_final + n_b_final + n_a_pre..1 + n_a_final + n_b_final + n_a_pre + n_b_pre
     );
 }
+
+#[test]
+fn grouped_root_rejects_multi_chunk_witness_layout() {
+    let (mut lp, _) = sample_grouped_root_params();
+    lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
+        num_chunks: 2,
+        num_activated_levels: 1,
+    };
+    let err = lp
+        .reject_grouped_multi_chunk("test")
+        .expect_err("grouped multi-chunk must reject");
+    assert!(
+        format!("{err:?}").contains(crate::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED),
+        "unexpected error: {err:?}"
+    );
+}

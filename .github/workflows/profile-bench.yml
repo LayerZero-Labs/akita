@@ -44,15 +44,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Cases are split across parallel jobs. Each job builds BOTH the PR and
-  # merge-base binaries and benchmarks them interleaved (PR, base, ...) to cancel
-  # drift; the build is paid per job, but the jobs run concurrently. The split
-  # keeps fp128 dense/tensor root-fold tracking in one job, flat one-hot coverage
-  # in the second, and distributed multi-chunk coverage in a third parallel group.
-  # `report` then concatenates per-job summaries.
+  # Cases are split across parallel jobs. Merge-base baseline policy lives in
+  # `scripts/profile_bench_merge_base_policy.py`: mode-name check, optional smoke
+  # run, then interleaved benchmark only when merge-base can complete every case.
   bench:
     name: Bench (${{ matrix.group.name }})
-    runs-on: ubuntu-latest
+    runs-on: GitHubRunner-Large-Public
     strategy:
       fail-fast: false
       matrix:
@@ -82,16 +79,6 @@ jobs:
             cases: |
               dense_fp128_d64:24:1
           - name: 2-fp128-tensor
-            # Keep the tensor case in its own group with the merge-base baseline
-            # skipped. main before the tensor prover cutover (this PR) ships a
-            # placeholder tensor schedule table: every nv is a non-committing
-            # Direct step, so the merge-base baseline binary panics resolving the
-            # commit layout for this mode at *any* nv. The name-based
-            # `baseline_required_mode` guard cannot detect this because the
-            # merge-base still defines the mode name. Skip the baseline until the
-            # real tensor schedules land on main; future PRs compare against
-            # merge-base like the rest.
-            skip_merge_base_baseline: true
             cases: |
               onehot_fp128_d64_tensor:26:1
           - name: 3-flat-onehot-suite
@@ -102,11 +89,6 @@ jobs:
               onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
           - name: 4-distributed
-            # Keep this in its own group so the first PR that introduces the
-            # profile mode can still benchmark the PR side even though its
-            # merge-base binary cannot run the new mode. Once merged, future
-            # PRs compare this case against merge-base like the rest.
-            baseline_required_mode: onehot_fp128_d64_multi_chunk_w8r2
             cases: |
               onehot_fp128_d64_multi_chunk_w2r2:32:1
               onehot_fp128_d64_multi_chunk_w4r2:32:1
@@ -128,16 +110,6 @@ jobs:
           echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
-          # Groups whose merge-base cannot meaningfully run the mode (e.g. a
-          # placeholder schedule that panics) opt out of the merge-base baseline
-          # via `skip_merge_base_baseline`. The name-based `baseline_required_mode`
-          # guard below only covers modes the merge-base does not define at all.
-          if [ "${{ matrix.group.skip_merge_base_baseline }}" = "true" ]; then
-            echo "AKITA_BENCH_BASELINE_AVAILABLE=0" >> "$GITHUB_ENV"
-          else
-            echo "AKITA_BENCH_BASELINE_AVAILABLE=1" >> "$GITHUB_ENV"
-          fi
-          echo "AKITA_BENCH_BASE_REQUIRED_MODE=${{ matrix.group.baseline_required_mode }}" >> "$GITHUB_ENV"
 
       - name: Determine PR benchmark merge base
         if: github.event_name == 'pull_request'
@@ -164,6 +136,23 @@ jobs:
             if (mergeBaseSha) {
               core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);
             }
+
+      - name: Resolve merge-base baseline policy (mode names)
+        if: github.event_name == 'pull_request'
+        env:
+          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
+        run: |
+          case_args=()
+          while IFS= read -r case_spec; do
+            if [ -n "$case_spec" ]; then
+              case_args+=(--case "$case_spec")
+            fi
+          done <<< "$AKITA_BENCH_GROUP_CASES"
+
+          python3 scripts/profile_bench_merge_base_policy.py resolve \
+            --merge-base-ref "$AKITA_BENCH_MERGE_BASE_SHA" \
+            --github-env "$GITHUB_ENV" \
+            "${case_args[@]}"
 
       # Pin a fixed baseline ISA instead of `-C target-cpu=native`.
       # GitHub-hosted `ubuntu-latest` is a heterogeneous fleet (Skylake,
@@ -192,7 +181,7 @@ jobs:
         run: ./scripts/check_profile_ci_features.sh
 
       - name: Build merge-base profile binary
-        if: github.event_name == 'pull_request' && matrix.group.skip_merge_base_baseline != true
+        if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
         run: |
           git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
           mkdir -p "$RUNNER_TEMP/bench-bins"
@@ -209,12 +198,24 @@ jobs:
           )
           cp "$RUNNER_TEMP/bench-base-target/release/examples/profile" \
              "$RUNNER_TEMP/bench-bins/profile-base"
-          required_mode="$AKITA_BENCH_BASE_REQUIRED_MODE"
-          if [ -n "$required_mode" ] &&
-             ! grep -F "name: \"$required_mode\"" "$RUNNER_TEMP/bench-base/crates/akita-pcs/examples/profile/modes.rs" >/dev/null; then
-            echo "::notice::Skipping merge-base benchmark for ${{ matrix.group.name }} because merge-base does not define profile mode '$required_mode'. Future PRs will compare this group against merge-base after the mode lands on main."
-            echo "AKITA_BENCH_BASELINE_AVAILABLE=0" >> "$GITHUB_ENV"
-          fi
+
+      - name: Resolve merge-base baseline policy (smoke)
+        if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
+        env:
+          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
+        run: |
+          case_args=()
+          while IFS= read -r case_spec; do
+            if [ -n "$case_spec" ]; then
+              case_args+=(--case "$case_spec")
+            fi
+          done <<< "$AKITA_BENCH_GROUP_CASES"
+
+          python3 scripts/profile_bench_merge_base_policy.py resolve \
+            --merge-base-ref "$AKITA_BENCH_MERGE_BASE_SHA" \
+            --smoke-binary "$RUNNER_TEMP/bench-bins/profile-base" \
+            --github-env "$GITHUB_ENV" \
+            "${case_args[@]}"
 
       - name: Build profile binary
         run: |
@@ -246,7 +247,17 @@ jobs:
               --baseline-output-dir "$AKITA_BENCH_MAIN_BASELINE_DIR"
             )
           elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base for this group; merge-base does not support the required profile mode."
+            case "$AKITA_BENCH_BASELINE_SKIP_REASON" in
+              missing_modes)
+                echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base; missing mode(s): $AKITA_BENCH_BASELINE_MISSING_MODES"
+                ;;
+              smoke_failed)
+                echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base; smoke failed for: $AKITA_BENCH_BASELINE_SMOKE_FAILURES"
+                ;;
+              *)
+                echo "Benchmarking PR head $AKITA_BENCH_SOURCE_SHA without merge-base baseline"
+                ;;
+            esac
           else
             echo "Benchmarking $AKITA_BENCH_SOURCE_BRANCH commit $AKITA_BENCH_SOURCE_SHA"
           fi

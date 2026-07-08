@@ -6,7 +6,7 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_challenges::{sample_folding_challenges, stage1_fold_challenge_labels, Challenges};
+use akita_challenges::{witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
@@ -18,7 +18,7 @@ use akita_types::{
     combine_polys, linear_combination, sis::FoldWitnessGrindContract,
     stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
     stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
-    MRowLayout,
+    MRowLayout, OpeningClaimsLayout,
 };
 
 type Stage1VerifyOutput<E> = Vec<E>;
@@ -38,49 +38,55 @@ pub(crate) fn validate_fold_grind_nonce(
     contract.validate_nonce(fold_grind_nonce)
 }
 
-/// Absorb the prover's `v` rows and sample the stage-1 fold challenges. The
-/// returned [`Challenges`] is either `Flat` (per-block sparse) or
-/// `Tensor` (factored left/right) depending on `lp.fold_challenge_shape`.
+/// Absorb the prover's `v` rows once, then sample one [`Challenges`] set per
+/// commitment group in `OpeningClaims` order.
+///
+/// This mirrors the prover's grouped [`RingRelationProver`] live sampling: the
+/// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
+/// group; the terminal layout drops the D-block so the absorb is skipped on
+/// both sides), then each group samples with its own `num_blocks`/`K_g` under
+/// the shared root `fold_challenge_config`/`fold_challenge_shape` and the shared
+/// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
+/// `Challenges` set with `lp.num_blocks`/`num_total_polynomials`.
 ///
 /// # Errors
 ///
-/// Returns an error if challenge sampling fails.
+/// Returns an error if the group layout is malformed or challenge sampling fails.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn derive_stage1_challenges<F, T>(
+pub(crate) fn derive_grouped_stage1_challenges<F, T>(
     transcript: &mut T,
     v_coeffs: &[F],
     ring_d: usize,
-    num_blocks_per_claim: usize,
-    num_claims: usize,
+    opening_batch: &OpeningClaimsLayout,
     lp: &LevelParams,
     m_row_layout: MRowLayout,
     grind_nonce: u32,
-) -> Result<Challenges, AkitaError>
+) -> Result<Vec<Challenges>, AkitaError>
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
     T: Transcript<F>,
 {
-    // Terminal layout drops the D-block (`v = D · ŵ`) from M entirely;
-    // `v` never travels on the wire, so the absorb must be skipped on
-    // both prover and verifier to keep the Fiat-Shamir transcript in
-    // sync. Intermediate layouts still bind the prover's `v` rows.
     if matches!(m_row_layout, MRowLayout::WithDBlock) {
-        // Absorb `v` as flat ring coefficients under dimension `ring_d` —
-        // byte-identical to the former typed `RingSliceSerializer(v)` path
-        // (S2 byte-identity test): ring-major coefficient order, no length
-        // header.
         append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, ring_d, transcript)?;
     }
-    sample_folding_challenges::<F, T>(
-        transcript,
-        ring_d,
-        num_blocks_per_claim,
-        num_claims,
-        &lp.stage1_config,
-        &lp.fold_challenge_shape,
-        stage1_fold_challenge_labels(),
-        grind_nonce,
-    )
+    let labels = witness_fold_challenge_labels();
+    let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
+    for group_index in 0..opening_batch.num_groups() {
+        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
+        group_challenges.push(
+            LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
+                ring_d,
+                group_lp.num_blocks(),
+                k_g,
+                &lp.fold_challenge_config,
+                &lp.fold_challenge_shape,
+                labels,
+                grind_nonce,
+            )?,
+        );
+    }
+    Ok(group_challenges)
 }
 
 struct ProductStageVerifier<E: FieldCore> {
@@ -282,20 +288,28 @@ mod fold_grind_nonce_tests {
     use akita_types::{FoldLinfProtocolBinding, SisModulusFamily};
 
     fn sample_level_params(
-        stage1_config: SparseChallengeConfig,
+        fold_challenge_config: SparseChallengeConfig,
         fold_shape: TensorChallengeShape,
     ) -> LevelParams {
-        LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 2, 4, 3, stage1_config)
-            .with_decomp(4, 2, 2, 2, 0)
-            .expect("level params")
-            .with_fold_challenge_shape(fold_shape)
-            .expect("fold challenge shape")
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            4,
+            3,
+            fold_challenge_config,
+        )
+        .with_decomp(4, 2, 2, 2, 0)
+        .expect("level params")
+        .with_fold_challenge_shape(fold_shape)
+        .expect("fold challenge shape")
     }
 
     #[test]
     fn worst_case_beta_only_rejects_nonzero_nonce() {
         let lp = sample_level_params(
-            SparseChallengeConfig::BoundedL1Norm,
+            SparseChallengeConfig::pm1_only(31),
             TensorChallengeShape::Tensor,
         );
         let contract = lp
@@ -312,9 +326,9 @@ mod fold_grind_nonce_tests {
     #[test]
     fn tail_bound_with_grind_accepts_nonce_below_cap() {
         let lp = sample_level_params(
-            SparseChallengeConfig::ExactShell {
-                count_mag1: 30,
-                count_mag2: 12,
+            SparseChallengeConfig {
+                count_pm1: 30,
+                count_pm2: 12,
             },
             TensorChallengeShape::Flat,
         );
@@ -334,9 +348,9 @@ mod fold_grind_nonce_tests {
     #[test]
     fn tensor_tail_bound_with_grind_accepts_nonce_below_cap() {
         let lp = sample_level_params(
-            SparseChallengeConfig::ExactShell {
-                count_mag1: 30,
-                count_mag2: 12,
+            SparseChallengeConfig {
+                count_pm1: 30,
+                count_pm2: 12,
             },
             TensorChallengeShape::Tensor,
         );

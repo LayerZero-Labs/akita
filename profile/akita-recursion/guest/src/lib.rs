@@ -28,8 +28,8 @@ use akita_verifier::batched_verify;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
 type F = fp128::Field;
-const D: usize = 32;
-type Cfg = fp128::D32OneHot;
+const D: usize = 64;
+type Cfg = fp128::D64OneHot;
 
 const _: () = {
     // Hard-fail at compile time if the guest monomorphization drifts away from
@@ -37,10 +37,10 @@ const _: () = {
     assert!(D == <Cfg as CommitmentConfig>::D);
 };
 
-// Memory limits sized for the Akita verifier with `D=32 OneHot`. The
-// verifier-input blob is ≈ 4 MiB at nv=20 but grows to ≈ 576 MiB at
-// nv=32 (dominated by the expanded verifier setup matrix). We give:
-//   - `max_input_size` = 768 MiB so the nv=32 blob fits with headroom.
+// Memory limits sized for the Akita verifier with `D=64 OneHot`. Blob size
+// scales with `nv` (≈4 MiB at nv=20; tens-to-hundreds of MiB at nv=32).
+// We give:
+//   - `max_input_size` = 768 MiB so large nv blobs fit with headroom.
 //                        Keep this literal equal to
 //                        `akita_recursion_glue::MAX_JOLT_BLOB_BYTES`.
 //   - `heap_size`      = 1 GiB so the decoded verifier setup + transient

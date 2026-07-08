@@ -324,7 +324,7 @@ mod tests {
         )
         .expect("Q32 i8 path should have headroom");
 
-        assert_eq!(width, 131_062);
+        assert_eq!(width, 131_057);
     }
 
     fn assert_profile_widths(
@@ -348,12 +348,12 @@ mod tests {
     fn selected_capacity_profiles_match_golden_safe_widths() {
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime32Offset99, 256>().unwrap(),
-            32_765,
+            32_764,
             8_191,
         );
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime64Offset59, 256>().unwrap(),
-            8_191,
+            8_190,
             2_047,
         );
         assert_profile_widths(

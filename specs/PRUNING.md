@@ -142,7 +142,7 @@ for a stacked follow-up.
 |------|--------------|
 | `akita-pcs-crate-decomposition.md` | `how/architecture.md` |
 | `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
-| `tensor-structured-folding-challenges.md`, `bounded-l1-sparse-challenge.md` | `how/proving/root-fold-ring-switch.md` |
+| `tensor-structured-folding-challenges.md`, `archive/bounded-l1-sparse-challenge.md` | `how/proving/root-fold-ring-switch.md` |
 | `terminal-fold-cutover.md` | `how/recursion.md` |
 | `weak-binding-norm-fix.md` (committed-fold section) | `how/security.md` |
 | `akita-sis-consolidation.md` | `how/security.md` |
