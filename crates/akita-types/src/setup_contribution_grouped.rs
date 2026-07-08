@@ -6,7 +6,6 @@ use super::{
 use crate::layout::flat_matrix::FlatRingMatrixView;
 use crate::proof::AkitaExpandedSetup;
 use crate::WitnessChunkLayout;
-use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
