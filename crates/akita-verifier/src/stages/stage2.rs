@@ -1,6 +1,6 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
@@ -163,7 +163,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
     alpha_evals_y: Vec<E>,
-    prepared_row_eval: RingSwitchDeferredRowEval<E>,
+    relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     opening_point: &'a RingOpeningPoint<F>,
@@ -191,7 +191,7 @@ where
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         stage1_point: Vec<E>,
         alpha_evals_y: Vec<E>,
-        prepared_row_eval: RingSwitchDeferredRowEval<E>,
+        relation_matrix_evaluator: RelationMatrixEvaluator<E>,
         setup_claim: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_point: &'a RingOpeningPoint<F>,
@@ -231,7 +231,7 @@ where
             witness_oracle,
             stage1_point,
             alpha_evals_y,
-            prepared_row_eval,
+            relation_matrix_evaluator,
             setup_claim,
             setup,
             opening_point,
@@ -261,8 +261,8 @@ where
         }
     }
 
-    fn row_eval(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
-        self.prepared_row_eval.eval_at_point::<F, D>(
+    fn evaluate_relation_matrix(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
+        self.relation_matrix_evaluator.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
             self.opening_point,
@@ -304,8 +304,8 @@ where
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let row_val = {
-            let _span = tracing::info_span!("stage2_ring_switch_row_eval").entered();
-            self.row_eval(x_challenges)?
+            let _span = tracing::info_span!("stage2_relation_matrix_eval").entered();
+            self.evaluate_relation_matrix(x_challenges)?
         };
         let relation_oracle = w_eval * alpha_val * row_val;
         let trace_oracle = if let Some(trace) = &self.trace {

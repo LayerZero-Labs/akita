@@ -342,7 +342,7 @@ Use current `main` paths, not the stale older plan.
 `akita-verifier`:
 
 - Verification path from the aggregate commitment scheme, including current functions around `batched_verify`, `verify_batched_recursive_suffix`, `verify_root_level`, `verify_one_level`, and root-direct verification helpers.
-- Verifier path from the former root ring-switch module, including `ring_switch_verifier`. The ring-switch verifier replay engine (`ring_switch_verifier`, `RingSwitchDeferredRowEval`, and the direct row-eval helpers) has moved into `crates/akita-verifier`; prover-side witness construction/finalization remains prover-owned.
+- Verifier path from the former root ring-switch module, including `ring_switch_verifier`. The ring-switch verifier replay engine (`ring_switch_verifier`, `RelationMatrixEvaluator`, and the direct row-eval helpers) has moved into `crates/akita-verifier`; prover-side witness construction/finalization remains prover-owned.
 - Verifier challenge derivation and stage helpers that used to sit beside the
   quadratic equation builder now live in `akita-verifier`; the remaining
   quadratic equation builder is prover-owned.
@@ -832,7 +832,7 @@ The intended sequence is:
     in-repo call sites import `akita_verifier` directly rather than relying on
     root protocol re-exports.
     Second cut: move ring-switch verifier replay (`ring_switch_verifier`,
-    `RingSwitchDeferredRowEval`, and row-eval helpers) into `akita-verifier`, after moving
+    `RelationMatrixEvaluator`, and row-eval helpers) into `akita-verifier`, after moving
     shared scalar-power, sparse-challenge-eval, gadget-scalar, and
     claim-routing validation helpers into foundational crates.
     Third cut: move stage-2 verifier construction and expected-output logic

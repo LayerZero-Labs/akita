@@ -1,6 +1,6 @@
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
-use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{eval_offset_eq_interval, summarize_pow2_block_carries};
 use akita_field::parallel::*;
@@ -288,7 +288,7 @@ where
 /// `offset_hi + 1` via two sparse interval bindings. Otherwise it materialises
 /// the `r`-tail vector and evaluates it as a single contiguous interval.
 pub(crate) fn compute_r_contribution<F, E>(
-    prepared: &RingSwitchDeferredRowEval<E>,
+    prepared: &RelationMatrixEvaluator<E>,
     full_vec_randomness: &[E],
     offset_r: usize,
     denom: E,
@@ -345,14 +345,14 @@ mod tests {
     };
 
     use crate::protocol::ring_switch::{
-        build_setup_contribution_groups, RingSwitchDeferredRowGroupEval,
+        build_setup_contribution_groups, RelationMatrixGroupEvaluator,
     };
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
 
     struct StructuredFixture {
-        prepared: RingSwitchDeferredRowEval<F>,
+        prepared: RelationMatrixEvaluator<F>,
         opening_point: RingOpeningPoint<F>,
         full_vec_randomness: Vec<F>,
         offset_e: usize,
@@ -480,7 +480,7 @@ mod tests {
             rows,
             num_polys_per_group: vec![num_claims],
         };
-        let groups = vec![RingSwitchDeferredRowGroupEval {
+        let groups = vec![RelationMatrixGroupEvaluator {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
                     .map(|idx| f(3_000 + idx as u128))
@@ -512,7 +512,7 @@ mod tests {
             total_blocks * depth_open,
         )
         .unwrap();
-        let prepared = RingSwitchDeferredRowEval {
+        let prepared = RelationMatrixEvaluator {
             role_dims: lp.role_dims(),
             groups,
             depth_fold,

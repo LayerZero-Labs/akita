@@ -7,7 +7,9 @@ pub(crate) mod ring_switch;
 mod slice_mle;
 
 pub use core::batched_verify;
-pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay};
+pub use ring_switch::{
+    prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
+};
 pub(crate) use slice_mle::SetupEvaluator;
 
 #[inline]

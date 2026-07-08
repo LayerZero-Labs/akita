@@ -1,7 +1,7 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
-use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use crate::protocol::SetupEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
@@ -41,7 +41,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     /// [`verify_batched_stage3`](Self::verify_batched_stage3).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F, const D: usize>(
-        prepared: &RingSwitchDeferredRowEval<E>,
+        prepared: &RelationMatrixEvaluator<E>,
         x_challenges: &[E],
         alpha: E,
     ) -> Result<Self, AkitaError>

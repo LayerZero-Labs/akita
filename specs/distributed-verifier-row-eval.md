@@ -31,7 +31,7 @@ it introduces a `ChunkedWitnessCfg` parameter in `LevelParams` describing the tw
 column layouts, factors both into one **chunk-list** common denominator, and
 refactors the evaluation so a single code path serves both — the established
 layout becoming the one-chunk special case. The implementation surface is
-`RingSwitchDeferredRowEval::eval_at_point`
+`RelationMatrixEvaluator::eval_at_point`
 (`crates/akita-verifier/src/protocol/ring_switch.rs`), the structured/setup
 evaluators in `crates/akita-verifier/src/protocol/slice_mle/`, and
 `akita_types::SetupContributionPlan`
@@ -132,7 +132,7 @@ setup-contribution planner consume the same definitions):
   `offset_t = offset_e + e_len_j`. Only the last chunk carries `r` (`Some`);
   all others carry `None`. All validation (no-panic) happens here.
   here. `RingRelationSegmentLayout` is deprecated and replaced by `WitnessLayout`.
-- **`RingSwitchDeferredRowEval`** carries the resolved `WitnessLayout` (replacing
+- **`RelationMatrixEvaluator`** carries the resolved `WitnessLayout` (replacing
   `witness_segment_layout`), and `eval_at_point` becomes a fold over
   `chunk_layout.chunks()` zipped with `chunk_layout.chunk_lengths`.
 - **`PreparedChallengeEvals::summarize_chunk_block_carries`** (new, generalizes
@@ -232,7 +232,7 @@ Implementation Stages).
   exist in `crates/akita-types/src/witness/`, and
   `RingRelationInstance::segment_layout(lp)` yields `1` chunk for
   `num_chunks = 1` and `W` chunks for `num_chunks = W`.
-- [ ] `RingSwitchDeferredRowEval::eval_at_point` evaluates `e_hat`, `t_hat`,
+- [ ] `RelationMatrixEvaluator::eval_at_point` evaluates `e_hat`, `t_hat`,
   `z_hat`, and the setup contribution as a fold over `chunk_layout.chunks()`,
   reusing the existing `EStructuredSlicesEvaluator` /
   `TStructuredSlicesEvaluator` / `ZStructuredPow2SlicesEvaluator` /
@@ -323,7 +323,7 @@ layout once into `WitnessLayout`, then keeps the verifier hot path expressed as 
 fold over resolved chunks. That is the correct boundary because today's code has
 three independent consumers of witness column geometry:
 
-- `RingSwitchDeferredRowEval::eval_at_point`, which owns the structured
+- `RelationMatrixEvaluator::eval_at_point`, which owns the structured
 `e_hat`/`t_hat`/`z_hat` and `r` contributions.
 - `SetupContributionPlan::prepare`, which translates the same geometry into
 column-equality weights for the packed setup scan.
@@ -346,7 +346,7 @@ offsets that are algebraically valid but outside the committed witness column
 domain. In implementation terms, either make `witness_len` part of
 `segment_layout`'s inputs, or add a non-optional
 `WitnessLayout::validate_capacity(witness_len, r_tail_len)` call in
-`prepare_ring_switch_row_eval` before the layout is stored.
+`prepare_relation_matrix_evaluator` before the layout is stored.
 
 `witness_chunk` must also be transcript/descriptor-bound as a public layout
 parameter. The proof should not choose it, but the verifier and prover must agree
@@ -892,14 +892,14 @@ Tests:
 
 ### Stage 2 — Prepare-Time Wiring
 
-Change `RingSwitchDeferredRowEval` to store `WitnessLayout` instead of
+Change `RelationMatrixEvaluator` to store `WitnessLayout` instead of
 `RingRelationSegmentLayout`. Do this before changing evaluation logic so the
 compiler reveals every caller that still expects single offsets.
 
 Expected code shape:
 
 ```rust
-pub struct RingSwitchDeferredRowEval<F: FieldCore> {
+pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
     // ...
     pub(crate) chunk_layout: WitnessLayout,
@@ -910,7 +910,7 @@ pub(crate) fn chunk_layout(&self) -> &WitnessLayout {
 }
 ```
 
-`prepare_ring_switch_row_eval` should resolve the layout after existing shape
+`prepare_relation_matrix_evaluator` should resolve the layout after existing shape
 checks and before returning the prepared evaluator:
 
 ```rust
@@ -923,14 +923,14 @@ let chunk_layout = relation.segment_layout(&lp, &SegmentLayoutInputs {
 })?;
 ```
 
-If `prepare_ring_switch_row_eval` does not currently receive `w_len`, thread it
+If `prepare_relation_matrix_evaluator` does not currently receive `w_len`, thread it
 through from `ring_switch_verifier_core`; the verifier already validates `w_len`
 and computes `num_ring_elems`, so this is the right boundary.
 
 Tests:
 
 - Existing verifier tests still pass under `ChunkedWitnessCfg::default()`.
-- A focused prepare test asserts `RingSwitchDeferredRowEval::chunk_layout()` is
+- A focused prepare test asserts `RelationMatrixEvaluator::chunk_layout()` is
   one chunk for default levels.
 
 ### Stage 3 — Chunk-Window Challenge Summaries

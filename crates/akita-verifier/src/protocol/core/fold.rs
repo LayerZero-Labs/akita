@@ -502,7 +502,7 @@ where
         witness_oracle,
         stage1.stage1_point,
         rs.alpha_evals_y.clone(),
-        rs.prepared_row_eval.clone(),
+        rs.relation_matrix_evaluator.clone(),
         setup_claim,
         &setup.expanded,
         ring_opening_point,
@@ -560,7 +560,7 @@ where
             role_d_a,
             |D| {
                 let verifier = SetupSumcheckVerifier::new::<F, D>(
-                    &rs.prepared_row_eval,
+                    &rs.relation_matrix_evaluator,
                     setup_x_challenges,
                     rs.alpha,
                 )?;

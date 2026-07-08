@@ -39,7 +39,7 @@ mod tests;
 /// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for deferred ring-switch row MLE evaluation.
-    pub prepared_row_eval: RingSwitchDeferredRowEval<E>,
+    pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     /// Evaluation table of alpha powers over the ring-coordinate dimension.
     pub alpha_evals_y: Vec<E>,
     /// Number of upper variable bits.
@@ -57,7 +57,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 }
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
-    prepared_row_eval: RingSwitchDeferredRowEval<E>,
+    relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     alpha_evals_y: Vec<E>,
     col_bits: usize,
     ring_bits: usize,
@@ -71,7 +71,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
     fn into_intermediate(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
-            prepared_row_eval: self.prepared_row_eval,
+            relation_matrix_evaluator: self.relation_matrix_evaluator,
             alpha_evals_y: self.alpha_evals_y,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
@@ -87,7 +87,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
             return Err(AkitaError::InvalidProof);
         }
         Ok(RingSwitchVerifyOutput {
-            prepared_row_eval: self.prepared_row_eval,
+            relation_matrix_evaluator: self.relation_matrix_evaluator,
             alpha_evals_y: self.alpha_evals_y,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
@@ -106,9 +106,9 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 /// Everything else is passed by reference at evaluation time to avoid
 /// duplicating setup matrix views, opening points, and gadget vectors.
 #[derive(Clone)]
-pub struct RingSwitchDeferredRowEval<F: FieldCore> {
+pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) role_dims: CommitmentRingDims,
-    pub(crate) groups: Vec<RingSwitchDeferredRowGroupEval<F>>,
+    pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
     /// Batch-wide fold depth used by setup-sumcheck planning.
     pub(crate) depth_fold: usize,
     /// Batch-wide basis used by the shared r-tail.
@@ -122,7 +122,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
 }
 
 #[derive(Clone)]
-pub(crate) struct RingSwitchDeferredRowGroupEval<F: FieldCore> {
+pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
     pub(crate) a_evals: Vec<F>,
     pub(crate) chunk_range: Range<usize>,
@@ -288,11 +288,11 @@ where
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let prepared_row_eval =
-        prepare_ring_switch_row_eval::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
+    let relation_matrix_evaluator =
+        prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
 
     Ok(RingSwitchVerifyCoreOutput {
-        prepared_row_eval,
+        relation_matrix_evaluator,
         alpha_evals_y,
         col_bits,
         ring_bits,
@@ -313,13 +313,13 @@ where
 /// Returns an error if gamma/challenge lengths do not match the claim shape,
 /// the expanded tau1 table is too short for the level layout, or sparse
 /// challenge evaluation fails.
-#[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
-pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
+#[tracing::instrument(skip_all, name = "prepare_relation_matrix_evaluator")]
+pub fn prepare_relation_matrix_evaluator<F, E, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
     witness_ring_len: Option<usize>,
-) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
+) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
@@ -330,14 +330,14 @@ where
     reject_mixed_d_multi_chunk::<D>(
         lp.role_dims(),
         &chunk_layout,
-        "prepare_ring_switch_row_eval",
+        "prepare_relation_matrix_evaluator",
     )?;
     let opening_batch = relation.opening_batch();
     let num_polys = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polys, F::modulus_bits())?;
     let rows = lp.m_row_count_for(opening_batch.num_groups(), relation.m_row_layout())?;
     if lp.has_precommitted_groups() {
-        return prepare_grouped_ring_switch_row_eval::<F, E, D>(
+        return prepare_relation_matrix_evaluator_grouped::<F, E, D>(
             replay,
             alpha,
             tau1,
@@ -351,7 +351,7 @@ where
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     let ring_multiplier_point = relation.group_ring_multiplier_point(0)?;
-    prepare_ring_switch_row_eval_inner::<F, E, D>(
+    prepare_relation_matrix_evaluator_inner::<F, E, D>(
         challenges,
         ring_multiplier_point,
         alpha,
@@ -367,14 +367,14 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_grouped_ring_switch_row_eval<F, E, const D: usize>(
+fn prepare_relation_matrix_evaluator_grouped<F, E, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
     chunk_layout: WitnessLayout,
     depth_fold: usize,
     rows: usize,
-) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
+) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
@@ -382,7 +382,7 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
-    lp.reject_grouped_multi_chunk("prepare_grouped_ring_switch_row_eval")?;
+    lp.reject_grouped_multi_chunk("prepare_relation_matrix_evaluator_grouped")?;
     lp.validate_root_opening_batch(opening_batch)?;
     validate_role_dispatch::<D>(relation.role_dims(), RingRole::Inner)?;
     if replay.row_coefficients.len() != opening_batch.num_total_polynomials() {
@@ -489,7 +489,7 @@ where
             ));
         }
 
-        groups.push(RingSwitchDeferredRowGroupEval {
+        groups.push(RelationMatrixGroupEvaluator {
             c_alphas,
             a_evals,
             chunk_range: order_pos..order_pos + 1,
@@ -541,7 +541,7 @@ where
         e_setup_cols,
     )?;
 
-    Ok(RingSwitchDeferredRowEval {
+    Ok(RelationMatrixEvaluator {
         role_dims: relation.role_dims(),
         groups,
         depth_fold,
@@ -601,7 +601,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
+fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     challenges: &Challenges,
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     alpha: E,
@@ -613,7 +613,7 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     chunk_layout: WitnessLayout,
     depth_fold: usize,
     rows: usize,
-) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
+) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
@@ -622,7 +622,11 @@ where
     let setup_contribution_inputs =
         SetupContributionPlanInputs::from_level_params(lp, &[num_polys], m_row_layout, depth_fold)?
             .with_eq_tau1_from_tau(tau1, rows)?;
-    reject_mixed_d_multi_chunk::<D>(lp.role_dims, &chunk_layout, "prepare_ring_switch_row_eval")?;
+    reject_mixed_d_multi_chunk::<D>(
+        lp.role_dims,
+        &chunk_layout,
+        "prepare_relation_matrix_evaluator",
+    )?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
     if num_polys != num_claims {
@@ -664,7 +668,7 @@ where
         .checked_mul(num_blocks)
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("e width overflow".to_string()))?;
-    let group = RingSwitchDeferredRowGroupEval {
+    let group = RelationMatrixGroupEvaluator {
         c_alphas,
         a_evals,
         chunk_range: 0..chunk_layout.chunks.len(),
@@ -693,7 +697,7 @@ where
         e_setup_cols,
     )?;
 
-    Ok(RingSwitchDeferredRowEval {
+    Ok(RelationMatrixEvaluator {
         role_dims: lp.role_dims,
         groups,
         depth_fold,
@@ -743,7 +747,7 @@ fn checked_slice<'a, T>(
 
 pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
     chunk_layout: &WitnessLayout,
-    groups: &[RingSwitchDeferredRowGroupEval<F>],
+    groups: &[RelationMatrixGroupEvaluator<F>],
 ) -> Result<Vec<SetupContributionGroupInputs>, AkitaError> {
     groups
         .iter()
@@ -840,7 +844,7 @@ where
     Ok(cache)
 }
 
-impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
+impl<E: FieldCore> RelationMatrixEvaluator<E> {
     pub(crate) fn chunk_layout(&self) -> &WitnessLayout {
         &self.chunk_layout
     }
@@ -855,7 +859,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
     fn group_chunks(
         &self,
-        group: &RingSwitchDeferredRowGroupEval<E>,
+        group: &RelationMatrixGroupEvaluator<E>,
     ) -> Result<&[WitnessChunkLayout], AkitaError> {
         self.chunk_layout
             .chunks

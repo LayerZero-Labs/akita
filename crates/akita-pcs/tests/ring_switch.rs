@@ -108,7 +108,7 @@ mod tests {
         Commitment, MRowLayout, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
         RingMultiplierOpeningPoint, RingVec,
     };
-    use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
+    use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
@@ -590,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_row_eval_matches_materialized() {
+    fn relation_matrix_evaluator_matches_materialized() {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
@@ -717,8 +717,8 @@ mod tests {
             row_coefficients: &gamma,
             lp: &level_params,
         };
-        let prepared = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1, None)
-            .expect("prepare_ring_switch_row_eval");
+        let prepared = prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
+            .expect("prepare_relation_matrix_evaluator");
 
         let got = prepared
             .eval_at_point::<F, D>(
@@ -733,7 +733,7 @@ mod tests {
 
         assert_eq!(
             got, expected,
-            "RingSwitchDeferredRowEval::eval_at_point must match materialized multilinear_eval"
+            "RelationMatrixEvaluator::eval_at_point must match materialized multilinear_eval"
         );
 
         // ----- Chunked layout ground truth (W ∈ powers of two | num_blocks) --
@@ -825,8 +825,9 @@ mod tests {
                 row_coefficients: &gamma,
                 lp: &lp_w,
             };
-            let prepared_w = prepare_ring_switch_row_eval::<F, F, D>(&replay_w, alpha, &tau1, None)
-                .expect("prepare chunked row eval");
+            let prepared_w =
+                prepare_relation_matrix_evaluator::<F, F, D>(&replay_w, alpha, &tau1, None)
+                    .expect("prepare chunked row eval");
             let got_w = prepared_w
                 .eval_at_point::<F, D>(
                     &x_challenges_w,

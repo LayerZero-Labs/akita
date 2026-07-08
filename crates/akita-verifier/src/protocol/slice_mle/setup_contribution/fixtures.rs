@@ -14,8 +14,8 @@ use akita_types::{
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
 use crate::protocol::ring_switch::{
-    build_setup_contribution_groups, PreparedChallengeEvals, RingSwitchDeferredRowEval,
-    RingSwitchDeferredRowGroupEval,
+    build_setup_contribution_groups, PreparedChallengeEvals, RelationMatrixEvaluator,
+    RelationMatrixGroupEvaluator,
 };
 
 pub(crate) type TestField = Prime128OffsetA7F7;
@@ -26,7 +26,7 @@ pub(crate) fn test_scalar(value: u128) -> TestField {
 }
 
 pub(crate) struct SetupContributionFixture {
-    pub prepared: RingSwitchDeferredRowEval<TestField>,
+    pub prepared: RelationMatrixEvaluator<TestField>,
     pub setup: AkitaExpandedSetup<TestField>,
     pub full_vec_randomness: Vec<TestField>,
     pub eq_low: Vec<TestField>,
@@ -209,7 +209,7 @@ impl SetupContributionFixture {
             MRowLayout::WithDBlock => shape.n_d,
             MRowLayout::WithoutDBlock => 0,
         };
-        let groups = vec![RingSwitchDeferredRowGroupEval {
+        let groups = vec![RelationMatrixGroupEvaluator {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
                     .map(|idx| test_scalar(41 + idx as u128))
@@ -243,7 +243,7 @@ impl SetupContributionFixture {
             n_cols_e,
         )
         .unwrap();
-        let prepared = RingSwitchDeferredRowEval {
+        let prepared = RelationMatrixEvaluator {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
             depth_fold: shape.depth_fold,

@@ -4,7 +4,7 @@
 //! vector `m_evals_x` that the fused stage-2 sumcheck treats as the row
 //! polynomial. The prover still materializes this table for stage-2 proving.
 //! The verifier replays the same group-major geometry with its structured
-//! `RingSwitchDeferredRowEval` path instead of rebuilding the dense vector.
+//! `RelationMatrixEvaluator` path instead of rebuilding the dense vector.
 
 use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;

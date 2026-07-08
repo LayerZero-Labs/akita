@@ -6,12 +6,12 @@ use akita_types::{
     SetupContributionPlanInputs, WitnessLayout,
 };
 
-use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 
 pub(crate) enum SetupEvaluatorMode<'a, F: FieldCore, E: FieldCore> {
     Direct {
         setup: &'a AkitaExpandedSetup<F>,
-        prepared: &'a RingSwitchDeferredRowEval<E>,
+        prepared: &'a RelationMatrixEvaluator<E>,
         alpha_pows_b: &'a [E],
         alpha_pows_d: &'a [E],
     },
@@ -114,7 +114,7 @@ where
 
     pub(crate) fn prepare_grouped(
         &self,
-        prepared: &RingSwitchDeferredRowEval<E>,
+        prepared: &RelationMatrixEvaluator<E>,
     ) -> Result<GroupedSetupContributionPlan<E>, AkitaError> {
         SetupContributionPlan::finish_grouped_plan::<F>(
             &prepared.setup_contribution_static,
@@ -128,7 +128,7 @@ where
 }
 
 fn validate_grouped_role_alpha_pows<E: FieldCore>(
-    prepared: &RingSwitchDeferredRowEval<E>,
+    prepared: &RelationMatrixEvaluator<E>,
     alpha_pows_a: &[E],
     alpha_pows_b: &[E],
     alpha_pows_d: &[E],

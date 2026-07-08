@@ -289,7 +289,7 @@ Why a sibling type and not an extension of `ClaimIncidenceSummary`: the summary'
 **Verifier adoption (the payoff).**
 The verifier today assembles the fold statement from loose pieces: `LevelParams`, the proof's `y_rings` / `v` / commitment rows, `ClaimIncidenceSummary`, and transcript-derived challenges, threaded by hand through `verify_root_level_inner` (`crates/akita-verifier/src/protocol/levels.rs:271`) and `verify_one_level_inner` (`crates/akita-verifier/src/protocol/levels/recursive.rs:120`).
 There is no single statement object today, so the same incidence/opening/challenge plumbing is spelled out separately from the prover's.
-Under this spec the verifier builds one `RingRelationInstance` from those same pieces and threads `&RingRelationInstance` into `prepare_ring_switch_row_eval` (`crates/akita-verifier/src/protocol/ring_switch.rs`) and `relation_claim_from_rows_extension` (`crates/akita-types/src/proof/relation.rs`).
+Under this spec the verifier builds one `RingRelationInstance` from those same pieces and threads `&RingRelationInstance` into `prepare_relation_matrix_evaluator` (`crates/akita-verifier/src/protocol/ring_switch.rs`) and `relation_claim_from_rows_extension` (`crates/akita-types/src/proof/relation.rs`).
 Every field is already in the verifier's hands at this point, so this is a regrouping, not new computation. Concretely:
 
 - `m_row_layout`: from the level's `LevelParams` (copied out).

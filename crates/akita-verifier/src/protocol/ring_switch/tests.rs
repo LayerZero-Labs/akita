@@ -54,7 +54,7 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
         fold_challenge_config(),
     );
     let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
-    let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
+    let err = match prepare_relation_matrix_evaluator_inner::<F, F, D>(
         &challenges,
         &reject_test_multiplier_point(),
         F::one(),
@@ -85,7 +85,7 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         fold_challenge_config(),
     );
     let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
-    let err = match prepare_ring_switch_row_eval_inner::<F, F, D>(
+    let err = match prepare_relation_matrix_evaluator_inner::<F, F, D>(
         &challenges,
         &reject_test_multiplier_point(),
         F::one(),
