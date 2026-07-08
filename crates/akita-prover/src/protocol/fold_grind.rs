@@ -133,65 +133,6 @@ fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     true
 }
 
-fn witness_linf_cap_for_grind(
-    root_lp: &LevelParams,
-    params: &(impl LevelParamsLike + ?Sized),
-    contract: &FoldWitnessGrindContract,
-    tail_t_vectors: Option<usize>,
-) -> Result<u128, AkitaError> {
-    match tail_t_vectors {
-        Some(num_t_vectors) => fold_witness_linf_cap_for_claims(root_lp, params, num_t_vectors),
-        None => Ok(contract.witness_linf_cap),
-    }
-}
-
-fn fold_witness_linf_digit_plan_for_claims(
-    root_lp: &LevelParams,
-    params: &(impl LevelParamsLike + ?Sized),
-    num_claims: usize,
-) -> Result<akita_types::sis::FoldWitnessLinfDigitPlan, AkitaError> {
-    akita_types::sis::fold_witness_linf_digit_plan(
-        params.r_vars(),
-        num_claims,
-        root_lp.field_bits_for_cache(),
-        params.log_basis(),
-        akita_types::sis::fold_challenge_norms(
-            &root_lp.fold_challenge_config,
-            root_lp.fold_challenge_shape,
-        ),
-        root_lp.fold_witness_norms_for_params(params),
-        &root_lp.fold_linf_cap_config,
-    )
-}
-
-fn fold_witness_linf_cap_for_claims(
-    root_lp: &LevelParams,
-    params: &(impl LevelParamsLike + ?Sized),
-    num_claims: usize,
-) -> Result<u128, AkitaError> {
-    Ok(fold_witness_linf_digit_plan_for_claims(root_lp, params, num_claims)?.grind_cap)
-}
-
-fn fold_witness_grind_contract(
-    root_lp: &LevelParams,
-    params: &(impl LevelParamsLike + ?Sized),
-    num_claims: usize,
-    max_grind_attempts: u32,
-) -> Result<FoldWitnessGrindContract, AkitaError> {
-    let policy = root_lp.fold_witness_linf_cap_policy();
-    let max_nonce_exclusive = match policy {
-        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind
-        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => max_grind_attempts,
-    };
-    let witness_linf_cap = fold_witness_linf_cap_for_claims(root_lp, params, num_claims)?;
-    Ok(FoldWitnessGrindContract {
-        policy,
-        witness_linf_cap,
-        max_nonce_exclusive,
-    })
-}
-
 fn grind_probe_nonces(
     contract: &FoldWitnessGrindContract,
     binding: &FoldLinfProtocolBinding,
@@ -418,22 +359,52 @@ where
     // A-role fold dimension; per-role split attaches here (mixed-row spec).
     let ring_d = root_lp.role_dims().d_a();
     let binding = FoldLinfProtocolBinding::CURRENT;
-    let contract =
-        fold_witness_grind_contract(root_lp, params, num_claims, binding.max_grind_attempts)?;
-    // Tail Golomb grinding sizes caps from `tail_t_vectors`; keep observer metrics on the
-    // same claim count so snap hints do not mix β/t*/δ from one count with cap from another.
-    let sizing_claims = tail_t_vectors.unwrap_or(num_claims);
-    let witness_linf_cap = witness_linf_cap_for_grind(root_lp, params, &contract, tail_t_vectors)?;
-    let digit_plan = fold_witness_linf_digit_plan_for_claims(root_lp, params, sizing_claims)?;
-    let delta_fold = digit_plan.delta_fold;
-    let (digit_negative_abs_bound, digit_positive_bound) =
-        akita_types::sis::fold_witness_representable_linf_bounds(params.log_basis(), delta_fold);
-    let verifier_linf_bound = fold_witness_verifier_linf_bound(params.log_basis(), delta_fold);
     let challenge = akita_types::sis::fold_challenge_norms(
         &root_lp.fold_challenge_config,
         root_lp.fold_challenge_shape,
     );
     let witness_norms = root_lp.fold_witness_norms_for_params(params);
+    let num_claims_digit_plan = akita_types::sis::fold_witness_linf_digit_plan(
+        params.r_vars(),
+        num_claims,
+        root_lp.field_bits_for_cache(),
+        params.log_basis(),
+        challenge,
+        witness_norms,
+        &root_lp.fold_linf_cap_config,
+    )?;
+    let policy = root_lp.fold_witness_linf_cap_policy();
+    let max_nonce_exclusive = match policy {
+        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => binding.max_grind_attempts,
+    };
+    let contract = FoldWitnessGrindContract {
+        policy,
+        witness_linf_cap: num_claims_digit_plan.grind_cap,
+        max_nonce_exclusive,
+    };
+    // Tail Golomb grinding sizes caps from `tail_t_vectors`; keep observer metrics on the
+    // same claim count so snap hints do not mix β/t*/δ from one count with cap from another.
+    let sizing_claims = tail_t_vectors.unwrap_or(num_claims);
+    let digit_plan = if sizing_claims == num_claims {
+        num_claims_digit_plan
+    } else {
+        akita_types::sis::fold_witness_linf_digit_plan(
+            params.r_vars(),
+            sizing_claims,
+            root_lp.field_bits_for_cache(),
+            params.log_basis(),
+            challenge,
+            witness_norms,
+            &root_lp.fold_linf_cap_config,
+        )?
+    };
+    let witness_linf_cap = digit_plan.grind_cap;
+    let delta_fold = digit_plan.delta_fold;
+    let (digit_negative_abs_bound, digit_positive_bound) =
+        akita_types::sis::fold_witness_representable_linf_bounds(params.log_basis(), delta_fold);
+    let verifier_linf_bound = fold_witness_verifier_linf_bound(params.log_basis(), delta_fold);
     let beta_inf = fold_witness_beta(params.r_vars(), sizing_claims, challenge, witness_norms)?;
     let level_meta = FoldGrindLevelMeta {
         beta_inf,
