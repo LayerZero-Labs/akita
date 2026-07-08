@@ -876,6 +876,137 @@ mod tests {
     }
 
     #[test]
+    fn grouped_packed_direct_accepts_d_footprint_at_nested_d_d() {
+        // D-role columns are counted at d_d; comparing `required` against
+        // total_ring_elements_at_dyn(d_a) falsely rejects valid setups when
+        // d_d < d_a and the D footprint dominates.
+        let grouped_plan = SetupContributionPlan {
+            d_rows: 2,
+            d_physical_cols: 11,
+            groups: vec![SetupContributionGroupPlan {
+                e_col_offset: 0,
+                t_cols: 4,
+                z_cols: 3,
+                n_a: 2,
+                n_b: 2,
+                e_eq_slice: vec![test_scalar(2), test_scalar(3)],
+                t_eq_slice: vec![
+                    test_scalar(5),
+                    test_scalar(7),
+                    test_scalar(11),
+                    test_scalar(13),
+                ],
+                z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
+                a_weights: vec![test_scalar(29), test_scalar(31)],
+                b_weights: vec![test_scalar(37), test_scalar(41)],
+                d_weights: vec![test_scalar(43), test_scalar(47)],
+            }],
+        };
+        const D_A: usize = 64;
+        const D_B: usize = 64;
+        const D_D: usize = 32;
+        let setup_ring_elements = 20usize;
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupSeed {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                gen_ring_dim: D_A,
+                max_setup_len: setup_ring_elements,
+                public_matrix_seed: [0u8; 32],
+            },
+            FlatMatrix::from_flat_data(
+                (0..setup_ring_elements * D_A)
+                    .map(|idx| test_scalar(311 + idx as u128))
+                    .collect(),
+                D_A,
+            ),
+        );
+        let alpha = test_scalar(3);
+        let alpha_pows_a = scalar_powers(alpha, D_A);
+        let alpha_pows_b = scalar_powers(alpha, D_B);
+        let alpha_pows_d = scalar_powers(alpha, D_D);
+        let expected = grouped_plan
+            .evaluate_direct_by_rows::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d, D_A)
+            .unwrap();
+        let got = grouped_plan
+            .evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
+            .unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn grouped_multi_group_packed_matches_row_fallback_with_mismatched_t_cols() {
+        let grouped_plan = SetupContributionPlan {
+            d_rows: 2,
+            d_physical_cols: 5,
+            groups: vec![
+                SetupContributionGroupPlan {
+                    e_col_offset: 2,
+                    t_cols: 4,
+                    z_cols: 3,
+                    n_a: 2,
+                    n_b: 2,
+                    e_eq_slice: vec![test_scalar(2), test_scalar(3)],
+                    t_eq_slice: vec![
+                        test_scalar(5),
+                        test_scalar(7),
+                        test_scalar(11),
+                        test_scalar(13),
+                    ],
+                    z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
+                    a_weights: vec![test_scalar(29), test_scalar(31)],
+                    b_weights: vec![test_scalar(37), test_scalar(41)],
+                    d_weights: vec![test_scalar(43), test_scalar(47)],
+                },
+                SetupContributionGroupPlan {
+                    e_col_offset: 0,
+                    t_cols: 6,
+                    z_cols: 3,
+                    n_a: 2,
+                    n_b: 2,
+                    e_eq_slice: vec![test_scalar(53), test_scalar(59)],
+                    t_eq_slice: vec![
+                        test_scalar(61),
+                        test_scalar(67),
+                        test_scalar(71),
+                        test_scalar(73),
+                        test_scalar(79),
+                        test_scalar(83),
+                    ],
+                    z_eq_slice: vec![test_scalar(89), test_scalar(97), test_scalar(101)],
+                    a_weights: vec![test_scalar(103), test_scalar(107)],
+                    b_weights: vec![test_scalar(109), test_scalar(113)],
+                    d_weights: vec![test_scalar(127), test_scalar(131)],
+                },
+            ],
+        };
+        let setup_len = 12;
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupSeed {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                gen_ring_dim: 1,
+                max_setup_len: setup_len,
+                public_matrix_seed: [0u8; 32],
+            },
+            FlatMatrix::from_flat_data(
+                (0..setup_len)
+                    .map(|idx| test_scalar(211 + idx as u128))
+                    .collect(),
+                1,
+            ),
+        );
+        let alpha_pows = [test_scalar(3)];
+        let expected = grouped_plan
+            .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, 1)
+            .unwrap();
+        let got = grouped_plan
+            .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
+            .unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
     fn from_level_params_rejects_non_pow2_num_blocks() {
         let mut lp = LevelParams::log_basis_stub(3);
         lp.ring_dimension = 64;

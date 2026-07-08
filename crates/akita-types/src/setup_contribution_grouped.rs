@@ -573,13 +573,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             .shared_matrix
             .ring_view_dyn(self.n_a, self.z_cols, d_a)?;
 
-        let (required, segments) = self.packed_segments(d_rows, d_physical_cols)?;
-        let setup_len = setup.shared_matrix().total_ring_elements_at_dyn(d_a)?;
-        if required > setup_len {
-            return Err(AkitaError::InvalidSetup(
-                "shared matrix is too small for selected grouped verifier layout".into(),
-            ));
-        }
+        let (_, segments) = self.packed_segments(d_rows, d_physical_cols)?;
         validate_packed_scan_access(
             d_rows,
             d_physical_cols,
