@@ -47,7 +47,7 @@ pub use norm_bound::{
     ring_product_infinity_norm_bound, rounded_up_collision_inf_norm,
     rounded_up_weak_binding_inf_norm, snap_min_tstar_retain_floor, snap_num_digits_fold_down,
     FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessLinfDigitPlan, FoldWitnessNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,

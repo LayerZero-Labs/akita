@@ -182,19 +182,6 @@ impl FoldWitnessNorms {
     }
 }
 
-/// Result of sizing `δ_fold` and the grind cap together.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FoldWitnessLinfDigitPlan {
-    /// Balanced digit depth for folded witness `z`.
-    pub delta_fold: usize,
-    /// Honest-prover grind threshold after optional digit snap-down.
-    pub grind_cap: u128,
-    /// Pre-snap cap `min(β_inf, t*)` (or `β_inf` alone).
-    pub pre_snap_cap: u128,
-    /// Sub-Gaussian tail cap `t*` when tail-bound-with-grind is active.
-    pub t_star: Option<u128>,
-}
-
 fn fold_witness_pre_snap_linf_cap(
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
@@ -268,6 +255,9 @@ pub fn snap_num_digits_fold_down(
 /// Canonical fold-l∞ digit sizing: pre-snap tail cap, optional digit snap-down,
 /// and the grind cap aligned with the snapped `δ_fold`.
 ///
+/// Returns `(delta_fold, inf_norm_bound)`, where `inf_norm_bound` is the
+/// honest-prover per-coefficient `‖z‖_inf` target after any snap-down.
+///
 /// # Errors
 ///
 /// Propagates [`fold_witness_beta`] / tail-bound setup errors.
@@ -279,7 +269,7 @@ pub fn fold_witness_linf_digit_plan(
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
     cap_config: &FoldWitnessLinfCapConfig,
-) -> Result<FoldWitnessLinfDigitPlan, AkitaError> {
+) -> Result<(usize, u128), AkitaError> {
     let binding = FoldLinfProtocolBinding::CURRENT;
     let snap_retain_num = u128::from(binding.snap_min_tstar_retain_num);
     let snap_retain_den = u128::from(binding.snap_min_tstar_retain_den);
@@ -287,7 +277,7 @@ pub fn fold_witness_linf_digit_plan(
         fold_witness_pre_snap_linf_cap(challenge, witness, r_vars, num_claims, cap_config)?;
     let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);
     let delta_base = num_digits_for_bound(log_cap, field_bits, log_basis);
-    let (delta_fold, grind_cap) = match (cap_config.policy, t_star) {
+    let (delta_fold, inf_norm_bound) = match (cap_config.policy, t_star) {
         (
             FoldWitnessLinfCapPolicy::TailBoundWithGrind
             | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
@@ -302,12 +292,7 @@ pub fn fold_witness_linf_digit_plan(
         ),
         _ => (delta_base, pre_snap_cap),
     };
-    Ok(FoldWitnessLinfDigitPlan {
-        delta_fold,
-        grind_cap,
-        pre_snap_cap,
-        t_star,
-    })
+    Ok((delta_fold, inf_norm_bound))
 }
 
 /// A-role committed-level coefficient-`L∞` collision bucket.
@@ -626,7 +611,7 @@ mod tests {
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
                 .unwrap();
-        let honest_cap = fold_witness_linf_digit_plan(
+        let (_honest_delta, honest_cap) = fold_witness_linf_digit_plan(
             4,
             1,
             decomposition.field_bits(),
@@ -635,8 +620,7 @@ mod tests {
             witness,
             &cap_config,
         )
-        .unwrap()
-        .grind_cap;
+        .unwrap();
         let delta_fold = num_digits_fold(
             4,
             1,
@@ -729,7 +713,7 @@ mod tests {
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
                 .unwrap();
-        let plan = fold_witness_linf_digit_plan(
+        let (delta_fold, inf_norm_bound) = fold_witness_linf_digit_plan(
             5,
             1,
             decomposition.field_bits(),
@@ -739,15 +723,17 @@ mod tests {
             &cap_config,
         )
         .unwrap();
-        let t_star = plan.t_star.expect("tail-bound level should expose t*");
+        let (pre_snap_cap, t_star_opt) =
+            fold_witness_pre_snap_linf_cap(challenge, witness, 5, 1, &cap_config).unwrap();
+        let t_star = t_star_opt.expect("tail-bound level should expose t*");
         let delta_unsnapped = num_digits_for_bound(
-            (128 - plan.pre_snap_cap.leading_zeros()).saturating_add(1),
+            (128 - pre_snap_cap.leading_zeros()).saturating_add(1),
             decomposition.field_bits(),
             decomposition.log_basis,
         );
-        if plan.delta_fold < delta_unsnapped {
-            assert!(plan.grind_cap <= plan.pre_snap_cap);
-            assert!(plan.grind_cap >= t_star / 2);
+        if delta_fold < delta_unsnapped {
+            assert!(inf_norm_bound <= pre_snap_cap);
+            assert!(inf_norm_bound >= t_star / 2);
         }
     }
 

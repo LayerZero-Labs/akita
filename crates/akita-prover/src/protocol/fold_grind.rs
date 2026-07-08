@@ -367,7 +367,7 @@ where
     };
     let contract = FoldWitnessGrindContract {
         policy,
-        witness_linf_cap: num_claims_digit_plan.grind_cap,
+        witness_linf_cap: num_claims_digit_plan.1,
         max_nonce_exclusive,
     };
     // Tail Golomb grinding sizes caps from `tail_t_vectors`.
@@ -385,8 +385,7 @@ where
             &root_lp.fold_linf_cap_config,
         )?
     };
-    let witness_linf_cap = digit_plan.grind_cap;
-    let delta_fold = digit_plan.delta_fold;
+    let (delta_fold, witness_linf_cap) = digit_plan;
     let (digit_negative_abs_bound, digit_positive_bound) =
         akita_types::sis::fold_witness_representable_linf_bounds(params.log_basis(), delta_fold);
     let probe_nonces =

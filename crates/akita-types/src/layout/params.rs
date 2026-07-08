@@ -418,13 +418,15 @@ impl LevelParams {
 
     /// Canonical fold-l∞ digit plan for this level at `num_claims`.
     ///
+    /// Returns `(delta_fold, inf_norm_bound)`.
+    ///
     /// # Errors
     ///
     /// Propagates [`crate::sis::fold_witness_linf_digit_plan`] setup errors.
     pub fn fold_witness_linf_digit_plan_for_claims(
         &self,
         num_claims: usize,
-    ) -> Result<crate::sis::FoldWitnessLinfDigitPlan, AkitaError> {
+    ) -> Result<(usize, u128), AkitaError> {
         crate::sis::fold_witness_linf_digit_plan(
             self.r_vars,
             num_claims,
@@ -446,9 +448,9 @@ impl LevelParams {
     ///
     /// Propagates [`crate::sis::fold_witness_linf_digit_plan`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        Ok(self
-            .fold_witness_linf_digit_plan_for_claims(num_claims)?
-            .grind_cap)
+        let (_delta_fold, inf_norm_bound) =
+            self.fold_witness_linf_digit_plan_for_claims(num_claims)?;
+        Ok(inf_norm_bound)
     }
 
     /// Propagates fold-beta / tail-bound rejections for tail-bound-with-grind levels.
