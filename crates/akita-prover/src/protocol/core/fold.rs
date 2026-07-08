@@ -496,6 +496,7 @@ where
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
+        + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
