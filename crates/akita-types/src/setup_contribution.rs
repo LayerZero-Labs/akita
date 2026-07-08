@@ -130,7 +130,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
     }
 }
 
-/// Canonical `D·ê` column eq-weights, shared by the flat and grouped setup
+/// Canonical `D·ê` column eq-weights, shared by the single-group and multi-group setup
 /// builders. Produces `num_claims * num_blocks * depth_open` weights, with a
 /// per-chunk high-eq window based at each chunk's `ê` offset. The `ê` block is
 /// setup-shared across commitment groups, so callers pass the same scalars
@@ -193,13 +193,13 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         .collect())
 }
 
-/// Canonical `B·t̂` column eq-weights, shared by the flat and grouped setup
+/// Canonical `B·t̂` column eq-weights, shared by the single-group and multi-group setup
 /// builders. Emits `num_vectors * cols_per_vector` weights; columns for a
 /// t-vector index `>= active_vectors` are zero (flat zero-padding to the widest
 /// group). The high-eq axis is addressed as `(vector_base + vector_idx)` with
 /// stride `high_vector_stride`: the flat builder packs all groups' t-vectors
 /// into one high axis (`vector_base = group offset`, stride = total t-vectors),
-/// while the grouped builder is per-group (`vector_base = 0`, stride = the
+/// while the multi-group builder is per-group (`vector_base = 0`, stride = the
 /// group's t-vector count).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn setup_t_col_weights<E: FieldCore>(
@@ -272,10 +272,10 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
 }
 
 /// Canonical `A·ẑ` column eq-weights for one chunk's replicated `ẑ` placed at
-/// `offset_z`, shared by the flat and grouped setup builders. Callers sum the
+/// `offset_z`, shared by the single-group and multi-group setup builders. Callers sum the
 /// result over chunks into `Z_comb`. `num_fold_groups` is the number of
 /// point-blocks folded into a single `ẑ` slice: the flat builder folds all
-/// commitment groups (`num_fold_groups = num_groups`), the grouped builder is
+/// commitment groups (`num_fold_groups = num_groups`), the multi-group builder is
 /// per-group (`num_fold_groups = 1`). Handles both the power-of-two `block_len`
 /// fast path and the dense fallback.
 #[allow(clippy::too_many_arguments)]
@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn grouped_single_group_supports_multi_chunk_weights() {
+    fn single_group_plan_supports_multi_chunk_weights() {
         let num_blocks = 4;
         let blocks_per_chunk = 2;
         let num_claims = 3;
@@ -690,8 +690,8 @@ mod tests {
     }
 
     #[test]
-    fn grouped_packed_direct_matches_row_fallback_with_d_offset() {
-        let grouped_plan = SetupContributionPlan {
+    fn packed_direct_matches_row_fallback_with_d_offset() {
+        let plan = SetupContributionPlan {
             d_rows: 2,
             d_physical_cols: 5,
             groups: vec![SetupContributionGroupPlan {
@@ -730,18 +730,18 @@ mod tests {
             ),
         );
         let alpha_pows = [test_scalar(3)];
-        let expected = grouped_plan
+        let expected = plan
             .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, 1)
             .unwrap();
-        let got = grouped_plan
+        let got = plan
             .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
             .unwrap();
         assert_eq!(got, expected);
     }
 
     #[test]
-    fn grouped_multi_group_packed_matches_row_fallback() {
-        let grouped_plan = SetupContributionPlan {
+    fn multi_group_packed_direct_matches_row_fallback() {
+        let plan = SetupContributionPlan {
             d_rows: 2,
             d_physical_cols: 5,
             groups: vec![
@@ -800,15 +800,15 @@ mod tests {
             ),
         );
         let alpha_pows = [test_scalar(3)];
-        let expected = grouped_plan
+        let expected = plan
             .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, 1)
             .unwrap();
-        let got = grouped_plan
+        let got = plan
             .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
             .unwrap();
         assert_eq!(got, expected);
 
-        let bar_omega = grouped_plan.materialize_bar_omega().unwrap();
+        let bar_omega = plan.materialize_bar_omega().unwrap();
         let setup_view = setup
             .shared_matrix()
             .ring_view::<1>(1, bar_omega.len())
@@ -822,8 +822,8 @@ mod tests {
     }
 
     #[test]
-    fn grouped_packed_direct_matches_row_fallback_with_nested_role_dims() {
-        let grouped_plan = SetupContributionPlan {
+    fn packed_direct_matches_row_fallback_with_nested_role_dims() {
+        let plan = SetupContributionPlan {
             d_rows: 2,
             d_physical_cols: 5,
             groups: vec![SetupContributionGroupPlan {
@@ -868,21 +868,21 @@ mod tests {
         let alpha_pows_a = scalar_powers(alpha, D);
         let alpha_pows_b = scalar_powers(alpha, D_B);
         let alpha_pows_d = scalar_powers(alpha, D_D);
-        let expected = grouped_plan
+        let expected = plan
             .evaluate_direct_by_rows::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d, D)
             .unwrap();
-        let got = grouped_plan
+        let got = plan
             .evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
             .unwrap();
         assert_eq!(got, expected);
     }
 
     #[test]
-    fn grouped_packed_direct_accepts_d_footprint_at_nested_d_d() {
+    fn packed_direct_accepts_d_footprint_at_nested_d_d() {
         // D-role columns are counted at d_d; comparing `required` against
         // total_ring_elements_at_dyn(d_a) falsely rejects valid setups when
         // d_d < d_a and the D footprint dominates.
-        let grouped_plan = SetupContributionPlan {
+        let plan = SetupContributionPlan {
             d_rows: 2,
             d_physical_cols: 11,
             groups: vec![SetupContributionGroupPlan {
@@ -927,18 +927,18 @@ mod tests {
         let alpha_pows_a = scalar_powers(alpha, D_A);
         let alpha_pows_b = scalar_powers(alpha, D_B);
         let alpha_pows_d = scalar_powers(alpha, D_D);
-        let expected = grouped_plan
+        let expected = plan
             .evaluate_direct_by_rows::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d, D_A)
             .unwrap();
-        let got = grouped_plan
+        let got = plan
             .evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
             .unwrap();
         assert_eq!(got, expected);
     }
 
     #[test]
-    fn grouped_multi_group_packed_matches_row_fallback_with_mismatched_t_cols() {
-        let grouped_plan = SetupContributionPlan {
+    fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
+        let plan = SetupContributionPlan {
             d_rows: 2,
             d_physical_cols: 5,
             groups: vec![
@@ -999,10 +999,10 @@ mod tests {
             ),
         );
         let alpha_pows = [test_scalar(3)];
-        let expected = grouped_plan
+        let expected = plan
             .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, 1)
             .unwrap();
-        let got = grouped_plan
+        let got = plan
             .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
             .unwrap();
         assert_eq!(got, expected);

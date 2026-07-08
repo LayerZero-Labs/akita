@@ -594,7 +594,10 @@ where
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
         if lp.has_precommitted_groups() {
-            Some(akita_types::build_grouped_root_stage2_trace_table::<F, E>(
+            Some(akita_types::build_multi_group_root_stage2_trace_table::<
+                F,
+                E,
+            >(
                 ring_d,
                 lp,
                 prepared_fold.instance.opening_batch(),

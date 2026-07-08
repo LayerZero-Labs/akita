@@ -646,7 +646,7 @@ terminal rows toward `consistency | A`.
 order is an implicit protocol convention, not a per-instance descriptor field.
 
 **Witness naming:** `num_z_segments` counts `z_folded` witness segments (planner
-sets `1` for ordinary folds, `G` for grouped roots). It is not an M-row count.
+sets `1` for ordinary folds, `G` for multi-group roots). It is not an M-row count.
 
 Expected implementation surface:
 

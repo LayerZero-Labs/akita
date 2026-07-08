@@ -49,10 +49,10 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     /// sampled after the next-level witness is bound to the transcript.
     pub trace_coeff: E,
     pub trace_opening_claim: E,
-    /// Dense grouped-root trace-weight table (`col ⊗ ring`, `output_scale = 1`).
+    /// Dense multi-group-root trace-weight table (`col ⊗ ring`, `output_scale = 1`).
     /// When present the stage-2 verifier evaluates its multilinear extension at
     /// the witness point instead of the closed-form [`Self::trace_terms`]. This
-    /// is the grouped-root counterpart of the succinct per-claim terms: grouped
+    /// is the multi-group-root counterpart of the succinct per-claim terms: multi-group
     /// roots decompose each group with per-group `num_blocks`/`num_digits_open`
     /// and a group-major e-hat offset, which the closed form cannot express.
     pub dense_evals: Option<Vec<E>>,
@@ -471,14 +471,14 @@ where
     })
 }
 
-/// Build the grouped-root verifier trace claim from a dense trace-weight table.
+/// Build the multi-group-root verifier trace claim from a dense trace-weight table.
 ///
-/// The table is [`build_grouped_root_stage2_trace_table`] with `output_scale =
+/// The table is [`build_multi_group_root_stage2_trace_table`] with `output_scale =
 /// 1`; the stage-2 `trace_coeff` factor stays separate so `expected_output_claim`
 /// applies it once. `trace_terms` are left empty because the closed form cannot
 /// express per-group block geometry; the dense table is evaluated directly.
 #[allow(clippy::too_many_arguments)]
-pub fn build_trace_claim_grouped_root<F, E, const D: usize>(
+pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
@@ -493,7 +493,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let table = build_grouped_root_stage2_trace_table::<F, E>(
+    let table = build_multi_group_root_stage2_trace_table::<F, E>(
         lp.role_dims().d_a(),
         lp,
         opening_batch,
@@ -551,7 +551,7 @@ where
     Ok(acc)
 }
 
-/// Build the dense grouped-root stage-2 trace table (`col ⊗ ring`).
+/// Build the dense multi-group-root stage-2 trace table (`col ⊗ ring`).
 ///
 /// Group `g`'s e-hat block sits inside its contiguous `[z_g ‖ e_g ‖ t_g]` stride
 /// at `base_g + z_g`, where `base_g` is the cumulative `z+e+t` width of the
@@ -565,7 +565,7 @@ where
 /// Returns an error for a non-degree-one opening field, mismatched group counts,
 /// or any segment-width arithmetic overflow.
 #[allow(clippy::too_many_arguments)]
-pub fn build_grouped_root_stage2_trace_table<F, E>(
+pub fn build_multi_group_root_stage2_trace_table<F, E>(
     ring_d: usize,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
@@ -581,7 +581,7 @@ where
 {
     if E::EXT_DEGREE != 1 {
         return Err(AkitaError::InvalidSetup(
-            "grouped root trace table currently requires degree-one openings".to_string(),
+            "multi-group root trace table currently requires degree-one openings".to_string(),
         ));
     }
     if live_x_cols == 0 {
@@ -614,8 +614,9 @@ where
                     group_layout.num_polynomials(),
                     lp.field_bits_for_cache(),
                 )?;
-                let overflow =
-                    || AkitaError::InvalidSetup("grouped trace segment width overflow".to_string());
+                let overflow = || {
+                    AkitaError::InvalidSetup("multi-group trace segment width overflow".to_string())
+                };
                 let z_g = group_lp
                     .block_len()
                     .checked_mul(group_lp.num_digits_commit())
@@ -641,7 +642,7 @@ where
             }
 
             let table_len = live_x_cols.checked_mul(ring_len).ok_or_else(|| {
-                AkitaError::InvalidSetup("grouped trace table length overflow".to_string())
+                AkitaError::InvalidSetup("multi-group trace table length overflow".to_string())
             })?;
             let mut table = vec![E::zero(); table_len];
             let mut claim_offset = 0usize;
@@ -675,20 +676,20 @@ where
                                 .checked_mul(group_lp.num_blocks())
                                 .ok_or_else(|| {
                                     AkitaError::InvalidSetup(
-                                        "grouped trace block width overflow".to_string(),
+                                        "multi-group trace block width overflow".to_string(),
                                     )
                                 })?;
                             let plane_offset =
                                 plane.checked_mul(group_block_cols).ok_or_else(|| {
                                     AkitaError::InvalidSetup(
-                                        "grouped trace plane offset overflow".to_string(),
+                                        "multi-group trace plane offset overflow".to_string(),
                                     )
                                 })?;
                             let claim_offset = local_claim
                                 .checked_mul(group_lp.num_blocks())
                                 .ok_or_else(|| {
                                     AkitaError::InvalidSetup(
-                                        "grouped trace claim offset overflow".to_string(),
+                                        "multi-group trace claim offset overflow".to_string(),
                                     )
                                 })?;
                             let col = e_offsets[group_index]
@@ -697,7 +698,7 @@ where
                                 .and_then(|n| n.checked_add(block))
                                 .ok_or_else(|| {
                                     AkitaError::InvalidSetup(
-                                        "grouped trace column overflow".to_string(),
+                                        "multi-group trace column overflow".to_string(),
                                     )
                                 })?;
                             if col >= live_x_cols {
@@ -705,11 +706,13 @@ where
                             }
                             let dst_base = col.checked_mul(ring_len).ok_or_else(|| {
                                 AkitaError::InvalidSetup(
-                                    "grouped trace row offset overflow".to_string(),
+                                    "multi-group trace row offset overflow".to_string(),
                                 )
                             })?;
                             let dst_end = dst_base.checked_add(ring_len).ok_or_else(|| {
-                                AkitaError::InvalidSetup("grouped trace row overflow".to_string())
+                                AkitaError::InvalidSetup(
+                                    "multi-group trace row overflow".to_string(),
+                                )
                             })?;
                             let factor = coefficient * block_weight * E::lift_base(*gadget_scalar);
                             let dst_row = table

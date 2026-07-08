@@ -94,7 +94,7 @@ pub use proof::{
     sample_public_matrix_seed, sample_public_row_coefficients, segment_typed_witness_shape,
     segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
     select_setup_prefix_slot, setup_prefix_level_params, setup_prefix_slot_id,
-    should_reject_grouped_root, tail_golomb_rice_z_params, tail_segment_layout,
+    should_reject_multi_group_root, tail_golomb_rice_z_params, tail_segment_layout,
     tail_segment_multiplicities_from_layout, terminal_e_hat_bytes_from_blocks,
     terminal_golomb_grind_tail_t_vectors, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
@@ -116,13 +116,13 @@ pub use proof::{
     SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
     SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
+    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
     SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
-    detect_field_modulus, grouped_root_commit_params, r_decomp_levels, root_current_w_len,
+    detect_field_modulus, multi_group_root_commit_params, r_decomp_levels, root_current_w_len,
     root_direct_schedule, schedule_is_root_direct, schedule_num_fold_levels,
     schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
@@ -144,9 +144,9 @@ pub use tail_golomb_rice_low_bits::{
     WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
 };
 pub use trace_weight::{
-    build_grouped_root_stage2_trace_table, build_trace_claim_grouped_root, build_trace_claim_root,
-    build_trace_table_scaled, ensure_trace_stage2_supported, eval_dense_trace_table,
-    eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
+    build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
+    build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
+    eval_dense_trace_table, eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
     trace_terms_root, trace_weight_layout_from_segment, TraceChunkLayout, TraceClaim,
     TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,

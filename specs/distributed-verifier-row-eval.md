@@ -436,7 +436,7 @@ verifier hot loop on layout.
 hard-wired to a single layout assumption: `e_hat` lives at one `offset_e` and
 spans all `num_blocks`; `t_hat` at one `offset_t`; `z_hat` at one `offset_z`;
 the SIS scan maps columns to those single offsets; `r` tails the lot. Adding the
-chunk-grouped layout by "branching on the shape" inside each of these — and
+chunk-multi-group layout by "branching on the shape" inside each of these — and
 inside `SetupContributionPlan::prepare`, and inside the `c_alpha` summary builder
 — would scatter the same `if chunked { … } else { … }` across every component,
 duplicate the subtle peeled-block arithmetic, and make the no-panic surface (and

@@ -30,7 +30,7 @@ same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
 Grouped roots use the same lookup key with any earlier groups recorded as
 `PrecommittedGroupParams` in `precommitteds`. For the scalar same-point batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
-multiplicity is always `1`; grouped roots derive those counts from
+multiplicity is always `1`; multi-group roots derive those counts from
 `final_group` plus `precommitteds`.
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:

@@ -108,7 +108,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let d_weights = if d_rows == 0 {
             Vec::new()
         } else {
-            checked_slice(&inputs.eq_tau1, d_row_start, d_rows, "grouped D rows")?.to_vec()
+            checked_slice(&inputs.eq_tau1, d_row_start, d_rows, "setup D rows")?.to_vec()
         };
         let num_groups = groups.len();
         let static_groups = groups
@@ -116,20 +116,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .map(|group| {
                 validate_group_chunk_layout(group, num_groups)?;
                 let t_cols =
-                    checked_mul(group.num_claims, group.t_cols_per_vector, "grouped B width")?;
-                let z_cols = checked_mul(group.block_len, group.depth_commit, "grouped Z range")?;
+                    checked_mul(group.num_claims, group.t_cols_per_vector, "setup B width")?;
+                let z_cols = checked_mul(group.block_len, group.depth_commit, "setup Z range")?;
                 let a_weights = checked_slice(
                     &inputs.eq_tau1,
                     group.a_row_start,
                     group.n_a,
-                    "grouped A rows",
+                    "setup A rows",
                 )?
                 .to_vec();
                 let b_weights = checked_slice(
                     &inputs.eq_tau1,
                     group.b_row_start,
                     group.n_b,
-                    "grouped B rows",
+                    "setup B rows",
                 )?
                 .to_vec();
                 Ok(SetupContributionGroupStatic {
@@ -210,7 +210,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         crate::gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
                     &fold_gadget_storage
                 };
-                let z_range = checked_mul(group.block_len, group.depth_commit, "grouped Z range")?;
+                let z_range = checked_mul(group.block_len, group.depth_commit, "setup Z range")?;
                 let mut z_eq_slice = vec![E::zero(); z_range];
                 for chunk in &group.chunks {
                     let per_chunk = setup_z_col_weights_for_offset::<F, E>(
@@ -318,14 +318,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     /// Packed-scan footprint length: max over groups of each role's `rows * cols`.
     /// `D` rows/cols are plan-level (shared); `B`/`A` are per-group.
     pub fn required(&self) -> Result<usize, AkitaError> {
-        let mut required = checked_mul(
-            self.d_rows,
-            self.d_physical_cols,
-            "grouped D setup footprint",
-        )?;
+        let mut required = checked_mul(self.d_rows, self.d_physical_cols, "setup D footprint")?;
         for group in &self.groups {
-            let b_required = checked_mul(group.n_b, group.t_cols, "grouped B setup footprint")?;
-            let a_required = checked_mul(group.n_a, group.z_cols, "grouped A setup footprint")?;
+            let b_required = checked_mul(group.n_b, group.t_cols, "setup B footprint")?;
+            let a_required = checked_mul(group.n_a, group.z_cols, "setup A footprint")?;
             required = required.max(b_required).max(a_required);
         }
         Ok(required)
@@ -513,28 +509,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         d_ratio: usize,
     ) -> Result<usize, AkitaError> {
         let mut required = checked_mul(
-            checked_mul(
-                self.d_rows,
-                self.d_physical_cols,
-                "grouped D setup footprint",
-            )?,
+            checked_mul(self.d_rows, self.d_physical_cols, "setup D footprint")?,
             d_ratio,
-            "grouped D base setup footprint",
+            "setup D base footprint",
         )?;
         for group in &self.groups {
-            let b_required = checked_mul(group.n_b, group.t_cols, "grouped B setup footprint")?;
-            let a_required = checked_mul(group.n_a, group.z_cols, "grouped A setup footprint")?;
+            let b_required = checked_mul(group.n_b, group.t_cols, "setup B footprint")?;
+            let a_required = checked_mul(group.n_a, group.z_cols, "setup A footprint")?;
             required = required
-                .max(checked_mul(
-                    b_required,
-                    b_ratio,
-                    "grouped B base setup footprint",
-                )?)
-                .max(checked_mul(
-                    a_required,
-                    a_ratio,
-                    "grouped A base setup footprint",
-                )?);
+                .max(checked_mul(b_required, b_ratio, "setup B base footprint")?)
+                .max(checked_mul(a_required, a_ratio, "setup A base footprint")?);
         }
         Ok(required)
     }
@@ -691,19 +675,19 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         self.packed_segments(d_rows, d_physical_cols)?;
-        let d_required = checked_mul(d_rows, d_physical_cols, "grouped D setup footprint")?;
-        let b_required = checked_mul(self.n_b, self.t_cols, "grouped B setup footprint")?;
-        let a_required = checked_mul(self.n_a, self.z_cols, "grouped A setup footprint")?;
-        let required = checked_mul(d_required, d_scales.ratio(), "grouped D base footprint")?
+        let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
+        let b_required = checked_mul(self.n_b, self.t_cols, "setup B footprint")?;
+        let a_required = checked_mul(self.n_a, self.z_cols, "setup A footprint")?;
+        let required = checked_mul(d_required, d_scales.ratio(), "setup D base footprint")?
             .max(checked_mul(
                 b_required,
                 b_scales.ratio(),
-                "grouped B base footprint",
+                "setup B base footprint",
             )?)
             .max(checked_mul(
                 a_required,
                 a_scales.ratio(),
-                "grouped A base footprint",
+                "setup A base footprint",
             )?);
         if required > 0 {
             setup_view.elem(0, required - 1)?;
@@ -995,17 +979,17 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         let e_end = checked_add(
             self.e_col_offset,
             self.e_eq_slice.len(),
-            "grouped D setup footprint",
+            "setup D footprint",
         )?;
         if e_end > d_physical_cols {
             return Err(AkitaError::InvalidSetup(
-                "grouped D setup weights exceed physical D width".into(),
+                "setup D weights exceed physical D width".into(),
             ));
         }
 
-        let d_required = checked_mul(d_rows, d_physical_cols, "grouped D setup footprint")?;
-        let b_required = checked_mul(self.n_b, self.t_cols, "grouped B setup footprint")?;
-        let a_required = checked_mul(self.n_a, self.z_cols, "grouped A setup footprint")?;
+        let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
+        let b_required = checked_mul(self.n_b, self.t_cols, "setup B footprint")?;
+        let a_required = checked_mul(self.n_a, self.z_cols, "setup A footprint")?;
         let required = d_required.max(b_required).max(a_required);
 
         let mut endpoints = Vec::new();
@@ -1126,23 +1110,23 @@ where
     for segment in segments {
         if segment.has_d && d_view.is_none() {
             return Err(AkitaError::InvalidSetup(
-                "grouped packed D scan missing D view".into(),
+                "setup packed D scan missing D view".into(),
             ));
         }
     }
-    let d_required = checked_mul(d_rows, d_physical_cols, "grouped D setup footprint")?;
+    let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
     if d_required > 0 {
         if let Some(d_view) = d_view {
             let probe = d_required - 1;
             d_view.elem(probe / d_physical_cols, probe % d_physical_cols)?;
         }
     }
-    let b_required = checked_mul(n_b, t_cols, "grouped B setup footprint")?;
+    let b_required = checked_mul(n_b, t_cols, "setup B footprint")?;
     if b_required > 0 {
         let probe = b_required - 1;
         b_view.elem(probe / t_cols, probe % t_cols)?;
     }
-    let a_required = checked_mul(n_a, z_cols, "grouped A setup footprint")?;
+    let a_required = checked_mul(n_a, z_cols, "setup A footprint")?;
     if a_required > 0 {
         let probe = a_required - 1;
         a_view.elem(probe / z_cols, probe % z_cols)?;
@@ -1384,11 +1368,11 @@ fn validate_group_chunk_layout(
     if checked_mul(
         group.chunks.len(),
         group.blocks_per_chunk,
-        "grouped chunk block coverage",
+        "setup chunk block coverage",
     )? != group.num_blocks
     {
         return Err(AkitaError::InvalidSetup(
-            "grouped witness chunk windows do not tile num_blocks".into(),
+            "setup witness chunk windows do not tile num_blocks".into(),
         ));
     }
     if group.chunks.len() > 1 && num_groups != 1 {
@@ -1436,7 +1420,7 @@ fn push_group_d_boundaries(
     if rows == 0 || stride == 0 {
         return Ok(());
     }
-    let active_col_end = checked_add(active_col_start, active_cols, "grouped D active columns")?;
+    let active_col_end = checked_add(active_col_start, active_cols, "setup D active columns")?;
     let mut row_start = 0usize;
     for _ in 0..rows {
         let row_end = checked_add(row_start, stride, "packed D boundary")?;
@@ -1445,12 +1429,12 @@ fn push_group_d_boundaries(
             endpoints.push(checked_add(
                 row_start,
                 active_col_start,
-                "grouped D active boundary",
+                "setup D active boundary",
             )?);
             endpoints.push(checked_add(
                 row_start,
                 active_col_end,
-                "grouped D active boundary",
+                "setup D active boundary",
             )?);
         }
         row_start = row_end;

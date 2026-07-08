@@ -12,7 +12,7 @@ use super::LevelParams;
 /// derived from the Ajtai keys and block geometry rather than stored twice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrecommittedLevelParams {
-    /// Frozen standalone group layout bound into the grouped root key.
+    /// Frozen standalone group layout bound into the multi-group root key.
     pub layout: PrecommittedGroupParams,
     /// Inner Ajtai matrix (A) used by this group.
     pub a_key: AjtaiKeyParams,

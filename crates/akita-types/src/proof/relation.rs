@@ -57,7 +57,7 @@ impl RelationRhsLayout {
 ///
 /// # Errors
 ///
-/// Returns an error if the opening batch is malformed for grouped root params.
+/// Returns an error if the opening batch is malformed for multi-group root params.
 pub fn relation_rhs_layout_for(
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,

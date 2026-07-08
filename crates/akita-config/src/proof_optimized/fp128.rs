@@ -201,7 +201,7 @@ where
 
 /// Select the best full-field fp128 preset for a schedule lookup key.
 ///
-/// The key carries singleton and grouped batch shape data, so
+/// The key carries singleton and multi-group batch shape data, so
 /// this helper can be used by profile tooling without manually comparing
 /// typed preset schedule tables. A genuine planner failure propagates as an
 /// error; for any valid key every preset yields a schedule (the DP falls back

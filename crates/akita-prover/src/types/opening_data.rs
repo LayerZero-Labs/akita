@@ -330,7 +330,7 @@ mod tests {
         Commitment::new(RingVec::from_coeffs(vec![F::zero()]))
     }
 
-    fn grouped_data<'a>(
+    fn multi_group_data<'a>(
         pre_refs: &'a [&'a MockPoly],
         final_refs: &'a [&'a MockPoly],
     ) -> ProverOpeningData<'a, F, MockPoly, F> {
@@ -367,7 +367,7 @@ mod tests {
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = grouped_data(&pre_refs, &final_refs);
+        let data = multi_group_data(&pre_refs, &final_refs);
 
         let layout = data.opening_layout::<F>().expect("precise layout");
 
@@ -387,7 +387,7 @@ mod tests {
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = grouped_data(&pre_refs, &final_refs);
+        let data = multi_group_data(&pre_refs, &final_refs);
 
         let err = data
             .opening_layout::<F>()
@@ -409,7 +409,7 @@ mod tests {
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = grouped_data(&pre_refs, &final_refs);
+        let data = multi_group_data(&pre_refs, &final_refs);
 
         let mut precise = AkitaTranscript::<F>::new(b"test/precise-group-shape");
         data.append_to_transcript(1, &mut precise)

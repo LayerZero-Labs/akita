@@ -6,7 +6,7 @@ use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
-    dispatch_for_field, LevelParamsLike, RingRole, GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED,
+    dispatch_for_field, LevelParamsLike, RingRole, MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED,
 };
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
@@ -152,7 +152,7 @@ pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore, const D: usize> {
 fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError> {
     let Some(first) = blocks.first() else {
         return Err(AkitaError::InvalidInput(
-            "grouped ring-switch requires at least one digit group".to_string(),
+            "multi-group ring-switch requires at least one digit group".to_string(),
         ));
     };
     let stride = first.digit_stride();
@@ -161,7 +161,7 @@ fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError
     for block in blocks {
         if block.digit_stride() != stride {
             return Err(AkitaError::InvalidInput(
-                "grouped ring-switch digit groups have mixed ring dimensions".to_string(),
+                "multi-group ring-switch digit groups have mixed ring dimensions".to_string(),
             ));
         }
         digits.extend_from_slice(block.digits());
@@ -327,14 +327,14 @@ where
                     .any(|group| group.z_folded_centered_per_chunk.len() > 1);
             if is_multi_group && has_multi_chunk_witness {
                 return Err(AkitaError::InvalidSetup(
-                    GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
+                    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
                 ));
             }
             // Only the singleton suffix retains terminal artifacts; multi-group folds
             // are never terminal.
             if is_multi_group && retain_terminal_artifacts {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root ring-switch does not produce terminal artifacts".to_string(),
+                    "multi-group root ring-switch does not produce terminal artifacts".to_string(),
                 ));
             }
             validate_chunked_witness_cfg(lp)?;
@@ -359,7 +359,7 @@ where
                 .enumerate()
                 .map(|(group_index, _)| instance.group_ring_multiplier_point(group_index))
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            let r = compute_grouped_relation_quotient::<F, B, D>(
+            let r = compute_multi_group_relation_quotient::<F, B, D>(
                 ring_switch_ctx,
                 lp,
                 opening_batch,

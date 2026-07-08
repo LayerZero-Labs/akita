@@ -29,7 +29,7 @@ use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness
 
 mod relation_quotient;
 
-pub(crate) use relation_quotient::compute_grouped_relation_quotient;
+pub(crate) use relation_quotient::compute_multi_group_relation_quotient;
 
 fn absorb_terminal_e_folded_fields<F, T>(
     transcript: &mut T,
@@ -107,7 +107,7 @@ where
 fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError> {
     let Some(first) = blocks.first() else {
         return Err(AkitaError::InvalidInput(
-            "grouped digit concatenation requires at least one group".to_string(),
+            "multi-group digit concatenation requires at least one group".to_string(),
         ));
     };
     let stride = first.digit_stride();
@@ -116,7 +116,7 @@ fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError
     for block in blocks {
         if block.digit_stride() != stride {
             return Err(AkitaError::InvalidInput(
-                "grouped digit blocks have mixed ring dimensions".to_string(),
+                "multi-group digit blocks have mixed ring dimensions".to_string(),
             ));
         }
         digits.extend_from_slice(block.digits());
@@ -288,7 +288,7 @@ where
     }
 }
 
-/// Convert scalar or grouped opening-point carriers into the grouped internal form.
+/// Convert scalar or multi-group opening-point carriers into the multi-group internal form.
 pub trait IntoRingOpeningPointVec<F: FieldCore> {
     fn into_vec(self) -> Vec<RingOpeningPoint<F>>;
 }
@@ -305,7 +305,7 @@ impl<F: FieldCore> IntoRingOpeningPointVec<F> for Vec<RingOpeningPoint<F>> {
     }
 }
 
-/// Convert scalar or grouped multiplier-point carriers into the grouped internal form.
+/// Convert scalar or multi-group multiplier-point carriers into the multi-group internal form.
 pub trait IntoRingMultiplierOpeningPointVec<F: FieldCore> {
     fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>>;
 }
@@ -386,7 +386,7 @@ where
 /// verifier layout resolution.
 pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
     lp.witness_chunk.validate()?;
-    lp.reject_grouped_multi_chunk("chunked witness")?;
+    lp.reject_multi_group_multi_chunk("chunked witness")?;
     let w = lp.witness_chunk.num_chunks;
     if w > 1 {
         if !lp.num_blocks.is_multiple_of(w) {
@@ -605,7 +605,7 @@ impl RingRelationProver {
         for group_index in 0..num_groups {
             let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
             let end = offset.checked_add(k_g).ok_or_else(|| {
-                AkitaError::InvalidSetup("grouped e-folded offset overflow".to_string())
+                AkitaError::InvalidSetup("multi-group e-folded offset overflow".to_string())
             })?;
             let group_lp = lp.root_group_params(&opening_batch, group_index)?;
             let (e_hat_g, e_folded_g) = dispatch_for_field!(
@@ -707,7 +707,8 @@ impl RingRelationProver {
             if let Some(existing) = accepted_nonce {
                 if existing != nonce {
                     return Err(AkitaError::InvalidInput(
-                        "grouped fold grind selected different nonces across groups".to_string(),
+                        "multi-group fold grind selected different nonces across groups"
+                            .to_string(),
                     ));
                 }
             } else {

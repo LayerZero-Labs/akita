@@ -15,7 +15,7 @@
 //! identical:
 //!
 //! - **table-backed** via [`table_backed_expanded`] after one full-catalog audit
-//!   for scalar schedules, or direct catalog-entry expansion for grouped-root
+//!   for scalar schedules, or direct catalog-entry expansion for multi-group-root
 //!   schedules under `all-schedules`;
 //! - **regenerated** via `family.regen` / `family.regen_group_batch`, which runs
 //!   the pure DP from scratch.
@@ -57,7 +57,7 @@ fn group_batch_emission_matches_supported_policy_shape() {
         let policy = (family.policy)();
         assert!(
             !family.emit_group_batch || policy.decomposition.log_commit_bound == 1,
-            "family {} must not emit grouped companions for unsupported grouped-root policies",
+            "family {} must not emit grouped companions for unsupported multi-group-root policies",
             family.module_name
         );
     }
@@ -180,7 +180,7 @@ fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
         .collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
-        "family {module_name} must have shipped grouped-table hits for every enumerated grouped key; first missing keys: {}",
+        "family {module_name} must have shipped grouped-table hits for every enumerated multi-group key; first missing keys: {}",
         missing.join("\n  ")
     );
 }
@@ -271,7 +271,7 @@ fn resolve_family_group_batch_schedule(
         "fp64_d256_onehot" => table_backed_group_batch_schedule::<fp64::D256OneHot>(key),
         "fp32_d128_onehot" => table_backed_group_batch_schedule::<fp32::D128OneHot>(key),
         "fp32_d256_onehot" => table_backed_group_batch_schedule::<fp32::D256OneHot>(key),
-        other => panic!("unknown generated family for grouped schedule guard: {other}"),
+        other => panic!("unknown generated family for multi-group schedule guard: {other}"),
     }
 }
 
@@ -510,13 +510,13 @@ fn compare_group_batch_key(
     let table_backed =
         resolve_family_group_batch_schedule(family, catalog, key).unwrap_or_else(|e| {
             panic!(
-                "table-backed grouped schedule failed for family {} key={key:?}: {e}",
+                "table-backed multi-group schedule failed for family {} key={key:?}: {e}",
                 family.module_name
             )
         });
     let regenerated = (family.regen_group_batch)(key.clone()).unwrap_or_else(|e| {
         panic!(
-            "grouped DP regen failed for family {} key={key:?}: {e}",
+            "multi-group DP regen failed for family {} key={key:?}: {e}",
             family.module_name
         )
     });
@@ -539,13 +539,13 @@ fn compare_group_batch_key(
 ) -> Option<Mismatch> {
     let table_backed = resolve_family_group_batch_schedule(family, key).unwrap_or_else(|e| {
         panic!(
-            "table-backed grouped schedule failed for family {} key={key:?}: {e}",
+            "table-backed multi-group schedule failed for family {} key={key:?}: {e}",
             family.module_name
         )
     });
     let regenerated = (family.regen_group_batch)(key.clone()).unwrap_or_else(|e| {
         panic!(
-            "grouped DP regen failed for family {} key={key:?}: {e}",
+            "multi-group DP regen failed for family {} key={key:?}: {e}",
             family.module_name
         )
     });
@@ -659,7 +659,7 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
         let catalog = family_catalog(family, &keys);
         let group_batch_keys = (family.group_batch_keys)(family).unwrap_or_else(|e| {
             panic!(
-                "family {} grouped key enumeration failed: {e}",
+                "family {} multi-group key enumeration failed: {e}",
                 family.module_name
             )
         });
@@ -673,7 +673,7 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     {
         let group_batch_keys = (family.group_batch_keys)(family).unwrap_or_else(|e| {
             panic!(
-                "family {} grouped key enumeration failed: {e}",
+                "family {} multi-group key enumeration failed: {e}",
                 family.module_name
             )
         });

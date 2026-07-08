@@ -257,7 +257,7 @@ fn materialized_entries(
     }
     for key in &spec.group_batch_keys {
         let schedule = (spec.regen_group_batch)(key.clone())
-            .map_err(|e| format!("{}: regen grouped {key:?}: {e}", spec.module_name))?;
+            .map_err(|e| format!("{}: regen multi-group {key:?}: {e}", spec.module_name))?;
         entries.push((key.clone(), schedule));
     }
     entries

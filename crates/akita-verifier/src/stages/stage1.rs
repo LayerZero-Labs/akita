@@ -41,7 +41,7 @@ pub(crate) fn validate_fold_grind_nonce(
 /// Absorb the prover's `v` rows once, then sample one [`Challenges`] set per
 /// commitment group in `OpeningClaims` order.
 ///
-/// This mirrors the prover's grouped [`RingRelationProver`] live sampling: the
+/// This mirrors the prover's multi-group [`RingRelationProver`] live sampling: the
 /// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
 /// group; the terminal layout drops the D-block so the absorb is skipped on
 /// both sides), then each group samples with its own `num_blocks`/`K_g` under
@@ -53,7 +53,7 @@ pub(crate) fn validate_fold_grind_nonce(
 ///
 /// Returns an error if the group layout is malformed or challenge sampling fails.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn derive_grouped_stage1_challenges<F, T>(
+pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     transcript: &mut T,
     v_coeffs: &[F],
     ring_d: usize,

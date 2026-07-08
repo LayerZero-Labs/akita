@@ -16,7 +16,7 @@ use akita_types::{
     validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaScheduleLookupKey, Commitment, DigitBlocks, FpExtEncoding, LevelParams,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
-    GROUPED_ROOT_DENSE_UNSUPPORTED,
+    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -631,7 +631,7 @@ where
     let opening_batch = prepare_commit_inputs::<F, P>(polys, setup)?;
     if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
         return Err(AkitaError::InvalidInput(
-            GROUPED_ROOT_DENSE_UNSUPPORTED.to_string(),
+            MULTI_GROUP_ROOT_DENSE_UNSUPPORTED.to_string(),
         ));
     }
     Ok(PolynomialGroupLayout::new(
@@ -757,16 +757,16 @@ where
     Ok(schedule_root_fold_step(&schedule).is_some())
 }
 
-/// Commit the final polynomial bundle for a grouped root commitment.
+/// Commit the final polynomial bundle for a multi-group root commitment.
 ///
 /// The final group shape is derived from `polys`; `precommitteds` supplies the
 /// schedule keys for prior groups in transcript order. Each precommitted key is
 /// resolved through the conservative commitment config to freeze its layout
-/// before selecting the final group's grouped root commitment layout.
+/// before selecting the final group's multi-group root commitment layout.
 ///
 /// # Errors
 ///
-/// Returns an error if input validation, grouped parameter selection, or
+/// Returns an error if input validation, multi-group parameter selection, or
 /// commitment execution fails.
 pub fn commit_final_group<Cfg, P, B>(
     polys: &[P],
@@ -786,7 +786,7 @@ where
     let tensor_ctx = stack.tensor();
     let schedule_key = final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds)?;
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
-    let params = Cfg::grouped_root_commit_params(&schedule)?;
+    let params = Cfg::multi_group_root_commit_params(&schedule)?;
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {

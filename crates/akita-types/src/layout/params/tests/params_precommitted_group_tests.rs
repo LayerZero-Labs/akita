@@ -1,7 +1,7 @@
 use super::*;
 use crate::schedule::PrecommittedGroupParams;
 
-fn sample_grouped_root_params() -> (LevelParams, OpeningClaimsLayout) {
+fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
     let lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
@@ -35,8 +35,8 @@ fn sample_grouped_root_params() -> (LevelParams, OpeningClaimsLayout) {
 }
 
 #[test]
-fn grouped_m_row_count_matches_canonical_layout() {
-    let (lp, _) = sample_grouped_root_params();
+fn multi_group_m_row_count_matches_canonical_layout() {
+    let (lp, _) = sample_multi_group_root_params();
     let n_a_final = lp.a_key.row_len();
     let n_b_final = lp.b_key.row_len();
     let n_a_pre = lp.precommitted_groups[0].a_key.row_len();
@@ -56,8 +56,8 @@ fn grouped_m_row_count_matches_canonical_layout() {
 }
 
 #[test]
-fn grouped_row_offsets_match_a_before_b_layout() {
-    let (lp, batch) = sample_grouped_root_params();
+fn multi_group_row_offsets_match_a_before_b_layout() {
+    let (lp, batch) = sample_multi_group_root_params();
     let n_a_final = lp.a_key.row_len();
     let n_b_final = lp.b_key.row_len();
     let n_a_pre = lp.precommitted_groups[0].a_key.row_len();
@@ -85,17 +85,17 @@ fn grouped_row_offsets_match_a_before_b_layout() {
 }
 
 #[test]
-fn grouped_root_rejects_multi_chunk_witness_layout() {
-    let (mut lp, _) = sample_grouped_root_params();
+fn multi_group_root_rejects_multi_chunk_witness_layout() {
+    let (mut lp, _) = sample_multi_group_root_params();
     lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
         num_chunks: 2,
         num_activated_levels: 1,
     };
     let err = lp
-        .reject_grouped_multi_chunk("test")
-        .expect_err("grouped multi-chunk must reject");
+        .reject_multi_group_multi_chunk("test")
+        .expect_err("multi-group multi-chunk must reject");
     assert!(
-        format!("{err:?}").contains(crate::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED),
+        format!("{err:?}").contains(crate::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED),
         "unexpected error: {err:?}"
     );
 }

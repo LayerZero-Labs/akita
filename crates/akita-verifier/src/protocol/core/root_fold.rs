@@ -79,7 +79,7 @@ where
     // `verify_fold_eor` on per-role dimensions. Grouped roots (`G > 1`) never
     // collapse into a synthetic single group.
     if opening_batch.num_groups() > 1 {
-        return verify_grouped_root_inner::<F, E, T>(
+        return verify_multi_group_root_inner::<F, E, T>(
             proof,
             setup,
             transcript,
@@ -308,7 +308,7 @@ where
 /// non-fold root, or any malformed group shape, and propagates layout/replay
 /// errors.
 #[allow(clippy::too_many_arguments)]
-fn verify_grouped_root_inner<F, E, T>(
+fn verify_multi_group_root_inner<F, E, T>(
     proof: &AkitaBatchedRootProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -403,8 +403,8 @@ where
             return Err(AkitaError::InvalidProof)
         }
     };
-    // Routes `verify_fold` to the grouped-root trace path; inert for the dense
-    // trace-weight table that grouped roots evaluate.
+    // Routes `verify_fold` to the multi-group-root trace path; inert for the dense
+    // trace-weight table that multi-group roots evaluate.
     let trace_block_opening =
         root_trace_block_opening::<E>(shared_opening_point, root_lp, alpha_bits)?;
 

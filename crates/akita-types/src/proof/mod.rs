@@ -29,10 +29,10 @@ mod tests;
 mod wire;
 
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, should_reject_grouped_root, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    GROUPED_ROOT_DENSE_UNSUPPORTED, GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED,
-    GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    sample_public_row_coefficients, should_reject_multi_group_root, OpeningClaims,
+    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED,
+    MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
@@ -64,7 +64,7 @@ pub use relation::{
 };
 pub use relation_matrix_cols::compute_relation_matrix_col_evals;
 pub use ring_relation::{
-    grouped_ring_relation_segment_lengths, ring_relation_segment_lengths,
+    multi_group_ring_relation_segment_lengths, ring_relation_segment_lengths,
     GroupedRingRelationSegmentLengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
 };

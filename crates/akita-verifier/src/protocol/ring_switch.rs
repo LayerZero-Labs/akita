@@ -351,7 +351,7 @@ where
         relation.relation_matrix_row_layout(),
     )?;
     if lp.has_precommitted_groups() {
-        return prepare_relation_matrix_evaluator_grouped::<F, E, D>(
+        return prepare_relation_matrix_evaluator_multi_group::<F, E, D>(
             replay,
             alpha,
             tau1,
@@ -381,7 +381,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_relation_matrix_evaluator_grouped<F, E, const D: usize>(
+fn prepare_relation_matrix_evaluator_multi_group<F, E, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
@@ -396,7 +396,7 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
-    lp.reject_grouped_multi_chunk("prepare_relation_matrix_evaluator_grouped")?;
+    lp.reject_multi_group_multi_chunk("prepare_relation_matrix_evaluator_multi_group")?;
     lp.validate_root_opening_batch(opening_batch)?;
     validate_role_dispatch::<D>(relation.role_dims(), RingRole::Inner)?;
     if replay.row_coefficients.len() != opening_batch.num_total_polynomials() {
@@ -414,7 +414,7 @@ where
     let order = opening_batch.root_group_order()?;
     if chunk_layout.chunks.len() != order.len() || chunk_layout.chunk_lengths.len() != order.len() {
         return Err(AkitaError::InvalidSetup(
-            "grouped witness layout does not match root group order".to_string(),
+            "multi-group witness layout does not match root group order".to_string(),
         ));
     }
 
@@ -428,10 +428,10 @@ where
             .num_polynomials()
             .checked_mul(group_lp.num_blocks())
             .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
         d_physical_cols = d_physical_cols
             .checked_add(e_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
     }
 
     let alpha_pows_a = scalar_powers(alpha, D);
@@ -450,12 +450,12 @@ where
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
         let inner_width = group_lp.a_col_len();
-        let expected_inner_width = block_len
-            .checked_mul(depth_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped inner width overflow".to_string()))?;
+        let expected_inner_width = block_len.checked_mul(depth_commit).ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group inner width overflow".to_string())
+        })?;
         if inner_width < expected_inner_width {
             return Err(AkitaError::InvalidSetup(
-                "grouped A-key column width is too small".to_string(),
+                "multi-group A-key column width is too small".to_string(),
             ));
         }
 
@@ -469,9 +469,9 @@ where
             return Err(AkitaError::InvalidProof);
         }
 
-        let total_blocks = k_g
-            .checked_mul(num_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped block count overflow".to_string()))?;
+        let total_blocks = k_g.checked_mul(num_blocks).ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group block count overflow".to_string())
+        })?;
         let challenges = relation
             .group_challenges()
             .get(group_index)
@@ -492,7 +492,7 @@ where
             .checked_mul(depth_open)
             .and_then(|len| len.checked_mul(num_blocks))
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("grouped B vector width overflow".to_string())
+                AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
         let a_range = lp.root_a_row_range(
             opening_batch,
@@ -506,7 +506,7 @@ where
         )?;
         if a_range.len() != n_a || b_range.len() != n_b {
             return Err(AkitaError::InvalidSetup(
-                "grouped row ranges do not match group matrix heights".to_string(),
+                "multi-group row ranges do not match group matrix heights".to_string(),
             ));
         }
 

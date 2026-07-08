@@ -110,7 +110,7 @@ where
     Ok(out)
 }
 
-/// Relation quotient `r` returned by [`compute_grouped_relation_quotient`].
+/// Relation quotient `r` returned by [`compute_multi_group_relation_quotient`].
 pub(crate) type RelationQuotientOutput<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
 
 fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
@@ -217,8 +217,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_grouped_relation_quotient")]
-pub(crate) fn compute_grouped_relation_quotient<F, B, const D: usize>(
+#[tracing::instrument(skip_all, name = "compute_multi_group_relation_quotient")]
+pub(crate) fn compute_multi_group_relation_quotient<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
     opening_batch: &akita_types::OpeningClaimsLayout,
@@ -233,7 +233,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
     B: RingSwitchProveBackend<F, D>,
 {
-    lp.reject_grouped_multi_chunk("grouped relation quotient")?;
+    lp.reject_multi_group_multi_chunk("multi-group relation quotient")?;
     lp.validate_root_opening_batch(opening_batch)?;
     if groups.len() != opening_batch.num_groups()
         || group_ring_multiplier_points.len() != opening_batch.num_groups()
@@ -273,7 +273,7 @@ where
         let n_b = group.params.b_rows_len();
         let blocks_per_claim = group.params.num_blocks();
         let inner_width = group.params.a_col_len();
-        validate_i8_setup_log_basis(log_basis, "for grouped relation quotient")?;
+        validate_i8_setup_log_basis(log_basis, "for multi-group relation quotient")?;
         if group_layout.num_polynomials() == 0 {
             return Err(AkitaError::InvalidProof);
         }

@@ -87,14 +87,14 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     })
 }
 
-/// Per-group `z ‖ e ‖ t` widths for grouped roots in final-first witness order.
-pub fn grouped_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
+/// Per-group `z ‖ e ‖ t` widths for multi-group roots in final-first witness order.
+pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<GroupedRingRelationSegmentLengths, AkitaError> {
     if !lp.has_precommitted_groups() {
         return Err(AkitaError::InvalidSetup(
-            "grouped ring-relation segment lengths require precommitted groups".to_string(),
+            "multi-group ring-relation segment lengths require precommitted groups".to_string(),
         ));
     }
     opening_batch.check()?;
@@ -117,16 +117,22 @@ pub fn grouped_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         let e_len = num_polys
             .checked_mul(num_blocks)
             .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped e-hat width overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group e-hat width overflow".to_string())
+            })?;
         let t_len = num_polys
             .checked_mul(num_blocks)
             .and_then(|n| n.checked_mul(n_a))
             .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped t-hat width overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group t-hat width overflow".to_string())
+            })?;
         let z_len = block_len
             .checked_mul(num_digits_commit)
             .and_then(|n| n.checked_mul(num_digits_fold))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped z-hat width overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group z-hat width overflow".to_string())
+            })?;
         z_lens.push(z_len);
         e_lens.push(e_len);
         t_lens.push(t_len);
@@ -530,11 +536,11 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             .ok_or_else(|| AkitaError::InvalidSetup("r-tail length overflow".to_string()))?;
 
         if lp.has_precommitted_groups() {
-            lp.reject_grouped_multi_chunk("segment_layout")?;
+            lp.reject_multi_group_multi_chunk("segment_layout")?;
             // Group-major layout: one chunk per group in `root_group_order()`
             // (final group first), each holding that group's contiguous
             // `[z_g ‖ e_g ‖ t_g]`, followed by one shared trailing `r` carried by
-            // the last chunk. `grouped_ring_relation_segment_lengths` returns the
+            // the last chunk. `multi_group_ring_relation_segment_lengths` returns the
             // per-group widths already in that order. The per-chunk block-window
             // fields (`blocks_per_chunk`, `global_block_base`) are inert here:
             // each group is a single, non-windowed segment stride.
@@ -542,7 +548,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 z_lens,
                 e_lens,
                 t_lens,
-            } = grouped_ring_relation_segment_lengths::<F>(lp, &self.opening_batch)?;
+            } = multi_group_ring_relation_segment_lengths::<F>(lp, &self.opening_batch)?;
             let num_groups = z_lens.len();
             let mut chunks = Vec::with_capacity(num_groups);
             let mut chunk_lengths = Vec::with_capacity(num_groups);
@@ -552,13 +558,13 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 let e_g = e_lens[p];
                 let t_g = t_lens[p];
                 let offset_e = base.checked_add(z_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("grouped e offset overflow".to_string())
+                    AkitaError::InvalidSetup("multi-group e offset overflow".to_string())
                 })?;
                 let offset_t = offset_e.checked_add(e_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("grouped t offset overflow".to_string())
+                    AkitaError::InvalidSetup("multi-group t offset overflow".to_string())
                 })?;
                 let after_t = offset_t.checked_add(t_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("grouped group stride overflow".to_string())
+                    AkitaError::InvalidSetup("multi-group stride overflow".to_string())
                 })?;
                 let is_last = p + 1 == num_groups;
                 chunks.push(WitnessChunkLayout {
@@ -1007,7 +1013,7 @@ mod tests {
             .expect("v rows match layout");
     }
 
-    fn grouped_one_three_fixture() -> (LevelParams, OpeningClaimsLayout) {
+    fn multi_group_one_three_fixture() -> (LevelParams, OpeningClaimsLayout) {
         use crate::schedule::PrecommittedGroupParams;
         let lp = LevelParams::params_only(
             crate::SisModulusFamily::Q128,
@@ -1019,7 +1025,7 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(2, 2, 2, 2, 0)
-        .expect("grouped main params");
+        .expect("multi-group main params");
         let precommit_lp = LevelParams::params_only(
             crate::SisModulusFamily::Q128,
             D,
@@ -1030,7 +1036,7 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(2, 2, 2, 2, 0)
-        .expect("grouped precommit params");
+        .expect("multi-group precommit params");
         let precommit = PrecommittedLevelParams {
             layout: PrecommittedGroupParams::from_params(
                 PolynomialGroupLayout::new(4, 3),
@@ -1044,19 +1050,19 @@ mod tests {
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold_one: precommit_lp.num_digits_fold_one,
         };
-        let mut grouped = lp;
-        grouped.precommitted_groups = vec![precommit];
+        let mut multi_group_lp = lp;
+        multi_group_lp.precommitted_groups = vec![precommit];
         let batch = OpeningClaimsLayout::from_root_groups(
             &[PolynomialGroupLayout::new(4, 3)],
             PolynomialGroupLayout::new(4, 1),
         )
-        .expect("grouped opening batch");
-        (grouped, batch)
+        .expect("multi-group opening batch");
+        (multi_group_lp, batch)
     }
 
     #[test]
-    fn grouped_segment_layout_total_matches_root_next_w_len() {
-        let (lp, opening_batch) = grouped_one_three_fixture();
+    fn multi_group_segment_layout_total_matches_root_next_w_len() {
+        let (lp, opening_batch) = multi_group_one_three_fixture();
         let relation_rhs_layout = crate::proof::relation::relation_rhs_layout_for(
             &lp,
             &opening_batch,
@@ -1081,21 +1087,21 @@ mod tests {
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
             CommitmentRingDims::uniform(D),
         )
-        .expect("grouped instance");
+        .expect("multi-group instance");
 
         let layout = instance
             .segment_layout(&lp, None)
-            .expect("grouped segment layout");
-        let grouped_lens =
-            grouped_ring_relation_segment_lengths::<F>(&lp, &opening_batch).expect("group lens");
-        let num_groups = grouped_lens.z_lens.len();
+            .expect("multi-group segment layout");
+        let segment_lens = multi_group_ring_relation_segment_lengths::<F>(&lp, &opening_batch)
+            .expect("segment lens");
+        let num_groups = segment_lens.z_lens.len();
         // Group-major: one chunk per group, each holding a contiguous
         // `[z_g | e_g | t_g]` stride; only the last chunk carries the single
         // shared `r` tail.
         assert_eq!(layout.num_chunks(), num_groups);
-        let z_total: usize = grouped_lens.z_lens.iter().sum();
-        let e_total: usize = grouped_lens.e_lens.iter().sum();
-        let t_total: usize = grouped_lens.t_lens.iter().sum();
+        let z_total: usize = segment_lens.z_lens.iter().sum();
+        let e_total: usize = segment_lens.e_lens.iter().sum();
+        let t_total: usize = segment_lens.t_lens.iter().sum();
         let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis);
 
         let mut base = 0usize;
@@ -1105,9 +1111,9 @@ mod tests {
             .zip(layout.chunk_lengths.iter())
             .enumerate()
         {
-            let z_g = grouped_lens.z_lens[p];
-            let e_g = grouped_lens.e_lens[p];
-            let t_g = grouped_lens.t_lens[p];
+            let z_g = segment_lens.z_lens[p];
+            let e_g = segment_lens.e_lens[p];
+            let t_g = segment_lens.t_lens[p];
             assert_eq!(lengths.z_len, z_g);
             assert_eq!(lengths.e_len, e_g);
             assert_eq!(lengths.t_len, t_g);
@@ -1133,8 +1139,8 @@ mod tests {
     }
 
     #[test]
-    fn grouped_segment_layout_rejects_multi_chunk() {
-        let (mut lp, opening_batch) = grouped_one_three_fixture();
+    fn multi_group_segment_layout_rejects_multi_chunk() {
+        let (mut lp, opening_batch) = multi_group_one_three_fixture();
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 2,
             num_activated_levels: 1,
@@ -1163,12 +1169,12 @@ mod tests {
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
             CommitmentRingDims::uniform(D),
         )
-        .expect("grouped instance");
+        .expect("multi-group instance");
         let err = instance
             .segment_layout(&lp, None)
-            .expect_err("grouped multi-chunk must reject");
+            .expect_err("multi-group multi-chunk must reject");
         assert!(
-            format!("{err:?}").contains(crate::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED),
+            format!("{err:?}").contains(crate::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED),
             "unexpected error: {err:?}"
         );
     }

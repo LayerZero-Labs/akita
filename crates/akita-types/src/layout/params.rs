@@ -102,7 +102,7 @@ pub struct LevelParams {
     /// truth for the per-level witness column layout. `ChunkedWitnessCfg::default()`
     /// (single chunk) is byte-identical to the historical layout.
     pub witness_chunk: crate::witness::ChunkedWitnessCfg,
-    /// Precommitted group-local params for a grouped root. Empty for scalar
+    /// Precommitted group-local params for a multi-group root. Empty for scalar
     /// levels; when non-empty, the top-level fields describe the final/new
     /// group and `d_key` describes the shared D matrix over all group `w_hat`
     /// segments.
@@ -249,13 +249,13 @@ impl LevelParams {
         }
     }
 
-    /// True when this level carries grouped-root metadata.
+    /// True when this level carries multi-group-root metadata.
     #[inline]
     pub fn has_precommitted_groups(&self) -> bool {
         !self.precommitted_groups.is_empty()
     }
 
-    /// Reject grouped-root params at scalar-only call sites.
+    /// Reject multi-group-root params at scalar-only call sites.
     pub fn require_scalar_level(&self, context: &str) -> Result<(), AkitaError> {
         if self.has_precommitted_groups() {
             return Err(AkitaError::InvalidSetup(format!(
@@ -265,12 +265,12 @@ impl LevelParams {
         Ok(())
     }
 
-    /// Reject grouped-root params combined with multi-chunk witness layout.
-    pub fn reject_grouped_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
+    /// Reject multi-group-root params combined with multi-chunk witness layout.
+    pub fn reject_multi_group_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
         if self.has_precommitted_groups() && self.witness_chunk.num_chunks > 1 {
             return Err(AkitaError::InvalidSetup(format!(
                 "{context}: {}",
-                crate::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED
+                crate::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED
             )));
         }
         Ok(())
@@ -816,14 +816,14 @@ impl LevelParams {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    fn grouped_relation_matrix_row_count_for(
+    fn multi_group_relation_matrix_row_count_for(
         &self,
         num_commitments: usize,
         layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         if num_commitments != self.root_group_count() {
             return Err(AkitaError::InvalidSetup(
-                "grouped root M rows require the real root group count".to_string(),
+                "multi-group root relation rows require the real root group count".to_string(),
             ));
         }
 
@@ -842,7 +842,7 @@ impl LevelParams {
             .ok_or_else(Self::m_row_overflow)
     }
 
-    /// Absolute start row of one group's A block in the grouped root layout
+    /// Absolute start row of one group's A block in the multi-group root layout
     /// (`consistency | A_final | B_final | A_pre* | B_pre* | D`).
     fn group_a_start(
         &self,
@@ -965,7 +965,7 @@ impl LevelParams {
             .ok_or_else(|| AkitaError::InvalidSetup("root witness segment overflow".to_string()))
     }
 
-    /// Root next-witness length in field elements for scalar or grouped roots.
+    /// Root next-witness length in field elements for scalar or multi-group roots.
     pub fn root_next_w_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
@@ -1053,7 +1053,7 @@ impl LevelParams {
         layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         if self.has_precommitted_groups() {
-            return self.grouped_relation_matrix_row_count_for(num_commitments, layout);
+            return self.multi_group_relation_matrix_row_count_for(num_commitments, layout);
         }
         self.require_scalar_level("relation_matrix_row_count_for")?;
         self.d_start(num_commitments)?

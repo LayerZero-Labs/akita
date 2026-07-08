@@ -273,17 +273,17 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
 }
 
 #[test]
-fn grouped_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
+fn multi_group_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
     type Cfg = fp128::D64OneHotMultiChunkW2R2;
     let opening_batch = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(8, 1),
         PolynomialGroupLayout::new(16, 1),
     ])
-    .expect("grouped opening batch");
+    .expect("multi-group opening batch");
     let point = vec![fp128::Field::zero(); opening_batch.max_num_vars()];
 
     let err = crate::effective_batched_schedule::<Cfg>(&opening_batch, &point)
-        .expect_err("grouped multi-chunk schedule must reject");
+        .expect_err("multi-group multi-chunk schedule must reject");
 
     assert!(
         err.to_string().contains("multi-chunk witness layout"),
@@ -292,15 +292,16 @@ fn grouped_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
 }
 
 #[test]
-fn setup_matrix_envelope_covers_grouped_batch_schedules() {
-    let opening_batch = OpeningClaimsLayout::new(30, 4).expect("grouped same-point opening_batch");
-    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&opening_batch)
+fn setup_matrix_envelope_covers_multi_group_batch_schedules() {
+    let opening_batch =
+        OpeningClaimsLayout::new(30, 4).expect("multi-group same-point opening_batch");
+    let multi_group_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&opening_batch)
         .unwrap()
-        .expect("grouped same-point shape should resolve to a setup envelope");
+        .expect("multi-group same-point shape should resolve to a setup envelope");
 
     let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D128Full>(30, 4)
-        .expect("setup envelope should cover generated grouped batch schedules");
-    assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
+        .expect("setup envelope should cover generated multi-group batch schedules");
+    assert!(setup_envelope.max_setup_len >= multi_group_same_point.max_setup_len);
 }
 
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClaimsLayout) -> usize {
@@ -353,7 +354,7 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
 #[test]
 fn setup_matrix_scan_uses_one_shared_opening_point() {
     let opening_batch =
-        worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch");
+        worst_case_multi_group_opening_batch_for_shape(30, 4).expect("valid opening batch");
     assert_eq!(opening_batch.num_total_polynomials(), 4);
 }
 
@@ -398,7 +399,7 @@ fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
 
 #[test]
 #[cfg(feature = "schedules-fp128-d64-onehot")]
-fn proof_optimized_setup_includes_precommitted_grouped_root_catalog_entries() {
+fn proof_optimized_setup_includes_precommitted_multi_group_root_catalog_entries() {
     type Cfg = fp128::D64OneHot;
 
     let catalog = Cfg::schedule_catalog().expect("D64 one-hot catalog");
@@ -414,19 +415,20 @@ fn proof_optimized_setup_includes_precommitted_grouped_root_catalog_entries() {
                     .iter()
                     .all(|group| group.group.num_vars() == 8 && group.group.num_polynomials() == 1)
         })
-        .expect("generated two-precommit grouped-root entry");
+        .expect("generated two-precommit multi-group-root entry");
     let key = super::runtime_key_from_generated_entry(entry);
-    let schedule = Cfg::runtime_schedule(key.clone()).expect("precommitted grouped-root schedule");
-    let layout = key.opening_layout().expect("grouped layout");
+    let schedule =
+        Cfg::runtime_schedule(key.clone()).expect("precommitted multi-group-root schedule");
+    let layout = key.opening_layout().expect("multi-group layout");
     let entry_envelope =
         super::matrix_envelope_for_schedule::<Cfg>(&schedule, &layout).expect("entry envelope");
 
     let setup_envelope = super::proof_optimized_max_setup_matrix_size::<Cfg>(16, 1)
-        .expect("setup envelope should include precommitted grouped-root catalog entries");
+        .expect("setup envelope should include precommitted multi-group-root catalog entries");
 
     assert!(
         setup_envelope.max_setup_len >= entry_envelope.max_setup_len,
-        "setup envelope must cover generated precommitted grouped-root catalog footprints"
+        "setup envelope must cover generated precommitted multi-group-root catalog footprints"
     );
 }
 
@@ -435,7 +437,7 @@ fn proof_optimized_setup_includes_conservative_precommit_inflation() {
     type Cfg = fp128::D64OneHot;
 
     let runtime_only = setup_matrix_envelope_for_shape::<Cfg>(
-        &worst_case_grouped_opening_batch_for_shape(30, 4).expect("valid opening batch"),
+        &worst_case_multi_group_opening_batch_for_shape(30, 4).expect("valid opening batch"),
     )
     .expect("runtime envelope")
     .expect("supported runtime schedule");

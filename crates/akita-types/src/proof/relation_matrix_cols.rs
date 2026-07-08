@@ -1,4 +1,4 @@
-//! Shared grouped/singleton relation matrix column evaluation.
+//! Shared singleton and multi-group relation matrix column evaluation.
 //!
 //! [`compute_relation_matrix_col_evals`] materializes the tau1-weighted relation-matrix column
 //! vector `relation_matrix_col_evals` that the fused stage-2 sumcheck treats as the row
@@ -18,7 +18,7 @@ use akita_challenges::Challenges;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase};
 
-/// Unified relation matrix column evaluation for singleton and grouped root relations.
+/// Unified relation matrix column evaluation for singleton and multi-group root relations.
 ///
 /// Singleton roots use the scalar/chunked witness layout. Grouped roots use the
 /// group-major layout and still reject multi-chunk witness emission.
@@ -46,7 +46,7 @@ where
 {
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
-    lp.reject_grouped_multi_chunk("compute_relation_matrix_col_evals")?;
+    lp.reject_multi_group_multi_chunk("compute_relation_matrix_col_evals")?;
     lp.validate_root_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
@@ -91,43 +91,47 @@ where
             .block_len()
             .checked_mul(group_lp.num_digits_commit())
             .and_then(|n| n.checked_mul(depth_fold))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped z width overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("relation matrix z width overflow".to_string())
+            })?;
         let group_z_cols = if use_chunked_singleton_layout {
             group_z_len.checked_mul(num_chunks).ok_or_else(|| {
-                AkitaError::InvalidSetup("chunked grouped z width overflow".to_string())
+                AkitaError::InvalidSetup("chunked relation matrix z width overflow".to_string())
             })?
         } else {
             group_z_len
         };
-        z_total = z_total
-            .checked_add(group_z_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped z width overflow".to_string()))?;
+        z_total = z_total.checked_add(group_z_cols).ok_or_else(|| {
+            AkitaError::InvalidSetup("relation matrix z width overflow".to_string())
+        })?;
         let e_len = k_g
             .checked_mul(group_lp.num_blocks())
             .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
         e_total = e_total
             .checked_add(e_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
         t_total = t_total
             .checked_add(
                 k_g.checked_mul(group_lp.num_blocks())
                     .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
                     .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("grouped t width overflow".to_string())
+                        AkitaError::InvalidSetup("relation matrix t width overflow".to_string())
                     })?,
             )
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped t width overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("relation matrix t width overflow".to_string())
+            })?;
     }
     let r_tail_len = rows
         .checked_mul(levels)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped r width overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix r width overflow".to_string()))?;
     let total_cols = z_total
         .checked_add(e_total)
         .and_then(|n| n.checked_add(t_total))
         .and_then(|n| n.checked_add(r_tail_len))
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped M width overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix width overflow".to_string()))?;
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
@@ -165,14 +169,14 @@ where
             || opening_point.b.len() != group_lp.num_blocks()
         {
             return Err(AkitaError::InvalidInput(
-                "grouped M eval opening-point layout mismatch".to_string(),
+                "relation matrix col eval opening-point layout mismatch".to_string(),
             ));
         }
         if ring_multiplier_point.a_len() < group_lp.block_len()
             || ring_multiplier_point.b_len() != group_lp.num_blocks()
         {
             return Err(AkitaError::InvalidInput(
-                "grouped M eval multiplier layout mismatch".to_string(),
+                "relation matrix col eval multiplier layout mismatch".to_string(),
             ));
         }
         let total_blocks = k_g
@@ -205,11 +209,11 @@ where
             .checked_mul(depth_open)
             .and_then(|len| len.checked_mul(num_blocks_g))
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("grouped B vector width overflow".to_string())
+                AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
         let b_width = k_g
             .checked_mul(t_cols_per_vector)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped B width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
         let a_view = setup.shared_matrix.ring_view_dyn(n_a, inner_width, d_a)?;
         let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, d_b)?;
         let a_rows: Vec<&[F]> = (0..n_a)
@@ -326,15 +330,17 @@ where
         let num_blocks = group_lp.num_blocks();
         if num_blocks == 0 {
             return Err(AkitaError::InvalidSetup(
-                "chunked grouped M evals require a non-zero block count".to_string(),
+                "chunked relation-matrix col evals require a non-zero block count".to_string(),
             ));
         }
         let blocks_per_chunk = num_blocks.checked_div(num_chunks).ok_or_else(|| {
-            AkitaError::InvalidSetup("chunked grouped M eval chunk count is zero".to_string())
+            AkitaError::InvalidSetup(
+                "chunked relation-matrix col eval chunk count is zero".to_string(),
+            )
         })?;
         if blocks_per_chunk == 0 {
             return Err(AkitaError::InvalidSetup(
-                "chunked grouped M eval block window is empty".to_string(),
+                "chunked relation-matrix col eval block window is empty".to_string(),
             ));
         }
         // Singleton chunked layout `[z|e_i|t_i]…[r]`: `z` is replicated per

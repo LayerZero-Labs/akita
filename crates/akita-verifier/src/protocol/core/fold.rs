@@ -225,11 +225,11 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) v: RingVec<F>,
     /// Normalized opening geometry (one group for scalar/suffix folds, `G`
-    /// groups for grouped roots).
+    /// groups for multi-group roots).
     pub(in crate::protocol::core) opening_shape: OpeningClaimsLayout,
     /// Sent commitment rows concatenated in M-row (final-first
     /// `root_group_order`) order — the single group's rows for scalar/suffix
-    /// folds, `concat_g u_g` for grouped roots. Matches the prover's
+    /// folds, `concat_g u_g` for multi-group roots. Matches the prover's
     /// `RingRelationProver` commitment-row concatenation and
     /// `relation_rhs_layout_for` block order.
     pub(in crate::protocol::core) commitment_rows: RingVec<F>,
@@ -462,7 +462,7 @@ where
                 trace_claim_scales,
                 opening_batch,
                 live_x_cols,
-            } => build_trace_claim_grouped_root::<F, E, D>(
+            } => build_trace_claim_multi_group_root::<F, E, D>(
                 layout,
                 lp,
                 &opening_batch,
@@ -626,7 +626,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let group_challenges = derive_grouped_stage1_challenges::<F, T>(
+    let group_challenges = derive_multi_group_stage1_challenges::<F, T>(
         transcript,
         prepared.v.coeffs(),
         role_dims.d_a(),
@@ -776,10 +776,10 @@ where
         }
         let live_x_cols = prepared.w_len / d_a;
         let col_bits = u32::try_from(rs.col_bits).map_err(|_| {
-            AkitaError::InvalidSetup("grouped trace column bits overflow".to_string())
+            AkitaError::InvalidSetup("multi-group trace column bits overflow".to_string())
         })?;
         let max_live_x_cols = 1usize.checked_shl(col_bits).ok_or_else(|| {
-            AkitaError::InvalidSetup("grouped trace column bound overflow".to_string())
+            AkitaError::InvalidSetup("multi-group trace column bound overflow".to_string())
         })?;
         if live_x_cols > max_live_x_cols {
             return Err(AkitaError::InvalidSize {

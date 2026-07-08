@@ -5,7 +5,7 @@
 | --------- | ---------------------------------- |
 | Author(s) |                                    |
 | Created   | 2026-06-17                         |
-| Status    | folded grouped roots implemented; chunking guarded |
+| Status    | folded multi-group roots implemented; chunking guarded |
 | PR        |                                    |
 | Book      | configuration chapter              |
 
@@ -23,7 +23,7 @@ narrow:
 - all groups are opened at one shared point;
 - group sizes `K_g` may differ;
 - multi-group structure exists only at the root level;
-- folded grouped roots hand off to singleton recursive suffix folds after the
+- folded multi-group roots hand off to singleton recursive suffix folds after the
   root produces one recursive witness commitment;
 - tiered multi-group commitments remain out of scope.
 
@@ -72,15 +72,15 @@ v:     public D commitment rows
 point.
 - Allow unequal group sizes `K_g`.
 - Give each group its own `z_hat_g` at the root.
-- Keep recursive suffix folds singleton: the grouped root produces one next
+- Keep recursive suffix folds singleton: the multi-group root produces one next
 witness commitment and the existing suffix machinery takes over.
 - Add conservative-rank presets, parallel to `proof_optimized`, for standalone
 precommitted groups.
 - Derive final-group planning state from public opening shape, setup, and config
-policy so the final commit can build a grouped root proof with already committed
+policy so the final commit can build a multi-group root proof with already committed
 groups.
 - Bind group partition through `OpeningClaimsLayout` / `opening_batch_digest` and
-bind the final grouped root schedule through the existing effective schedule
+bind the final multi-group root schedule through the existing effective schedule
 digest.
 - Preserve the verifier no-panic contract. Malformed group shapes, schedules,
 commitments, witness shapes, and descriptors must return `AkitaError`.
@@ -148,7 +148,7 @@ singleton proof path.
 
 ## Current State
 
-The codebase has implemented the grouped scheduler, conservative precommit,
+The codebase has implemented the multi-group scheduler, conservative precommit,
 `commit_final_group`, and **root-direct multi-group opening proofs** for
 one-hot polynomials under `SetupContributionMode::Direct`.
 
@@ -162,10 +162,10 @@ Implemented now:
 - `CommitmentConfig::runtime_schedule` resolves the unified
   `AkitaScheduleLookupKey`. A scalar key is represented as
   `AkitaScheduleLookupKey::single(final_group)` and delegates to the scalar
-  scheduler. A grouped key goes through generated group-batch lookup first, then
+  scheduler. A multi-group key goes through generated group-batch lookup first, then
   DP fallback.
-- `find_group_batch_schedule` builds grouped root-direct or folded-root
-  schedules for one-hot, non-tiered configs. The grouped root `LevelParams` holds
+- `find_group_batch_schedule` builds multi-group root-direct or folded-root
+  schedules for one-hot, non-tiered configs. The multi-group root `LevelParams` holds
   the final group in the normal root fields and all precommitted groups in
   `precommitted_groups`.
 - Grouped root planning sizes the shared `D` key over one `w_hat_g` segment per
@@ -182,14 +182,14 @@ Implemented now:
   `PolynomialGroupLayout`s under `ConservativeCommitmentConfig<Cfg>`,
   resolves grouped params through `Cfg::get_params_for_grouped_batched_commitment`,
   and emits the final commitment plus hint.
-- `batched_prove` / `batched_verify` support `G > 1` folded grouped-root one-hot
+- `batched_prove` / `batched_verify` support `G > 1` folded multi-group-root one-hot
   openings when `SetupContributionMode::Direct`, the opening field has extension
   degree one, and the root can hand off to a singleton recursive suffix. The
-  grouped root carries per-group `z_hat`, `e_hat`, and `t_hat` sections followed
+  multi-group root carries per-group `z_hat`, `e_hat`, and `t_hat` sections followed
   by one shared quotient tail.
 - `akita_config::effective_batched_schedule` still root-directs unsupported
   grouped folded-root shapes, including grouped extension-field openings.
-- The grouped root relation quotient, verifier ring-switch replay, setup
+- The multi-group root relation quotient, verifier ring-switch replay, setup
   contribution, grouped M-eval table, and grouped stage-2 trace table are
   implemented for the supported folded root shape.
 - Setup-envelope sizing includes conservative commitments for eligible
@@ -200,21 +200,21 @@ Still future / guarded:
 - Multi-chunk / distributed grouped witnesses. Today, multi-chunk witness layout
   combined with precommitted groups is rejected; the distributed design should
   decide whether all groups must share the same chunk count.
-- Dense polynomial grouped roots, recursive setup contribution, and tiered
+- Dense polynomial multi-group roots, recursive setup contribution, and tiered
   grouped commitments remain guarded.
-- Folded grouped roots over extension-field openings remain guarded by a
+- Folded multi-group roots over extension-field openings remain guarded by a
   root-direct fallback until the grouped trace/output contribution supports them.
-- Immediately terminal grouped root folds and EOR-bearing grouped roots remain
+- Immediately terminal multi-group root folds and EOR-bearing multi-group roots remain
   guarded.
 - There is no separate descriptor `CommitSection`, and the design should not add
   one for this flow. The current descriptor binds call shape through
-  `CallSection.opening_batch_digest` and binds the materialized grouped schedule
+  `CallSection.opening_batch_digest` and binds the materialized multi-group schedule
   through `PlanSection.effective_schedule_digest`; that schedule digest includes
-  grouped-root `LevelParams.precommitted_groups` when a grouped schedule is
+  multi-group-root `LevelParams.precommitted_groups` when a multi-group schedule is
   materialized. `commit_final_group` itself returns only the final commitment and
   hint.
 
-This spec records the implemented grouped final-commit and folded grouped-root
+This spec records the implemented grouped final-commit and folded multi-group-root
 behavior, plus the remaining unsupported matrix.
 
 ## Opening Claims Shape
@@ -320,7 +320,7 @@ column width large enough for the full concatenated witness:
 width_D >= sum_g width(w_hat_g)
 ```
 
-The grouped root design uses this concatenated D relation. It does not use per-group `v_g`
+The multi-group root design uses this concatenated D relation. It does not use per-group `v_g`
 commitments. A future per-group D design must show that the extra D blocks and
 extra `v_g` payloads are cheaper for a concrete workload, and it must give a
 separate binding argument for the group-wise D outputs.
@@ -330,12 +330,12 @@ The suffix sees only the resulting recursive witness commitment and remains
 unchanged:
 
 ```text
-grouped root -> one committed recursive witness -> singleton suffix folds
+multi-group root -> one committed recursive witness -> singleton suffix folds
 ```
 
 ## Root Counts
 
-The grouped root uses these counts:
+The multi-group root uses these counts:
 
 ```text
 num_commitment_groups = G
@@ -412,7 +412,7 @@ pub struct PrecommittedGroupParams {
 group commitment. The final planner must use the same `t_hat_g` shape for that
 group. In the `commit_final_group`/opening phase, every precommitted group must
 verify against the frozen `conservative_n_b`. The final group may use a
-non-conservative B rank because it is committed after the full grouped root
+non-conservative B rank because it is committed after the full multi-group root
 shape is known.
 
 The public final-commit API accepts precommitted `PolynomialGroupLayout`s and
@@ -450,7 +450,7 @@ num_z_vectors_root  = G
 num_z_segments      = G
 ```
 
-For the current supported grouped root, each group contributes one `w_hat_g`, so
+For the current supported multi-group root, each group contributes one `w_hat_g`, so
 `sum_g W_g = G`. `num_z_segments` is the witness `z_folded` segment count, not
 an M-row count. Public openings bind through the fused trace term, not through
 dedicated M-matrix rows.
@@ -517,7 +517,7 @@ Conservative-rank standalone group commits use the existing one-hot
 adapter overrides ordinary scalar schedule/commit layout selection so
 precommitted groups can be produced with the existing `batched_commit` API while
 using a B rank conservative for the parent config's maximum root basis. Dense
-backends and tiered conservative/grouped roots return explicit `AkitaError`.
+backends and tiered conservative/multi-group roots return explicit `AkitaError`.
 
 ### Standalone Conservative Commit
 
@@ -558,10 +558,10 @@ For a group committed before the final grouped proof is known:
 
 This protects the B relation for the precommitted group against any later
 root-group choice whose `log_basis <= l_max`, but only for the B role and only
-for the frozen `t_hat_g` shape. The final grouped root must not change the
+for the frozen `t_hat_g` shape. The final multi-group root must not change the
 precommitted group's `m`, `r`, `n_a`, `log_basis`, or derived B width. The A and
 D roles must still be sized and bound according to their own actual layouts in
-the final grouped root plan.
+the final multi-group root plan.
 
 ### Last Group
 
@@ -587,7 +587,7 @@ commit_final_group(new_group, precommitted_layouts)
 ## Config Surface
 
 `CommitmentConfig` now has a unified grouped/scalar schedule entry point plus a
-root-params accessor for final grouped commitments:
+root-params accessor for final multi-group commitments:
 
 ```rust
 fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>;
@@ -597,7 +597,7 @@ fn get_params_for_grouped_batched_commitment(
 ) -> Result<LevelParams, AkitaError>;
 ```
 
-`runtime_schedule` delegates scalar keys to `resolve_schedule` and grouped keys
+`runtime_schedule` delegates scalar keys to `resolve_schedule` and multi-group keys
 to `resolve_group_batch_schedule`; both paths validate catalog identity on table
 hits and fall back to DP on misses. `get_params_for_grouped_batched_commitment`
 reads the main/final group's root commit params from the first schedule step
@@ -638,7 +638,7 @@ pub struct LevelParams {
 }
 ```
 
-When `precommitted_groups` is nonempty, the level is a grouped root. The normal
+When `precommitted_groups` is nonempty, the level is a multi-group root. The normal
 `a_key`, `b_key`, and block fields describe the final group; each
 `GroupRootParams` describes one precommitted group; and `d_key` is the shared D
 matrix over all group `w_hat_g` segments.
@@ -734,8 +734,8 @@ wrap one group entry.
 ## Root Witness Layout
 
 The current implementation has scheduler-side grouped witness sizing, not yet a
-serialized/prover-side `GroupedRootWitnessLayout` object. A grouped schedule can
-be root-direct (`Step::Direct` with `params: Some(grouped_root_params)`) or
+serialized/prover-side `GroupedRootWitnessLayout` object. A multi-group schedule can
+be root-direct (`Step::Direct` with `params: Some(multi_group_root_params)`) or
 fold-rooted (`Step::Fold` followed by a singleton recursive suffix).
 
 For each group, the planner prices:
@@ -746,18 +746,18 @@ t_hat_g = K_g * num_blocks_g * n_a_g * num_digits_open_g
 z_hat_g = block_len_g * num_digits_commit_g * num_digits_fold_g
 ```
 
-For a folded grouped root, the grouped root's next recursive witness ring count
+For a folded multi-group root, the multi-group root's next recursive witness ring count
 is:
 
 ```text
 sum_g (e_hat_g + t_hat_g + z_hat_g)
-+ r_tail(grouped root M rows)
++ r_tail(multi-group root M rows)
 ```
 
-`grouped_root_next_w_len` returns this count multiplied by `ring_dimension`,
+`multi_group_root_next_w_len` returns this count multiplied by `ring_dimension`,
 matching the schedule's field-element witness lengths.
 
-For a grouped root-direct schedule, the direct witness length is the sum of raw
+For a multi-group root-direct schedule, the direct witness length is the sum of raw
 group witness lengths:
 
 ```text
@@ -790,11 +790,11 @@ pub struct GroupRootWitnessSegment {
 
 The proof layout must use `z_hat_segments = G` and
 `total_d_w_rings = sum_g w_hat_rings_g`. Prover and verifier must derive the
-same layout from the grouped root schedule and opening batch.
+same layout from the multi-group root schedule and opening batch.
 
 ## Root M-Row Layout
 
-For scheduler sizing of the initial non-tiered grouped opening, the grouped-root
+For scheduler sizing of the initial non-tiered grouped opening, the multi-group-root
 M-row count is:
 
 ```text
@@ -812,26 +812,26 @@ per group: each group relation has its own A and B blocks, and the shared D bloc
 trails all group blocks. Public openings bind through the fused trace term, not
 through M rows.
 
-There is no shared A block in the grouped root model. Each group relation has
+There is no shared A block in the multi-group root model. Each group relation has
 its own A role, even if two groups happen to use identical dimensions or the same
 setup prefix widths.
 
 Exact prover/verifier row offsets are still Phase 2 work. The current scheduler
 stores the params needed to derive them in the root `LevelParams`: the normal
 fields describe the final group, and `precommitted_groups` describes the earlier
-groups. Scalar row-offset helpers reject grouped roots today. Any future proof or
+groups. Scalar row-offset helpers reject multi-group roots today. Any future proof or
 verifier path that consumes grouped params must account for `G` group blocks and
 one shared D block. Hardcoding `G = 1` in a verifier-reachable grouped path is
 invalid.
 
 ## Phase 2 Relation Quotient Requirements
 
-The grouped root quotient must:
+The multi-group root quotient must:
 
 - validate `commitments.len() == G`;
 - validate `hints.len() == G` on the prover side;
 - validate each commitment's row length against that group's params;
-- bind public openings through the fused trace term for the whole grouped batch;
+- bind public openings through the fused trace term for the whole multi-group batch;
 - produce `G` B (commitment) row blocks;
 - produce one `z_hat_g` segment per group;
 - compute the D rows over `concat(w_hat_0, ..., w_hat_{G-1})`;
@@ -894,7 +894,7 @@ for each group:
 ```
 
 `PlanSection.effective_schedule_digest` binds
-`schedule.append_descriptor_bytes(...)`. When a grouped schedule is materialized,
+`schedule.append_descriptor_bytes(...)`. When a multi-group schedule is materialized,
 the root `LevelParams` descriptor includes `precommitted_groups`; each
 `GroupRootParams` descriptor includes its frozen `PrecommittedGroupParams`, A key,
 B key, block geometry, and digit counts.
@@ -912,7 +912,7 @@ conservative_n_b
 ```
 
 Changing the group partition or normalized point-variable arity changes the
-opening-batch digest. Changing the generated grouped schedule row or
+opening-batch digest. Changing the generated multi-group schedule row or
 precommitted group params changes the effective schedule digest. Both digests
 are already part of the instance descriptor absorbed by the transcript.
 
@@ -941,7 +941,7 @@ existing descriptor already has the two bindings needed for this shape:
   including group count, per-group polynomial counts, and point-variable
   selections.
 - `PlanSection.effective_schedule_digest` binds the materialized schedule. For a
-  grouped root, the schedule descriptor includes the root `LevelParams`, its
+  multi-group root, the schedule descriptor includes the root `LevelParams`, its
   `precommitted_groups`, each `PrecommittedGroupParams`, conservative B ranks, A/B
   keys, block geometry, and digit counts.
 
@@ -1033,7 +1033,7 @@ The verifier must follow this order:
    `OpeningClaimsLayout`.
 3. Reconstruct `AkitaScheduleLookupKey` from the public opening batch, setup, and
    config policy.
-4. Resolve the grouped root schedule from that key and compare
+4. Resolve the multi-group root schedule from that key and compare
    `PlanSection.effective_schedule_digest`.
 5. Reject if any schedule-derived precommitted layout differs from the layout
    recomputed from config policy.
@@ -1071,15 +1071,15 @@ counts:
 Conservative-rank setup sizing must include:
 
 - the largest conservative B footprint over supported precommit shapes;
-- the grouped root D footprint for `concat(w_hat_g)`;
+- the multi-group root D footprint for `concat(w_hat_g)`;
 - the A footprints for every allowed one-hot group layout;
 - descriptor/cache version bumps or schedule-digest changes so a single-group
 setup is not reused for a grouped proof shape that needs more matrix.
 
 ## Efficiency Rules
 
-The grouped root is expected to cost more than a scalar same-point batch when all
-polynomials are known up front. The grouped root pays for:
+The multi-group root is expected to cost more than a scalar same-point batch when all
+polynomials are known up front. The multi-group root pays for:
 
 - one `z_hat_g` segment per group;
 - one B block per group;
@@ -1089,7 +1089,7 @@ polynomials are known up front. The grouped root pays for:
 
 The main offset is the concatenated D relation. It can size D against the number
 of group `w_hat_g` segments rather than the total number of polynomials, but this
-does not by itself make grouped roots the preferred path for known-upfront
+does not by itself make multi-group roots the preferred path for known-upfront
 batches.
 
 The planner exposes three modes:
@@ -1118,15 +1118,15 @@ At conservative precommit time:
   `(derived_B_width_g, norm_B(l_max))`;
 - the selected params must fit setup capacity.
 
-At Phase 1 grouped schedule lookup time:
+At Phase 1 multi-group schedule lookup time:
 
 - `AkitaScheduleLookupKey::single(final_group)` must delegate to the scalar
   scheduler.
 - `precommitteds` must be well-formed derived group params.
-- The full grouped key must not be collapsed into a scalar total-polynomial key.
+- The full multi-group key must not be collapsed into a scalar total-polynomial key.
 - Each precommitted group must have
   `group.num_vars <= final_group.num_vars / 2`.
-- Dense and tiered grouped roots must return `AkitaError::InvalidSetup`.
+- Dense and tiered multi-group roots must return `AkitaError::InvalidSetup`.
 - Grouped folded roots must hand off to a singleton recursive suffix; grouped
   terminal root folds remain rejected until the terminal witness layout is
   implemented.
@@ -1144,8 +1144,8 @@ At current `commit_final_group` time:
 - each precommitted group must keep its `PrecommittedGroupParams` `m`, `r`,
   `log_basis`, `n_a`, and B width;
 - each precommitted group must use the frozen conservative B row count in the
-  grouped root relation;
-- the final grouped root schedule must fit setup capacity;
+  multi-group root relation;
+- the final multi-group root schedule must fit setup capacity;
 - the last group commitment must match the final group's params.
 
 At current prove time:
@@ -1164,7 +1164,7 @@ At current verify time:
 
 - The verifier must reconstruct the `AkitaScheduleLookupKey` from the public
   opening batch, setup, and config policy.
-- The verifier must recompute grouped root params from the key.
+- The verifier must recompute multi-group root params from the key.
 - The verifier must reject if a precommitted group's final root layout differs
   from its `PrecommittedGroupParams`.
 - The verifier must reject if a precommitted group's B row count differs from
@@ -1179,16 +1179,16 @@ At current verify time:
 
 | Shape                                           | Rejection point                         | Error                                    |
 | ----------------------------------------------- | --------------------------------------- | ---------------------------------------- |
-| Tiered preset + grouped schedule key            | `runtime_schedule` / grouped DP         | `AkitaError::InvalidSetup`               |
+| Tiered preset + multi-group schedule key            | `runtime_schedule` / grouped DP         | `AkitaError::InvalidSetup`               |
 | Tiered preset + `G > 1` proof                   | Prove / verify entry                    | `AkitaError::InvalidSetup`               |
-| Dense config + grouped schedule key             | `runtime_schedule` / grouped DP         | `AkitaError::InvalidSetup`               |
+| Dense config + multi-group schedule key             | `runtime_schedule` / grouped DP         | `AkitaError::InvalidSetup`               |
 | Dense polynomial at conservative precommit      | `ConservativeCommitmentConfig` commit params / one-hot validators | `AkitaError::InvalidSetup` / `InvalidInput` |
 | Dense polynomial + `G > 1` proof                | Prove entry                             | `AkitaError::InvalidInput`               |
-| Precommitted `num_vars > final_group.num_vars / 2` | grouped key validation               | `AkitaError::InvalidInput`               |
+| Precommitted `num_vars > final_group.num_vars / 2` | multi-group key validation               | `AkitaError::InvalidInput`               |
 | Recursive setup contribution + `G > 1`          | Prove / verify entry                    | `AkitaError::InvalidSetup`               |
 | Scalar table lookup collapsing `[1,3]` to `[4]` | scalar key construction / grouped lookup | table miss or `AkitaError::InvalidSetup` |
 | Generic grouped proof before Phase 2            | Prove / verify entry                    | `AkitaError::InvalidInput` / `InvalidProof` |
-| `log_basis != min_basis(Cfg)` at precommit      | conservative layout validation / grouped root params | `AkitaError::InvalidSetup`               |
+| `log_basis != min_basis(Cfg)` at precommit      | conservative layout validation / multi-group root params | `AkitaError::InvalidSetup`               |
 
 
 ## Rollout Plan
@@ -1202,27 +1202,27 @@ At current verify time:
   - each `PolynomialGroupClaims` has `PointVariableSelection` plus dense
     evaluations and a commitment.
 - Keep `OpeningClaimsLayout::new` as the scalar same-bundle constructor.
-- Add `OpeningClaimsLayout::from_group_sizes` for shape-only grouped batches.
+- Add `OpeningClaimsLayout::from_group_sizes` for shape-only multi-group batches.
 - Bind group partition and point-variable selections in the instance descriptor.
 - Add explicit rejects for unsupported proof paths while the grouped proof is not
 implemented:
   - tiered + `G > 1`;
   - recursive setup contribution + `G > 1`;
   - dense polynomial multi-group root batching;
-  - scalar table lookup that would collapse a grouped key into `[sum_g K_g]`.
+  - scalar table lookup that would collapse a multi-group key into `[sum_g K_g]`.
 - Update docs that say multi-commitment same-point folded recursion is "not yet"
 to point here.
 
 Phase 0 is implemented. The old slot/routing vocabulary is gone from
-`OpeningClaimsLayout`, grouped batch shape and descriptor binding exist, scalar
+`OpeningClaimsLayout`, multi-group batch shape and descriptor binding exist, scalar
 paths still work, and unsupported grouped proof paths fail explicitly.
 
 ### Phase 1: Scheduler and Conservative Precommit
 
 - Implemented `AkitaScheduleLookupKey`.
-- Implemented generated/DP schedule resolution for grouped keys without collapsing
+- Implemented generated/DP schedule resolution for multi-group keys without collapsing
 `[K_0, K_1, ...]` into `[sum_g K_g]`.
-- Threaded grouped root counts through planner and proof-size formulas:
+- Threaded multi-group root counts through planner and proof-size formulas:
   - `G`;
   - `num_t_vectors_total = sum_g K_g`;
   - `num_w_vectors_root = sum_g W_g`;
@@ -1232,11 +1232,11 @@ paths still work, and unsupported grouped proof paths fail explicitly.
 - Implemented conservative B rank selection for standalone groups through
   `ConservativeCommitmentConfig<Cfg>`.
 - Added generated grouped table entries for selected one-hot families.
-- Kept grouped opening and grouped root prove guarded until Phase 2.
+- Kept grouped opening and multi-group root prove guarded until Phase 2.
 
 Phase 1 is implemented. Conservative precommit layouts are reproducible from
-`PolynomialGroupLayout`, grouped scheduler lookup/DP fallback is available
-for final planning, conservative B rank selection works, and grouped schedule
+`PolynomialGroupLayout`, multi-group scheduler lookup/DP fallback is available
+for final planning, conservative B rank selection works, and multi-group schedule
 negative tests pass.
 
 ### Phase 1.5: Final Group Commitment
@@ -1255,9 +1255,9 @@ final commitment row count, but it does not produce a grouped opening proof.
   partition and point-variable selection binding.
 - Reconstruct and validate the full `AkitaScheduleLookupKey` from the public
   opening batch, setup, and config policy.
-- Bind the final grouped root schedule through
+- Bind the final multi-group root schedule through
   `PlanSection.effective_schedule_digest`.
-- Implement grouped root witness layout with `concat(w_hat_g)`.
+- Implement multi-group root witness layout with `concat(w_hat_g)`.
 - Route prover root B rows through per-group B computation for `G > 1`.
 - Generalize root verifier row counts and terminal witness shapes.
 - Support unequal `K_g`.
@@ -1272,7 +1272,7 @@ unequal `K_g`, with recursive suffix folds remaining singleton.
 
 - Add generated table grids for common grouped one-hot shapes, including unequal
 `K_g`.
-- Add profile modes for grouped roots.
+- Add profile modes for multi-group roots.
 - Add fused B kernels if repeated per-group B traversal is too slow.
 - Consider per-group D commitments only in a separate spec update with a concrete
 cost model and security argument.
@@ -1292,8 +1292,8 @@ B-row time is a bottleneck.
   frozen group params, and `conservative_n_b`.
 - Descriptor bytes change when a precommitted group's `PrecommittedGroupParams`
   `m`, `r`, `log_basis`, `n_a`, or conservative `n_b'` changes.
-- Scheduler grouped root sizing accounts for one `z_hat_g` segment per group.
-- Scheduler grouped D width reports `total_d_w_rings = sum_g w_hat_rings_g`.
+- Scheduler multi-group root sizing accounts for one `z_hat_g` segment per group.
+- Scheduler multi-group D width reports `total_d_w_rings = sum_g w_hat_rings_g`.
 - Grouped terminal root folds reject until the terminal witness layout exists.
 - Conservative B rank uses the derived B width and norm from `l_max`.
 - `log_basis != min_basis(Cfg)` rejects.
@@ -1305,7 +1305,7 @@ B-row time is a bottleneck.
 - Independent conservative precommitted groups do not depend on each other.
 - Undersized conservative `n_b` rejects.
 - Exceeding setup capacity rejects.
-- Dense policies reject in the conservative/grouped precommit path.
+- Dense policies reject in the conservative/multi-group precommit path.
 - `commit_final_group(group_last, precommitted_layouts)` commits the final group
   with grouped params.
 - `commit_final_group` rejects if a precommitted key cannot recompute to a valid
@@ -1316,7 +1316,7 @@ B-row time is a bottleneck.
 
 ### Prove / Verify Tests
 
-- Current prove rejects generic one-hot `G > 1` with the grouped-root unsupported error.
+- Current prove rejects generic one-hot `G > 1` with the multi-group-root unsupported error.
 - Current verify rejects generic `G > 1` with `AkitaError::InvalidProof`.
 - Current prove/verify reject tiered `G > 1` with `AkitaError::InvalidSetup`.
 - Current prove/verify reject recursive setup contribution `G > 1` with
@@ -1324,8 +1324,8 @@ B-row time is a bottleneck.
 - Phase 2: root-direct two-group one-hot same-point round trip.
 - Phase 2: folded non-tiered two-group one-hot same-point round trip.
 - Phase 2: folded non-tiered unequal group sizes, for example `[1, 3]`.
-- Phase 2: suffix remains singleton after a grouped root.
-- Phase 2: serialize/deserialize grouped proofs round trip with the current descriptor schema.
+- Phase 2: suffix remains singleton after a multi-group root.
+- Phase 2: serialize/deserialize multi-group proofs round trip with the current descriptor schema.
 - Phase 2: opening-batch digest mismatch rejects.
 - Phase 2: reordered precommitted group vector rejects.
 - Phase 2: duplicate or missing precommitted group layout derivation rejects.
@@ -1345,7 +1345,7 @@ B-row time is a bottleneck.
 key.
 - Generated grouped entries, once emitted, match DP.
 - Root `w_len` from planner matches the Phase 2 prover-built grouped witness length.
-- Singleton `G = 1` grouped schedule lookup delegates to the scalar path.
+- Singleton `G = 1` multi-group schedule lookup delegates to the scalar path.
 - Phase 2 setup envelope scans include unequal partitions such as `[1, 3]`.
 
 ### Performance Tests
@@ -1374,7 +1374,7 @@ Pass criteria for the spec gate:
 grouped proof bytes >= scalar [4] proof bytes for the same num_vars
 grouped B-row time is reported separately from scalar baseline
 grouped descriptor size > scalar descriptor size when G > 1
-DP fallback time for grouped keys is reported even when tables miss
+DP fallback time for multi-group keys is reported even when tables miss
 ```
 
 Track B-row time from repeated per-group B traversal.
@@ -1386,8 +1386,8 @@ Track DP fallback time and table hit rate.
 Conservative B rank is necessary but not sufficient by itself. The security
 argument also depends on:
 
-- effective-schedule binding of the materialized grouped root;
-- verifier recomputation of grouped root params from that key;
+- effective-schedule binding of the materialized multi-group root;
+- verifier recomputation of multi-group root params from that key;
 - group partition binding;
 - frozen precommit layout binding for every precommitted group;
 - equality between the final precommitted-group B row count and the frozen
@@ -1414,12 +1414,12 @@ their original identity.
 
 ### Known-final-schedule precommit
 
-A caller can avoid conservative rank when it knows the final grouped root layout
+A caller can avoid conservative rank when it knows the final multi-group root layout
 before committing the earlier groups. In that mode, each group commits with the
 actual final root layout rather than the `l_max` B norm.
 
 This is cheaper than conservative precommit, but it is only safe when the caller
-binds the final grouped root key before the first group commit.
+binds the final multi-group root key before the first group commit.
 
 ### Shared A for identical group layouts
 
@@ -1445,7 +1445,7 @@ that combines the group openings. This keeps each group close to the singleton
 path, but it adds extra transcript and proof material. It also moves complexity
 into a new linking proof.
 
-This spec does not choose that shape because the grouped root keeps one opening
+This spec does not choose that shape because the multi-group root keeps one opening
 proof and one recursive suffix.
 
 ## Resolved Design Decisions
