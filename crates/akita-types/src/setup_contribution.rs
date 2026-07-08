@@ -6,13 +6,10 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::eval_ring_at_pows_fast;
-use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, ExtField, FieldCore, MulBase, MulBaseUnreduced};
+use akita_field::{AkitaError, FieldCore, MulBase};
 
 use crate::layout::{LevelParams, MRowLayout};
-use crate::proof::AkitaExpandedSetup;
 const POSSIBLE_CARRIES: usize = 2;
 
 #[path = "setup_contribution_grouped.rs"]
@@ -224,67 +221,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         Ok(segment_sums.into_iter().sum())
     }
 
-    pub fn evaluate_prepared_direct<F, const D: usize>(
-        &self,
-        setup: &AkitaExpandedSetup<F>,
-        alpha_pows: &[E],
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
-        if self.required > setup_len {
-            return Err(AkitaError::InvalidSetup(
-                "shared matrix is too small for selected verifier layout".into(),
-            ));
-        }
-        let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
-        let setup_flat = setup_view.as_slice();
-
-        let segments = self.segments();
-        let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
-            .map(|idx| -> Result<E, AkitaError> {
-                let segment = &segments[idx];
-                macro_rules! segment_sum {
-                    ($has_d:literal, $has_b:literal, $has_a:literal) => {
-                        packed_slice_inner_sum::<F, E, D, $has_d, $has_b, $has_a>(
-                            segment.lo..segment.hi,
-                            setup_flat,
-                            alpha_pows,
-                            segment.d_start_abs,
-                            segment.d_weight,
-                            &self.e_eq_slice,
-                            segment.b_start_abs,
-                            segment.b_weights,
-                            &self.t_eq_slice_per_group,
-                            segment.a_start_abs,
-                            segment.a_weight,
-                            &self.z_eq_slice,
-                        )
-                    };
-                }
-
-                Ok(match (segment.has_d, segment.has_b, segment.has_a) {
-                    (true, true, true) => segment_sum!(true, true, true),
-                    (true, true, false) => segment_sum!(true, true, false),
-                    (true, false, true) => segment_sum!(true, false, true),
-                    (false, true, true) => segment_sum!(false, true, true),
-                    (true, false, false) => segment_sum!(true, false, false),
-                    (false, true, false) => segment_sum!(false, true, false),
-                    (false, false, true) => segment_sum!(false, false, true),
-                    (false, false, false) => segment_sum!(false, false, false),
-                })
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-
-        Ok(segment_sums.into_iter().sum())
-    }
-
     /// Canonical setup-contribution weight for shared-vector entry `lambda`
-    /// within `segment` — the multiplier the verifier applies to
-    /// `eval_ring_at_pows(setup_flat[lambda])` (see `packed_slice_inner_sum`,
-    /// which carries an identical const-generic copy for the hot direct scan).
+    /// within `segment`: the multiplier the verifier applies to the shared-setup
+    /// ring element at `lambda` before summing.
     fn weight_at(&self, lambda: usize, segment: &SetupSegment<'_, E>) -> E {
         let mut weight = E::zero();
         if segment.has_d {
@@ -666,58 +605,6 @@ struct SetupSegment<'a, E> {
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn packed_slice_inner_sum<
-    F,
-    E,
-    const D: usize,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
->(
-    range: std::ops::Range<usize>,
-    setup_flat: &[CyclotomicRing<F, D>],
-    alpha_pows: &[E],
-    d_start: usize,
-    d_weight: E,
-    e_eq: &[E],
-    b_start: usize,
-    b_weights: &[E],
-    t_eq_per_group: &[Vec<E>],
-    a_start: usize,
-    a_weight: E,
-    z_eq: &[E],
-) -> E
-where
-    F: FieldCore,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    cfg_fold_reduce!(
-        range,
-        E::zero,
-        |mut acc, lambda| {
-            let mut weight = E::zero();
-            if HAS_D {
-                weight += d_weight * e_eq[lambda - d_start];
-            }
-            if HAS_B {
-                for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
-                    weight += b_weights[g] * t_eq_slice[lambda - b_start];
-                }
-            }
-            if HAS_A {
-                weight += a_weight * z_eq[lambda - a_start];
-            }
-            if !weight.is_zero() {
-                acc += eval_ring_at_pows_fast(&setup_flat[lambda], alpha_pows) * weight;
-            }
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    )
-}
-
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
     range: std::ops::Range<usize>,
     eq_lambda: &[E],
@@ -1023,7 +910,7 @@ fn checked_slice<'a, T>(
 mod tests {
     use super::setup_contribution_grouped::GroupSetupContributionPlan;
     use super::*;
-    use crate::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout};
+    use crate::{gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout};
     use akita_algebra::ring::scalar_powers;
     use akita_field::Prime128OffsetA7F7;
 
@@ -1250,8 +1137,8 @@ mod tests {
             ),
         );
         let alpha_pows = [test_scalar(3)];
-        let expected = flat_plan
-            .evaluate_prepared_direct::<F, 1>(&setup, &alpha_pows)
+        let expected = grouped_plan
+            .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, 1)
             .unwrap();
         let got_grouped = grouped_plan
             .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
@@ -1282,6 +1169,76 @@ mod tests {
                 b_weights: vec![test_scalar(37), test_scalar(41)],
                 d_weights: vec![test_scalar(43), test_scalar(47)],
             }],
+        };
+        let setup_len = 10;
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupSeed {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                gen_ring_dim: 1,
+                max_setup_len: setup_len,
+                public_matrix_seed: [0u8; 32],
+            },
+            FlatMatrix::from_flat_data(
+                (0..setup_len)
+                    .map(|idx| test_scalar(211 + idx as u128))
+                    .collect(),
+                1,
+            ),
+        );
+        let alpha_pows = [test_scalar(3)];
+        let expected = grouped_plan
+            .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, 1)
+            .unwrap();
+        let got = grouped_plan
+            .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
+            .unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn grouped_multi_group_packed_matches_row_fallback() {
+        let grouped_plan = GroupedSetupContributionPlan {
+            d_rows: 2,
+            d_physical_cols: 5,
+            groups: vec![
+                GroupSetupContributionPlan {
+                    e_col_offset: 2,
+                    t_cols: 4,
+                    z_cols: 3,
+                    n_a: 2,
+                    n_b: 2,
+                    e_eq_slice: vec![test_scalar(2), test_scalar(3)],
+                    t_eq_slice: vec![
+                        test_scalar(5),
+                        test_scalar(7),
+                        test_scalar(11),
+                        test_scalar(13),
+                    ],
+                    z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
+                    a_weights: vec![test_scalar(29), test_scalar(31)],
+                    b_weights: vec![test_scalar(37), test_scalar(41)],
+                    d_weights: vec![test_scalar(43), test_scalar(47)],
+                },
+                GroupSetupContributionPlan {
+                    e_col_offset: 0,
+                    t_cols: 4,
+                    z_cols: 3,
+                    n_a: 2,
+                    n_b: 2,
+                    e_eq_slice: vec![test_scalar(53), test_scalar(59)],
+                    t_eq_slice: vec![
+                        test_scalar(61),
+                        test_scalar(67),
+                        test_scalar(71),
+                        test_scalar(73),
+                    ],
+                    z_eq_slice: vec![test_scalar(79), test_scalar(83), test_scalar(89)],
+                    a_weights: vec![test_scalar(97), test_scalar(101)],
+                    b_weights: vec![test_scalar(103), test_scalar(107)],
+                    d_weights: vec![test_scalar(109), test_scalar(113)],
+                },
+            ],
         };
         let setup_len = 10;
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(

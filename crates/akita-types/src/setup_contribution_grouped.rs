@@ -330,11 +330,7 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
             ));
         }
 
-        if self.groups.len() == 1 {
-            self.evaluate_packed_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d, d_a)
-        } else {
-            self.evaluate_direct_by_rows(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d, d_a)
-        }
+        self.evaluate_packed_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d, d_a)
     }
 
     fn evaluate_packed_direct<F>(
@@ -364,6 +360,7 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
         Ok(acc)
     }
 
+    #[cfg(test)]
     pub(super) fn evaluate_direct_by_rows<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
@@ -1117,6 +1114,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn evaluate_weighted_setup_row<Base, E>(
     row: &[Base],
     col_offset: usize,
