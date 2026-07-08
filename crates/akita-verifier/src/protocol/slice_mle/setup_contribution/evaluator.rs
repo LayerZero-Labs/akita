@@ -147,6 +147,9 @@ where
         SetupContributionPlan::prepare_grouped::<F>(
             self.inputs,
             self.full_vec_randomness,
+            self.eq_low,
+            self.z_block_low_eq,
+            (!self.fold_gadget.is_empty()).then_some(self.fold_gadget),
             &groups,
             prepared.d_start,
             prepared.n_d_active,
