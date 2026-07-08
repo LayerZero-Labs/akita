@@ -76,7 +76,7 @@ impl JlWitnessLayout {
     /// Returns an error if `matrix_cols` is not divisible by `2^ring_bits`.
     pub fn canonical_for_matrix(matrix_cols: usize, ring_bits: usize) -> Result<Self, AkitaError> {
         let ring_len = pow2(ring_bits, "JL witness ring dimension")?;
-        if matrix_cols % ring_len != 0 {
+        if !matrix_cols.is_multiple_of(ring_len) {
             return Err(AkitaError::InvalidInput(format!(
                 "JL matrix column count {matrix_cols} is not divisible by ring length {ring_len}"
             )));
