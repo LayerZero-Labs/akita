@@ -5,7 +5,7 @@
 //! verifier can evaluate the same plan directly against the packed setup.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
@@ -373,8 +373,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: full_vec_randomness.len(),
             });
         }
-        let block_mask = blocks_per_chunk - 1;
-        let high_challenges = &full_vec_randomness[block_bits..];
         let eq_low_storage;
         let eq_low = if let Some(eq_low) = eq_low {
             eq_low
@@ -456,81 +454,34 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let e_eq_slice: Vec<E> = if n_d_active == 0 {
             Vec::new()
         } else {
-            let e_hi_len =
-                checked_mul(inputs.num_claims, inputs.depth_open, "e-hat high-eq width")?;
-            // Per-chunk high-eq tables based at each chunk's `ê` high offset. A
-            // single SIS column maps to exactly one chunk (the `e` partition),
-            // so the footprint `n_cols_e` is unchanged.
-            let eq_hi_e_tables: Vec<Vec<E>> = chunk_layout
-                .chunks
-                .iter()
-                .map(|chunk| {
-                    let high_base = chunk.offset_e >> block_bits;
-                    (0..=e_hi_len)
-                        .map(|k| eq_eval_at_index(high_challenges, high_base + k))
-                        .collect::<Vec<E>>()
-                })
-                .collect();
-            cfg_into_iter!(0..n_cols_e)
-                .map(|current_index| {
-                    let (chunk_idx, low_eq_idx, high_eq_idx) = get_eq_indices_for_d_chunked(
-                        current_index,
-                        chunk_layout,
-                        inputs.depth_open,
-                        inputs.num_blocks,
-                        inputs.num_claims,
-                        b_per_claim_e,
-                        block_mask,
-                        block_bits,
-                    );
-                    eq_low[low_eq_idx] * eq_hi_e_tables[chunk_idx][high_eq_idx]
-                })
-                .collect()
+            setup_e_col_weights::<E>(
+                &chunk_layout.chunks,
+                blocks_per_chunk,
+                inputs.num_blocks,
+                inputs.num_claims,
+                inputs.depth_open,
+                full_vec_randomness,
+                Some(eq_low),
+            )?
         };
 
-        let t_hi_len = checked_mul(
-            checked_mul(inputs.num_t_vectors, inputs.depth_open, "T high-eq width")?,
-            inputs.n_a,
-            "T high-eq width",
-        )?;
-        // Per-chunk high-eq tables based at each chunk's `t̂` high offset.
-        let eq_hi_t_tables: Vec<Vec<E>> = chunk_layout
-            .chunks
-            .iter()
-            .map(|chunk| {
-                let high_base = chunk.offset_t >> block_bits;
-                (0..=t_hi_len)
-                    .map(|k| eq_eval_at_index(high_challenges, high_base + k))
-                    .collect::<Vec<E>>()
-            })
-            .collect();
         let t_eq_slice_per_group: Vec<Vec<E>> = (0..inputs.num_groups)
             .map(|g| {
-                let group_size = inputs.num_polys_per_group[g];
-                cfg_into_iter!(0..n_cols_t)
-                    .map(|c| {
-                        let poly_idx = c / cols_per_poly_t;
-                        if poly_idx >= group_size {
-                            return E::zero();
-                        }
-                        let flat_t_vector = group_offsets[g] + poly_idx;
-                        let (chunk_idx, low_eq_idx, high_eq_idx) = get_eq_indices_for_b_chunked(
-                            c,
-                            flat_t_vector,
-                            chunk_layout,
-                            inputs.depth_open,
-                            inputs.n_a,
-                            inputs.num_blocks,
-                            inputs.num_t_vectors,
-                            stride_t,
-                            block_mask,
-                            block_bits,
-                        );
-                        eq_low[low_eq_idx] * eq_hi_t_tables[chunk_idx][high_eq_idx]
-                    })
-                    .collect()
+                setup_t_col_weights::<E>(
+                    &chunk_layout.chunks,
+                    blocks_per_chunk,
+                    inputs.depth_open,
+                    inputs.n_a,
+                    cols_per_poly_t,
+                    max_group_poly_count,
+                    inputs.num_polys_per_group[g],
+                    group_offsets[g],
+                    inputs.num_t_vectors,
+                    full_vec_randomness,
+                    Some(eq_low),
+                )
             })
-            .collect();
+            .collect::<Result<Vec<_>, AkitaError>>()?;
 
         // Chunk-replicated `A·ẑ`: `Z_comb[c] = Σ_chunk z_weight(c, chunk.offset_z)`.
         // The output length (`z_range = inner_width`) is unchanged, so the
@@ -539,13 +490,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         // For `num_chunks = 1` this is the historical single z_eq_slice.
         let mut z_eq_slice = vec![E::zero(); z_range];
         for chunk in &chunk_layout.chunks {
-            let per_chunk = build_z_eq_slice_for_offset::<F, E>(
-                inputs,
+            let per_chunk = setup_z_col_weights_for_offset::<F, E>(
+                inputs.block_len,
+                inputs.depth_commit,
+                inputs.depth_fold,
+                inputs.num_groups,
                 full_vec_randomness,
                 z_block_low_eq,
                 fold_gadget,
                 chunk.offset_z,
-                z_offset_low_bits,
                 z_range,
             )?;
             for (dst, src) in z_eq_slice.iter_mut().zip(per_chunk) {
@@ -646,128 +599,212 @@ where
     )
 }
 
-/// Chunk-aware `D·ê` column → `(chunk_idx, low_eq_idx, high_eq_idx)` mapping.
-///
-/// Decodes the SIS column to its logical `(digit, global_block, claim)` as
-/// before, then routes the global block to its chunk; `high_eq_idx` is relative
-/// to that chunk's `ê` high offset (the per-chunk high table base). A SIS column
-/// maps to exactly one chunk, so the footprint is unchanged. `num_chunks = 1`
-/// (`blocks_per_chunk = num_blocks`) reproduces the single-chunk mapping.
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn get_eq_indices_for_d_chunked(
-    current_index: usize,
-    layout: &crate::WitnessLayout,
-    num_digits: usize,
+/// Canonical `D·ê` column eq-weights, shared by the flat and grouped setup
+/// builders. Produces `num_claims * num_blocks * depth_open` weights, with a
+/// per-chunk high-eq window based at each chunk's `ê` offset. The `ê` block is
+/// setup-shared across commitment groups, so callers pass the same scalars
+/// regardless of group layout.
+pub(crate) fn setup_e_col_weights<E: FieldCore>(
+    chunks: &[crate::WitnessChunkLayout],
+    blocks_per_chunk: usize,
     num_blocks: usize,
     num_claims: usize,
-    blocks_per_claim_e: usize,
-    block_mask: usize,
-    block_bits: usize,
-) -> (usize, usize, usize) {
-    let digit_idx = current_index % num_digits;
-    let blk_g = (current_index / num_digits) % num_blocks;
-    let claim_idx = current_index / blocks_per_claim_e;
-    let chunk_idx = blk_g / layout.blocks_per_chunk;
-    let block_local = blk_g % layout.blocks_per_chunk;
-    let offset_e = layout.chunks[chunk_idx].offset_e;
-    let m_layout_high_idx = digit_idx * num_claims + claim_idx;
-    let block_sum = (offset_e & block_mask) + block_local;
-    let low_eq_idx = block_sum & block_mask;
-    let block_carry = block_sum >> block_bits;
-    let high_eq_idx = m_layout_high_idx + block_carry;
-    (chunk_idx, low_eq_idx, high_eq_idx)
+    depth_open: usize,
+    full_vec_randomness: &[E],
+    eq_low: Option<&[E]>,
+) -> Result<Vec<E>, AkitaError> {
+    let block_bits = blocks_per_chunk.trailing_zeros() as usize;
+    if block_bits > full_vec_randomness.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: block_bits,
+            actual: full_vec_randomness.len(),
+        });
+    }
+    let eq_low_storage;
+    let eq_low = if let Some(precomputed) = eq_low {
+        precomputed
+    } else {
+        eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..block_bits])?;
+        &eq_low_storage
+    };
+    if eq_low.len() < blocks_per_chunk {
+        return Err(AkitaError::InvalidSize {
+            expected: blocks_per_chunk,
+            actual: eq_low.len(),
+        });
+    }
+    let high_challenges = &full_vec_randomness[block_bits..];
+    let high_len = checked_mul(num_claims, depth_open, "D high width")?;
+    let eq_high_by_chunk: Vec<Vec<E>> = chunks
+        .iter()
+        .map(|chunk| high_eq_window(high_challenges, chunk.offset_e >> block_bits, high_len))
+        .collect();
+    let low_mask = blocks_per_chunk - 1;
+    let total_blocks = checked_mul(num_claims, num_blocks, "D blocks")?;
+    let e_cols = checked_mul(total_blocks, depth_open, "D columns")?;
+    Ok(cfg_into_iter!(0..e_cols)
+        .map(|local_col| {
+            let flat_block = local_col / depth_open;
+            let digit = local_col % depth_open;
+            let claim_idx = flat_block / num_blocks;
+            let global_block_idx = flat_block % num_blocks;
+            let chunk_idx = global_block_idx / blocks_per_chunk;
+            let block_idx = global_block_idx % blocks_per_chunk;
+            let chunk = &chunks[chunk_idx];
+            let eq_high = &eq_high_by_chunk[chunk_idx];
+            let offset_low = chunk.offset_e & low_mask;
+            let shifted = offset_low + block_idx;
+            let low_idx = shifted & low_mask;
+            let carry = shifted >> block_bits;
+            let high_idx = digit * num_claims + claim_idx + carry;
+            eq_low[low_idx] * eq_high[high_idx]
+        })
+        .collect())
 }
 
-/// Chunk-aware `B·t̂` column → `(chunk_idx, low_eq_idx, high_eq_idx)` mapping.
-/// Same chunk routing as [`get_eq_indices_for_d_chunked`], with the extra
-/// `a_row` / `flat_t_vector` high axes preserved.
-#[inline(always)]
+/// Canonical `B·t̂` column eq-weights, shared by the flat and grouped setup
+/// builders. Emits `num_vectors * cols_per_vector` weights; columns for a
+/// t-vector index `>= active_vectors` are zero (flat zero-padding to the widest
+/// group). The high-eq axis is addressed as `(vector_base + vector_idx)` with
+/// stride `high_vector_stride`: the flat builder packs all groups' t-vectors
+/// into one high axis (`vector_base = group offset`, stride = total t-vectors),
+/// while the grouped builder is per-group (`vector_base = 0`, stride = the
+/// group's t-vector count).
 #[allow(clippy::too_many_arguments)]
-fn get_eq_indices_for_b_chunked(
-    current_index: usize,
-    flat_t_vector: usize,
-    layout: &crate::WitnessLayout,
-    num_digits: usize,
+pub(crate) fn setup_t_col_weights<E: FieldCore>(
+    chunks: &[crate::WitnessChunkLayout],
+    blocks_per_chunk: usize,
+    depth_open: usize,
     n_a: usize,
-    num_blocks: usize,
-    num_t_vectors: usize,
-    stride_t: usize,
-    block_mask: usize,
-    block_bits: usize,
-) -> (usize, usize, usize) {
-    let digit_idx = current_index % num_digits;
-    let a_row_idx = (current_index / num_digits) % n_a;
-    let blk_g = (current_index / stride_t) % num_blocks;
-    let chunk_idx = blk_g / layout.blocks_per_chunk;
-    let block_local = blk_g % layout.blocks_per_chunk;
-    let offset_t = layout.chunks[chunk_idx].offset_t;
-    let m_layout_high_idx =
-        flat_t_vector + num_t_vectors * digit_idx + num_t_vectors * num_digits * a_row_idx;
-    let block_sum = (offset_t & block_mask) + block_local;
-    let low_eq_idx = block_sum & block_mask;
-    let block_carry = block_sum >> block_bits;
-    let high_eq_idx = m_layout_high_idx + block_carry;
-    (chunk_idx, low_eq_idx, high_eq_idx)
+    cols_per_vector: usize,
+    num_vectors: usize,
+    active_vectors: usize,
+    vector_base: usize,
+    high_vector_stride: usize,
+    full_vec_randomness: &[E],
+    eq_low: Option<&[E]>,
+) -> Result<Vec<E>, AkitaError> {
+    let block_bits = blocks_per_chunk.trailing_zeros() as usize;
+    if block_bits > full_vec_randomness.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: block_bits,
+            actual: full_vec_randomness.len(),
+        });
+    }
+    let eq_low_storage;
+    let eq_low = if let Some(precomputed) = eq_low {
+        precomputed
+    } else {
+        eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..block_bits])?;
+        &eq_low_storage
+    };
+    if eq_low.len() < blocks_per_chunk {
+        return Err(AkitaError::InvalidSize {
+            expected: blocks_per_chunk,
+            actual: eq_low.len(),
+        });
+    }
+    let high_challenges = &full_vec_randomness[block_bits..];
+    let high_len = checked_mul(
+        checked_mul(high_vector_stride, depth_open, "B high width")?,
+        n_a,
+        "B high width",
+    )?;
+    let eq_high_by_chunk: Vec<Vec<E>> = chunks
+        .iter()
+        .map(|chunk| high_eq_window(high_challenges, chunk.offset_t >> block_bits, high_len))
+        .collect();
+    let low_mask = blocks_per_chunk - 1;
+    let t_compound_per_block = checked_mul(n_a, depth_open, "B compound stride")?;
+    let t_cols = checked_mul(num_vectors, cols_per_vector, "B width")?;
+    Ok(cfg_into_iter!(0..t_cols)
+        .map(|local_col| {
+            let vector_idx = local_col / cols_per_vector;
+            if vector_idx >= active_vectors {
+                return E::zero();
+            }
+            let phys_claim_offset = local_col % cols_per_vector;
+            let global_block_idx = phys_claim_offset / t_compound_per_block;
+            let chunk_idx = global_block_idx / blocks_per_chunk;
+            let block_idx = global_block_idx % blocks_per_chunk;
+            let chunk = &chunks[chunk_idx];
+            let eq_high = &eq_high_by_chunk[chunk_idx];
+            let offset_low = chunk.offset_t & low_mask;
+            let compound = phys_claim_offset % t_compound_per_block;
+            let shifted = offset_low + block_idx;
+            let low_idx = shifted & low_mask;
+            let carry = shifted >> block_bits;
+            let high_idx = compound * high_vector_stride + (vector_base + vector_idx) + carry;
+            eq_low[low_idx] * eq_high[high_idx]
+        })
+        .collect())
 }
 
-/// Build the `A·ẑ` column-equality weights for one chunk's replicated `ẑ`
-/// placed at `offset_z`. Returns a length-`z_range` (`= inner_width`) vector;
-/// the caller sums these over chunks into `Z_comb`. This is the per-offset
-/// extract of the historical single-chunk `z_eq_slice` build (pow2 + dense
-/// fallback), with `offset_z` as the only chunk-varying input.
-fn build_z_eq_slice_for_offset<F, E>(
-    inputs: &SetupContributionPlanInputs<E>,
+/// Canonical `A·ẑ` column eq-weights for one chunk's replicated `ẑ` placed at
+/// `offset_z`, shared by the flat and grouped setup builders. Callers sum the
+/// result over chunks into `Z_comb`. `num_fold_groups` is the number of
+/// point-blocks folded into a single `ẑ` slice: the flat builder folds all
+/// commitment groups (`num_fold_groups = num_groups`), the grouped builder is
+/// per-group (`num_fold_groups = 1`). Handles both the power-of-two `block_len`
+/// fast path and the dense fallback.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn setup_z_col_weights_for_offset<F, E>(
+    block_len: usize,
+    depth_commit: usize,
+    depth_fold: usize,
+    num_fold_groups: usize,
     full_vec_randomness: &[E],
     z_block_low_eq: Option<&[E]>,
     fold_gadget: &[F],
     offset_z: usize,
-    z_offset_low_bits: usize,
     z_range: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore,
     E: MulBase<F>,
 {
-    if inputs.block_len.is_power_of_two() {
-        let z_offset_low = offset_z & inputs.block_len.saturating_sub(1);
-        let z_block_low_storage;
-        let z_block_low_eq = if let Some(z_block_low_eq) = z_block_low_eq {
-            z_block_low_eq
-        } else {
-            z_block_low_storage = EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits])?;
-            &z_block_low_storage
-        };
-        if z_block_low_eq.len() < inputs.block_len {
+    if block_len.is_power_of_two() {
+        let z_bits = block_len.trailing_zeros() as usize;
+        if z_bits > full_vec_randomness.len() {
             return Err(AkitaError::InvalidSize {
-                expected: inputs.block_len,
-                actual: z_block_low_eq.len(),
+                expected: z_bits,
+                actual: full_vec_randomness.len(),
             });
         }
-
-        let z_offset_high = offset_z >> z_offset_low_bits;
-        let z_block_mask = inputs.block_len.wrapping_sub(1);
-        let z_high_challenges = &full_vec_randomness[z_offset_low_bits..];
-        let num_q_z = checked_mul(
-            checked_mul(inputs.num_groups, inputs.depth_fold, "Z high-eq width")?,
-            inputs.depth_commit,
-            "Z high-eq width",
+        let eq_low_storage;
+        let eq_low = if let Some(precomputed) = z_block_low_eq {
+            precomputed
+        } else {
+            eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..z_bits])?;
+            &eq_low_storage
+        };
+        if eq_low.len() < block_len {
+            return Err(AkitaError::InvalidSize {
+                expected: block_len,
+                actual: eq_low.len(),
+            });
+        }
+        let high_challenges = &full_vec_randomness[z_bits..];
+        let high_len = checked_mul(
+            checked_mul(depth_commit, depth_fold, "Z high width")?,
+            num_fold_groups,
+            "Z high width",
         )?;
-        let eq_hi_z_table: Vec<E> = (0..=num_q_z)
-            .map(|k| eq_eval_at_index(z_high_challenges, z_offset_high + k))
-            .collect();
-        let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = (0..inputs.depth_commit)
+        let eq_high = high_eq_window(high_challenges, offset_z >> z_bits, high_len);
+        let low_mask = block_len - 1;
+        let offset_low = offset_z & low_mask;
+        let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = (0..depth_commit)
             .map(|dc| {
                 let mut s = [E::zero(); POSSIBLE_CARRIES];
                 for (carry_slot, slot) in s.iter_mut().enumerate() {
                     let mut acc = E::zero();
-                    for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold) {
-                        for pt in 0..inputs.num_groups {
-                            let k = pt
-                                + inputs.num_groups * df
-                                + inputs.num_groups * inputs.depth_fold * dc
+                    for (df, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
+                        for pt in 0..num_fold_groups {
+                            let high_idx = pt
+                                + num_fold_groups * df
+                                + num_fold_groups * depth_fold * dc
                                 + carry_slot;
-                            acc += eq_hi_z_table[k].mul_base(fg);
+                            acc += eq_high[high_idx].mul_base(fold);
                         }
                     }
                     *slot = -acc;
@@ -776,91 +813,89 @@ where
             })
             .collect();
         Ok(cfg_into_iter!(0..z_range)
-            .map(|c| {
-                let (low_eq_idx, depth_commit_idx, block_carry) = get_eq_indices_for_a(
-                    c,
-                    inputs.depth_commit,
-                    z_offset_low,
-                    z_block_mask,
-                    z_offset_low_bits,
-                );
-                z_block_low_eq[low_eq_idx] * s_per_dc_per_carry[depth_commit_idx][block_carry]
+            .map(|k| {
+                let block_idx = k / depth_commit;
+                let dc = k % depth_commit;
+                let shifted = offset_low + block_idx;
+                let low_idx = shifted & low_mask;
+                let carry = shifted >> z_bits;
+                let low = eq_low[low_idx];
+                let high = s_per_dc_per_carry[dc][carry];
+                low * high
             })
             .collect())
     } else {
-        let z_total_blocks_dense =
-            checked_mul(inputs.block_len, inputs.num_groups, "dense Z block width")?;
-        let z_len_dense = checked_mul(
-            checked_mul(inputs.depth_fold, inputs.depth_commit, "dense Z length")?,
-            z_total_blocks_dense,
+        let z_len = checked_mul(
+            checked_mul(depth_fold, depth_commit, "dense Z length")?,
+            checked_mul(block_len, num_fold_groups, "dense Z block width")?,
             "dense Z length",
         )?;
-        let n_rand = full_vec_randomness.len();
-        let k = z_len_dense
+        let low_bits = z_len
             .saturating_sub(1)
             .checked_next_power_of_two()
             .map(|p| p.trailing_zeros() as usize)
             .unwrap_or(0)
             .max(1)
-            .min(n_rand);
-        let mask = 1usize
-            .checked_shl(u32::try_from(k).map_err(|_| AkitaError::InvalidSize {
-                expected: usize::BITS as usize,
-                actual: k,
-            })?)
+            .min(full_vec_randomness.len());
+        let low_mask = 1usize
+            .checked_shl(
+                u32::try_from(low_bits).map_err(|_| AkitaError::InvalidSize {
+                    expected: usize::BITS as usize,
+                    actual: low_bits,
+                })?,
+            )
             .ok_or_else(|| AkitaError::InvalidSetup("dense Z eq width overflow".into()))?
             - 1;
-        let offset_z_dense_low = offset_z & mask;
-        let offset_z_dense_high = offset_z >> k;
-        let eq_low_z_dense = EqPolynomial::evals(&full_vec_randomness[..k])?;
-        let max_high = offset_z
-            .checked_add(z_len_dense)
-            .and_then(|end| end.checked_sub(1))
-            .ok_or_else(|| AkitaError::InvalidSetup("dense Z high-eq bound overflow".into()))?
-            >> k;
-        let n_high = max_high - offset_z_dense_high + 1;
-        let eq_high_z_dense: Vec<E> = (0..n_high)
-            .map(|h| eq_eval_at_index(&full_vec_randomness[k..], offset_z_dense_high + h))
+        let eq_low = EqPolynomial::evals(&full_vec_randomness[..low_bits])?;
+        let offset_low = offset_z & low_mask;
+        let offset_high = offset_z >> low_bits;
+        let max_high = checked_add(offset_z, z_len, "dense Z end")?
+            .checked_sub(1)
+            .ok_or(AkitaError::InvalidProof)?
+            >> low_bits;
+        let eq_high: Vec<E> = (offset_high..=max_high)
+            .map(|idx| eq_eval_at_index(&full_vec_randomness[low_bits..], idx))
             .collect();
-
-        Ok(cfg_into_iter!(0..z_range)
-            .map(|c| {
-                let dc = c % inputs.depth_commit;
-                let blk = c / inputs.depth_commit;
-                let mut acc = E::zero();
-                for pt in 0..inputs.num_groups {
-                    for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold) {
-                        let x = blk
-                            + inputs.block_len * pt
-                            + inputs.block_len * inputs.num_groups * df
-                            + inputs.block_len * inputs.num_groups * inputs.depth_fold * dc;
-                        let sum = offset_z_dense_low + x;
-                        let low_idx = sum & mask;
-                        let high_carry = sum >> k;
-                        let eq_val = eq_low_z_dense[low_idx] * eq_high_z_dense[high_carry];
-                        acc += eq_val.mul_base(fg);
+        cfg_into_iter!(0..z_range)
+            .map(|k| {
+                let block_idx = k / depth_commit;
+                let dc = k % depth_commit;
+                let mut weight = E::zero();
+                for pt in 0..num_fold_groups {
+                    for (df, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
+                        let x = checked_add(
+                            block_idx,
+                            checked_mul(
+                                block_len,
+                                checked_add(
+                                    pt,
+                                    checked_mul(
+                                        num_fold_groups,
+                                        checked_add(
+                                            df,
+                                            checked_mul(depth_fold, dc, "dense Z df")?,
+                                            "dense Z pt",
+                                        )?,
+                                        "dense Z df stride",
+                                    )?,
+                                    "dense Z pt stride",
+                                )?,
+                                "dense Z block stride",
+                            )?,
+                            "dense Z x",
+                        )?;
+                        let shifted = checked_add(offset_low, x, "dense Z low")?;
+                        let low_idx = shifted & low_mask;
+                        let high_carry = shifted >> low_bits;
+                        let low = *eq_low.get(low_idx).ok_or(AkitaError::InvalidProof)?;
+                        let high = *eq_high.get(high_carry).ok_or(AkitaError::InvalidProof)?;
+                        weight -= (low * high).mul_base(fold);
                     }
                 }
-                -acc
+                Ok(weight)
             })
-            .collect())
+            .collect()
     }
-}
-
-#[inline(always)]
-fn get_eq_indices_for_a(
-    current_index: usize,
-    depth_commit: usize,
-    z_offset_low: usize,
-    z_block_mask: usize,
-    z_offset_low_bits: usize,
-) -> (usize, usize, usize) {
-    let block_idx = current_index / depth_commit;
-    let depth_commit_idx = current_index % depth_commit;
-    let block_sum = z_offset_low + block_idx;
-    let low_eq_idx = block_sum & z_block_mask;
-    let block_carry = block_sum >> z_offset_low_bits;
-    (low_eq_idx, depth_commit_idx, block_carry)
 }
 
 #[inline(always)]

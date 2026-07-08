@@ -1,12 +1,12 @@
 use super::{
-    checked_add, checked_mul, checked_slice, push_role_boundaries, SetupContributionPlan,
-    SetupContributionPlanInputs, POSSIBLE_CARRIES,
+    checked_add, checked_mul, checked_slice, push_role_boundaries, setup_e_col_weights,
+    setup_t_col_weights, setup_z_col_weights_for_offset, SetupContributionPlan,
+    SetupContributionPlanInputs,
 };
 use crate::layout::flat_matrix::FlatRingMatrixView;
 use crate::proof::AkitaExpandedSetup;
 use crate::WitnessChunkLayout;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
@@ -175,14 +175,60 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .iter()
             .zip(groups)
             .map(|(static_group, group)| {
-                let e_eq_slice = grouped_e_setup_weights(group, full_vec_randomness, eq_low)?;
-                let t_eq_slice = grouped_t_setup_weights(group, full_vec_randomness, eq_low)?;
-                let z_eq_slice = grouped_z_setup_weights::<F, E>(
-                    group,
+                let e_eq_slice = setup_e_col_weights::<E>(
+                    &group.chunks,
+                    group.blocks_per_chunk,
+                    group.num_blocks,
+                    group.num_claims,
+                    group.depth_open,
                     full_vec_randomness,
-                    z_block_low_eq,
-                    fold_gadget,
+                    eq_low,
                 )?;
+                let t_eq_slice = setup_t_col_weights::<E>(
+                    &group.chunks,
+                    group.blocks_per_chunk,
+                    group.depth_open,
+                    group.n_a,
+                    group.t_cols_per_vector,
+                    group.num_claims,
+                    group.num_claims,
+                    0,
+                    group.num_claims,
+                    full_vec_randomness,
+                    eq_low,
+                )?;
+                let fold_gadget_storage;
+                let fold_gadget = if let Some(fold_gadget) = fold_gadget {
+                    if fold_gadget.len() < group.depth_fold {
+                        return Err(AkitaError::InvalidSize {
+                            expected: group.depth_fold,
+                            actual: fold_gadget.len(),
+                        });
+                    }
+                    fold_gadget
+                } else {
+                    fold_gadget_storage =
+                        crate::gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
+                    &fold_gadget_storage
+                };
+                let z_range = checked_mul(group.block_len, group.depth_commit, "grouped Z range")?;
+                let mut z_eq_slice = vec![E::zero(); z_range];
+                for chunk in &group.chunks {
+                    let per_chunk = setup_z_col_weights_for_offset::<F, E>(
+                        group.block_len,
+                        group.depth_commit,
+                        group.depth_fold,
+                        1,
+                        full_vec_randomness,
+                        z_block_low_eq,
+                        fold_gadget,
+                        chunk.offset_z,
+                        z_range,
+                    )?;
+                    for (dst, src) in z_eq_slice.iter_mut().zip(per_chunk) {
+                        *dst += src;
+                    }
+                }
                 Ok(GroupSetupContributionPlan {
                     e_col_offset: static_group.e_col_offset,
                     t_cols: static_group.t_cols,
@@ -824,294 +870,6 @@ fn validate_group_chunk_layout(
         ));
     }
     Ok(())
-}
-
-fn grouped_e_setup_weights<E: FieldCore>(
-    group: &SetupContributionGroupInputs,
-    full_vec_randomness: &[E],
-    eq_low: Option<&[E]>,
-) -> Result<Vec<E>, AkitaError> {
-    let block_bits = group.blocks_per_chunk.trailing_zeros() as usize;
-    if block_bits > full_vec_randomness.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: block_bits,
-            actual: full_vec_randomness.len(),
-        });
-    }
-    let eq_low_storage;
-    let eq_low = if let Some(precomputed) = eq_low {
-        precomputed
-    } else {
-        eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..block_bits])?;
-        &eq_low_storage
-    };
-    if eq_low.len() < group.blocks_per_chunk {
-        return Err(AkitaError::InvalidSize {
-            expected: group.blocks_per_chunk,
-            actual: eq_low.len(),
-        });
-    }
-    let high_challenges = &full_vec_randomness[block_bits..];
-    let high_len = checked_mul(group.num_claims, group.depth_open, "grouped D high width")?;
-    let eq_high_by_chunk: Vec<Vec<E>> = group
-        .chunks
-        .iter()
-        .map(|chunk| high_eq_window(high_challenges, chunk.offset_e >> block_bits, high_len))
-        .collect();
-    let low_mask = group.blocks_per_chunk - 1;
-    let total_blocks = checked_mul(group.num_claims, group.num_blocks, "grouped D blocks")?;
-    let e_cols = checked_mul(total_blocks, group.depth_open, "grouped D columns")?;
-    Ok(cfg_into_iter!(0..e_cols)
-        .map(|local_col| {
-            let flat_block = local_col / group.depth_open;
-            let digit = local_col % group.depth_open;
-            let claim_idx = flat_block / group.num_blocks;
-            let global_block_idx = flat_block % group.num_blocks;
-            let chunk_idx = global_block_idx / group.blocks_per_chunk;
-            let block_idx = global_block_idx % group.blocks_per_chunk;
-            let chunk = &group.chunks[chunk_idx];
-            let eq_high = &eq_high_by_chunk[chunk_idx];
-            let offset_low = chunk.offset_e & low_mask;
-            let shifted = offset_low + block_idx;
-            let low_idx = shifted & low_mask;
-            let carry = shifted >> block_bits;
-            let high_idx = digit * group.num_claims + claim_idx + carry;
-            eq_low[low_idx] * eq_high[high_idx]
-        })
-        .collect())
-}
-
-fn grouped_t_setup_weights<E: FieldCore>(
-    group: &SetupContributionGroupInputs,
-    full_vec_randomness: &[E],
-    eq_low: Option<&[E]>,
-) -> Result<Vec<E>, AkitaError> {
-    let block_bits = group.blocks_per_chunk.trailing_zeros() as usize;
-    if block_bits > full_vec_randomness.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: block_bits,
-            actual: full_vec_randomness.len(),
-        });
-    }
-    let eq_low_storage;
-    let eq_low = if let Some(precomputed) = eq_low {
-        precomputed
-    } else {
-        eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..block_bits])?;
-        &eq_low_storage
-    };
-    if eq_low.len() < group.blocks_per_chunk {
-        return Err(AkitaError::InvalidSize {
-            expected: group.blocks_per_chunk,
-            actual: eq_low.len(),
-        });
-    }
-    let high_challenges = &full_vec_randomness[block_bits..];
-    let high_len = checked_mul(
-        checked_mul(group.num_claims, group.depth_open, "grouped B high width")?,
-        group.n_a,
-        "grouped B high width",
-    )?;
-    let eq_high_by_chunk: Vec<Vec<E>> = group
-        .chunks
-        .iter()
-        .map(|chunk| high_eq_window(high_challenges, chunk.offset_t >> block_bits, high_len))
-        .collect();
-    let low_mask = group.blocks_per_chunk - 1;
-    let t_compound_per_block =
-        checked_mul(group.n_a, group.depth_open, "grouped B compound stride")?;
-    let t_cols = checked_mul(group.num_claims, group.t_cols_per_vector, "grouped B width")?;
-    Ok(cfg_into_iter!(0..t_cols)
-        .map(|local_col| {
-            let t_vector_idx = local_col / group.t_cols_per_vector;
-            let phys_claim_offset = local_col % group.t_cols_per_vector;
-            let global_block_idx = phys_claim_offset / t_compound_per_block;
-            let chunk_idx = global_block_idx / group.blocks_per_chunk;
-            let block_idx = global_block_idx % group.blocks_per_chunk;
-            let chunk = &group.chunks[chunk_idx];
-            let eq_high = &eq_high_by_chunk[chunk_idx];
-            let offset_low = chunk.offset_t & low_mask;
-            let compound = phys_claim_offset % t_compound_per_block;
-            let shifted = offset_low + block_idx;
-            let low_idx = shifted & low_mask;
-            let carry = shifted >> block_bits;
-            let high_idx = compound * group.num_claims + t_vector_idx + carry;
-            eq_low[low_idx] * eq_high[high_idx]
-        })
-        .collect())
-}
-
-fn grouped_z_setup_weights<F, E>(
-    group: &SetupContributionGroupInputs,
-    full_vec_randomness: &[E],
-    z_block_low_eq: Option<&[E]>,
-    fold_gadget: Option<&[F]>,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: MulBase<F>,
-{
-    let fold_gadget_storage;
-    let fold_gadget = if let Some(fold_gadget) = fold_gadget {
-        if fold_gadget.len() < group.depth_fold {
-            return Err(AkitaError::InvalidSize {
-                expected: group.depth_fold,
-                actual: fold_gadget.len(),
-            });
-        }
-        fold_gadget
-    } else {
-        fold_gadget_storage = crate::gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
-        &fold_gadget_storage
-    };
-    let z_range = checked_mul(group.block_len, group.depth_commit, "grouped Z range")?;
-    let mut z_eq_slice = vec![E::zero(); z_range];
-    for chunk in &group.chunks {
-        let per_chunk = grouped_z_setup_weights_for_offset::<F, E>(
-            group,
-            full_vec_randomness,
-            z_block_low_eq,
-            fold_gadget,
-            chunk.offset_z,
-            z_range,
-        )?;
-        for (dst, src) in z_eq_slice.iter_mut().zip(per_chunk) {
-            *dst += src;
-        }
-    }
-    Ok(z_eq_slice)
-}
-
-fn grouped_z_setup_weights_for_offset<F, E>(
-    group: &SetupContributionGroupInputs,
-    full_vec_randomness: &[E],
-    z_block_low_eq: Option<&[E]>,
-    fold_gadget: &[F],
-    offset_z: usize,
-    z_range: usize,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: MulBase<F>,
-{
-    if group.block_len.is_power_of_two() {
-        let z_bits = group.block_len.trailing_zeros() as usize;
-        if z_bits > full_vec_randomness.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: z_bits,
-                actual: full_vec_randomness.len(),
-            });
-        }
-        let eq_low_storage;
-        let eq_low = if let Some(precomputed) = z_block_low_eq {
-            precomputed
-        } else {
-            eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..z_bits])?;
-            &eq_low_storage
-        };
-        if eq_low.len() < group.block_len {
-            return Err(AkitaError::InvalidSize {
-                expected: group.block_len,
-                actual: eq_low.len(),
-            });
-        }
-        let high_challenges = &full_vec_randomness[z_bits..];
-        let high_len = checked_mul(group.depth_commit, group.depth_fold, "grouped Z high width")?;
-        let eq_high = high_eq_window(high_challenges, offset_z >> z_bits, high_len);
-        let low_mask = group.block_len - 1;
-        let offset_low = offset_z & low_mask;
-        let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = (0..group.depth_commit)
-            .map(|dc| {
-                let mut s = [E::zero(); POSSIBLE_CARRIES];
-                for (carry_slot, slot) in s.iter_mut().enumerate() {
-                    let mut acc = E::zero();
-                    for (df, &fold) in fold_gadget.iter().enumerate().take(group.depth_fold) {
-                        let high_idx = dc * group.depth_fold + df + carry_slot;
-                        acc += eq_high[high_idx].mul_base(fold);
-                    }
-                    *slot = -acc;
-                }
-                s
-            })
-            .collect();
-        Ok(cfg_into_iter!(0..z_range)
-            .map(|k| {
-                let block_idx = k / group.depth_commit;
-                let dc = k % group.depth_commit;
-                let shifted = offset_low + block_idx;
-                let low_idx = shifted & low_mask;
-                let carry = shifted >> z_bits;
-                let low = eq_low[low_idx];
-                let high = s_per_dc_per_carry[dc][carry];
-                low * high
-            })
-            .collect())
-    } else {
-        let z_len = checked_mul(
-            checked_mul(
-                group.depth_commit,
-                group.depth_fold,
-                "grouped dense Z length",
-            )?,
-            group.block_len,
-            "grouped dense Z length",
-        )?;
-        let low_bits = z_len
-            .saturating_sub(1)
-            .checked_next_power_of_two()
-            .map(|p| p.trailing_zeros() as usize)
-            .unwrap_or(0)
-            .max(1)
-            .min(full_vec_randomness.len());
-        let low_mask = 1usize
-            .checked_shl(
-                u32::try_from(low_bits).map_err(|_| AkitaError::InvalidSize {
-                    expected: usize::BITS as usize,
-                    actual: low_bits,
-                })?,
-            )
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped dense Z eq width overflow".into()))?
-            - 1;
-        let eq_low = EqPolynomial::evals(&full_vec_randomness[..low_bits])?;
-        let offset_low = offset_z & low_mask;
-        let offset_high = offset_z >> low_bits;
-        let max_high = checked_add(offset_z, z_len, "grouped dense Z end")?
-            .checked_sub(1)
-            .ok_or(AkitaError::InvalidProof)?
-            >> low_bits;
-        let eq_high: Vec<E> = (offset_high..=max_high)
-            .map(|idx| eq_eval_at_index(&full_vec_randomness[low_bits..], idx))
-            .collect();
-        cfg_into_iter!(0..z_range)
-            .map(|k| {
-                let block_idx = k / group.depth_commit;
-                let dc = k % group.depth_commit;
-                let mut weight = E::zero();
-                for (df, &fold) in fold_gadget.iter().enumerate().take(group.depth_fold) {
-                    let x = checked_add(
-                        block_idx,
-                        checked_mul(
-                            group.block_len,
-                            checked_add(
-                                df,
-                                checked_mul(dc, group.depth_fold, "grouped dense Z dc")?,
-                                "grouped dense Z df",
-                            )?,
-                            "grouped dense Z offset",
-                        )?,
-                        "grouped dense Z offset",
-                    )?;
-                    let shifted = checked_add(offset_low, x, "grouped dense Z low")?;
-                    let low_idx = shifted & low_mask;
-                    let high_carry = shifted >> low_bits;
-                    let low = *eq_low.get(low_idx).ok_or(AkitaError::InvalidProof)?;
-                    let high = *eq_high.get(high_carry).ok_or(AkitaError::InvalidProof)?;
-                    weight -= (low * high).mul_base(fold);
-                }
-                Ok(weight)
-            })
-            .collect()
-    }
 }
 
 #[cfg(test)]
