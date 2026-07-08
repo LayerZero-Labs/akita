@@ -160,12 +160,10 @@ Validate at this boundary, before any witness math (no-panic contract):
 | `num_chunks == 0` | `InvalidSetup` |
 | `num_chunks > 1` and not a power of two | `InvalidSetup` |
 | `num_chunks > 1` and `lp.num_blocks % num_chunks != 0` | `InvalidSetup` |
-| `num_chunks > 1` and `lp.tier_split > 1` | `InvalidSetup` |
 | `num_chunks > 1` under `feature = "zk"` | `InvalidSetup` |
 
-(`tier_split > 1` and the `zk` blinding segments are not specified for the chunked
-witness yet; reject rather than emit a malformed shape. This matches the planner entry guard and
-the verifier spec's Stage 0.)
+(`zk` blinding segments are not specified for the chunked witness yet; reject
+rather than emit a malformed shape.)
 
 ### Step 1 — compute the $W$ folded responses
 
@@ -332,8 +330,8 @@ ordinary single-segment witness.
   the replicated-`z` capacity are validated from public `LevelParams` before any
   witness math; malformed shapes reject with `AkitaError`, never panic. Same inputs
   → same proof bytes.
-- **Tiered and ZK rejected.** `W > 1` with `tier_split > 1`, and `W > 1` under
-  `zk`, reject with `AkitaError`.
+- **ZK rejected for chunked layout.** `W > 1` under `zk` rejects with
+  `AkitaError`. (Tiered commitment was removed in #257.)
 
 ## Implementation Stages
 
@@ -412,8 +410,7 @@ the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
   `W ∈ {2,4,8}` (pow2 and dense `block_len`); `W = 1` matches the legacy proof.
 - [ ] No change to the matvec commit kernels, `compute_relation_quotient`, or the
   `AkitaStage{1,2,3}Prover` bodies (review assertion).
-- [ ] `W > 1` with `tier_split > 1` and `W > 1` under `zk` reject with
-  `AkitaError` (no panic).
+- [ ] `W > 1` under `zk` rejects with `AkitaError` (no panic).
 - [ ] `cargo fmt`, `cargo clippy --all -- -D warnings`, `cargo test` pass.
 
 ### Testing Strategy
@@ -425,7 +422,7 @@ the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
 4. **Proof-size parity** vs the planner schedule.
 5. **End-to-end roundtrip** (gated on verifier landing).
 6. **Determinism** and **no-panic negatives** (bad `num_chunks`,
-   `num_chunks ∤ num_blocks`, tiered+chunked, zk+chunked).
+   `num_chunks ∤ num_blocks`, zk+chunked).
 
 ### Performance
 

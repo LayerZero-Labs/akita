@@ -757,7 +757,7 @@ mod tests {
         let t_len = depth_open * n_a * num_t_vectors * num_blocks;
         let r_tail_len = rows * r_decomp_levels::<F>(level_params.log_basis);
 
-        // Single-chunk segments (z ‖ e ‖ t ‖ r; no tiered u in this fixture).
+        // Single-chunk segments (z ‖ e ‖ t ‖ r).
         let z_seg = m_evals_x[0..z_len].to_vec();
         let e_seg = m_evals_x[z_len..z_len + e_len].to_vec();
         let t_seg = m_evals_x[z_len + e_len..z_len + e_len + t_len].to_vec();

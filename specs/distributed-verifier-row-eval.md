@@ -92,24 +92,21 @@ setup-contribution planner consume the same definitions):
   that are absent use `None` rather than `0` so call sites cannot silently
   treat an absent offset as a valid position.
   ```rust
-  /// Per-chunk segment sizes.
-  /// `u_len` and `r_len` are `None` for non-last chunks.
-  /// `u_len` is also `None` in the last chunk when tiered commitment is absent.
+  /// Per-chunk segment sizes (emission order `z ‖ e ‖ t ‖ r`).
+  /// `r_len` is `None` for non-last chunks.
   pub struct WitnessChunkLengths {
       pub z_len: usize,            // replicated: same in every chunk
       pub e_len: usize,            // partitioned: total_e_len / num_chunks
       pub t_len: usize,            // partitioned: total_t_len / num_chunks
-      pub u_len: Option<usize>,    // Some only in last chunk when tiered commitment
       pub r_len: Option<usize>,    // Some only in last chunk
   }
 
   /// Per-chunk segment offsets.
-  /// `offset_u` and `offset_r` mirror `u_len`/`r_len`: `None` when absent.
+  /// `offset_r` mirrors `r_len`: `None` when absent.
   pub struct WitnessChunkLayout {
       pub offset_z: usize,
       pub offset_e: usize,
       pub offset_t: usize,
-      pub offset_u: Option<usize>,
       pub offset_r: Option<usize>,
       pub global_block_base: usize,  // chunk_idx * blocks_per_chunk
   }
@@ -132,8 +129,8 @@ setup-contribution planner consume the same definitions):
   and `global_block_base = 0`. `num_chunks = W` computes per-chunk offsets
   arithmetically with fixed `[z|e|t]` order per chunk: for chunk `j`,
   `offset_z = j·stride`, `offset_e = offset_z + z_len_j`,
-  `offset_t = offset_e + e_len_j`. Only the last chunk carries `u` and `r`
-  (`Some` values); all others carry `None`. All validation (no-panic) happens
+  `offset_t = offset_e + e_len_j`. Only the last chunk carries `r` (`Some`);
+  all others carry `None`. All validation (no-panic) happens here.
   here. `RingRelationSegmentLayout` is deprecated and replaced by `WitnessLayout`.
 - **`RingSwitchDeferredRowEval`** carries the resolved `WitnessLayout` (replacing
   `witness_segment_layout`), and `eval_at_point` becomes a fold over
@@ -239,8 +236,8 @@ Implementation Stages).
   `z_hat`, and the setup contribution as a fold over `chunk_layout.chunks()`,
   reusing the existing `EStructuredSlicesEvaluator` /
   `TStructuredSlicesEvaluator` / `ZStructuredPow2SlicesEvaluator` /
-  `ZDenseSlicesEvaluator` unchanged in body; `u` and `r` contributions are
-  gated by `lens.u_len.is_some()` / `lens.r_len.is_some()`.
+  `ZDenseSlicesEvaluator` unchanged in body; the `r` contribution is gated by
+  `lens.r_len.is_some()`.
 - [ ] `SetupContributionPlan::prepare` builds `e_eq_slice`,
   `t_eq_slice_per_group`, and `Z_comb` (`z_eq_slice`) against the `WitnessLayout`;
   `packed_slice_inner_sum` is unchanged.
@@ -359,27 +356,16 @@ canonical descriptor/serialization path would create a configuration mismatch
 risk: two executions could absorb the same commitments and proof bytes while
 interpreting the relation matrix columns differently.
 
-One current-code edge needs an explicit decision before implementation:
-`RingRelationSegmentLayout` has `offset_u` and tiered-commitment replay uses it in
-both `SetupContributionPlan::prepare` and `u_recompose_contribution`. The new
-`WitnessChunkLayout` carries `offset_u: Option<usize>` and `WitnessChunkLengths`
-carries `u_len: Option<usize>`, which are `Some` only in the last chunk when
-tiering is active. Therefore the first implementation must either:
-
-- reject `num_chunks > 1` when `lp.tier_split > 1` with `AkitaError` and state
-  that chunked tiered commitments are outside this spec's first landing, or
-- specify whether `û_concat` is partitioned with `t_hat`, replicated, or kept as
-  a shared segment, and implement accordingly.
-
-The conservative path is to reject chunked+tiered at first. That rejection must
-be public-layout validation, not a late panic or hidden assumption.
+One layout note for maintainers: tiered commitment and the `û_concat` witness
+segment were removed in #257. The witness layout is always `z ‖ e ‖ t ‖ r`;
+there is no `u` segment and no `tier_split` planner field.
 
 The `num_chunks = 1` compatibility story is good but should be tested at two
 levels. A direct result comparison protects behavior, while a resolved-layout
 snapshot test protects the intended geometry (`offset_e`, `offset_t`, `offset_z`,
-`offset_u`, `offset_r`). The latter is useful because a future refactor can
-preserve one fixture's final scalar while still moving offsets in a way that
-breaks setup contribution or ZK/tiered follow-ups.
+`offset_r`). The latter is useful because a future refactor can preserve one
+fixture's final scalar while still moving offsets in a way that breaks setup
+contribution or other follow-ups.
 
 ### Efficiency Review
 
@@ -677,9 +663,7 @@ range (`r_max`, `n_cols`) and α-eval count are layout-independent. `Z_comb` is 
 `compute_r_contribution` is **unchanged**: a single summed quotient `r` tails the
 whole witness. Its offset comes from
 `chunk_layout.chunks.last().unwrap().offset_r.expect("last chunk always has r")`.
-The evaluator body and cost are identical. The tiered `u_recompose` term uses
-`chunk.offset_u.expect("u present when tiered")` and is guarded by
-`if let Some(u_len) = lens.u_len { … }`.
+The evaluator body and cost are identical.
 
 ### Alternatives Considered
 
@@ -741,15 +725,14 @@ that prove it before moving on.
 
 ### Stage 0 — Scope and Descriptor Boundary
 
-Before changing the hot path, lock down two public-boundary decisions:
+Before changing the hot path, lock down the public-boundary decision:
 
-1. `witness_chunk` is a public schedule/layout parameter and is included anywhere
-   `LevelParams` participates in canonical descriptor bytes, schedule snapshots,
-   or generated table identity.
-2. `num_chunks > 1` with `lp.tier_split > 1` is either rejected for the first
-   landing or the spec is extended with explicit `û_concat` chunk geometry. The
-   recommended first landing is rejection, because tiered-chunked `u` geometry is
-   not yet specified.
+`witness_chunk` is a public schedule/layout parameter and is included anywhere
+`LevelParams` participates in canonical descriptor bytes, schedule snapshots,
+or generated table identity.
+
+Tiered commitment was removed in #257; there is no `û_concat` segment and no
+`tier_split` guard for multi-chunk layouts.
 
 Expected code shape:
 
@@ -776,23 +759,10 @@ impl Default for ChunkedWitnessCfg {
 pub witness_chunk: ChunkedWitnessCfg,  // default: ChunkedWitnessCfg::default()
 ```
 
-The early rejection, if tiered chunking is deferred, should happen before proof
-data is used:
-
-```rust
-if lp.witness_chunk.num_chunks > 1 && lp.tier_split > 1 {
-    return Err(AkitaError::InvalidSetup(
-        "multi-chunk verifier layout for tiered commitments is not specified".into(),
-    ));
-}
-```
-
 Tests:
 
 - A descriptor/serialization snapshot changes when `witness_chunk` changes.
 - Existing schedules deserialize/build with `ChunkedWitnessCfg::default()`.
-- `num_chunks > 1` with `tier_split > 1` returns `AkitaError` if tiered chunking
-  is deferred.
 
 ### Stage 1 — Layout Types and Capacity-Checked Resolution
 
@@ -810,7 +780,6 @@ pub struct WitnessChunkLengths {
     pub z_len: usize,              // replicated: same in every chunk
     pub e_len: usize,              // partitioned: total_e_len / num_chunks
     pub t_len: usize,              // partitioned: total_t_len / num_chunks
-    pub u_len: Option<usize>,      // Some only in last chunk when tiered commitment
     pub r_len: Option<usize>,      // Some only in last chunk
 }
 
@@ -819,7 +788,6 @@ pub struct WitnessChunkLayout {
     pub offset_z: usize,
     pub offset_e: usize,
     pub offset_t: usize,
-    pub offset_u: Option<usize>,           // None if u absent
     pub offset_r: Option<usize>,           // None if r absent
     pub global_block_base: usize,          // chunk_idx * blocks_per_chunk
 }
@@ -844,13 +812,11 @@ adapter:
 
 ```rust
 let lens = ring_relation_segment_lengths(lp, inputs)?;  // includes r_len
-let u_offset = lens.z_len + lens.e_len + lens.t_len;
-let r_offset = u_offset + lens.u_len.unwrap_or(0);
+let r_offset = lens.z_len + lens.e_len + lens.t_len;
 let layout = WitnessChunkLayout {
     offset_z: 0,
     offset_e: lens.z_len,
     offset_t: lens.z_len + lens.e_len,
-    offset_u: lens.u_len.map(|_| u_offset),
     offset_r: Some(r_offset),
     global_block_base: 0,
 };
@@ -858,7 +824,6 @@ let lengths = WitnessChunkLengths {
     z_len: lens.z_len,
     e_len: lens.e_len,
     t_len: lens.t_len,
-    u_len: lens.u_len,   // already Option<usize> after RingRelationSegmentLengths update
     r_len: Some(lens.r_len),
 };
 WitnessLayout {
@@ -868,8 +833,8 @@ WitnessLayout {
 }
 ```
 
-`num_chunks = W` computes z-first `[z^j|e^j|t^j]` with checked arithmetic,
-`u`/`r` only on the last chunk as `Some`:
+`num_chunks = W` computes z-first `[z^j|e^j|t^j]` with checked arithmetic;
+`r` only on the last chunk as `Some`:
 
 ```rust
 let w = lp.witness_chunk.num_chunks;
@@ -889,7 +854,6 @@ let (chunks, chunk_lengths): (Vec<_>, Vec<_>) = (0..w)
             offset_z: base,
             offset_e: base + z_len_j,
             offset_t: base + z_len_j + e_len_j,
-            offset_u: None,   // u unsupported for num_chunks > 1 (rejected in Stage 0)
             offset_r: if is_last { Some(w * chunk_stride) } else { None },
             global_block_base: j * blocks_per_chunk,
         };
@@ -897,7 +861,6 @@ let (chunks, chunk_lengths): (Vec<_>, Vec<_>) = (0..w)
             z_len: z_len_j,
             e_len: e_len_j,
             t_len: t_len_j,
-            u_len: None,
             r_len: if is_last { Some(r_len_total) } else { None },
         };
         (layout, lengths)
@@ -1112,23 +1075,16 @@ for (chunk, lens) in layout.chunks.iter().zip(&layout.chunk_lengths) {
     acc += eval_e(chunk, lens.e_len);
     acc += eval_t(chunk, lens.t_len);
     // present only in the last chunk
-    if let Some(u_len) = lens.u_len {
-        acc += eval_u(chunk, u_len);
-    }
     if let Some(r_len) = lens.r_len {
         acc += eval_r(chunk, r_len);
     }
 }
 ```
 
-If tiered chunking is deferred, `u_recompose_contribution` remains unchanged for
-`num_chunks = 1` (where `u_len` is `Some` in the single chunk when tiering is
-active) and is unreachable for `num_chunks > 1` (rejected in Stage 0).
-
 Tests:
 
 - `single_chunk_matches_legacy_row_eval` for pow2 and non-pow2 `block_len`.
-- `chunk_grouped_one_equals_single_chunk` under the non-tiered fixture.
+- `chunk_grouped_one_equals_single_chunk`.
 - `chunk_grouped_matches_materialized` for structured-only `e/t/z/r`.
 - per-component tests (`e_only`, `t_only`, `z_only`) if the combined test is hard
   to debug.
@@ -1319,7 +1275,7 @@ Follow-ups after the first full landing:
 - tensor/factored `c_alpha` chunk windowing.
 - non-power-of-two `B_w` dense per-chunk fallback.
 - ZK blinding under chunking.
-- chunked tiered commitments, if Stage 0 deferred them.
+- chunked ZK witness layout (rejected today).
 
 ## References
 

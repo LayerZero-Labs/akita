@@ -91,7 +91,7 @@ fields on `AkitaScheduleLookupKey`.
   `resolve_schedule(key, policy, …)` price chunked layout iff
   `policy.witness_chunk.uses_multi_chunk()`. Callers must pass the policy derived
   from the preset they intend to prove under; mismatched preset vs policy is out
-  of scope (same as today for `tiered`, `basis_range`, etc.).
+  of scope (same as today for `basis_range`, etc.).
 - **Block divisibility.** Multi-chunk root candidates require
   `num_blocks % num_chunks == 0` so each node owns an equal block window
   (`blocks_per_chunk = num_blocks / num_chunks`). Candidates violating this are
@@ -127,11 +127,10 @@ fields on `AkitaScheduleLookupKey`.
 - **Verifier row-MLE refactor.** Assumed landed or in flight per
   `distributed-verifier-row-eval.md`; this spec only requires
   `LevelParams::witness_chunk` to be set consistently.
-- **Multi-chunk tiered commitments.** `resolve_schedule` rejects
-  `tiered && policy.witness_chunk.uses_multi_chunk()`; multi-chunk + tiered stays
-  unsupported until [`specs/multi-group-batching.md`](multi-group-batching.md)-style
-  design exists. (This is also why the chunked closed form below carries no
-  $\widehat u$ term: $\widehat u$ is non-empty only under tiered commitment.)
+- **Multi-chunk with precommitted commitment groups.** Chunked witness layout
+  (`witness_chunk.uses_multi_chunk()`) and multi-group precommitted roots are
+  separate axes; mixed-D multi-chunk is rejected at the verifier boundary.
+  (Tiered commitment was removed in #257; there is no `û_concat` segment.)
 - **Searching `num_activated_levels`.** The activated-level count is a **preset
   constant** chosen by the code author, not a DP search axis.
 - **Non-`D = 64` generated tables.** Which ring dimensions get shipped
@@ -160,8 +159,7 @@ Public $\widehat z$ uses `num_public_rows = 1` (single opening point).
 
 (`num_segments` in earlier drafts is the first `m_row_count_for` argument, named
 `num_commitments` in [`params.rs`](../crates/akita-types/src/layout/params.rs);
-today's single-chunk pricing passes `1`. The non-zk total also includes
-`u_concat_ring_len_per_group()`, which is `0` for every non-tiered preset.)
+today's single-chunk pricing passes `1`.)
 
 At the root, `num_polynomials` comes from the lookup key; recursive levels use
 `num_polynomials = 1` and `num_public_rows = 1`.
@@ -185,7 +183,6 @@ with (matching the verifier spec's per-chunk segment ordering and lengths):
   `num_chunks`; still scaled by root `num_polynomials` at level 0)
 - $\widehat z^j$ is **full** `inner_width · num_digits_fold` (replicated per chunk,
   *not* divided by `num_chunks`)
-- $\widehat u$ is empty (non-tiered) and so omitted
 - $r$ is **shared** (one summed quotient $\mathbf r = \sum_j \mathbf r_j$, a single
   tail) and keeps the **single-machine shape**. The per-node relations stack
   *horizontally* ($\mathbf M = [\mathbf M_0 \mid \dots \mid \mathbf M_{num\_chunks-1}]$),
@@ -200,13 +197,13 @@ with (matching the verifier spec's per-chunk segment ordering and lengths):
   [verifier theory](book/src/how/verifying/distributed-relation-verifier.md):
   "the row axis is unchanged", `r_tail` delta `none`).
 
-Closed form for total ring elements at an intermediate fold (non-zk, non-tiered):
+Closed form for total ring elements at an intermediate fold (non-zk):
 
 ```text
 e_chunk = num_polynomials · blocks_per_chunk · δ_open
 t_chunk = num_polynomials · blocks_per_chunk · n_a · δ_open
 z_chunk = inner_width · δ_fold                         // full fold width, not / num_chunks
-body    = e_chunk + t_chunk + z_chunk                  // u_concat = 0 for non-tiered
+body    = e_chunk + t_chunk + z_chunk
 r_rows  = m_row_count_for(num_commitments = 1, 0, layout)  // summed quotient: single-machine shape, UNCHANGED
 rings   = num_chunks · body + r_rows · r_decomp_levels
 ```
@@ -352,8 +349,8 @@ impl ChunkedWitnessCfg {
 [`akita-planner/src/schedule_params.rs`](../crates/akita-planner/src/schedule_params.rs),
 not visible to `akita-types`. To respect the `akita-types ← akita-planner`
 layering, `validate()` performs only the layout-only checks; the depth bound is
-checked at the `find_schedule` / `resolve_schedule` entry (alongside the tiered
-guard), where the const is in scope.
+checked at the `find_schedule` / `resolve_schedule` entry, where the const is
+in scope.
 
 The verifier spec already includes `witness_chunk` in `LevelParams` descriptor
 bytes (append-only; `ChunkedWitnessCfg::default()` reproduces today's bytes). No
@@ -403,7 +400,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     PlannerPolicy {
         ring_dimension: Cfg::D,
         // ... existing fields ...
-        tiered: Cfg::TIERED_COMMITMENT,
         witness_chunk: Cfg::chunked_witness_cfg(),  // NEW
     }
 }
@@ -418,9 +414,6 @@ multi-chunk settings automatically.
 ```rust
 let mc = policy.witness_chunk;
 mc.validate()?;                                   // layout-only rules
-if policy.tiered && mc.uses_multi_chunk() {
-    return Err(AkitaError::InvalidSetup(/* tiered + multi-chunk unsupported */));
-}
 if mc.num_activated_levels > MAX_RECURSION_DEPTH { // depth bound (planner-owned const)
     return Err(AkitaError::InvalidSetup(/* too many activated levels */));
 }
@@ -505,10 +498,8 @@ Behavior:
   `AkitaError::InvalidSetup`.
 
 To keep the single-source-of-truth invariant, the `num_chunks > 1` branch must
-mirror **every** segment of the delegate that is non-zero for the non-tiered
-core ($\widehat e$, $\widehat t$, $\widehat z$, $r$); $\widehat u$ and the zk
-blinding columns are zero in this phase (non-tiered, non-zk) and are added when
-zk multi-chunk tables follow.
+mirror every segment of the delegate ($\widehat e$, $\widehat t$, $\widehat z$,
+$r$). ZK blinding columns are out of scope for the initial non-zk tables.
 
 Unit tests in `akita-types` compare against the chunk offset arithmetic from
 `distributed-verifier-row-eval.md` Stage 1 (`chunk_stride`, `offset_r`).
@@ -543,7 +534,7 @@ This is the core review section. Implement in roughly this order.
 2. Add `CommitmentConfig::chunked_witness_cfg()` with default
    `ChunkedWitnessCfg::default()`.
 3. Extend `policy_of::<Cfg>()` to set `PlannerPolicy.witness_chunk`.
-4. Validate `policy.witness_chunk` (layout rules + tiered guard + depth bound) at
+4. Validate `policy.witness_chunk` (layout rules + depth bound) at
    `find_schedule` / `resolve_schedule` entry.
 5. Thread `PlannerPolicy` (with embedded config) through existing entry points:
    `find_schedule`, `resolve_schedule`, `schedule_from_entry`,
@@ -704,11 +695,10 @@ Add **D = 64 multi-chunk companions** for the existing non-zk D64 families:
 | `fp128_d64_onehot` | `fp128_d64_onehot_multi_chunk` | `fp128::D64OneHotMultiChunk` |
 | `fp128_d64_full` | `fp128_d64_full_multi_chunk` | `fp128::D64FullMultiChunk` |
 
-**Exclude** `fp128_d64_onehot_tiered_multi_chunk` until tiered + multi-$\widehat z$
-is designed. The **tensor** verifier family (`fp128_d64_onehot_tensor`) does
-**not** get a multi-chunk companion: the tensor-shaped root challenge is an
-orthogonal verifier-cost optimization, kept separate from the distributed-prover
-witness layout for now.
+**Exclude** tensor multi-chunk companions for now. The **tensor** verifier family
+(`fp128_d64_onehot_tensor`) does not get a multi-chunk companion: the
+tensor-shaped root challenge is an orthogonal verifier-cost optimization, kept
+separate from the distributed-prover witness layout for now.
 
 The companions delegate every layout parameter to their base `Cfg` via the
 `impl_multi_chunk_companion!` helper and override only `chunked_witness_cfg()`
@@ -829,7 +819,6 @@ Non-zk only in this spec phase.
 - [ ] `generated_schedule_tables_match_find_schedule` passes with
   `--features all-schedules` including multi-chunk families (same keys as siblings,
   different policies).
-- [ ] Multi-chunk preset rejects `tiered && witness_chunk.uses_multi_chunk()`.
 - [ ] `CommitmentConfig::chunked_witness_cfg()` default unchanged for all
   non-chunked presets (no macro churn).
 - [ ] `AkitaScheduleLookupKey` remains two-field; no legacy vector-count fields
