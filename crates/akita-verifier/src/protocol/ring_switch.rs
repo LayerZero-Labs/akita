@@ -788,6 +788,67 @@ pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
         .collect()
 }
 
+struct SetupContributionEqCache<E, F> {
+    eq_low: Option<Vec<E>>,
+    z_block_low_eq: Option<Vec<E>>,
+    fold_gadget: Option<Vec<F>>,
+}
+
+fn precompute_setup_contribution_eq_cache<E, F>(
+    setup_groups: &[SetupContributionGroupInputs],
+    x_challenges: &[E],
+) -> Result<SetupContributionEqCache<E, F>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore,
+{
+    let mut cache = SetupContributionEqCache {
+        eq_low: None,
+        z_block_low_eq: None,
+        fold_gadget: None,
+    };
+    let Some(first) = setup_groups.first() else {
+        return Ok(cache);
+    };
+
+    if setup_groups
+        .iter()
+        .all(|group| group.blocks_per_chunk == first.blocks_per_chunk)
+    {
+        let block_bits = first.blocks_per_chunk.trailing_zeros() as usize;
+        if block_bits > x_challenges.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: block_bits,
+                actual: x_challenges.len(),
+            });
+        }
+        cache.eq_low = Some(EqPolynomial::evals(&x_challenges[..block_bits])?);
+    }
+
+    if setup_groups
+        .iter()
+        .all(|group| group.block_len == first.block_len)
+    {
+        let z_offset_low_bits = first.block_len.trailing_zeros() as usize;
+        if z_offset_low_bits > x_challenges.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: z_offset_low_bits,
+                actual: x_challenges.len(),
+            });
+        }
+        cache.z_block_low_eq = Some(EqPolynomial::evals(&x_challenges[..z_offset_low_bits])?);
+    }
+
+    if setup_groups
+        .iter()
+        .all(|group| group.depth_fold == first.depth_fold && group.log_basis == first.log_basis)
+    {
+        cache.fold_gadget = Some(gadget_row_scalars::<F>(first.depth_fold, first.log_basis));
+    }
+
+    Ok(cache)
+}
+
 impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
     pub(crate) fn chunk_layout(&self) -> &WitnessLayout {
         &self.chunk_layout
@@ -860,9 +921,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let mut e_structured_contribution = E::zero();
         let mut t_structured_contribution = E::zero();
         let mut z_structured_contribution = E::zero();
-        let mut setup_eq_low = None;
-        let mut setup_z_block_low_eq = None;
-        let mut setup_fold_gadget: Option<Vec<F>> = None;
+        let setup_eq_cache = precompute_setup_contribution_eq_cache::<E, F>(
+            &self.setup_contribution_groups,
+            x_challenges,
+        )?;
+        let setup_eq_low = setup_eq_cache.eq_low;
+        let setup_z_block_low_eq = setup_eq_cache.z_block_low_eq;
+        let setup_fold_gadget = setup_eq_cache.fold_gadget;
 
         {
             let _span = tracing::info_span!("structured_chunks").entered();
@@ -919,12 +984,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     });
                 }
                 let z_block_low_eq = EqPolynomial::evals(&x_challenges[..z_offset_low_bits])?;
-
-                if self.groups.len() == 1 {
-                    setup_eq_low = Some(eq_low.clone());
-                    setup_z_block_low_eq = Some(z_block_low_eq.clone());
-                    setup_fold_gadget = Some(fold_gadget.clone());
-                }
 
                 for chunk in chunks {
                     let block_offset_low = chunk.offset_e & (blocks_per_chunk - 1);
