@@ -328,7 +328,7 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
             });
         }
 
-        if alpha_pows_b.len() == D && alpha_pows_d.len() == D {
+        if alpha_pows_b.len() == D && alpha_pows_d.len() == D && self.groups.len() == 1 {
             self.evaluate_packed_direct::<F, D>(setup, alpha_pows_a)
         } else {
             self.evaluate_direct_by_rows::<F, D>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
@@ -920,7 +920,7 @@ where
                 let mut s = [E::zero(); POSSIBLE_CARRIES];
                 for (carry_slot, slot) in s.iter_mut().enumerate() {
                     let mut acc = E::zero();
-                    for (df, &fold) in fold_gadget.iter().enumerate() {
+                    for (df, &fold) in fold_gadget.iter().enumerate().take(group.depth_fold) {
                         let high_idx = dc * group.depth_fold + df + carry_slot;
                         acc += eq_high[high_idx].mul_base(fold);
                     }
@@ -982,7 +982,7 @@ where
                 let block_idx = k / group.depth_commit;
                 let dc = k % group.depth_commit;
                 let mut weight = E::zero();
-                for (df, &fold) in fold_gadget.iter().enumerate() {
+                for (df, &fold) in fold_gadget.iter().enumerate().take(group.depth_fold) {
                     let x = checked_add(
                         block_idx,
                         checked_mul(
