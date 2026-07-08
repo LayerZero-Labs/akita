@@ -11,17 +11,12 @@ use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 pub(crate) enum SetupEvaluatorMode<'a, F: FieldCore, E: FieldCore> {
     Direct {
         setup: &'a AkitaExpandedSetup<F>,
-    },
-    GroupedDirect {
-        setup: &'a AkitaExpandedSetup<F>,
         prepared: &'a RingSwitchDeferredRowEval<E>,
         alpha_pows_b: &'a [E],
         alpha_pows_d: &'a [E],
     },
     #[cfg(test)]
-    Recursive {
-        setup: &'a AkitaExpandedSetup<F>,
-    },
+    Recursive { setup: &'a AkitaExpandedSetup<F> },
 }
 
 pub(crate) enum SetupEvaluation<E> {
@@ -80,12 +75,7 @@ where
             });
         }
         match mode {
-            SetupEvaluatorMode::Direct { setup } => {
-                let plan = self.prepare()?;
-                let value = plan.evaluate_prepared_direct::<F, D>(setup, self.alpha_pows)?;
-                Ok(SetupEvaluation::Direct(value))
-            }
-            SetupEvaluatorMode::GroupedDirect {
+            SetupEvaluatorMode::Direct {
                 setup,
                 prepared,
                 alpha_pows_b,
@@ -103,14 +93,14 @@ where
             }
             #[cfg(test)]
             SetupEvaluatorMode::Recursive { setup } => {
-                let plan = self.prepare()?;
+                let plan = self.prepare_flat()?;
                 let value = recursive_inner_product::<F, E, D>(&plan, setup, self.alpha_pows)?;
                 Ok(SetupEvaluation::Recursive(value))
             }
         }
     }
 
-    pub(crate) fn prepare(&self) -> Result<SetupContributionPlan<E>, AkitaError> {
+    pub(crate) fn prepare_flat(&self) -> Result<SetupContributionPlan<E>, AkitaError> {
         SetupContributionPlan::prepare(
             self.inputs,
             self.full_vec_randomness,
@@ -125,16 +115,13 @@ where
         &self,
         prepared: &RingSwitchDeferredRowEval<E>,
     ) -> Result<GroupedSetupContributionPlan<E>, AkitaError> {
-        SetupContributionPlan::prepare_grouped::<F>(
-            self.inputs,
+        SetupContributionPlan::finish_grouped_plan::<F>(
+            &prepared.setup_contribution_static,
             self.full_vec_randomness,
             self.eq_low,
             self.z_block_low_eq,
             (!self.fold_gadget.is_empty()).then_some(self.fold_gadget),
             &prepared.setup_contribution_groups,
-            prepared.d_start,
-            prepared.n_d_active,
-            prepared.e_setup_cols,
         )
     }
 }

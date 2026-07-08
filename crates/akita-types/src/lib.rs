@@ -131,8 +131,8 @@ pub use schedule::{
     ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
-    GroupedSetupContributionPlan, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupContributionPlanInputs,
+    GroupedSetupContributionPlan, GroupedSetupContributionStatic, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupContributionPlanInputs,
 };
 pub use setup_geometry::{
     ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,

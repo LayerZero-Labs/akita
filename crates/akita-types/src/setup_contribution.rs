@@ -18,7 +18,9 @@ const POSSIBLE_CARRIES: usize = 2;
 #[path = "setup_contribution_grouped.rs"]
 mod setup_contribution_grouped;
 
-pub use setup_contribution_grouped::{GroupedSetupContributionPlan, SetupContributionGroupInputs};
+pub use setup_contribution_grouped::{
+    GroupedSetupContributionPlan, GroupedSetupContributionStatic, SetupContributionGroupInputs,
+};
 
 /// Minimal setup-contribution data needed to derive `bar_omega`.
 #[derive(Clone)]

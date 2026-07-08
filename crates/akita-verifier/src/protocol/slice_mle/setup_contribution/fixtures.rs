@@ -8,8 +8,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
-    MRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessChunkLengths,
-    WitnessLayout,
+    MRowLayout, SetupContributionPlan, SetupContributionPlanInputs, WitnessChunkLayout,
+    WitnessChunkLengths, WitnessLayout,
 };
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
@@ -169,11 +169,10 @@ impl SetupContributionFixture {
             FlatMatrix::from_ring_slice::<TEST_RING_DIM>(&matrix_entries),
         );
 
-        let eq_tau1: Vec<TestField> = (0..rows.next_power_of_two())
-            .map(|idx| test_scalar(11 + idx as u128))
-            .collect();
         let setup_contribution_inputs = SetupContributionPlanInputs {
-            eq_tau1: eq_tau1.clone(),
+            eq_tau1: (0..rows.next_power_of_two())
+                .map(|idx| test_scalar(11 + idx as u128))
+                .collect(),
             num_t_vectors,
             num_blocks: shape.num_blocks,
             num_claims: shape.num_claims,
@@ -236,8 +235,15 @@ impl SetupContributionFixture {
         }];
         let setup_contribution_groups =
             build_setup_contribution_groups(&chunk_layout, &groups).unwrap();
+        let setup_contribution_static = SetupContributionPlan::prepare_grouped_static(
+            &setup_contribution_inputs,
+            &setup_contribution_groups,
+            rows - n_d_active,
+            n_d_active,
+            n_cols_e,
+        )
+        .unwrap();
         let prepared = RingSwitchDeferredRowEval {
-            eq_tau1,
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
             e_setup_cols: n_cols_e,
@@ -248,6 +254,7 @@ impl SetupContributionFixture {
             chunk_layout,
             setup_contribution_groups,
             setup_contribution_inputs,
+            setup_contribution_static,
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)
@@ -277,7 +284,7 @@ impl SetupContributionFixture {
     }
 
     pub fn compute_contribution(&self) -> TestField {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
+        let setup_contribution = self.prepared.setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -288,7 +295,7 @@ impl SetupContributionFixture {
             &self.prepared.chunk_layout,
         );
         match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::GroupedDirect {
+            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct {
                 setup: &self.setup,
                 prepared: &self.prepared,
                 alpha_pows_b: &self.alpha_pows,
@@ -304,7 +311,7 @@ impl SetupContributionFixture {
     }
 
     pub fn recursive_contribution(&self) -> TestField {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
+        let setup_contribution = self.prepared.setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -338,7 +345,7 @@ impl SetupContributionFixture {
     /// kernel) must equal the eq-weighted materialized `bar_omega` (the generic
     /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree.
     pub fn assert_eq_eval_matches_materialized(&self) {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
+        let setup_contribution = self.prepared.setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
             &setup_contribution,
             &self.full_vec_randomness,
@@ -348,7 +355,7 @@ impl SetupContributionFixture {
             &self.fold_gadget,
             &self.prepared.chunk_layout,
         );
-        let plan = evaluator.prepare().unwrap();
+        let plan = evaluator.prepare_flat().unwrap();
         let bar_omega = plan.materialize_bar_omega();
         let lambda_len = plan.required().checked_next_power_of_two().unwrap();
         let eq_lambda: Vec<TestField> = (0..lambda_len)

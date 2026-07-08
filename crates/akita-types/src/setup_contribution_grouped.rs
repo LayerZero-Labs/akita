@@ -36,6 +36,26 @@ pub struct GroupedSetupContributionPlan<E> {
     pub(super) d_physical_cols: usize,
 }
 
+/// Tau1-derived grouped setup weights cached at ring-switch prepare time.
+#[derive(Clone)]
+pub struct GroupedSetupContributionStatic<E> {
+    pub(super) groups: Vec<GroupSetupContributionStatic<E>>,
+    pub(super) d_rows: usize,
+    pub(super) d_physical_cols: usize,
+    pub(super) d_weights: Vec<E>,
+}
+
+#[derive(Clone)]
+pub(super) struct GroupSetupContributionStatic<E> {
+    pub(super) e_col_offset: usize,
+    pub(super) t_cols: usize,
+    pub(super) z_cols: usize,
+    pub(super) n_a: usize,
+    pub(super) n_b: usize,
+    pub(super) a_weights: Vec<E>,
+    pub(super) b_weights: Vec<E>,
+}
+
 pub(super) struct GroupSetupContributionPlan<E> {
     pub(super) e_col_offset: usize,
     pub(super) t_cols: usize,
@@ -67,13 +87,32 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         F: FieldCore + CanonicalField,
         E: MulBase<F>,
     {
+        let static_plan =
+            Self::prepare_grouped_static(inputs, groups, d_row_start, d_rows, d_physical_cols)?;
+        Self::finish_grouped_plan::<F>(
+            &static_plan,
+            full_vec_randomness,
+            eq_low,
+            z_block_low_eq,
+            fold_gadget,
+            groups,
+        )
+    }
+
+    pub fn prepare_grouped_static(
+        inputs: &SetupContributionPlanInputs<E>,
+        groups: &[SetupContributionGroupInputs],
+        d_row_start: usize,
+        d_rows: usize,
+        d_physical_cols: usize,
+    ) -> Result<GroupedSetupContributionStatic<E>, AkitaError> {
         let d_weights = if d_rows == 0 {
             Vec::new()
         } else {
             checked_slice(&inputs.eq_tau1, d_row_start, d_rows, "grouped D rows")?.to_vec()
         };
         let num_groups = groups.len();
-        let groups = groups
+        let static_groups = groups
             .iter()
             .map(|group| {
                 validate_group_chunk_layout(group, num_groups)?;
@@ -94,6 +133,48 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     "grouped B rows",
                 )?
                 .to_vec();
+                Ok(GroupSetupContributionStatic {
+                    e_col_offset: group.e_col_offset,
+                    t_cols,
+                    z_cols,
+                    n_a: group.n_a,
+                    n_b: group.n_b,
+                    a_weights,
+                    b_weights,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        Ok(GroupedSetupContributionStatic {
+            groups: static_groups,
+            d_rows,
+            d_physical_cols,
+            d_weights,
+        })
+    }
+
+    pub fn finish_grouped_plan<F>(
+        static_plan: &GroupedSetupContributionStatic<E>,
+        full_vec_randomness: &[E],
+        eq_low: Option<&[E]>,
+        z_block_low_eq: Option<&[E]>,
+        fold_gadget: Option<&[F]>,
+        groups: &[SetupContributionGroupInputs],
+    ) -> Result<GroupedSetupContributionPlan<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: MulBase<F>,
+    {
+        if static_plan.groups.len() != groups.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: groups.len(),
+                actual: static_plan.groups.len(),
+            });
+        }
+        let dynamic_groups = static_plan
+            .groups
+            .iter()
+            .zip(groups)
+            .map(|(static_group, group)| {
                 let e_eq_slice = grouped_e_setup_weights(group, full_vec_randomness, eq_low)?;
                 let t_eq_slice = grouped_t_setup_weights(group, full_vec_randomness, eq_low)?;
                 let z_eq_slice = grouped_z_setup_weights::<F, E>(
@@ -103,24 +184,24 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     fold_gadget,
                 )?;
                 Ok(GroupSetupContributionPlan {
-                    e_col_offset: group.e_col_offset,
-                    t_cols,
-                    z_cols,
-                    n_a: group.n_a,
-                    n_b: group.n_b,
+                    e_col_offset: static_group.e_col_offset,
+                    t_cols: static_group.t_cols,
+                    z_cols: static_group.z_cols,
+                    n_a: static_group.n_a,
+                    n_b: static_group.n_b,
                     e_eq_slice,
                     t_eq_slice,
                     z_eq_slice,
-                    a_weights,
-                    b_weights,
-                    d_weights: d_weights.clone(),
+                    a_weights: static_group.a_weights.clone(),
+                    b_weights: static_group.b_weights.clone(),
+                    d_weights: static_plan.d_weights.clone(),
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         Ok(GroupedSetupContributionPlan {
-            groups,
-            d_rows,
-            d_physical_cols,
+            groups: dynamic_groups,
+            d_rows: static_plan.d_rows,
+            d_physical_cols: static_plan.d_physical_cols,
         })
     }
 }
