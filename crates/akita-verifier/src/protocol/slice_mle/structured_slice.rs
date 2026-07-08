@@ -466,24 +466,24 @@ mod tests {
             b: (0..num_blocks).map(|idx| f(2_000 + idx as u128)).collect(),
         };
         let setup_contribution_inputs = SetupContributionPlanInputs {
-            eq_tau1: (0..rows.next_power_of_two())
-                .map(|idx| f(4_000 + idx as u128))
-                .collect(),
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+            rows,
+            n_a,
+            n_b,
+            n_d,
+            num_groups: 1,
+            num_polys_per_group: vec![num_claims],
             num_t_vectors: num_claims,
-            num_blocks,
             num_claims,
+            num_blocks,
+            block_len,
             depth_open,
             depth_commit,
             depth_fold,
-            block_len,
             inner_width,
-            n_a,
-            n_d,
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
-            n_b,
-            num_groups: 1,
-            rows,
-            num_polys_per_group: vec![num_claims],
+            eq_tau1: (0..rows.next_power_of_two())
+                .map(|idx| f(4_000 + idx as u128))
+                .collect(),
         };
         let groups = vec![RelationMatrixGroupEvaluator {
             c_alphas: PreparedChallengeEvals::Flat(

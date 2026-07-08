@@ -535,22 +535,22 @@ where
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
     let setup_contribution_inputs = SetupContributionPlanInputs {
-        eq_tau1: eq_tau1.clone(),
+        relation_matrix_row_layout: relation.relation_matrix_row_layout(),
+        rows,
+        n_a: lp.a_key.row_len(),
+        n_b: lp.b_key.row_len(),
+        n_d: lp.d_key.row_len(),
+        num_groups: opening_batch.num_groups(),
+        num_polys_per_group: opening_batch.group_sizes(),
         num_t_vectors: opening_batch.num_total_polynomials(),
-        num_blocks: lp.num_blocks,
         num_claims: opening_batch.num_total_polynomials(),
+        num_blocks: lp.num_blocks,
+        block_len: lp.block_len,
         depth_open: lp.num_digits_open,
         depth_commit: lp.num_digits_commit,
         depth_fold,
-        block_len: lp.block_len,
         inner_width: lp.a_key.col_len(),
-        n_a: lp.a_key.row_len(),
-        n_d: lp.d_key.row_len(),
-        relation_matrix_row_layout: relation.relation_matrix_row_layout(),
-        n_b: lp.b_key.row_len(),
-        num_groups: opening_batch.num_groups(),
-        rows,
-        num_polys_per_group: opening_batch.group_sizes(),
+        eq_tau1: eq_tau1.clone(),
     };
 
     let setup_contribution_groups = build_setup_contribution_groups(&chunk_layout, &groups)?;

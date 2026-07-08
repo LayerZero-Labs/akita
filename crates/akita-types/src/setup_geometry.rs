@@ -231,22 +231,22 @@ mod tests {
             .collect::<Vec<_>>();
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
+            rows: 2,
+            n_a: 1,
+            n_b: 0,
+            n_d: 0,
+            num_groups: num_points,
+            num_polys_per_group: vec![0],
             num_t_vectors: 0,
-            num_blocks: 4,
             num_claims: 1,
+            num_blocks: 4,
+            block_len,
             depth_open: 16,
             depth_commit,
             depth_fold,
-            block_len,
             inner_width: z_range,
-            n_a: 1,
-            n_d: 0,
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
-            n_b: 0,
-            num_groups: num_points,
-            rows: 2,
-            num_polys_per_group: vec![0],
+            eq_tau1: vec![test_scalar(11), test_scalar(12)],
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
@@ -269,22 +269,22 @@ mod tests {
         let depth_fold = 2;
         let z_range = block_len * depth_commit;
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
+            rows: 2,
+            n_a: 1,
+            n_b: 0,
+            n_d: 0,
+            num_groups: 1,
+            num_polys_per_group: vec![2],
             num_t_vectors: 2,
-            num_blocks: 4,
             num_claims: 1,
+            num_blocks: 4,
+            block_len,
             depth_open: 16,
             depth_commit,
             depth_fold,
-            block_len,
             inner_width: z_range,
-            n_a: 1,
-            n_d: 0,
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
-            n_b: 0,
-            num_groups: 1,
-            rows: 2,
-            num_polys_per_group: vec![2],
+            eq_tau1: vec![test_scalar(11), test_scalar(12)],
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         assert!(required > 0);
@@ -318,22 +318,22 @@ mod tests {
     #[test]
     fn ensure_setup_envelope_rejects_undersized_matrix() {
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+            rows: 8,
+            n_a: 2,
+            n_b: 2,
+            n_d: 1,
+            num_groups: 1,
+            num_polys_per_group: vec![1],
             num_t_vectors: 1,
-            num_blocks: 4,
             num_claims: 1,
+            num_blocks: 4,
+            block_len: 16,
             depth_open: 8,
             depth_commit: 2,
             depth_fold: 3,
-            block_len: 16,
             inner_width: 32,
-            n_a: 2,
-            n_d: 1,
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
-            n_b: 2,
-            num_groups: 1,
-            rows: 8,
-            num_polys_per_group: vec![1],
+            eq_tau1: vec![],
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let seed = crate::AkitaSetupSeed {
@@ -353,22 +353,22 @@ mod tests {
     #[test]
     fn setup_required_for_inputs_rejects_non_pow2_num_blocks() {
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+            rows: 8,
+            n_a: 2,
+            n_b: 2,
+            n_d: 1,
+            num_groups: 1,
+            num_polys_per_group: vec![1],
             num_t_vectors: 1,
-            num_blocks: 3,
             num_claims: 1,
+            num_blocks: 3,
+            block_len: 16,
             depth_open: 8,
             depth_commit: 2,
             depth_fold: 3,
-            block_len: 16,
             inner_width: 32,
-            n_a: 2,
-            n_d: 1,
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
-            n_b: 2,
-            num_groups: 1,
-            rows: 8,
-            num_polys_per_group: vec![1],
+            eq_tau1: vec![],
         };
         let err = setup_required_for_inputs(&inputs).expect_err("non-pow2 blocks");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));

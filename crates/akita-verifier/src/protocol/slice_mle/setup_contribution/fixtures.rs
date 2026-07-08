@@ -170,24 +170,24 @@ impl SetupContributionFixture {
         );
 
         let setup_contribution_inputs = SetupContributionPlanInputs {
-            eq_tau1: (0..rows.next_power_of_two())
-                .map(|idx| test_scalar(11 + idx as u128))
-                .collect(),
+            relation_matrix_row_layout: shape.relation_matrix_row_layout,
+            rows,
+            n_a: shape.n_a,
+            n_b: shape.n_b,
+            n_d: shape.n_d,
+            num_groups: 1,
+            num_polys_per_group: shape.num_polys_per_group.clone(),
             num_t_vectors,
-            num_blocks: shape.num_blocks,
             num_claims: shape.num_claims,
+            num_blocks: shape.num_blocks,
+            block_len: shape.block_len,
             depth_open: shape.depth_open,
             depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
-            block_len: shape.block_len,
             inner_width,
-            n_a: shape.n_a,
-            n_d: shape.n_d,
-            relation_matrix_row_layout: shape.relation_matrix_row_layout,
-            n_b: shape.n_b,
-            num_groups: 1,
-            rows,
-            num_polys_per_group: shape.num_polys_per_group.clone(),
+            eq_tau1: (0..rows.next_power_of_two())
+                .map(|idx| test_scalar(11 + idx as u128))
+                .collect(),
         };
         let chunk_layout = WitnessLayout {
             blocks_per_chunk: shape.num_blocks,

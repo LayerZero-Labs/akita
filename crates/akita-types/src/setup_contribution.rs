@@ -22,22 +22,22 @@ pub use setup_contribution_plan::{
 /// Minimal setup-contribution data needed to derive `bar_omega`.
 #[derive(Clone)]
 pub struct SetupContributionPlanInputs<E: FieldCore> {
-    pub eq_tau1: Vec<E>,
+    pub relation_matrix_row_layout: RelationMatrixRowLayout,
+    pub rows: usize,
+    pub n_a: usize,
+    pub n_b: usize,
+    pub n_d: usize,
+    pub num_groups: usize,
+    pub num_polys_per_group: Vec<usize>,
     pub num_t_vectors: usize,
-    pub num_blocks: usize,
     pub num_claims: usize,
+    pub num_blocks: usize,
+    pub block_len: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
-    pub block_len: usize,
     pub inner_width: usize,
-    pub n_a: usize,
-    pub n_d: usize,
-    pub relation_matrix_row_layout: RelationMatrixRowLayout,
-    pub n_b: usize,
-    pub num_groups: usize,
-    pub rows: usize,
-    pub num_polys_per_group: Vec<usize>,
+    pub eq_tau1: Vec<E>,
 }
 
 impl<E: FieldCore> SetupContributionPlanInputs<E> {
@@ -90,22 +90,22 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
         }
         let rows = lp.relation_matrix_row_count_for(num_groups, relation_matrix_row_layout)?;
         Ok(Self {
-            eq_tau1: Vec::new(),
+            relation_matrix_row_layout,
+            rows,
+            n_a: lp.a_key.row_len(),
+            n_b: lp.b_key.row_len(),
+            n_d: lp.d_key.row_len(),
+            num_groups,
+            num_polys_per_group: num_polys_per_group.to_vec(),
             num_t_vectors: num_polynomials,
-            num_blocks: lp.num_blocks,
             num_claims: num_polynomials,
+            num_blocks: lp.num_blocks,
+            block_len: lp.block_len,
             depth_open,
             depth_commit,
             depth_fold,
-            block_len: lp.block_len,
             inner_width,
-            n_a: lp.a_key.row_len(),
-            n_d: lp.d_key.row_len(),
-            relation_matrix_row_layout,
-            n_b: lp.b_key.row_len(),
-            num_groups,
-            rows,
-            num_polys_per_group: num_polys_per_group.to_vec(),
+            eq_tau1: Vec::new(),
         })
     }
 
@@ -501,22 +501,22 @@ mod tests {
             .collect::<Vec<_>>();
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
         let inputs = SetupContributionPlanInputs {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
+            rows: 2,
+            n_a: 1,
+            n_b: 0,
+            n_d: 0,
+            num_groups: num_points,
+            num_polys_per_group: vec![0],
             num_t_vectors: 0,
-            num_blocks: 4,
             num_claims: 1,
+            num_blocks: 4,
+            block_len,
             depth_open: 16,
             depth_commit,
             depth_fold,
-            block_len,
             inner_width: z_range,
-            n_a: 1,
-            n_d: 0,
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
-            n_b: 0,
-            num_groups: num_points,
-            rows: 2,
-            num_polys_per_group: vec![0],
+            eq_tau1: vec![test_scalar(11), test_scalar(12)],
         };
 
         let chunk_layout = crate::WitnessLayout {
@@ -599,24 +599,24 @@ mod tests {
             .collect::<Vec<_>>();
         let rows = 1 + n_a + n_b + n_d;
         let inputs = SetupContributionPlanInputs {
-            eq_tau1: (0..rows.next_power_of_two())
-                .map(|idx| test_scalar(11 + idx as u128))
-                .collect(),
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+            rows,
+            n_a,
+            n_b,
+            n_d,
+            num_groups: 1,
+            num_polys_per_group: vec![num_claims],
             num_t_vectors: num_claims,
-            num_blocks,
             num_claims,
+            num_blocks,
+            block_len,
             depth_open,
             depth_commit,
             depth_fold,
-            block_len,
             inner_width: z_range,
-            n_a,
-            n_d,
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
-            n_b,
-            num_groups: 1,
-            rows,
-            num_polys_per_group: vec![num_claims],
+            eq_tau1: (0..rows.next_power_of_two())
+                .map(|idx| test_scalar(11 + idx as u128))
+                .collect(),
         };
         let full_vec_randomness = (0..10)
             .map(|idx| test_scalar(101 + idx as u128))
