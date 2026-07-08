@@ -139,7 +139,7 @@ pub enum Challenges {
     },
 }
 
-/// Transcript labels consumed by [`crate::sample_folding_challenges`].
+/// Transcript labels consumed by [`crate::FoldDraw::draw_folding_challenges`].
 ///
 /// Bundling them in a struct keeps the call sites self-describing and prevents
 /// accidental left/right swaps. Callers pick label byte strings appropriate
@@ -157,12 +157,12 @@ pub struct ChallengeLabels<'a> {
     pub tensor_right: &'a [u8],
 }
 
-/// Canonical stage-1 fold challenge transcript labels.
+/// Canonical witness-fold challenge transcript labels.
 #[inline]
 #[must_use]
-pub fn stage1_fold_challenge_labels() -> ChallengeLabels<'static> {
+pub fn witness_fold_challenge_labels() -> ChallengeLabels<'static> {
     ChallengeLabels {
-        flat: labels::CHALLENGE_STAGE1_FOLD,
+        flat: labels::CHALLENGE_WITNESS_FOLD,
         tensor_left: labels::CHALLENGE_TENSOR_FOLD_LEFT,
         tensor_left_digest: labels::ABSORB_TENSOR_FOLD_LEFT,
         tensor_right: labels::CHALLENGE_TENSOR_FOLD_RIGHT,
@@ -251,8 +251,8 @@ impl Challenges {
     }
 
     /// Evaluate every logical challenge at the precomputed `alpha`-powers,
-    /// in claim-major flat order. This is the boundary used by both prover
-    /// `compute_m_evals_x` and verifier `prepare_ring_switch_row_eval`.
+    /// in claim-major flat order. This is the boundary used by the prover's
+    /// dense `compute_grouped_m_evals_x` path.
     ///
     /// For the sparse variant this is the canonical per-block evaluation
     /// loop; for the tensor variant it uses the factored aggregate

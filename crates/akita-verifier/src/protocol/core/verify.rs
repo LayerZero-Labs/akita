@@ -14,9 +14,8 @@ use akita_field::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
-use akita_types::dispatch_ring_dim_result;
 use akita_types::{
-    should_reject_grouped_root, validate_schedule_ring_dims, AkitaBatchedProof,
+    dispatch_for_field, should_reject_grouped_root, validate_schedule_ring_dims, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
     CleartextWitnessProof, Commitment, FpExtEncoding, LevelParams, LevelParamsLike, OpeningClaims,
     OpeningClaimsLayout, RingCommitment, RingVec, RingView, Schedule, SetupContributionMode, Step,
@@ -342,33 +341,38 @@ where
 
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_witnesses = &witnesses[range.clone()];
-        let recomputed_matches = dispatch_ring_dim_result!(ring_dim, |D| {
-            let recomputed = if group_index == final_group {
-                validate_direct_group_shape::<F>(
-                    group_witnesses,
-                    params,
-                    setup_seed,
-                    group_layout.num_vars(),
-                    ring_dim,
-                )?;
-                recommit_direct_witness_group::<F, D>(group_witnesses, setup, params)?
-            } else {
-                let group_params = params
-                    .precommitted_groups
-                    .get(group_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                validate_direct_group_shape::<F>(
-                    group_witnesses,
-                    group_params,
-                    setup_seed,
-                    group_layout.num_vars(),
-                    ring_dim,
-                )?;
-                recommit_direct_witness_group::<F, D>(group_witnesses, setup, group_params)?
-            };
-            let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
-            Ok(recomputed_vec.coeffs() == commitment_view.coeffs())
-        })?;
+        let recomputed_matches = dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
+            F,
+            ring_dim,
+            |D| {
+                let recomputed = if group_index == final_group {
+                    validate_direct_group_shape::<F>(
+                        group_witnesses,
+                        params,
+                        setup_seed,
+                        group_layout.num_vars(),
+                        ring_dim,
+                    )?;
+                    recommit_direct_witness_group::<F, D>(group_witnesses, setup, params)?
+                } else {
+                    let group_params = params
+                        .precommitted_groups
+                        .get(group_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    validate_direct_group_shape::<F>(
+                        group_witnesses,
+                        group_params,
+                        setup_seed,
+                        group_layout.num_vars(),
+                        ring_dim,
+                    )?;
+                    recommit_direct_witness_group::<F, D>(group_witnesses, setup, group_params)?
+                };
+                let recomputed_vec = RingVec::from_ring_elems(&recomputed.u);
+                Ok(recomputed_vec.coeffs() == commitment_view.coeffs())
+            }
+        )?;
         if !recomputed_matches {
             return Err(AkitaError::InvalidProof);
         }
@@ -443,21 +447,29 @@ where
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
+    schedule
+        .reject_grouped_multi_chunk("batched verify")
+        .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
     // The transcript instance descriptor binds the setup-wide root ring
     // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
     // the prover binds for uniform-D presets. Dispatch on the runtime value so
     // the verifier entry stays D-free; the descriptor bytes are unchanged.
-    dispatch_ring_dim_result!(setup.expanded.seed().gen_ring_dim, |D| {
-        bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
-            &setup.expanded,
-            &opening_batch,
-            &schedule,
-            basis,
-            transcript,
-        )
-    })?;
+    dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Envelope,
+        Cfg::Field,
+        setup.expanded.seed().gen_ring_dim,
+        |D| {
+            bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+                &setup.expanded,
+                &opening_batch,
+                &schedule,
+                basis,
+                transcript,
+            )
+        }
+    )?;
 
     verify::<Cfg, T>(
         proof,
@@ -555,7 +567,12 @@ pub(crate) fn verify_folded_batched_proof<F, E, T>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -687,11 +704,8 @@ mod tests {
     type F = Fp32<251>;
     const D: usize = 32;
 
-    fn stage1_config() -> SparseChallengeConfig {
-        SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![1],
-        }
+    fn fold_challenge_config() -> SparseChallengeConfig {
+        SparseChallengeConfig::pm1_only(1)
     }
 
     fn opening_batch(num_vars: usize) -> OpeningClaimsLayout {
@@ -710,10 +724,17 @@ mod tests {
 
     #[test]
     fn root_direct_recommitment_rejects_undersized_setup() {
-        let params =
-            LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-                .with_decomp(1, 0, 2, 1, 0)
-                .expect("valid direct layout");
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            fold_challenge_config(),
+        )
+        .with_decomp(1, 0, 2, 1, 0)
+        .expect("valid direct layout");
         let setup_seed = setup_seed(3);
         let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
             vec![F::zero(); 64],
@@ -731,10 +752,17 @@ mod tests {
 
     #[test]
     fn root_direct_recommitment_rejects_wrong_witness_dimension() {
-        let mut params =
-            LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-                .with_decomp(1, 0, 2, 1, 0)
-                .expect("valid direct layout");
+        let mut params = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            fold_challenge_config(),
+        )
+        .with_decomp(1, 0, 2, 1, 0)
+        .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(
             DEFAULT_SIS_SECURITY_BITS,
             SisModulusFamily::Q32,

@@ -180,6 +180,7 @@ fn trace_claim_eval_matches_dense_table_for_k1() {
         }],
         trace_coeff: F::from_u64(13),
         trace_opening_claim: F::from_u64(17),
+        dense_evals: None,
     };
 
     let table = build_trace_weight_table_field_block_weights::<F, F, D>(

@@ -200,7 +200,7 @@ fn expand_envelope_witness_at_ring_d(
         block_len,
         m_vars,
         r_vars,
-        stage1_config: ring_challenge_cfg,
+        fold_challenge_config: ring_challenge_cfg,
         fold_challenge_shape: fold_shape,
         num_digits_commit,
         num_digits_open: num_digits_open_val,

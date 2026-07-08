@@ -406,7 +406,7 @@ mod tests {
     use akita_types::SetupMatrixEnvelope;
 
     type F = Fp64<4294967197>;
-    const D: usize = 32;
+    const D: usize = 64;
 
     fn test_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
         SetupMatrixEnvelope { max_setup_len }

@@ -15,9 +15,10 @@ Run from `crates/akita-pcs/`. The harness refuses debug builds unless
 ## Presets and ring degrees
 
 Under committed-fold A-role SIS pricing, **fp128** production is **D=64**
-(exact-shell; ~20% smaller than D128).
+(signed-sparse; ~20% smaller than D128).
 Shipped tables: `fp128_d64_onehot`, `fp128_d64_full`, `fp128_d128_*`.
-**D32** presets always use the planner DP (no shipped table).
+**fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
+`D32OneHot` preset.
 **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
 one-hot** (CI benches at `nv=28`).
 

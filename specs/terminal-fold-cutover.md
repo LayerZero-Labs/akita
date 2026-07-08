@@ -59,7 +59,7 @@ new_recursive_multipoint_prover}`, `ring_switch_build_w`,
 `prove_terminal_fold_level_from_quadratic`,
 `prove_terminal_root_fold_{from_quadratic, with_params}`,
 `prove_terminal_recursive_fold_with_params`,
-`derive_stage1_challenges`, `relation_claim_from_rows_extension`,
+`derive_witness_fold_challenges`, `relation_claim_from_rows_extension`,
 `schedule_plan_from_generated_entry`,
 `w_ring_element_count_with_counts_for_layout`,
 `w_ring_element_count_with_vector_counts_for_layout_bits`,
@@ -306,7 +306,7 @@ Affected crates and the change at each boundary:
     `w_hat`, samples the sparse seed, absorbs the final-witness
     remainder, re-derives ring-switch `alpha`/`tau1` without terminal
     `tau0`, and runs stage-2 in relation-only mode.
-  - `derive_stage1_challenges` accepts `MRowLayout` and skips the
+  - `derive_witness_fold_challenges` accepts `MRowLayout` and skips the
     `ABSORB_PROVER_V` absorb when the layout is Terminal (no `v` is
     transmitted).
 
@@ -386,7 +386,7 @@ Done in the following order, all on `quang/akita-fix-tail`:
 3. Introduce `MRowLayout` and thread it through
    `QuadraticEquation::{new_prover, new_recursive_multipoint_prover}`,
    `compute_r_split_eq`, `ring_switch_build_w`, `build_w_coeffs`,
-   `ring_switch_finalize_*`, `derive_stage1_challenges`,
+   `ring_switch_finalize_*`, `derive_witness_fold_challenges`,
    `generate_y`, and the relation-claim builder.
 4. Update the planner: extend `LevelParams::m_row_count_for`,
    `w_ring_element_count_with_counts_for_layout`, and the schedule-

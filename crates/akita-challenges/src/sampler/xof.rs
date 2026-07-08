@@ -1,11 +1,8 @@
-//! Streaming XOF cursor used by every sparse-challenge sampler.
+//! Streaming XOF cursor used by the signed-sparse fold-challenge sampler.
 //!
-//! All three sampling families ([`crate::SparseChallengeConfig::Uniform`],
-//! [`crate::SparseChallengeConfig::ExactShell`],
-//! [`crate::SparseChallengeConfig::BoundedL1Norm`]) consume their per-challenge
-//! randomness from the same SHAKE256-backed cursor. Centralising the cursor
-//! here means the PRG choice, the buffer size, and the bias-free drawing
-//! primitives can be swapped or audited in one place.
+//! Every per-challenge draw consumes randomness from the same SHAKE256-backed
+//! cursor. Centralising the cursor here means the PRG choice, the buffer size,
+//! and the bias-free drawing primitives can be swapped or audited in one place.
 //!
 //! The cursor's `next_*` helpers use bitmask rejection sampling, so every
 //! returned value is uniform over the requested range with no modulo bias.
@@ -145,28 +142,6 @@ impl XofCursor {
                     return val;
                 }
             }
-        }
-    }
-
-    /// Read 16 little-endian bytes from the XOF and interpret them as an
-    /// unsigned 128-bit integer.
-    ///
-    /// This is the canonical top-level draw for the truncated-`2^128`
-    /// bounded-`L1` sampler. There is no rejection loop and no modulo
-    /// reduction: the realized distribution is uniform over `[0, 2^128)`,
-    /// matching `read_u128_le` in `specs/bounded-l1-sparse-challenge.md`.
-    #[inline]
-    pub(crate) fn next_u128_le(&mut self) -> u128 {
-        if self.pos + 16 <= XOF_BUF_SIZE {
-            let val = u128::from_le_bytes(self.buf[self.pos..self.pos + 16].try_into().unwrap());
-            self.pos += 16;
-            val
-        } else {
-            let mut bytes = [0u8; 16];
-            for slot in bytes.iter_mut() {
-                *slot = self.next_u8();
-            }
-            u128::from_le_bytes(bytes)
         }
     }
 }

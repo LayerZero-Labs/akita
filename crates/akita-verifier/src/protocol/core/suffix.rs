@@ -37,7 +37,12 @@ fn prepare_fold_replay<'a, F, E, T>(
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let lp = &scheduled.params;
@@ -147,26 +152,19 @@ where
         AkitaLevelProof::Intermediate { v, .. } => v.clone(),
         AkitaLevelProof::Terminal { .. } => RingVec::from_coeffs(Vec::new()),
     };
-    let replay_opening_batch = OpeningClaims::from_groups(
-        current_state.opening_point.as_slice(),
-        vec![PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(
-                opening_batch.max_num_vars(),
-                current_state.opening_point.len(),
-            )?,
-            openings,
-            current_state.commitment,
-        )?],
-    )?;
+    // Suffix folds are singleton (`G == 1`); the sole commitment's rows are the
+    // whole M-row commitment block.
+    let commitment_rows = RingVec::from_coeffs(current_state.commitment.coeffs().to_vec());
     Ok(PreparedFoldReplay {
         lp,
         m_row_layout,
         fold_grind_nonce,
         v: v_storage,
-        opening_batch: replay_opening_batch,
+        opening_shape: opening_batch,
+        commitment_rows,
         row_coefficients,
-        ring_opening_point: prepared_point.ring_opening_point.clone(),
-        ring_multiplier_point: prepared_point.ring_multiplier_point.clone(),
+        group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
+        group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
         w_len,
         stage1: stage1_proof,
         stage2,
@@ -174,7 +172,7 @@ where
         next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
         terminal_replay,
         stage3,
-        trace_prepared_point: Some(prepared_point.clone()),
+        trace_prepared_points: Some(vec![prepared_point.clone()]),
         trace_block_opening: None,
         trace_eval_target,
         trace_eval_scale,
@@ -206,7 +204,12 @@ pub(super) fn verify_suffix<'a, F, E, T>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     for (offset, step) in steps.iter().enumerate() {

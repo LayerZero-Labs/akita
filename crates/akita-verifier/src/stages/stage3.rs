@@ -4,7 +4,7 @@
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use crate::protocol::{SetupEvalPlan, SetupEvaluator};
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::scalar_powers;
+use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -13,7 +13,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_ring_dim_result, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    dispatch_for_field, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
     stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
     SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
@@ -99,7 +99,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         if stage2_challenges.len() != witness_rounds {
@@ -119,18 +119,23 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             setup_len,
             transcript,
         )?;
-        dispatch_ring_dim_result!(ring_d, |D| {
-            self.verify_batched_stage3_kernel::<F, T, D>(
-                setup,
-                proof,
-                stage2_next_w_eval,
-                stage2_challenges,
-                witness_rounds,
-                setup_eval_len,
-                eta,
-                transcript,
-            )
-        })
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            ring_d,
+            |D| {
+                self.verify_batched_stage3_kernel::<F, T, D>(
+                    setup,
+                    proof,
+                    stage2_next_w_eval,
+                    stage2_challenges,
+                    witness_rounds,
+                    setup_eval_len,
+                    eta,
+                    transcript,
+                )
+            }
+        )
     }
 
     fn setup_eval_len<F, T>(
@@ -187,7 +192,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         let batched_rounds = self.rounds.max(witness_rounds);
@@ -289,7 +294,7 @@ fn setup_mle_at_eq_tables<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: ExtField<F> + akita_field::MulBaseUnreduced<F>,
 {
     if required > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
@@ -318,11 +323,7 @@ where
         0..required,
         E::zero,
         |mut acc, lambda| {
-            let ring = &setup_entries[lambda];
-            let mut ring_eval = E::zero();
-            for (weight, &coeff) in eq_y.iter().zip(ring.coefficients()) {
-                ring_eval += weight.mul_base(coeff);
-            }
+            let ring_eval = eval_ring_at_pows_fast(&setup_entries[lambda], eq_y);
             acc += eq_lambda[lambda] * ring_eval;
             acc
         },

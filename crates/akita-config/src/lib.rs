@@ -207,8 +207,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// This is the short ring element `c(X)` that folds the committed witness
     /// (the weak-binding challenge). It is sampled before the stage-1 sumcheck,
     /// so it is not itself a sumcheck-stage challenge. "Short" means bounded
-    /// norm, not sparse: the `d == 32` policy is a low-norm ball that may be
-    /// dense, while larger degrees use sparse fixed-weight families.
+    /// norm, not sparse: larger protocol degrees use sparse fixed-weight families.
     ///
     /// # Errors
     ///
@@ -413,10 +412,7 @@ mod tests {
                     Self::D
                 )));
             }
-            Ok(SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            })
+            Ok(SparseChallengeConfig::pm1_only(1))
         }
 
         fn sis_modulus_family() -> SisModulusFamily {

@@ -94,7 +94,7 @@ mod tests {
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
-        build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
+        build_w_evals_compact, compute_grouped_m_evals_x, ring_switch_build_w,
     };
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
@@ -389,17 +389,14 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_m_evals_x::<F, F>(
+            let m_evals_x = compute_grouped_m_evals_x::<F, F>(
                 &setup.expanded,
-                instance.opening_point(),
-                &ring_multiplier_point,
-                &instance.challenges,
+                &instance,
                 alpha,
                 &alpha_evals_y,
                 lp.role_dims(),
                 &lp,
                 &tau1,
-                1,
                 &[F::one()],
                 MRowLayout::WithDBlock,
             )
@@ -530,17 +527,14 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_m_evals_x::<F, F>(
+            let m_evals_x = compute_grouped_m_evals_x::<F, F>(
                 &setup.expanded,
-                instance.opening_point(),
-                &ring_multiplier_point,
-                &instance.challenges,
+                &instance,
                 alpha,
                 &alpha_evals_y,
                 lp.role_dims(),
                 &lp,
                 &tau1,
-                1,
                 &[F::one()],
                 MRowLayout::WithDBlock,
             )
@@ -698,17 +692,14 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let m_evals_x = compute_m_evals_x::<F, F>(
+        let m_evals_x = compute_grouped_m_evals_x::<F, F>(
             &setup.expanded,
-            &ring_opening_point,
-            &ring_multiplier_point,
-            &instance.challenges,
+            &instance,
             alpha,
             &alpha_evals_y,
             level_params.role_dims(),
             &level_params,
             &tau1,
-            1,
             &[F::one()],
             MRowLayout::WithDBlock,
         )
@@ -851,27 +842,24 @@ mod tests {
                 "chunked eval_at_point must match materialized chunked row for W={w}"
             );
 
-            // Prover-side cross-check: the chunked `compute_m_evals_x` must emit
+            // Prover-side cross-check: the chunked grouped M evaluator must emit
             // exactly the rearranged column layout, and its multilinear eval must
             // match the verifier's chunked row eval.
-            let prover_chunked = compute_m_evals_x::<F, F>(
+            let prover_chunked = compute_grouped_m_evals_x::<F, F>(
                 &setup.expanded,
-                &ring_opening_point,
-                &ring_multiplier_point,
-                &instance.challenges,
+                &instance,
                 alpha,
                 &alpha_evals_y,
                 lp_w.role_dims(),
                 &lp_w,
                 &tau1,
-                1,
                 &[F::one()],
                 MRowLayout::WithDBlock,
             )
             .expect("chunked m evals (prover)");
             assert_eq!(
                 prover_chunked, chunked,
-                "prover chunked compute_m_evals_x must equal the rearranged column layout for W={w}"
+                "prover chunked grouped M evals must equal the rearranged column layout for W={w}"
             );
             let prover_eval =
                 multilinear_eval(&prover_chunked, &x_challenges_w).expect("multilinear_eval");

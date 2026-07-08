@@ -5,10 +5,9 @@
 //! ring-dimension cutover plan.  They require real schedules from
 //! `akita-config` presets and a hand-built mixed-D schedule.
 //!
-//! Runtime→const-D dispatch is provided by the canonical
-//! [`akita_types::dispatch_ring_dim_result!`]; the prover-local duplicate
-//! `dispatch_ring_d!` was removed in Slice A. Its routing/rejection coverage
-//! lives in `akita-types` (`dispatch.rs` unit tests).
+//! Runtime→const-D dispatch is provided by [`akita_types::dispatch_for_field!`] with
+//! an explicit [`akita_types::ProtocolDispatchSlot`].
+//! Routing/rejection coverage lives in `akita-types` (`dispatch/` unit tests).
 //!
 //! Gate condition from the plan:
 //! `cargo test -p akita-prover dispatch` must pass.
@@ -48,6 +47,8 @@ fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
 
 /// Build a minimal `FoldStep` with explicit ring dimension and geometry.
 fn make_fold_step(ring_dimension: usize, num_blocks: usize, block_len: usize) -> FoldStep {
+    let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+        .unwrap_or_else(|| SparseChallengeConfig::pm1_only(ring_dimension.max(31)));
     let mut params = LevelParams::params_only(
         SisModulusFamily::Q128,
         ring_dimension,
@@ -55,10 +56,7 @@ fn make_fold_step(ring_dimension: usize, num_blocks: usize, block_len: usize) ->
         1,
         1,
         1,
-        SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![1],
-        },
+        fold_challenge_config,
     );
     params.role_dims = akita_types::CommitmentRingDims::uniform(ring_dimension);
     params.num_blocks = num_blocks;
@@ -140,15 +138,15 @@ fn ring_dim_plan_accepts_fp128_schedule_with_gen_ring_dim_128() {
     }
 }
 
-/// A fp64::D32Full schedule validated against gen_ring_dim=256 (32 | 256).
+/// A fp64::D64Full schedule validated against gen_ring_dim=256 (64 | 256).
 #[test]
-fn ring_dim_plan_accepts_fp64_d32_schedule_against_larger_gen_ring_dim() {
-    type Cfg = fp64::D32Full;
+fn ring_dim_plan_accepts_fp64_d64_schedule_against_larger_gen_ring_dim() {
+    type Cfg = fp64::D64Full;
     let sched = real_schedule::<Cfg>(16);
     validate_schedule_ring_dims(&sched, &test_seed(256))
-        .expect("D=32 schedule must be valid for gen_ring_dim=256 (32|256)");
+        .expect("D=64 schedule must be valid for gen_ring_dim=256 (64|256)");
     for level in 0..sched.num_fold_levels() {
-        assert_fold_level_geometry(&sched, level, 32);
+        assert_fold_level_geometry(&sched, level, 64);
     }
 }
 
@@ -169,18 +167,17 @@ fn ring_dim_plan_rejects_fp128_schedule_against_too_small_gen_ring_dim() {
 // validate_schedule_ring_dims — hand-built mixed-D schedule
 // ---------------------------------------------------------------------------
 
-/// A schedule where each fold level has a *different* ring dimension.
+/// A schedule where each fold level has a *different* A-role ring dimension.
 ///
-/// gen_ring_dim = 256; levels use 32, 64, 128, 256 — all divide 256.
+/// gen_ring_dim = 256; levels use d_a = 64, 128, 256 (all divide 256; d_a >= 64).
 #[test]
 fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
-    let sched = mixed_d_schedule(&[(32, 4, 8), (64, 4, 4), (128, 2, 4), (256, 2, 2)]);
+    let sched = mixed_d_schedule(&[(64, 4, 4), (128, 2, 4), (256, 2, 2)]);
     validate_schedule_ring_dims(&sched, &test_seed(256)).expect("all dims divide 256");
-    assert_eq!(sched.num_fold_levels(), 4);
+    assert_eq!(sched.num_fold_levels(), 3);
 
     let expected = [
-        (32usize, 32usize, 1024usize),
-        (64, 16, 1024),
+        (64usize, 16usize, 1024usize),
         (128, 8, 1024),
         (256, 4, 1024),
     ];
@@ -201,6 +198,56 @@ fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
             "level {level} flat_field_len"
         );
     }
+}
+
+/// Nested per-role dims: B/D may use D=32 while d_a >= 64.
+#[test]
+fn ring_dim_plan_accepts_nested_opening_d32() {
+    use akita_types::sis::DEFAULT_SIS_SECURITY_BITS;
+    use akita_types::{AjtaiKeyParams, SisModulusFamily};
+
+    let mut step = make_fold_step(128, 4, 8);
+    step.params.ring_dimension = 128;
+    step.params.a_key = AjtaiKeyParams::new_unchecked(
+        DEFAULT_SIS_SECURITY_BITS,
+        SisModulusFamily::Q128,
+        1,
+        16,
+        0,
+        128,
+    );
+    step.params.b_key = AjtaiKeyParams::new_unchecked(
+        DEFAULT_SIS_SECURITY_BITS,
+        SisModulusFamily::Q128,
+        1,
+        16,
+        0,
+        64,
+    );
+    step.params.d_key = AjtaiKeyParams::new_unchecked(
+        DEFAULT_SIS_SECURITY_BITS,
+        SisModulusFamily::Q128,
+        1,
+        16,
+        0,
+        32,
+    );
+    step.params.stamp_role_dims_from_keys();
+    step.params.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(step.params.d_a()).expect("d_a ladder");
+    step.current_w_len = 128;
+    let sched = Schedule {
+        steps: vec![Step::Fold(step), Step::Direct(make_direct_step())],
+        total_bytes: 0,
+    };
+    validate_schedule_ring_dims(&sched, &test_seed(128)).expect("128|64|32");
+    let Step::Fold(step) = &sched.steps[0] else {
+        panic!("expected fold");
+    };
+    let dims = step.params.role_dims;
+    assert_eq!(dims.d_a(), 128);
+    assert_eq!(dims.d_b(), 64);
+    assert_eq!(dims.d_d(), 32);
 }
 
 /// A mixed-D schedule where one level's ring_dimension does NOT divide

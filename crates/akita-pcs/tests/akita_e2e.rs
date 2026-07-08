@@ -41,7 +41,6 @@ const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const SAME_POINT_ONEHOT_BATCH_SIZE: usize = 4;
-const D32_TEST_NV: usize = 12;
 
 fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
     let opening_batch =
@@ -789,45 +788,6 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 }
 
 #[test]
-fn full_d32_prove_verify() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::D32Full;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<F, D, Cfg>(D32_TEST_NV, b"akita_e2e/full-d32");
-
-        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(D32_TEST_NV),
-        ))
-        .expect("schedule plan");
-        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32");
-        let result = AkitaCommitmentScheme::<Cfg>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
-            BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
-        );
-
-        assert!(
-            result.is_ok(),
-            "D32 verification must pass: {:?}",
-            result.err()
-        );
-    });
-}
-
-#[test]
 fn fp32_static_dense_round_trip() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -892,11 +852,11 @@ fn fp64_static_dense_round_trip() {
 }
 
 #[test]
-fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
+fn full_d64_tiny_root_direct_roundtrip_and_serialization() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D32Full;
+        type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
         let nv = TINY_DIRECT_TEST_NV;
@@ -944,7 +904,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d64-direct-root");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
             prove_input(
@@ -1001,7 +961,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
                 .expect("deserialize direct-root proof");
         assert_eq!(decoded, proof);
 
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d64-direct-root");
         let result = AkitaCommitmentScheme::<Cfg>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -1013,7 +973,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         assert!(
             result.is_ok(),
-            "tiny D32 direct verification must pass: {:?}",
+            "tiny D64 direct verification must pass: {:?}",
             result.err()
         );
     });

@@ -12,10 +12,11 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
-    dispatch_ring_dim_result, root_tensor_projection_enabled, schedule_root_fold_step,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, DigitBlocks,
-    FpExtEncoding, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, GROUPED_ROOT_DENSE_UNSUPPORTED,
+    dispatch_for_field, root_tensor_projection_enabled, schedule_root_fold_step,
+    validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaScheduleLookupKey, Commitment, DigitBlocks, FpExtEncoding, LevelParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
+    GROUPED_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -129,7 +130,7 @@ pub(crate) fn validate_commit_level_params<F>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
 {
     if params.num_blocks == 0 || params.block_len == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -142,6 +143,9 @@ where
         ));
     }
     validate_i8_setup_log_basis(params.log_basis, "for i8 commitment decomposition")?;
+    let dims = params.role_dims();
+    validate_role_dims(dims)?;
+    validate_role_dims_for_field::<F>(dims)?;
     let expected_a_width = params
         .block_len
         .checked_mul(params.num_digits_commit)
@@ -329,12 +333,17 @@ where
 {
     let backend = tensor_ctx.backend();
     let prepared = tensor_ctx.prepared();
-    dispatch_ring_dim_result!(transform_ring_d, |D| {
-        polys
-            .iter()
-            .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), poly))
-            .collect()
-    })
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        transform_ring_d,
+        |D| {
+            polys
+                .iter()
+                .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), poly))
+                .collect()
+        }
+    )
 }
 
 fn commit_with_validated_params<F, P, B>(
@@ -374,56 +383,66 @@ where
     // between the inner A-role and outer B-role commitment halves) plus the
     // D-free `DigitBlocks` hint payload; recomposed inner rows are recomputed
     // on demand from the digit stream (S5 re-home), not cached here.
-    let (b_input_flat, decomposed_digit_blocks) = dispatch_ring_dim_result!(dims.d_a(), |D_A| {
-        let flat_len = total_b_input_len.checked_mul(D_A).ok_or_else(|| {
-            AkitaError::InvalidSetup("commit inner digit carrier length overflow".to_string())
-        })?;
-        let per_poly_flat_len = b_input_len_per_poly.checked_mul(D_A).ok_or_else(|| {
-            AkitaError::InvalidSetup("commit inner digit carrier length overflow".to_string())
-        })?;
-        let mut b_input_flat = vec![0i8; flat_len];
-        let mut decomposed_digit_blocks: Vec<DigitBlocks> =
-            (0..polys.len()).map(|_| DigitBlocks::empty(D_A)).collect();
-        cfg_chunks_mut!(b_input_flat, per_poly_flat_len)
-            .zip(cfg_iter!(polys))
-            .zip(cfg_iter_mut!(decomposed_digit_blocks))
-            .try_for_each(|((dst, poly), decomposed)| -> Result<(), AkitaError> {
-                let view = RootCommitSource::<F, D_A>::commit_view(poly)?;
-                let inner =
-                    RootCommitKernel::<_, F, D_A>::commit_inner(backend, prepared, view, plan)?;
-                validate_commit_inner_shape::<F, D_A>(
-                    &inner,
-                    num_blocks,
-                    n_a,
-                    num_digits_open,
-                    log_basis,
-                )?;
-                let typed_digits = inner.decomposed_inner_rows_trusted::<D_A>()?;
-                dst.copy_from_slice(typed_digits.typed_planes::<D_A>()?.as_flattened());
-                *decomposed = typed_digits.clone();
-                Ok(())
+    let (b_input_flat, decomposed_digit_blocks) = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        dims.d_a(),
+        |D_A| {
+            let flat_len = total_b_input_len.checked_mul(D_A).ok_or_else(|| {
+                AkitaError::InvalidSetup("commit inner digit carrier length overflow".to_string())
             })?;
-        Ok::<_, AkitaError>((b_input_flat, decomposed_digit_blocks))
-    })?;
+            let per_poly_flat_len = b_input_len_per_poly.checked_mul(D_A).ok_or_else(|| {
+                AkitaError::InvalidSetup("commit inner digit carrier length overflow".to_string())
+            })?;
+            let mut b_input_flat = vec![0i8; flat_len];
+            let mut decomposed_digit_blocks: Vec<DigitBlocks> =
+                (0..polys.len()).map(|_| DigitBlocks::empty(D_A)).collect();
+            cfg_chunks_mut!(b_input_flat, per_poly_flat_len)
+                .zip(cfg_iter!(polys))
+                .zip(cfg_iter_mut!(decomposed_digit_blocks))
+                .try_for_each(|((dst, poly), decomposed)| -> Result<(), AkitaError> {
+                    let view = RootCommitSource::<F, D_A>::commit_view(poly)?;
+                    let inner =
+                        RootCommitKernel::<_, F, D_A>::commit_inner(backend, prepared, view, plan)?;
+                    validate_commit_inner_shape::<F, D_A>(
+                        &inner,
+                        num_blocks,
+                        n_a,
+                        num_digits_open,
+                        log_basis,
+                    )?;
+                    let typed_digits = inner.decomposed_inner_rows_trusted::<D_A>()?;
+                    dst.copy_from_slice(typed_digits.typed_planes::<D_A>()?.as_flattened());
+                    *decomposed = typed_digits.clone();
+                    Ok(())
+                })?;
+            Ok::<_, AkitaError>((b_input_flat, decomposed_digit_blocks))
+        }
+    )?;
     validate_commit_outer_input_nonempty(b_input_flat.len())?;
     let n_b = params.b_key.row_len();
     // B-role operation: the sent commitment rows `u = B·t̂`.
-    let commitment = dispatch_ring_dim_result!(dims.d_b(), |D_B| {
-        let (b_input_digits, remainder) = b_input_flat.as_chunks::<D_B>();
-        if !remainder.is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "commit digit carrier is not aligned to the outer ring dimension".to_string(),
-            ));
+    let commitment = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        dims.d_b(),
+        |D_B| {
+            let (b_input_digits, remainder) = b_input_flat.as_chunks::<D_B>();
+            if !remainder.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "commit digit carrier is not aligned to the outer ring dimension".to_string(),
+                ));
+            }
+            let u = backend.digit_rows::<D_B>(prepared, n_b, b_input_digits, log_basis)?;
+            if u.len() != n_b {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "backend returned {} B commitment rows, expected {n_b}",
+                    u.len(),
+                )));
+            }
+            Ok::<_, AkitaError>(Commitment::from_ring_elems(&u))
         }
-        let u = backend.digit_rows::<D_B>(prepared, n_b, b_input_digits, log_basis)?;
-        if u.len() != n_b {
-            return Err(AkitaError::InvalidSetup(format!(
-                "backend returned {} B commitment rows, expected {n_b}",
-                u.len(),
-            )));
-        }
-        Ok::<_, AkitaError>(Commitment::from_ring_elems(&u))
-    })?;
+    )?;
     let hint = AkitaCommitmentHint::new(decomposed_digit_blocks);
     Ok((commitment, hint))
 }
@@ -691,9 +710,9 @@ where
         .into_iter()
         .map(|key| {
             key.validate()?;
-            let opening_batch = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
+            let singleton = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
             let params = <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &opening_batch,
+                &singleton,
             )?;
             Ok(PrecommittedGroupParams::from_params(key, &params))
         })
@@ -878,7 +897,7 @@ mod tests {
     use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
 
     type F = Fp64<4294967197>;
-    const D: usize = 32;
+    const D: usize = 64;
 
     fn inner_witness(
         recomposed_blocks: usize,
@@ -958,10 +977,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            SparseChallengeConfig::pm1_only(1),
         )
         .with_decomp(1, 1, 2, 2, 0)
         .unwrap();
@@ -990,10 +1006,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            SparseChallengeConfig::pm1_only(1),
         )
         .with_onehot_chunk_size(256);
         let wrong = OneHotPoly::<F, u16>::new(64, D, vec![Some(1), None]).unwrap();
@@ -1016,10 +1029,7 @@ mod tests {
             1,
             1,
             1,
-            SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
+            SparseChallengeConfig::pm1_only(1),
         )
         .with_onehot_chunk_size(256);
         let wrong_wrapped = MultilinearPolynomial::<F, u16>::onehot(

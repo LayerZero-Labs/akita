@@ -6,10 +6,10 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::eval_ring_at_pows;
+use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, ExtField, FieldCore, MulBase};
+use akita_field::{AkitaError, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 
 use crate::layout::{LevelParams, MRowLayout};
 use crate::proof::AkitaExpandedSetup;
@@ -47,10 +47,12 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
     /// Returns an error when level layout parameters are inconsistent.
     pub fn from_level_params(
         lp: &LevelParams,
-        num_polynomials: usize,
+        num_polys_per_segment: &[usize],
         m_row_layout: MRowLayout,
         depth_fold: usize,
     ) -> Result<Self, AkitaError> {
+        let num_polynomials: usize = num_polys_per_segment.iter().copied().sum();
+        let num_segments = num_polys_per_segment.len().max(1);
         let depth_commit = lp.num_digits_commit;
         let depth_open = lp.num_digits_open;
         if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
@@ -82,7 +84,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
                 "B-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let rows = lp.m_row_count_for(1, m_row_layout)?;
+        let rows = lp.m_row_count_for(num_segments, m_row_layout)?;
         Ok(Self {
             eq_tau1: Vec::new(),
             num_t_vectors: num_polynomials,
@@ -97,9 +99,9 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
             n_d: lp.d_key.row_len(),
             m_row_layout,
             n_b: lp.b_key.row_len(),
-            num_segments: 1,
+            num_segments,
             rows,
-            num_polys_per_segment: vec![num_polynomials],
+            num_polys_per_segment: num_polys_per_segment.to_vec(),
         })
     }
 
@@ -222,7 +224,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
         if self.required > setup_len {
@@ -681,7 +683,7 @@ fn packed_slice_inner_sum<
 ) -> E
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: ExtField<F> + MulBaseUnreduced<F>,
 {
     cfg_fold_reduce!(
         range,
@@ -700,7 +702,7 @@ where
                 weight += a_weight * z_eq[lambda - a_start];
             }
             if !weight.is_zero() {
-                acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
+                acc += eval_ring_at_pows_fast(&setup_flat[lambda], alpha_pows) * weight;
             }
             acc
         },
@@ -1103,7 +1105,7 @@ mod tests {
         lp.num_digits_open = 3;
         assert!(SetupContributionPlanInputs::<F>::from_level_params(
             &lp,
-            2,
+            &[2],
             MRowLayout::WithoutDBlock,
             2,
         )

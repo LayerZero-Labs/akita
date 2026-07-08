@@ -60,26 +60,35 @@ pub const ABSORB_STOP_CONDITION: &[u8] = b"ak/a/st";
 /// Challenge sampled for recursion stop-condition checks (paper §4.5).
 pub const CHALLENGE_STOP_CONDITION: &[u8] = b"ak/c/st";
 
-/// Absorb the prover's stage-1 message `v = D · ŵ` (paper §4.2, Figure 3).
+/// Absorb the prover's folded witness message `v = D · ŵ` before sampling fold
+/// challenges (paper §4.2, Figure 3).
 pub const ABSORB_PROVER_V: &[u8] = b"ak/a/v";
-/// Challenge label for stage-1 fold (sampling sparse `c_i`).
-pub const CHALLENGE_STAGE1_FOLD: &[u8] = b"ak/c/s1f";
-/// Challenge label for the left factor of a tensor-shaped fold round.
+/// Challenge label for witness-fold sparse ring elements `c_i` (flat shape).
 ///
-/// A tensor-shaped fold samples two sparse-challenge vectors `α_p` and `β_q`
-/// per claim, and folds with `c_{p,q} = α_p · β_q`. This label samples
-/// the `α` vector; the matching `β` vector uses
-/// [`CHALLENGE_TENSOR_FOLD_RIGHT`].
-pub const CHALLENGE_TENSOR_FOLD_LEFT: &[u8] = b"ak/c/s1fl";
-/// Absorb a canonical digest of the tensor-left challenge vector before
-/// sampling the tensor-right vector.
+/// Prefixes the sparse-challenge Fiat–Shamir absorb buffer for one draw batch.
+/// The buffer is appended under [`ABSORB_SPARSE_CHALLENGE`]; this string is not
+/// absorbed by itself into the positional production sponge.
+pub const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
+/// Challenge label for the left factor `α` in a tensor-shaped fold round.
 ///
-/// Binding the right vector to the left through this absorb prevents an
-/// adversary from choosing `β` adaptively after observing `α`.
-pub const ABSORB_TENSOR_FOLD_LEFT: &[u8] = b"ak/a/s1tl";
-/// Challenge label for the right factor of a tensor-shaped fold round.
-/// See [`CHALLENGE_TENSOR_FOLD_LEFT`].
-pub const CHALLENGE_TENSOR_FOLD_RIGHT: &[u8] = b"ak/c/s1fr";
+/// Tensor folds sample `√N` left and `√N` right sparse challenges per claim and
+/// use `c_{p,q} = α_p · β_q`. This prefixes the absorb buffer for the **left**
+/// draw batch (under [`ABSORB_SPARSE_CHALLENGE`]). After the left challenges are
+/// expanded, [`ABSORB_TENSOR_FOLD_LEFT`] commits a digest of the left vector
+/// before the right batch is drawn.
+pub const CHALLENGE_TENSOR_FOLD_LEFT: &[u8] = b"ak/c/wfl";
+/// Digest of the sampled left tensor factor, appended between left and right draws.
+///
+/// Canonical hash of the left sparse-challenge vector (`tensor_left_digest`).
+/// Prevents choosing the right factor `β` adaptively after seeing `α`. This is
+/// a real transcript append (positional sponge); it is not the challenges themselves.
+pub const ABSORB_TENSOR_FOLD_LEFT: &[u8] = b"ak/a/wtl";
+/// Challenge label for the right factor `β` in a tensor-shaped fold round.
+///
+/// Prefixes the absorb buffer for the **right** draw batch (under
+/// [`ABSORB_SPARSE_CHALLENGE`]), after [`ABSORB_TENSOR_FOLD_LEFT`]. There is no
+/// symmetric digest absorb for the right vector.
+pub const CHALLENGE_TENSOR_FOLD_RIGHT: &[u8] = b"ak/c/wfr";
 
 /// Absorb field-element evaluation claims for γ-batching.
 pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
@@ -128,7 +137,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_STOP_CONDITION,
     CHALLENGE_STOP_CONDITION,
     ABSORB_PROVER_V,
-    CHALLENGE_STAGE1_FOLD,
+    CHALLENGE_WITNESS_FOLD,
     CHALLENGE_TENSOR_FOLD_LEFT,
     ABSORB_TENSOR_FOLD_LEFT,
     CHALLENGE_TENSOR_FOLD_RIGHT,
