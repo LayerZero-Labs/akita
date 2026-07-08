@@ -565,14 +565,12 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                     offset_e,
                     offset_t,
                     offset_r: is_last.then_some(after_t),
-                    offset_u: None,
                     global_block_base: 0,
                 });
                 chunk_lengths.push(WitnessChunkLengths {
                     z_len: z_g,
                     e_len: e_g,
                     t_len: t_g,
-                    u_len: None,
                     r_len: is_last.then_some(r_len_total),
                 });
                 base = after_t;
@@ -677,7 +675,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 offset_z: base,
                 offset_e,
                 offset_t,
-                offset_u: None,
                 offset_r,
                 global_block_base,
             });
@@ -685,7 +682,6 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 z_len,
                 e_len: e_len_j,
                 t_len: t_len_j,
-                u_len: None,
                 r_len: is_last.then_some(r_len_total),
             });
         }
@@ -903,7 +899,6 @@ mod tests {
                 assert_eq!(chunk.offset_e, base + lens.z_len);
                 assert_eq!(chunk.offset_t, base + lens.z_len + lens.e_len / w);
                 assert_eq!(chunk.global_block_base, j * (lp.num_blocks / w));
-                assert_eq!(chunk.offset_u, None);
                 if j + 1 == w {
                     assert_eq!(chunk.offset_r, Some(w * stride));
                 } else {

@@ -16,7 +16,6 @@ fn reject_test_segment_layout() -> WitnessLayout {
             offset_z: 0,
             offset_e: 0,
             offset_t: 0,
-            offset_u: None,
             offset_r: Some(0),
             global_block_base: 0,
         }],
@@ -24,7 +23,6 @@ fn reject_test_segment_layout() -> WitnessLayout {
             z_len: 0,
             e_len: 0,
             t_len: 0,
-            u_len: None,
             r_len: Some(0),
         }],
     }

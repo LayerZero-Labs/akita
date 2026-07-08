@@ -360,8 +360,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     /// partition, so the footprint is unchanged) and the chunk-replicated `z`
     /// enters only through the additively combined `z_eq_slice` (`Z_comb`),
     /// summed over chunks. `num_chunks = 1` reproduces the historical plan
-    /// exactly. Multi-chunk (`W > 1`) is supported only for the non-tiered,
-    /// single-commitment-bundle core.
+    /// exactly. Multi-chunk (`W > 1`) requires a single commitment bundle.
     #[allow(clippy::too_many_arguments)]
     pub fn prepare<F>(
         inputs: &SetupContributionPlanInputs<E>,
@@ -1068,7 +1067,6 @@ mod tests {
                 offset_z,
                 offset_e: 0,
                 offset_t: 64,
-                offset_u: None,
                 offset_r: Some(0),
                 global_block_base: 0,
             }],
@@ -1076,7 +1074,6 @@ mod tests {
                 z_len: z_range,
                 e_len: 0,
                 t_len: 0,
-                u_len: None,
                 r_len: Some(0),
             }],
         };
@@ -1137,7 +1134,6 @@ mod tests {
                     offset_z: base,
                     offset_e,
                     offset_t,
-                    offset_u: None,
                     offset_r: (idx == 1).then_some(offset_t + t_len_per_chunk),
                     global_block_base: idx * blocks_per_chunk,
                 }
@@ -1148,7 +1144,6 @@ mod tests {
                 z_len: z_range,
                 e_len: e_len_per_chunk,
                 t_len: t_len_per_chunk,
-                u_len: None,
                 r_len: (idx == 1).then_some(0),
             })
             .collect::<Vec<_>>();

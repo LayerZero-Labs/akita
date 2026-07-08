@@ -206,7 +206,6 @@ mod tests {
                 offset_z,
                 offset_e,
                 offset_t,
-                offset_u: None,
                 offset_r: Some(offset_r),
                 global_block_base: 0,
             }],
@@ -214,7 +213,6 @@ mod tests {
                 z_len,
                 e_len: 0,
                 t_len: 0,
-                u_len: None,
                 r_len: Some(0),
             }],
         }

@@ -379,9 +379,8 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `num_chunks == 0`, `num_chunks > 1`
-/// is not a power of two, `lp.num_blocks` is not divisible by `num_chunks`, the
-/// level is tiered (multi-chunk + tiered is unsupported), or any width product
-/// overflows. Never panics — verifier-reachable through the runtime DP fallback.
+/// is not a power of two, `lp.num_blocks` is not divisible by `num_chunks`, or
+/// any width product overflows. Never panics — verifier-reachable through the runtime DP fallback.
 pub fn w_ring_element_count_for_chunks(
     field_bits: u32,
     lp: &LevelParams,

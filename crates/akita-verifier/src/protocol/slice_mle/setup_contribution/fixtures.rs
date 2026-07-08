@@ -196,7 +196,6 @@ impl SetupContributionFixture {
                 offset_z,
                 offset_e,
                 offset_t,
-                offset_u: None,
                 offset_r: Some(offset_r),
                 global_block_base: 0,
             }],
@@ -204,7 +203,6 @@ impl SetupContributionFixture {
                 z_len,
                 e_len,
                 t_len,
-                u_len: None,
                 r_len: Some(0),
             }],
         };

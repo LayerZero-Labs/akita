@@ -20,7 +20,6 @@ pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
     pub recomposed_inner_rows: Vec<RingVec<F>>,
     z_folded_centered_flat: Vec<i32>,
     pub r: RingVec<F>,
-    pub u_concat_planes: usize,
     ring_dim: usize,
 }
 
@@ -31,7 +30,6 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
         z_folded_centered: Vec<[i32; D]>,
         r: Vec<CyclotomicRing<F, D>>,
-        u_concat_planes: usize,
     ) -> Self {
         Self {
             e_folded: RingVec::from_ring_elems(&e_folded),
@@ -44,7 +42,6 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
                 .flat_map(|row| row.iter().copied())
                 .collect(),
             r: RingVec::from_ring_elems(&r),
-            u_concat_planes,
             ring_dim: D,
         }
     }
@@ -407,7 +404,6 @@ where
                     group.recomposed_inner_rows.clone(),
                     group.z_centered.clone(),
                     r,
-                    0,
                 ))
             } else {
                 None
