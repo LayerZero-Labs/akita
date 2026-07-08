@@ -311,8 +311,9 @@ where
         let [a0, a1] = summarize_pow2_block_carries(&eq_low, offset_lo, &r_gadget_ext)?;
         let offset_hi = offset_r >> m0;
         let high = &full_vec_randomness[m0..];
-        let b0 = eval_offset_eq_interval(high, offset_hi, E::one(), prepared.eq_tau1())?;
-        let b1 = eval_offset_eq_interval(high, offset_hi + 1, E::one(), prepared.eq_tau1())?;
+        let eq_tau1_rows = &prepared.eq_tau1()[..rows];
+        let b0 = eval_offset_eq_interval(high, offset_hi, E::one(), eq_tau1_rows)?;
+        let b1 = eval_offset_eq_interval(high, offset_hi + 1, E::one(), eq_tau1_rows)?;
         Ok(-denom * (a0 * b0 + a1 * b1))
     } else {
         let _span = tracing::info_span!("r_dense").entered();
