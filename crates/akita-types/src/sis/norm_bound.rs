@@ -37,6 +37,29 @@ pub fn rounded_up_collision_inf_norm(
     ceil_supported_linf_bound(min_security_bits, sis_family, ring_dimension as u32, linf)
 }
 
+/// This implements computing the norm bound based on the weak binding lemma.
+/// Formula is `2 * c_bar * z_bar`, where `c_bar = 2 * challenge_l1_norm` and
+/// `z_bar = 2 * z_inf_norm`.
+pub fn rounded_up_weak_binding_inf_norm(
+    min_security_bits: u16,
+    sis_family: SisModulusFamily,
+    ring_dimension: usize,
+    challenge_l1_norm: u128,
+    ring_subfield_norm_bound: u32,
+    z_inf_norm: u128,
+) -> Option<u128> {
+    let collision_linf = 8u128
+        .checked_mul(challenge_l1_norm)?
+        .checked_mul(u128::from(ring_subfield_norm_bound))?
+        .checked_mul(z_inf_norm)?;
+    ceil_supported_linf_bound(
+        min_security_bits,
+        sis_family,
+        ring_dimension as u32,
+        collision_linf,
+    )
+}
+
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
 /// per-operand L1/L∞ bounds:
 ///
@@ -309,7 +332,7 @@ pub fn fold_witness_linf_digit_plan(
 pub fn committed_fold_collision_linf_bound(
     min_security_bits: u16,
     sis_family: SisModulusFamily,
-    d: u32,
+    ring_dimension: u32,
     challenge_l1_mass: u128,
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
@@ -319,23 +342,25 @@ pub fn committed_fold_collision_linf_bound(
     decomposition: DecompositionParams,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Option<u128> {
-    let log_basis = decomposition.log_basis;
     let delta_fold = num_digits_fold(
         r_vars,
         num_claims,
         decomposition.field_bits(),
-        log_basis,
+        decomposition.log_basis,
         challenge,
         witness,
         *cap_config,
     )
     .ok()?;
-    let z_verifier_linf_bound = fold_witness_verifier_linf_bound(log_basis, delta_fold);
-    let collision_linf = 8u128
-        .checked_mul(challenge_l1_mass)?
-        .checked_mul(z_verifier_linf_bound)?
-        .checked_mul(u128::from(ring_subfield_norm_bound))?;
-    ceil_supported_linf_bound(min_security_bits, sis_family, d, collision_linf)
+    let z_verifier_linf_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
+    rounded_up_weak_binding_inf_norm(
+        min_security_bits,
+        sis_family,
+        ring_dimension as usize,
+        challenge_l1_mass,
+        ring_subfield_norm_bound,
+        z_verifier_linf_bound,
+    )
 }
 
 /// A-role committed-fold collision bucket and audited secure rank at one geometry.
