@@ -943,7 +943,7 @@ fn checked_slice<'a, T>(
 
 #[cfg(test)]
 mod tests {
-    use super::setup_contribution_grouped::GroupSetupContributionPlan;
+    use super::setup_contribution_grouped::SetupContributionGroupPlan;
     use super::*;
     use crate::{gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout};
     use akita_algebra::ring::scalar_powers;
@@ -1186,7 +1186,7 @@ mod tests {
         let grouped_plan = GroupedSetupContributionPlan {
             d_rows: 2,
             d_physical_cols: 5,
-            groups: vec![GroupSetupContributionPlan {
+            groups: vec![SetupContributionGroupPlan {
                 e_col_offset: 2,
                 t_cols: 4,
                 z_cols: 3,
@@ -1237,7 +1237,7 @@ mod tests {
             d_rows: 2,
             d_physical_cols: 5,
             groups: vec![
-                GroupSetupContributionPlan {
+                SetupContributionGroupPlan {
                     e_col_offset: 2,
                     t_cols: 4,
                     z_cols: 3,
@@ -1255,7 +1255,7 @@ mod tests {
                     b_weights: vec![test_scalar(37), test_scalar(41)],
                     d_weights: vec![test_scalar(43), test_scalar(47)],
                 },
-                GroupSetupContributionPlan {
+                SetupContributionGroupPlan {
                     e_col_offset: 0,
                     t_cols: 4,
                     z_cols: 3,
@@ -1306,7 +1306,7 @@ mod tests {
         let grouped_plan = GroupedSetupContributionPlan {
             d_rows: 2,
             d_physical_cols: 5,
-            groups: vec![GroupSetupContributionPlan {
+            groups: vec![SetupContributionGroupPlan {
                 e_col_offset: 2,
                 t_cols: 4,
                 z_cols: 3,

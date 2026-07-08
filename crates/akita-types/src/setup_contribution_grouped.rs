@@ -31,7 +31,7 @@ pub struct SetupContributionGroupInputs {
 }
 
 pub struct GroupedSetupContributionPlan<E> {
-    pub(super) groups: Vec<GroupSetupContributionPlan<E>>,
+    pub(super) groups: Vec<SetupContributionGroupPlan<E>>,
     pub(super) d_rows: usize,
     pub(super) d_physical_cols: usize,
 }
@@ -39,14 +39,14 @@ pub struct GroupedSetupContributionPlan<E> {
 /// Tau1-derived grouped setup weights cached at ring-switch prepare time.
 #[derive(Clone)]
 pub struct GroupedSetupContributionStatic<E> {
-    pub(super) groups: Vec<GroupSetupContributionStatic<E>>,
+    pub(super) groups: Vec<SetupContributionGroupStatic<E>>,
     pub(super) d_rows: usize,
     pub(super) d_physical_cols: usize,
     pub(super) d_weights: Vec<E>,
 }
 
 #[derive(Clone)]
-pub(super) struct GroupSetupContributionStatic<E> {
+pub(super) struct SetupContributionGroupStatic<E> {
     pub(super) e_col_offset: usize,
     pub(super) t_cols: usize,
     pub(super) z_cols: usize,
@@ -56,7 +56,7 @@ pub(super) struct GroupSetupContributionStatic<E> {
     pub(super) b_weights: Vec<E>,
 }
 
-pub(super) struct GroupSetupContributionPlan<E> {
+pub(super) struct SetupContributionGroupPlan<E> {
     pub(super) e_col_offset: usize,
     pub(super) t_cols: usize,
     pub(super) z_cols: usize,
@@ -133,7 +133,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     "grouped B rows",
                 )?
                 .to_vec();
-                Ok(GroupSetupContributionStatic {
+                Ok(SetupContributionGroupStatic {
                     e_col_offset: group.e_col_offset,
                     t_cols,
                     z_cols,
@@ -229,7 +229,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         *dst += src;
                     }
                 }
-                Ok(GroupSetupContributionPlan {
+                Ok(SetupContributionGroupPlan {
                     e_col_offset: static_group.e_col_offset,
                     t_cols: static_group.t_cols,
                     z_cols: static_group.z_cols,
@@ -484,7 +484,7 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
     }
 }
 
-impl<E: FieldCore> GroupSetupContributionPlan<E> {
+impl<E: FieldCore> SetupContributionGroupPlan<E> {
     #[allow(clippy::too_many_arguments)]
     fn evaluate_packed_direct<F>(
         &self,
