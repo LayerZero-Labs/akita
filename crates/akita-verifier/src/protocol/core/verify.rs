@@ -567,7 +567,12 @@ pub(crate) fn verify_folded_batched_proof<F, E, T>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {

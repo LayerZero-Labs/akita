@@ -6,10 +6,10 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::{eval_flat_ring_at_pows, eval_ring_at_pows};
+use akita_algebra::ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 
 use crate::layout::{LevelParams, MRowLayout};
 use crate::proof::AkitaExpandedSetup;
@@ -264,7 +264,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
         if self.required > setup_len {
@@ -854,7 +854,7 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         if alpha_pows_a.len() != D {
             return Err(AkitaError::InvalidSize {
@@ -891,7 +891,7 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let mut acc = E::zero();
         if self.d_rows != 0 {
@@ -968,7 +968,7 @@ impl<E: FieldCore> GroupSetupContributionPlan<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let (required, segments) = self.packed_segments(d_rows, d_physical_cols)?;
         if required > setup_flat.len() {
@@ -1203,7 +1203,7 @@ fn packed_slice_inner_sum<
 ) -> E
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: ExtField<F> + MulBaseUnreduced<F>,
 {
     cfg_fold_reduce!(
         range,
@@ -1222,7 +1222,7 @@ where
                 weight += a_weight * z_eq[lambda - a_start];
             }
             if !weight.is_zero() {
-                acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
+                acc += eval_ring_at_pows_fast(&setup_flat[lambda], alpha_pows) * weight;
             }
             acc
         },
@@ -1255,7 +1255,7 @@ fn packed_group_slice_inner_sum<
 ) -> E
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: ExtField<F> + MulBaseUnreduced<F>,
 {
     cfg_fold_reduce!(
         range,
@@ -1272,7 +1272,7 @@ where
                 weight += a_weight * z_eq[lambda - a_start];
             }
             if !weight.is_zero() {
-                acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
+                acc += eval_ring_at_pows_fast(&setup_flat[lambda], alpha_pows) * weight;
             }
             acc
         },
@@ -1605,7 +1605,7 @@ fn evaluate_weighted_setup_row<Base, E>(
 ) -> Result<E, AkitaError>
 where
     Base: FieldCore,
-    E: ExtField<Base>,
+    E: ExtField<Base> + MulBaseUnreduced<Base>,
 {
     let ring_d = alpha_pows.len();
     let mut acc = E::zero();
@@ -1616,7 +1616,7 @@ where
         let setup_col = checked_add(col_offset, col, "weighted setup column")?;
         let coeff_start = checked_mul(setup_col, ring_d, "weighted setup coeff start")?;
         let coeffs = checked_slice(row, coeff_start, ring_d, "weighted setup coeffs")?;
-        acc += row_weight * col_weight * eval_flat_ring_at_pows::<Base, E>(coeffs, alpha_pows);
+        acc += row_weight * col_weight * eval_flat_ring_at_pows_fast::<Base, E>(coeffs, alpha_pows);
     }
     Ok(acc)
 }

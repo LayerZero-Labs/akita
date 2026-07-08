@@ -1,6 +1,6 @@
 #[cfg(test)]
 use akita_algebra::ring::eval_ring_at_pows;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_types::{
     AkitaExpandedSetup, GroupedSetupContributionPlan, SetupContributionGroupInputs,
     SetupContributionPlan, SetupContributionPlanInputs, WitnessChunkLayout, WitnessLayout,
@@ -64,7 +64,10 @@ where
     pub(crate) fn evaluate<const D: usize>(
         &self,
         mode: SetupEvaluatorMode<'_, F, E>,
-    ) -> Result<SetupEvaluation<E>, AkitaError> {
+    ) -> Result<SetupEvaluation<E>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
         if self.alpha_pows.len() != D {
             return Err(AkitaError::InvalidSize {
                 expected: D,

@@ -5,7 +5,8 @@ use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
+    RandomSampling,
 };
 use akita_transcript::labels::{
     ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH,
@@ -750,7 +751,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: FpExtEncoding<F> + FromPrimitiveInt,
+        E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     {
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
         let d_b = self.role_dims.d_b();
@@ -951,7 +952,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: FpExtEncoding<F> + FromPrimitiveInt,
+        E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;
         if self.uses_grouped_eval::<D>() {
