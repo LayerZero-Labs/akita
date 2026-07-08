@@ -492,27 +492,6 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
-// --- Legacy L2 helper (`l2_sq_from_linf`) ------------------------------------
-//
-// Production SIS pricing now uses coefficient-L∞ table keys directly. This
-// helper remains for local arithmetic checks of the old sqrt(d) envelope.
-
-/// Convert a coefficient-`L∞` collision bound to its Euclidean (L2) counterpart
-/// via `||v||_2 <= sqrt(d)·||v||_inf`, kept squared and exact:
-/// `||v||_2^2 <= d·linf^2`.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] on `u128` overflow of `d · linf^2`.
-#[inline]
-pub fn l2_sq_from_linf(d: u128, linf: u128) -> Result<u128, AkitaError> {
-    linf.checked_mul(linf)
-        .and_then(|sq| sq.checked_mul(d))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("l2_sq_from_linf: d · ||v||_inf^2 overflows u128".to_string())
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::ajtai_key::DEFAULT_SIS_SECURITY_BITS;
@@ -543,13 +522,6 @@ mod tests {
         assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).infinity_norm, 4); // 2^2
                                                                              // No root/recursive split: dense is b/2 regardless of `is_onehot=false`.
         assert_eq!(FoldWitnessNorms::new(5, 64, 1, false).infinity_norm, 16); // 2^4
-    }
-
-    #[test]
-    fn l2_sq_from_linf_matches_sqrt_d_envelope() {
-        // B/D-role digit collision 2^lb - 1 at lb=3 is 7; ||v||_2^2 <= d·49.
-        assert_eq!(l2_sq_from_linf(64, 7).unwrap(), 64 * 49);
-        assert!(l2_sq_from_linf(u128::MAX, u128::MAX).is_err());
     }
 
     #[test]

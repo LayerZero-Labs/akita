@@ -43,7 +43,7 @@ pub use norm_bound::{
     fold_level_witness_scoring_cost, fold_witness_beta, fold_witness_linf_cap_policy,
     fold_witness_linf_digit_plan,
     fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
-    fold_witness_linf_tensor_tail_bound_sq, isqrt_ceil, l2_sq_from_linf,
+    fold_witness_linf_tensor_tail_bound_sq, isqrt_ceil,
     ring_product_infinity_norm_bound, rounded_up_collision_inf_norm,
     snap_min_tstar_retain_floor, snap_num_digits_fold_down, FoldChallengeNorms,
     FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessLinfDigitPlan, FoldWitnessNorms,
