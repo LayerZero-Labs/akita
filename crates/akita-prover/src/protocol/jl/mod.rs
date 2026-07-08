@@ -8,8 +8,8 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels, Transcript};
 use akita_types::jl::{
-    absorb_jl_image, absorb_jl_witness_layout, jl_image_claim, padded_live_table,
-    sample_jl_row_point, validate_layout_for_matrix_mle, JlWitnessLayout, JL_CONSISTENCY_DEGREE,
+    absorb_jl_image, jl_image_claim, padded_live_table, sample_jl_row_point,
+    validate_layout_for_matrix_mle, JlWitnessLayout, JL_CONSISTENCY_DEGREE,
 };
 
 /// Prove JL consistency for a compact flat witness table.
@@ -35,7 +35,6 @@ where
             actual: witness_evals.len(),
         });
     }
-    absorb_jl_witness_layout::<F, T>(transcript, layout);
     absorb_jl_image::<F, T>(transcript, image_coords);
     let r_j = sample_jl_row_point(transcript, matrix.n_rows());
     let image_claim =

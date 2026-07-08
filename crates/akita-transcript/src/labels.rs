@@ -33,8 +33,6 @@ pub const ABSORB_JL_PROJECTION: &[u8] = b"ak/a/jl";
 pub const CHALLENGE_JL_SEED: &[u8] = b"ak/c/jl";
 /// Absorb the JL image coordinates before row-batching challenges.
 pub const ABSORB_JL_IMAGE: &[u8] = b"ak/a/jli";
-/// Absorb the pinned JL witness layout before image binding.
-pub const ABSORB_JL_WITNESS_LAYOUT: &[u8] = b"ak/a/jll";
 /// Challenge for batching JL projection rows in the consistency sumcheck.
 pub const CHALLENGE_JL_ROW: &[u8] = b"ak/c/jlr";
 /// Absorb the initial sumcheck claim before round messages begin.
@@ -125,7 +123,6 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_JL_PROJECTION,
     CHALLENGE_JL_SEED,
     ABSORB_JL_IMAGE,
-    ABSORB_JL_WITNESS_LAYOUT,
     CHALLENGE_JL_ROW,
     ABSORB_SUMCHECK_CLAIM,
     ABSORB_SETUP_PREFIX_SLOT,

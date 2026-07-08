@@ -64,9 +64,8 @@ pub use instance_descriptor::{
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 pub use jl::{
-    absorb_jl_image, absorb_jl_witness_layout, embed_jl_image_coords, embed_signed_i32,
-    jl_image_claim, padded_live_table, sample_jl_row_point, validate_layout_for_matrix_mle,
-    JlWitnessLayout, JL_CONSISTENCY_DEGREE,
+    absorb_jl_image, embed_jl_image_coords, embed_signed_i32, jl_image_claim, padded_live_table,
+    sample_jl_row_point, validate_layout_for_matrix_mle, JlWitnessLayout, JL_CONSISTENCY_DEGREE,
 };
 pub use layout::{
     basis_weights, block_rings_at_opening, direct_witness_bytes,

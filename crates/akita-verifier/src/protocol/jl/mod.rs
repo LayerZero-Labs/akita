@@ -7,8 +7,8 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceVerifier, SumcheckInstanceVerifierExt, SumcheckProof};
 use akita_transcript::{labels, Transcript};
 use akita_types::jl::{
-    absorb_jl_image, absorb_jl_witness_layout, jl_image_claim, sample_jl_row_point,
-    validate_layout_for_matrix_mle, JlWitnessLayout, JL_CONSISTENCY_DEGREE,
+    absorb_jl_image, jl_image_claim, sample_jl_row_point, validate_layout_for_matrix_mle,
+    JlWitnessLayout, JL_CONSISTENCY_DEGREE,
 };
 
 /// Verify a standalone JL consistency sumcheck proof.
@@ -27,7 +27,6 @@ where
     W: Fn(&[F]) -> Result<F, AkitaError> + Send + Sync,
 {
     validate_layout_for_matrix_mle(matrix.cols(), layout)?;
-    absorb_jl_witness_layout::<F, T>(transcript, layout);
     absorb_jl_image::<F, T>(transcript, image_coords);
     let r_j = sample_jl_row_point(transcript, matrix.n_rows());
     let image_claim =
@@ -222,42 +221,29 @@ mod tests {
     }
 
     #[test]
-    fn verify_rejects_mismatched_layout_transcript_binding() {
+    fn verify_rejects_noncanonical_layout_for_matrix_mle() {
         type F = Prime64Offset59;
-        let seed = b"jl-verifier-layout-mismatch";
-        let fixture = consistency_fixture::<F>(seed, 8, 4, 1);
-        let mut prover_transcript = AkitaTranscript::<F>::new(seed);
-        let prover_matrix = JlProjectionMatrix::sample::<F, _>(
-            &mut prover_transcript,
+        let wrong_layout = JlWitnessLayout::new(8, 2, 1, 2).unwrap();
+        let fixture = consistency_fixture::<F>(b"jl-verifier-noncanonical-layout", 8, 4, 1);
+        let empty_proof = SumcheckProof {
+            round_polys: Vec::new(),
+        };
+
+        let mut verify_transcript = AkitaTranscript::<F>::new(b"jl-verifier-noncanonical-layout");
+        let verify_matrix = JlProjectionMatrix::sample::<F, _>(
+            &mut verify_transcript,
             8,
             fixture.layout.live_len(),
-        )
-        .unwrap();
-        let (proof, _, _) = prove_jl_consistency(
-            &mut prover_transcript,
-            &prover_matrix,
-            fixture.layout,
-            &fixture.witness,
-            &fixture.image_coords,
-            Some(fixture.norm_bound),
         )
         .unwrap();
 
-        let wrong_layout = JlWitnessLayout::new(8, 2, 1, 2).unwrap();
-        let mut verifier_transcript = AkitaTranscript::<F>::new(seed);
-        let verifier_matrix = JlProjectionMatrix::sample::<F, _>(
-            &mut verifier_transcript,
-            8,
-            fixture.layout.live_len(),
-        )
-        .unwrap();
         assert!(verify_jl_consistency(
-            &mut verifier_transcript,
-            &verifier_matrix,
+            &mut verify_transcript,
+            &verify_matrix,
             wrong_layout,
             &fixture.image_coords,
-            Some(fixture.norm_bound),
-            &proof,
+            None,
+            &empty_proof,
             |point| eval_padded_table_at(&fixture.padded_witness, point),
         )
         .is_err());

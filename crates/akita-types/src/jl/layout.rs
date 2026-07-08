@@ -68,12 +68,11 @@ impl JlWitnessLayout {
         })
     }
 
-    /// Canonical witness layout for `matrix_cols` live coefficients and `ring_bits`
-    /// ring slots per outer column.
+    /// Canonical witness layout derived from schedule-fixed geometry.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if `matrix_cols` is not divisible by `2^ring_bits`.
+    /// `matrix_cols` comes from the JL projection matrix width; `ring_bits` is the
+    /// stage-2 ring-slot exponent fixed by the active level schedule (not sent on
+    /// the wire). Both prover and verifier derive the same layout locally.
     pub fn canonical_for_matrix(matrix_cols: usize, ring_bits: usize) -> Result<Self, AkitaError> {
         let ring_len = pow2(ring_bits, "JL witness ring dimension")?;
         if !matrix_cols.is_multiple_of(ring_len) {
@@ -128,7 +127,11 @@ pub fn padded_live_table<F: FieldCore>(
     Ok(table)
 }
 
-/// Validate that `layout` matches the matrix column count and MLE hypercube geometry.
+/// Validate that `layout` matches the matrix column count and schedule-derived geometry.
+///
+/// Callers pass `layout` built from local schedule facts (`matrix.cols()` and the
+/// level's ring-slot bit width). Layout coordinates are not absorbed into the
+/// transcript.
 pub fn validate_layout_for_matrix_mle(
     matrix_cols: usize,
     layout: JlWitnessLayout,
