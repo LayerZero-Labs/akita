@@ -1024,6 +1024,7 @@ mod tests {
     use super::setup_contribution_grouped::GroupSetupContributionPlan;
     use super::*;
     use crate::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout};
+    use akita_algebra::ring::scalar_powers;
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -1304,6 +1305,62 @@ mod tests {
             .unwrap();
         let got = grouped_plan
             .evaluate_direct::<F, 1>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
+            .unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn grouped_packed_direct_matches_row_fallback_with_nested_role_dims() {
+        let grouped_plan = GroupedSetupContributionPlan {
+            d_rows: 2,
+            d_physical_cols: 5,
+            groups: vec![GroupSetupContributionPlan {
+                e_col_offset: 2,
+                t_cols: 4,
+                z_cols: 3,
+                n_a: 2,
+                n_b: 2,
+                e_eq_slice: vec![test_scalar(2), test_scalar(3)],
+                t_eq_slice: vec![
+                    test_scalar(5),
+                    test_scalar(7),
+                    test_scalar(11),
+                    test_scalar(13),
+                ],
+                z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
+                a_weights: vec![test_scalar(29), test_scalar(31)],
+                b_weights: vec![test_scalar(37), test_scalar(41)],
+                d_weights: vec![test_scalar(43), test_scalar(47)],
+            }],
+        };
+        const D: usize = 4;
+        const D_B: usize = 2;
+        const D_D: usize = 2;
+        let setup_len = 10;
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupSeed {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                gen_ring_dim: D,
+                max_setup_len: setup_len,
+                public_matrix_seed: [0u8; 32],
+            },
+            FlatMatrix::from_flat_data(
+                (0..setup_len * D)
+                    .map(|idx| test_scalar(211 + idx as u128))
+                    .collect(),
+                D,
+            ),
+        );
+        let alpha = test_scalar(3);
+        let alpha_pows_a = scalar_powers(alpha, D);
+        let alpha_pows_b = scalar_powers(alpha, D_B);
+        let alpha_pows_d = scalar_powers(alpha, D_D);
+        let expected = grouped_plan
+            .evaluate_direct_by_rows::<F, D>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
+            .unwrap();
+        let got = grouped_plan
+            .evaluate_direct::<F, D>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
             .unwrap();
         assert_eq!(got, expected);
     }

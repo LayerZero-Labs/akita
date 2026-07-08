@@ -2,12 +2,12 @@ use super::{
     checked_add, checked_mul, checked_slice, push_role_boundaries, SetupContributionPlan,
     SetupContributionPlanInputs, POSSIBLE_CARRIES,
 };
+use crate::layout::flat_matrix::FlatRingMatrixView;
 use crate::proof::AkitaExpandedSetup;
 use crate::WitnessChunkLayout;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
-use akita_algebra::ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast};
-use akita_algebra::CyclotomicRing;
+use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 
@@ -328,8 +328,8 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
             });
         }
 
-        if alpha_pows_b.len() == D && alpha_pows_d.len() == D && self.groups.len() == 1 {
-            self.evaluate_packed_direct::<F, D>(setup, alpha_pows_a)
+        if self.groups.len() == 1 {
+            self.evaluate_packed_direct::<F, D>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
         } else {
             self.evaluate_direct_by_rows::<F, D>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
         }
@@ -338,20 +338,21 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
     fn evaluate_packed_direct<F, const D: usize>(
         &self,
         setup: &AkitaExpandedSetup<F>,
-        alpha_pows: &[E],
+        alpha_pows_a: &[E],
+        alpha_pows_b: &[E],
+        alpha_pows_d: &[E],
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
-        let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
-        let setup_flat = setup_view.as_slice();
         let mut acc = E::zero();
         for group in &self.groups {
             acc += group.evaluate_packed_direct::<F, D>(
-                setup_flat,
-                alpha_pows,
+                setup,
+                alpha_pows_a,
+                alpha_pows_b,
+                alpha_pows_d,
                 self.d_rows,
                 self.d_physical_cols,
             )?;
@@ -438,8 +439,10 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
 impl<E: FieldCore> GroupSetupContributionPlan<E> {
     fn evaluate_packed_direct<F, const D: usize>(
         &self,
-        setup_flat: &[CyclotomicRing<F, D>],
-        alpha_pows: &[E],
+        setup: &AkitaExpandedSetup<F>,
+        alpha_pows_a: &[E],
+        alpha_pows_b: &[E],
+        alpha_pows_d: &[E],
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<E, AkitaError>
@@ -447,8 +450,27 @@ impl<E: FieldCore> GroupSetupContributionPlan<E> {
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        let d_d = alpha_pows_d.len();
+        let d_b = alpha_pows_b.len();
+        let d_view = if d_rows != 0 && !self.e_eq_slice.is_empty() {
+            Some(
+                setup
+                    .shared_matrix
+                    .ring_view_dyn(d_rows, d_physical_cols, d_d)?,
+            )
+        } else {
+            None
+        };
+        let b_view = setup
+            .shared_matrix
+            .ring_view_dyn(self.n_b, self.t_cols, d_b)?;
+        let a_view = setup
+            .shared_matrix
+            .ring_view_dyn(self.n_a, self.z_cols, D)?;
+
         let (required, segments) = self.packed_segments(d_rows, d_physical_cols)?;
-        if required > setup_flat.len() {
+        let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
+        if required > setup_len {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected grouped verifier layout".into(),
             ));
@@ -459,10 +481,19 @@ impl<E: FieldCore> GroupSetupContributionPlan<E> {
                 let segment = &segments[idx];
                 macro_rules! segment_sum {
                     ($has_d:literal, $has_b:literal, $has_a:literal) => {
-                        packed_group_slice_inner_sum::<F, E, D, $has_d, $has_b, $has_a>(
+                        packed_group_slice_inner_sum::<F, E, $has_d, $has_b, $has_a>(
                             segment.lo..segment.hi,
-                            setup_flat,
-                            alpha_pows,
+                            d_view.as_ref(),
+                            d_physical_cols,
+                            d_d,
+                            &b_view,
+                            self.t_cols,
+                            &a_view,
+                            self.z_cols,
+                            D,
+                            alpha_pows_a,
+                            alpha_pows_b,
+                            alpha_pows_d,
                             segment.d_start_abs,
                             segment.d_weight,
                             &self.e_eq_slice,
@@ -476,7 +507,7 @@ impl<E: FieldCore> GroupSetupContributionPlan<E> {
                     };
                 }
 
-                match (segment.has_d, segment.has_b, segment.has_a) {
+                Ok(match (segment.has_d, segment.has_b, segment.has_a) {
                     (true, true, true) => segment_sum!(true, true, true),
                     (true, true, false) => segment_sum!(true, true, false),
                     (true, false, true) => segment_sum!(true, false, true),
@@ -484,10 +515,10 @@ impl<E: FieldCore> GroupSetupContributionPlan<E> {
                     (true, false, false) => segment_sum!(true, false, false),
                     (false, true, false) => segment_sum!(false, true, false),
                     (false, false, true) => segment_sum!(false, false, true),
-                    (false, false, false) => E::zero(),
-                }
+                    (false, false, false) => Ok(E::zero()),
+                }?)
             })
-            .collect();
+            .collect::<Result<Vec<_>, AkitaError>>()?;
 
         Ok(segment_sums.into_iter().sum())
     }
@@ -643,17 +674,19 @@ struct GroupSetupSegment<E> {
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn packed_group_slice_inner_sum<
-    F,
-    E,
-    const D: usize,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
->(
+fn packed_group_slice_inner_sum<F, E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
     range: std::ops::Range<usize>,
-    setup_flat: &[CyclotomicRing<F, D>],
-    alpha_pows: &[E],
+    d_view: Option<&FlatRingMatrixView<'_, F>>,
+    d_physical_cols: usize,
+    d_d: usize,
+    b_view: &FlatRingMatrixView<'_, F>,
+    t_cols: usize,
+    a_view: &FlatRingMatrixView<'_, F>,
+    z_cols: usize,
+    d_a: usize,
+    alpha_pows_a: &[E],
+    alpha_pows_b: &[E],
+    alpha_pows_d: &[E],
     d_start: usize,
     d_weight: E,
     e_eq: &[E],
@@ -663,32 +696,52 @@ fn packed_group_slice_inner_sum<
     a_start: usize,
     a_weight: E,
     z_eq: &[E],
-) -> E
+) -> Result<E, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
-    cfg_fold_reduce!(
-        range,
-        E::zero,
-        |mut acc, lambda| {
-            let mut weight = E::zero();
-            if HAS_D {
-                weight += d_weight * e_eq[lambda - d_start];
+    let d_b = b_view.ring_d();
+    let mut acc = E::zero();
+    for lambda in range {
+        if HAS_D {
+            let eq_w = d_weight * e_eq[lambda - d_start];
+            if !eq_w.is_zero() {
+                let d_view = d_view.ok_or_else(|| {
+                    AkitaError::InvalidSetup("grouped packed D scan missing D view".into())
+                })?;
+                let d_row = lambda / d_physical_cols;
+                let d_col = lambda % d_physical_cols;
+                let row = d_view.row_flat(d_row)?;
+                let coeff_start = checked_mul(d_col, d_d, "grouped packed D coeff start")?;
+                let coeffs = checked_slice(row, coeff_start, d_d, "grouped packed D coeffs")?;
+                acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, alpha_pows_d) * eq_w;
             }
-            if HAS_B {
-                weight += b_weight * t_eq[lambda - b_start];
+        }
+        if HAS_B {
+            let eq_w = b_weight * t_eq[lambda - b_start];
+            if !eq_w.is_zero() {
+                let b_row = lambda / t_cols;
+                let b_col = lambda % t_cols;
+                let row = b_view.row_flat(b_row)?;
+                let coeff_start = checked_mul(b_col, d_b, "grouped packed B coeff start")?;
+                let coeffs = checked_slice(row, coeff_start, d_b, "grouped packed B coeffs")?;
+                acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, alpha_pows_b) * eq_w;
             }
-            if HAS_A {
-                weight += a_weight * z_eq[lambda - a_start];
+        }
+        if HAS_A {
+            let eq_w = a_weight * z_eq[lambda - a_start];
+            if !eq_w.is_zero() {
+                let a_row = lambda / z_cols;
+                let a_col = lambda % z_cols;
+                let row = a_view.row_flat(a_row)?;
+                let coeff_start = checked_mul(a_col, d_a, "grouped packed A coeff start")?;
+                let coeffs = checked_slice(row, coeff_start, d_a, "grouped packed A coeffs")?;
+                acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, alpha_pows_a) * eq_w;
             }
-            if !weight.is_zero() {
-                acc += eval_ring_at_pows_fast(&setup_flat[lambda], alpha_pows) * weight;
-            }
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    )
+        }
+    }
+    Ok(acc)
 }
 
 fn validate_group_chunk_layout(
