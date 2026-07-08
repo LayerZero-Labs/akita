@@ -353,8 +353,12 @@ impl SetupContributionFixture {
             &self.prepared.chunk_layout,
         );
         let plan = evaluator.prepare_flat().unwrap();
-        let bar_omega = plan.materialize_bar_omega();
-        let lambda_len = plan.required().checked_next_power_of_two().unwrap();
+        let bar_omega = plan.materialize_bar_omega().unwrap();
+        let lambda_len = plan
+            .required()
+            .unwrap()
+            .checked_next_power_of_two()
+            .unwrap();
         let eq_lambda: Vec<TestField> = (0..lambda_len)
             .map(|idx| test_scalar(7 + idx as u128 * 13))
             .collect();

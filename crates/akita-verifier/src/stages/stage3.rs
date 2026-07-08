@@ -63,9 +63,12 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             layout,
         );
         let plan = evaluator.prepare_flat()?;
-        let lambda_len = plan.required().checked_next_power_of_two().ok_or_else(|| {
-            AkitaError::InvalidSetup("setup product lambda length overflow".into())
-        })?;
+        let lambda_len = plan
+            .required()?
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup product lambda length overflow".into())
+            })?;
         let lambda_bits = lambda_len.trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
         let rounds = ring_bits
@@ -151,8 +154,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         T: Transcript<F>,
     {
         if ring_d == SETUP_OFFLOAD_D_SETUP {
-            let natural_field_len = stage3_offload_natural_field_len(self.plan.required(), ring_d)?;
-            ensure_setup_envelope(&setup.expanded, self.plan.required(), ring_d)?;
+            let natural_field_len =
+                stage3_offload_natural_field_len(self.plan.required()?, ring_d)?;
+            ensure_setup_envelope(&setup.expanded, self.plan.required()?, ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
                 setup.expanded.seed(),
                 setup_len,
@@ -211,11 +215,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let rho_setup = &challenges[..self.rounds];
         let (rho_y, rho_lambda) = rho_setup.split_at(self.ring_bits);
 
-        let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
+        let eq_lambda = lambda_eq_table(self.plan.required()?, rho_lambda)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
         let setup_val = setup_mle_at_eq_tables::<F, E, D>(
             &setup.expanded,
-            self.plan.required(),
+            self.plan.required()?,
             setup_eval_len,
             &eq_lambda,
             &eq_y,

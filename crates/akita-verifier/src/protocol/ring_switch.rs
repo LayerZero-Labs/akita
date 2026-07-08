@@ -15,9 +15,9 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup,
-    CommitmentRingDims, FpExtEncoding, GroupedSetupContributionStatic, LevelParams, MRowLayout,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingRole, RingVec,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
+    CommitmentRingDims, FpExtEncoding, LevelParams, MRowLayout, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationInstance, RingRole, RingVec, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
     TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
 };
 use std::ops::Range;
@@ -118,7 +118,7 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) chunk_layout: WitnessLayout,
     pub(crate) setup_contribution_groups: Vec<SetupContributionGroupInputs>,
     pub(crate) setup_contribution_inputs: SetupContributionPlanInputs<F>,
-    pub(crate) setup_contribution_static: GroupedSetupContributionStatic<F>,
+    pub(crate) setup_contribution_static: SetupContributionStatic<F>,
 }
 
 #[derive(Clone)]

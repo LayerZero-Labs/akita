@@ -401,8 +401,8 @@ where
     let layout = relation.segment_layout(lp, None)?;
     let plan =
         SetupContributionPlan::prepare(&inputs, x_challenges, None, None, &fold_gadget, &layout)?;
-    let required = plan.required();
-    let bar_omega = plan.materialize_bar_omega();
+    let required = plan.required()?;
+    let bar_omega = plan.materialize_bar_omega()?;
     Ok((required, bar_omega, alpha_pows.to_vec()))
 }
 

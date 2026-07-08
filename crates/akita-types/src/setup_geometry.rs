@@ -259,7 +259,7 @@ mod tests {
             &chunk_layout,
         )
         .expect("plan");
-        assert_eq!(required, plan.required());
+        assert_eq!(required, plan.required().unwrap());
     }
 
     #[test]
@@ -311,8 +311,8 @@ mod tests {
             &chunk_layout,
         )
         .expect("plan b");
-        assert_eq!(required, plan_a.required());
-        assert_eq!(plan_a.required(), plan_b.required());
+        assert_eq!(required, plan_a.required().unwrap());
+        assert_eq!(plan_a.required().unwrap(), plan_b.required().unwrap());
     }
 
     #[test]

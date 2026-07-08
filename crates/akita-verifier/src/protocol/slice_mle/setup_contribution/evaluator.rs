@@ -2,8 +2,7 @@
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_types::{
-    AkitaExpandedSetup, GroupedSetupContributionPlan, SetupContributionPlan,
-    SetupContributionPlanInputs, WitnessLayout,
+    AkitaExpandedSetup, SetupContributionPlan, SetupContributionPlanInputs, WitnessLayout,
 };
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
@@ -115,7 +114,7 @@ where
     pub(crate) fn prepare_grouped(
         &self,
         prepared: &RelationMatrixEvaluator<E>,
-    ) -> Result<GroupedSetupContributionPlan<E>, AkitaError> {
+    ) -> Result<SetupContributionPlan<E>, AkitaError> {
         SetupContributionPlan::finish_grouped_plan::<F>(
             &prepared.setup_contribution_static,
             self.full_vec_randomness,
@@ -167,7 +166,7 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let bar_omega = plan.materialize_bar_omega();
+    let bar_omega = plan.materialize_bar_omega()?;
     let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
     if setup_len < bar_omega.len() {
         return Err(AkitaError::InvalidSize {
