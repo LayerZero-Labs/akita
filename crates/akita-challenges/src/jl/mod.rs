@@ -4,7 +4,7 @@ use akita_field::{field_modulus, AkitaError, CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_JL_PROJECTION, CHALLENGE_JL_SEED};
 use akita_transcript::Transcript;
 
-use crate::sampler::xof::XofCursor;
+use crate::sampler::XofCursor;
 
 mod hooks;
 mod kernels;
