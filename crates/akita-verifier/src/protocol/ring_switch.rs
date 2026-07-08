@@ -23,9 +23,9 @@ use akita_types::{
 use std::ops::Range;
 
 use super::slice_mle::{
-    compute_r_contribution, high_eq_window, EStructuredSlicesEvaluator, SetupContributionEvalMode,
-    SetupContributionEvaluation, SetupContributionEvaluator, StructuredSliceMleEvaluator,
-    TStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, evaluate_setup_contribution_direct, high_eq_window,
+    EStructuredSlicesEvaluator, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
+    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 use super::validate_log_basis;
 use akita_types::validate_ring_dispatch;
@@ -169,7 +169,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
@@ -210,7 +210,7 @@ pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
@@ -233,7 +233,7 @@ fn ring_switch_verifier_core<F, E, T, const D: usize>(
 ) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let relation = replay.relation;
@@ -333,7 +333,7 @@ pub fn prepare_relation_matrix_evaluator<F, E, const D: usize>(
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
     let relation = replay.relation;
     let lp = replay.lp;
@@ -391,7 +391,7 @@ fn prepare_relation_matrix_evaluator_multi_group<F, E, const D: usize>(
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
     let relation = replay.relation;
     let lp = replay.lp;
@@ -582,7 +582,7 @@ fn prepare_challenge_evals<F, E, const D: usize>(
 ) -> Result<PreparedChallengeEvals<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
     match challenges {
         Challenges::Sparse {
@@ -637,7 +637,7 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
     validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
     let setup_contribution_inputs = SetupContributionPlanInputs::from_level_params(
@@ -870,18 +870,6 @@ where
 }
 
 impl<E: FieldCore> RelationMatrixEvaluator<E> {
-    pub(crate) fn chunk_layout(&self) -> &WitnessLayout {
-        &self.chunk_layout
-    }
-
-    pub(crate) fn setup_contribution_inputs(&self) -> &SetupContributionPlanInputs<E> {
-        &self.setup_contribution_inputs
-    }
-
-    pub(crate) fn eq_tau1(&self) -> &[E] {
-        &self.setup_contribution_inputs.eq_tau1
-    }
-
     fn group_chunks(
         &self,
         group: &RelationMatrixGroupEvaluator<E>,
@@ -914,7 +902,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
-        let layout = self.chunk_layout();
+        let layout = &self.chunk_layout;
         let d_b = self.role_dims.d_b();
         let d_d = self.role_dims.d_d();
         let alpha_pows_a = scalar_powers(alpha, D);
@@ -1026,7 +1014,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     e_structured_contribution += EStructuredSlicesEvaluator {
                         gadget_vector: &g_open,
                         challenge_block_summaries: &summaries,
-                        challenge_weight: self.eq_tau1()[0],
+                        challenge_weight: self.setup_contribution_inputs.eq_tau1[0],
                         high_eq_table: &eq_hi_e_table,
                     }
                     .evaluate();
@@ -1041,7 +1029,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         gadget_vector: &g_open,
                         challenge_block_summaries: &summaries,
                         a_row_weights: checked_slice(
-                            self.eq_tau1(),
+                            &self.setup_contribution_inputs.eq_tau1,
                             group.a_row_start,
                             group.n_a,
                             "A rows",
@@ -1070,7 +1058,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                             g1_commit: &g_commit,
                             fold_gadget: &fold_gadget,
                             a_block_summary,
-                            consistency_weight: self.eq_tau1()[0],
+                            consistency_weight: self.setup_contribution_inputs.eq_tau1[0],
                             high_eq_table: &eq_hi_z_table,
                         }
                         .evaluate();
@@ -1080,7 +1068,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         z_structured_contribution += ZDenseSlicesEvaluator {
                             g1_commit: &g_commit,
                             fold_gadget: &fold_gadget,
-                            consistency_weight: self.eq_tau1()[0],
+                            consistency_weight: self.setup_contribution_inputs.eq_tau1[0],
                             a_evals: &group.a_evals,
                             full_vec_randomness: x_challenges,
                             offset_z: chunk.offset_z,
@@ -1096,31 +1084,18 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             claim
         } else {
             let _span = tracing::info_span!("setup_contribution").entered();
-            let setup_contribution_inputs = self.setup_contribution_inputs();
             let fold_gadget = setup_fold_gadget.as_deref().unwrap_or(&[]);
-            let evaluator = SetupContributionEvaluator::new(
-                setup_contribution_inputs,
+            evaluate_setup_contribution_direct::<F, E, D>(
+                self,
                 x_challenges,
                 setup_eq_low.as_deref(),
                 setup_z_block_low_eq.as_deref(),
                 &alpha_pows_a,
+                &alpha_pows_b,
+                &alpha_pows_d,
                 fold_gadget,
-                layout,
-            );
-            match evaluator.evaluate::<D>(SetupContributionEvalMode::Direct {
                 setup,
-                relation_matrix_evaluator: self,
-                alpha_pows_b: &alpha_pows_b,
-                alpha_pows_d: &alpha_pows_d,
-            })? {
-                SetupContributionEvaluation::Direct(value) => value,
-                #[cfg(test)]
-                SetupContributionEvaluation::Recursive(_) => {
-                    return Err(AkitaError::InvalidSetup(
-                        "setup evaluator returned recursive output for direct mode".into(),
-                    ))
-                }
-            }
+            )?
         };
 
         let r_contribution = {

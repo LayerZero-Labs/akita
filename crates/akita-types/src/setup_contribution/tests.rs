@@ -148,32 +148,38 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let plan = SetupContributionPlan::prepare::<F>(
+    let groups = [SetupContributionGroupInputs {
+        e_col_offset: 0,
+        num_claims,
+        num_blocks,
+        block_len,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        log_basis,
+        n_a,
+        n_b,
+        t_cols_per_vector: n_a * depth_open * num_blocks,
+        a_row_start: 1,
+        b_row_start: 1 + n_a,
+        blocks_per_chunk,
+        chunks,
+    }];
+    let static_plan = SetupContributionPlan::prepare_static(
         &inputs,
+        &groups,
+        rows - n_d,
+        n_d,
+        num_claims * num_blocks * depth_open,
+    )
+    .unwrap();
+    let plan = SetupContributionPlan::finish_plan::<F>(
+        &static_plan,
         &full_vec_randomness,
         None,
         None,
         Some(&fold_gadget),
-        &[SetupContributionGroupInputs {
-            e_col_offset: 0,
-            num_claims,
-            num_blocks,
-            block_len,
-            depth_open,
-            depth_commit,
-            depth_fold,
-            log_basis,
-            n_a,
-            n_b,
-            t_cols_per_vector: n_a * depth_open * num_blocks,
-            a_row_start: 1,
-            b_row_start: 1 + n_a,
-            blocks_per_chunk,
-            chunks,
-        }],
-        rows - n_d,
-        n_d,
-        num_claims * num_blocks * depth_open,
+        &groups,
     )
     .unwrap();
 

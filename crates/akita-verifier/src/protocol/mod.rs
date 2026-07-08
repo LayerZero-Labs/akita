@@ -10,7 +10,6 @@ pub use core::batched_verify;
 pub use ring_switch::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
-pub(crate) use slice_mle::SetupContributionEvaluator;
 
 #[inline]
 pub(crate) fn validate_log_basis(log_basis: u32) -> Result<(), AkitaError> {

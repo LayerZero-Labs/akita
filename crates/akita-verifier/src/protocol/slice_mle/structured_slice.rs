@@ -311,7 +311,7 @@ where
         let [a0, a1] = summarize_pow2_block_carries(&eq_low, offset_lo, &r_gadget_ext)?;
         let offset_hi = offset_r >> m0;
         let high = &full_vec_randomness[m0..];
-        let eq_tau1_rows = &prepared.eq_tau1()[..rows];
+        let eq_tau1_rows = &prepared.setup_contribution_inputs.eq_tau1[..rows];
         let b0 = eval_offset_eq_interval(high, offset_hi, E::one(), eq_tau1_rows)?;
         let b1 = eval_offset_eq_interval(high, offset_hi + 1, E::one(), eq_tau1_rows)?;
         Ok(-denom * (a0 * b0 + a1 * b1))
@@ -321,7 +321,8 @@ where
             .map(|idx| {
                 let row_idx = idx / levels;
                 let level_idx = idx % levels;
-                -(prepared.eq_tau1()[row_idx] * denom).mul_base(r_gadget[level_idx])
+                -(prepared.setup_contribution_inputs.eq_tau1[row_idx] * denom)
+                    .mul_base(r_gadget[level_idx])
             })
             .collect();
         eval_offset_eq_interval(full_vec_randomness, offset_r, E::one(), &r_tail)
@@ -587,7 +588,7 @@ mod tests {
         let got = EStructuredSlicesEvaluator {
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
-            challenge_weight: p.eq_tau1()[0],
+            challenge_weight: p.setup_contribution_inputs.eq_tau1[0],
             high_eq_table: &eq_hi_e,
         }
         .evaluate();
@@ -596,7 +597,7 @@ mod tests {
         for x in 0..e_len {
             let dig = x / total_blocks;
             let blk = x % total_blocks;
-            let entry = p.eq_tau1()[0] * c_alphas[blk] * fx.g1_open[dig];
+            let entry = p.setup_contribution_inputs.eq_tau1[0] * c_alphas[blk] * fx.g1_open[dig];
             expected += entry * eq[fx.offset_e + x];
         }
         assert_eq!(got, expected);
@@ -636,7 +637,7 @@ mod tests {
         let got = TStructuredSlicesEvaluator {
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
-            a_row_weights: &p.eq_tau1()[a_start..(a_start + g.n_a)],
+            a_row_weights: &p.setup_contribution_inputs.eq_tau1[a_start..(a_start + g.n_a)],
             high_eq_table: &eq_hi_t,
         }
         .evaluate();
@@ -647,7 +648,9 @@ mod tests {
             let blk = x % total_blocks;
             let a_idx = compound_dig / g.depth_open;
             let digit_idx = compound_dig % g.depth_open;
-            let entry = p.eq_tau1()[a_start + a_idx] * c_alphas[blk] * fx.g1_open[digit_idx];
+            let entry = p.setup_contribution_inputs.eq_tau1[a_start + a_idx]
+                * c_alphas[blk]
+                * fx.g1_open[digit_idx];
             expected += entry * eq[fx.offset_t + x];
         }
         assert_eq!(got, expected);
@@ -681,7 +684,7 @@ mod tests {
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
             a_block_summary,
-            consistency_weight: p.eq_tau1()[0],
+            consistency_weight: p.setup_contribution_inputs.eq_tau1[0],
             high_eq_table: &eq_hi_z,
         }
         .evaluate();
@@ -694,8 +697,10 @@ mod tests {
             let dc = compound_dig / g.depth_fold;
             let df = compound_dig % g.depth_fold;
             let blk = global_blk % g.block_len;
-            let entry =
-                -(p.eq_tau1()[0] * fx.opening_point.a[blk] * fx.g1_commit[dc] * fx.fold_gadget[df]);
+            let entry = -(p.setup_contribution_inputs.eq_tau1[0]
+                * fx.opening_point.a[blk]
+                * fx.g1_commit[dc]
+                * fx.fold_gadget[df]);
             expected += entry * eq[fx.offset_z + x];
         }
         assert_eq!(got, expected);
@@ -717,7 +722,7 @@ mod tests {
         let got = ZDenseSlicesEvaluator {
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
-            consistency_weight: p.eq_tau1()[0],
+            consistency_weight: p.setup_contribution_inputs.eq_tau1[0],
             a_evals: &a_evals,
             full_vec_randomness: &fx.full_vec_randomness,
             offset_z: fx.offset_z,
@@ -734,8 +739,10 @@ mod tests {
             let dc = compound_dig / g.depth_fold;
             let df = compound_dig % g.depth_fold;
             let blk = global_blk % g.block_len;
-            let entry =
-                -(p.eq_tau1()[0] * fx.opening_point.a[blk] * fx.g1_commit[dc] * fx.fold_gadget[df]);
+            let entry = -(p.setup_contribution_inputs.eq_tau1[0]
+                * fx.opening_point.a[blk]
+                * fx.g1_commit[dc]
+                * fx.fold_gadget[df]);
             expected += entry * eq[fx.offset_z + x];
         }
         assert_eq!(got, expected);
@@ -763,7 +770,8 @@ mod tests {
         for idx in 0..r_len {
             let row_idx = idx / fx.r_gadget.len();
             let level_idx = idx % fx.r_gadget.len();
-            let entry = -(p.eq_tau1()[row_idx] * denom * fx.r_gadget[level_idx]);
+            let entry =
+                -(p.setup_contribution_inputs.eq_tau1[row_idx] * denom * fx.r_gadget[level_idx]);
             expected += entry * eq[fx.offset_r + idx];
         }
         assert_eq!(got, expected);

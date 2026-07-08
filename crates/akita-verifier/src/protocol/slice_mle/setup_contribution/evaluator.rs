@@ -1,129 +1,78 @@
 #[cfg(test)]
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
-use akita_types::{
-    AkitaExpandedSetup, SetupContributionPlan, SetupContributionPlanInputs, WitnessLayout,
-};
+use akita_types::{AkitaExpandedSetup, SetupContributionPlan};
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 
-pub(crate) enum SetupContributionEvalMode<'a, F: FieldCore, E: FieldCore> {
-    Direct {
-        setup: &'a AkitaExpandedSetup<F>,
-        relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-        alpha_pows_b: &'a [E],
-        alpha_pows_d: &'a [E],
-    },
-    #[cfg(test)]
-    Recursive { setup: &'a AkitaExpandedSetup<F> },
-}
-
-pub(crate) enum SetupContributionEvaluation<E> {
-    Direct(E),
-    #[cfg(test)]
-    Recursive(E),
-}
-
-pub(crate) struct SetupContributionEvaluator<'a, F: FieldCore, E: FieldCore> {
-    inputs: &'a SetupContributionPlanInputs<E>,
-    full_vec_randomness: &'a [E],
-    eq_low: Option<&'a [E]>,
-    z_block_low_eq: Option<&'a [E]>,
-    alpha_pows: &'a [E],
-    fold_gadget: &'a [F],
-    chunk_layout: &'a WitnessLayout,
-}
-
-impl<'a, F, E> SetupContributionEvaluator<'a, F, E>
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn evaluate_setup_contribution_direct<F, E, const D: usize>(
+    relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
+    full_vec_randomness: &[E],
+    eq_low: Option<&[E]>,
+    z_block_low_eq: Option<&[E]>,
+    alpha_pows_a: &[E],
+    alpha_pows_b: &[E],
+    alpha_pows_d: &[E],
+    fold_gadget: &[F],
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: ExtField<F> + MulBaseUnreduced<F>,
 {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        inputs: &'a SetupContributionPlanInputs<E>,
-        full_vec_randomness: &'a [E],
-        eq_low: Option<&'a [E]>,
-        z_block_low_eq: Option<&'a [E]>,
-        alpha_pows: &'a [E],
-        fold_gadget: &'a [F],
-        chunk_layout: &'a WitnessLayout,
-    ) -> Self {
-        Self {
-            inputs,
-            full_vec_randomness,
-            eq_low,
-            z_block_low_eq,
-            alpha_pows,
-            fold_gadget,
-            chunk_layout,
-        }
+    if alpha_pows_a.len() != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: alpha_pows_a.len(),
+        });
     }
+    validate_role_alpha_pows(
+        relation_matrix_evaluator,
+        alpha_pows_a,
+        alpha_pows_b,
+        alpha_pows_d,
+    )?;
+    let plan = SetupContributionPlan::finish_plan::<F>(
+        &relation_matrix_evaluator.setup_contribution_static,
+        full_vec_randomness,
+        eq_low,
+        z_block_low_eq,
+        (!fold_gadget.is_empty()).then_some(fold_gadget),
+        &relation_matrix_evaluator.setup_contribution_groups,
+    )?;
+    plan.evaluate_direct::<F>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
+}
 
-    pub(crate) fn evaluate<const D: usize>(
-        &self,
-        mode: SetupContributionEvalMode<'_, F, E>,
-    ) -> Result<SetupContributionEvaluation<E>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        if self.alpha_pows.len() != D {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.alpha_pows.len(),
-            });
-        }
-        match mode {
-            SetupContributionEvalMode::Direct {
-                setup,
-                relation_matrix_evaluator,
-                alpha_pows_b,
-                alpha_pows_d,
-            } => {
-                validate_role_alpha_pows(
-                    relation_matrix_evaluator,
-                    self.alpha_pows,
-                    alpha_pows_b,
-                    alpha_pows_d,
-                )?;
-                let plan = self.finish_cached_static_plan(relation_matrix_evaluator)?;
-                let value =
-                    plan.evaluate_direct::<F>(setup, self.alpha_pows, alpha_pows_b, alpha_pows_d)?;
-                Ok(SetupContributionEvaluation::Direct(value))
-            }
-            #[cfg(test)]
-            SetupContributionEvalMode::Recursive { setup } => {
-                let plan = self.prepare_single_group_plan()?;
-                let value = recursive_inner_product::<F, E, D>(&plan, setup, self.alpha_pows)?;
-                Ok(SetupContributionEvaluation::Recursive(value))
-            }
-        }
+#[cfg(test)]
+pub(crate) fn evaluate_setup_contribution_recursive<F, E, const D: usize>(
+    relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
+    full_vec_randomness: &[E],
+    eq_low: Option<&[E]>,
+    z_block_low_eq: Option<&[E]>,
+    alpha_pows: &[E],
+    fold_gadget: &[F],
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    if alpha_pows.len() != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: alpha_pows.len(),
+        });
     }
-
-    pub(crate) fn prepare_single_group_plan(&self) -> Result<SetupContributionPlan<E>, AkitaError> {
-        SetupContributionPlan::prepare_single_group(
-            self.inputs,
-            self.full_vec_randomness,
-            self.eq_low,
-            self.z_block_low_eq,
-            self.fold_gadget,
-            self.chunk_layout,
-        )
-    }
-
-    pub(crate) fn finish_cached_static_plan(
-        &self,
-        relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
-    ) -> Result<SetupContributionPlan<E>, AkitaError> {
-        SetupContributionPlan::finish_plan::<F>(
-            &relation_matrix_evaluator.setup_contribution_static,
-            self.full_vec_randomness,
-            self.eq_low,
-            self.z_block_low_eq,
-            (!self.fold_gadget.is_empty()).then_some(self.fold_gadget),
-            &relation_matrix_evaluator.setup_contribution_groups,
-        )
-    }
+    let plan = SetupContributionPlan::prepare_single_group(
+        &relation_matrix_evaluator.setup_contribution_inputs,
+        full_vec_randomness,
+        eq_low,
+        z_block_low_eq,
+        fold_gadget,
+        &relation_matrix_evaluator.chunk_layout,
+    )?;
+    recursive_inner_product::<F, E, D>(&plan, setup, alpha_pows)
 }
 
 fn validate_role_alpha_pows<E: FieldCore>(

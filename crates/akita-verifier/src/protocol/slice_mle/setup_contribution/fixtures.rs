@@ -12,7 +12,7 @@ use akita_types::{
     WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
 
-use super::{SetupContributionEvalMode, SetupContributionEvaluation, SetupContributionEvaluator};
+use super::{evaluate_setup_contribution_direct, evaluate_setup_contribution_recursive};
 use crate::protocol::ring_switch::{
     build_setup_contribution_groups, PreparedChallengeEvals, RelationMatrixEvaluator,
     RelationMatrixGroupEvaluator,
@@ -281,52 +281,31 @@ impl SetupContributionFixture {
     }
 
     pub fn compute_contribution(&self) -> TestField {
-        let setup_contribution = self.relation_matrix_evaluator.setup_contribution_inputs();
-        let evaluator = SetupContributionEvaluator::new(
-            setup_contribution,
+        evaluate_setup_contribution_direct::<TestField, TestField, TEST_RING_DIM>(
+            &self.relation_matrix_evaluator,
             &self.full_vec_randomness,
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
             &self.alpha_pows,
+            &self.alpha_pows,
+            &self.alpha_pows,
             &self.fold_gadget,
-            &self.relation_matrix_evaluator.chunk_layout,
-        );
-        match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupContributionEvalMode::Direct {
-                setup: &self.setup,
-                relation_matrix_evaluator: &self.relation_matrix_evaluator,
-                alpha_pows_b: &self.alpha_pows,
-                alpha_pows_d: &self.alpha_pows,
-            })
-            .unwrap()
-        {
-            SetupContributionEvaluation::Direct(value) => value,
-            SetupContributionEvaluation::Recursive(_) => {
-                panic!("setup evaluator returned recursive output for multi-group direct mode")
-            }
-        }
+            &self.setup,
+        )
+        .unwrap()
     }
 
     pub fn recursive_contribution(&self) -> TestField {
-        let setup_contribution = self.relation_matrix_evaluator.setup_contribution_inputs();
-        let evaluator = SetupContributionEvaluator::new(
-            setup_contribution,
+        evaluate_setup_contribution_recursive::<TestField, TestField, TEST_RING_DIM>(
+            &self.relation_matrix_evaluator,
             &self.full_vec_randomness,
             None,
             None,
             &self.alpha_pows,
             &self.fold_gadget,
-            &self.relation_matrix_evaluator.chunk_layout,
-        );
-        match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupContributionEvalMode::Recursive { setup: &self.setup })
-            .unwrap()
-        {
-            SetupContributionEvaluation::Recursive(value) => value,
-            SetupContributionEvaluation::Direct(_) => {
-                panic!("setup evaluator returned direct output for recursive mode")
-            }
-        }
+            &self.setup,
+        )
+        .unwrap()
     }
 
     pub fn assert_direct_matches_recursive(&self) {
@@ -342,17 +321,15 @@ impl SetupContributionFixture {
     /// kernel) must equal the eq-weighted materialized `bar_omega` (the generic
     /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree.
     pub fn assert_eq_eval_matches_materialized(&self) {
-        let setup_contribution = self.relation_matrix_evaluator.setup_contribution_inputs();
-        let evaluator = SetupContributionEvaluator::new(
-            setup_contribution,
+        let plan = SetupContributionPlan::prepare_single_group(
+            &self.relation_matrix_evaluator.setup_contribution_inputs,
             &self.full_vec_randomness,
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
-            &self.alpha_pows,
             &self.fold_gadget,
             &self.relation_matrix_evaluator.chunk_layout,
-        );
-        let plan = evaluator.prepare_single_group_plan().unwrap();
+        )
+        .unwrap();
         let bar_omega = plan.materialize_bar_omega().unwrap();
         let lambda_len = plan
             .required()

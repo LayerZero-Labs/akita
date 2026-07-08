@@ -6,10 +6,10 @@ use crate::{
     BasisMode, BlockOrder, Commitment, FpExtEncoding, LevelParams, RingOpeningPoint, RingVec,
 };
 use akita_algebra::{
-    ring::{eval_flat_ring_at_pows, eval_ring_at_pows},
+    ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast},
     CyclotomicRing,
 };
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
 
@@ -240,7 +240,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         alpha_pows: &[E],
     ) -> Result<E, AkitaError>
     where
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         match self {
             Self::Base(point) => point
@@ -252,7 +252,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
             Self::Ring { a, .. } => a
                 .as_ring_slice::<D>()?
                 .get(idx)
-                .map(|value| eval_ring_at_pows(value, alpha_pows))
+                .map(|value| eval_ring_at_pows_fast(value, alpha_pows))
                 .ok_or(AkitaError::InvalidProof),
         }
     }
@@ -274,7 +274,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         alpha_pows: &[E],
     ) -> Result<E, AkitaError>
     where
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         match self {
             Self::Base(point) => point
@@ -289,7 +289,10 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                     .as_ring_slice::<D>()?
                     .get(idx)
                     .ok_or(AkitaError::InvalidProof)?;
-                Ok(eval_ring_at_pows(&(*coefficient_ring * *value), alpha_pows))
+                Ok(eval_ring_at_pows_fast(
+                    &(*coefficient_ring * *value),
+                    alpha_pows,
+                ))
             }
         }
     }
@@ -304,7 +307,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     /// multiplier data does not chunk at the supplied dimension.
     pub fn eval_a_at_dyn<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         match self {
             Self::Base(point) => point
@@ -321,7 +324,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                 a.coeffs()
                     .chunks_exact(ring_d)
                     .nth(idx)
-                    .map(|chunk| eval_flat_ring_at_pows(chunk, alpha_pows))
+                    .map(|chunk| eval_flat_ring_at_pows_fast(chunk, alpha_pows))
                     .ok_or(AkitaError::InvalidProof)
             }
         }
@@ -348,7 +351,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F>,
+        E: ExtField<F> + MulBaseUnreduced<F>,
     {
         match self {
             Self::Base(point) => point
@@ -386,7 +389,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                             value.try_into().map_err(|_| AkitaError::InvalidProof)?;
                         let product = CyclotomicRing::<F, D>::from_coefficients(coeff_arr)
                             * CyclotomicRing::<F, D>::from_coefficients(value_arr);
-                        Ok(eval_ring_at_pows(&product, alpha_pows))
+                        Ok(eval_ring_at_pows_fast(&product, alpha_pows))
                     }
                 )
             }

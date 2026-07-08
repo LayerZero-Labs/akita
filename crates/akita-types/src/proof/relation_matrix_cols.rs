@@ -13,10 +13,12 @@ use crate::{
     RelationMatrixRowLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::{eval_flat_ring_at_pows, scalar_powers};
+use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_challenges::Challenges;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase};
+use akita_field::{
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
+};
 
 /// Unified relation matrix column evaluation for singleton and multi-group root relations.
 ///
@@ -42,7 +44,7 @@ pub fn compute_relation_matrix_col_evals<F, E>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
@@ -250,7 +252,7 @@ where
                 for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
-                            * eval_flat_ring_at_pows(
+                            * eval_flat_ring_at_pows_fast(
                                 &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
                                 &alpha_pows_d,
                             );
@@ -283,7 +285,7 @@ where
                 for (row_idx, eq_i) in b_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
-                            * eval_flat_ring_at_pows(
+                            * eval_flat_ring_at_pows_fast(
                                 &b_rows[row_idx][local_col * d_b..(local_col + 1) * d_b],
                                 &alpha_pows_b,
                             );
@@ -302,7 +304,7 @@ where
                 for (a_idx, eq_i) in a_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
-                            * eval_flat_ring_at_pows(
+                            * eval_flat_ring_at_pows_fast(
                                 &a_rows[a_idx][k * d_a..(k + 1) * d_a],
                                 alpha_pows_a,
                             );

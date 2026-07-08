@@ -2,7 +2,6 @@
 //! prover-side `AkitaStage3Prover`.
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use crate::protocol::SetupContributionEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
@@ -54,18 +53,14 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             relation_matrix_evaluator.depth_fold,
             relation_matrix_evaluator.log_basis,
         );
-        let layout = relation_matrix_evaluator.chunk_layout();
-        let setup_contribution_inputs = relation_matrix_evaluator.setup_contribution_inputs();
-        let evaluator = SetupContributionEvaluator::new(
-            setup_contribution_inputs,
+        let plan = SetupContributionPlan::prepare_single_group(
+            &relation_matrix_evaluator.setup_contribution_inputs,
             x_challenges,
             None,
             None,
-            &alpha_pows,
             &fold_gadget,
-            layout,
-        );
-        let plan = evaluator.prepare_single_group_plan()?;
+            &relation_matrix_evaluator.chunk_layout,
+        )?;
         let lambda_len = plan
             .required()?
             .checked_next_power_of_two()

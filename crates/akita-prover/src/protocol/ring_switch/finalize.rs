@@ -1,4 +1,5 @@
 use super::*;
+use akita_field::MulBaseUnreduced;
 use akita_types::dispatch_for_field;
 
 /// Complete the ring switch after the caller has bound the next witness.
@@ -28,7 +29,7 @@ pub fn ring_switch_finalize<F, E, T>(
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let dims = instance.role_dims();

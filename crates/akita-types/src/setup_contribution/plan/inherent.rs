@@ -1,32 +1,4 @@
 impl<E: FieldCore> SetupContributionPlan<E> {
-    #[allow(clippy::too_many_arguments)]
-    pub fn prepare<F>(
-        inputs: &SetupContributionPlanInputs<E>,
-        full_vec_randomness: &[E],
-        eq_low: Option<&[E]>,
-        z_block_low_eq: Option<&[E]>,
-        fold_gadget: Option<&[F]>,
-        groups: &[SetupContributionGroupInputs],
-        d_row_start: usize,
-        d_rows: usize,
-        d_physical_cols: usize,
-    ) -> Result<SetupContributionPlan<E>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: MulBase<F>,
-    {
-        let static_plan =
-            Self::prepare_static(inputs, groups, d_row_start, d_rows, d_physical_cols)?;
-        Self::finish_plan::<F>(
-            &static_plan,
-            full_vec_randomness,
-            eq_low,
-            z_block_low_eq,
-            fold_gadget,
-            groups,
-        )
-    }
-
     pub fn prepare_static(
         inputs: &SetupContributionPlanInputs<E>,
         groups: &[SetupContributionGroupInputs],
@@ -231,16 +203,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             blocks_per_chunk: chunk_layout.blocks_per_chunk,
             chunks: chunk_layout.chunks.clone(),
         };
-        Self::prepare::<F>(
+        let static_plan = Self::prepare_static(
             inputs,
+            std::slice::from_ref(&group),
+            d_row_start,
+            n_d_active,
+            n_cols_e,
+        )?;
+        Self::finish_plan::<F>(
+            &static_plan,
             full_vec_randomness,
             eq_low,
             z_block_low_eq,
             Some(fold_gadget),
             std::slice::from_ref(&group),
-            d_row_start,
-            n_d_active,
-            n_cols_e,
         )
     }
 
@@ -408,7 +384,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         };
 
         let required =
-            self.required_divisible_base(a_scales.ratio(), b_scales.ratio(), d_scales.ratio())?;
+            self.required_divisible_base(
+                a_scales.scales.len(),
+                b_scales.scales.len(),
+                d_scales.scales.len(),
+            )?;
         let setup_len = setup.shared_matrix().total_ring_elements_at_dyn(base_d)?;
         if required > setup_len {
             return Err(AkitaError::InvalidSetup(
@@ -607,23 +587,23 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
         let b_required = checked_mul(self.n_b, self.t_cols, "setup B footprint")?;
         let a_required = checked_mul(self.n_a, self.z_cols, "setup A footprint")?;
-        let required = checked_mul(d_required, d_scales.ratio(), "setup D base footprint")?
+        let required = checked_mul(d_required, d_scales.scales.len(), "setup D base footprint")?
             .max(checked_mul(
                 b_required,
-                b_scales.ratio(),
+                b_scales.scales.len(),
                 "setup B base footprint",
             )?)
             .max(checked_mul(
                 a_required,
-                a_scales.ratio(),
+                a_scales.scales.len(),
                 "setup A base footprint",
             )?);
         if required > 0 {
             setup_view.elem(0, required - 1)?;
         }
-        let d_scaled_weights = scaled_row_weights(&self.d_weights, d_scales.scales());
-        let b_scaled_weights = scaled_row_weights(&self.b_weights, b_scales.scales());
-        let a_scaled_weights = scaled_row_weights(&self.a_weights, a_scales.scales());
+        let d_scaled_weights = scaled_row_weights(&self.d_weights, &d_scales.scales);
+        let b_scaled_weights = scaled_row_weights(&self.b_weights, &b_scales.scales);
+        let a_scaled_weights = scaled_row_weights(&self.a_weights, &a_scales.scales);
 
         Ok(cfg_fold_reduce!(
             0..required,
@@ -669,9 +649,9 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
     ) -> E {
         let mut weight = E::zero();
 
-        let d_ratio = d_scales.ratio();
+        let d_ratio = d_scales.scales.len();
         if !self.e_eq_slice.is_empty() {
-            let d_lambda = base_lambda >> d_scales.shift();
+            let d_lambda = base_lambda >> d_scales.shift;
             if d_lambda < d_required {
                 let d_col = d_lambda % d_physical_cols;
                 let e_end = self.e_col_offset + self.e_eq_slice.len();
@@ -679,30 +659,30 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                     let d_row = d_lambda / d_physical_cols;
                     let d_start_abs = d_row * d_physical_cols + self.e_col_offset;
                     let scaled_weight =
-                        d_scaled_weights[d_row * d_ratio + (base_lambda & d_scales.mask())];
+                        d_scaled_weights[d_row * d_ratio + (base_lambda & d_scales.mask)];
                     weight += scaled_weight * self.e_eq_slice[d_lambda - d_start_abs];
                 }
             }
         }
 
-        let b_ratio = b_scales.ratio();
-        let b_lambda = base_lambda >> b_scales.shift();
+        let b_ratio = b_scales.scales.len();
+        let b_lambda = base_lambda >> b_scales.shift;
         if b_lambda < b_required {
             if let Some(b_row) = b_lambda.checked_div(self.t_cols) {
                 let b_start_abs = b_row * self.t_cols;
                 let scaled_weight =
-                    b_scaled_weights[b_row * b_ratio + (base_lambda & b_scales.mask())];
+                    b_scaled_weights[b_row * b_ratio + (base_lambda & b_scales.mask)];
                 weight += scaled_weight * self.t_eq_slice[b_lambda - b_start_abs];
             }
         }
 
-        let a_ratio = a_scales.ratio();
-        let a_lambda = base_lambda >> a_scales.shift();
+        let a_ratio = a_scales.scales.len();
+        let a_lambda = base_lambda >> a_scales.shift;
         if a_lambda < a_required {
             if let Some(a_row) = a_lambda.checked_div(self.z_cols) {
                 let a_start_abs = a_row * self.z_cols;
                 let scaled_weight =
-                    a_scaled_weights[a_row * a_ratio + (base_lambda & a_scales.mask())];
+                    a_scaled_weights[a_row * a_ratio + (base_lambda & a_scales.mask)];
                 weight += scaled_weight * self.z_eq_slice[a_lambda - a_start_abs];
             }
         }

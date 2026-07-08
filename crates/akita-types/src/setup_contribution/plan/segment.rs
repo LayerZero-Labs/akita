@@ -64,27 +64,9 @@ where
 }
 
 pub(super) struct AlphaChunkScales<E> {
-    scales: Vec<E>,
-    shift: usize,
-    mask: usize,
-}
-
-impl<E> AlphaChunkScales<E> {
-    pub(super) fn ratio(&self) -> usize {
-        self.scales.len()
-    }
-
-    pub(super) fn scales(&self) -> &[E] {
-        &self.scales
-    }
-
-    pub(super) fn shift(&self) -> usize {
-        self.shift
-    }
-
-    pub(super) fn mask(&self) -> usize {
-        self.mask
-    }
+    pub(super) scales: Vec<E>,
+    pub(super) shift: usize,
+    pub(super) mask: usize,
 }
 
 pub(super) fn alpha_chunk_scales<E: FieldCore>(
