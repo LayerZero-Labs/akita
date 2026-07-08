@@ -434,8 +434,109 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         {
             return self.evaluate_uniform_direct(setup, alpha_pows_a, d_a);
         }
+        if let Some(value) =
+            self.evaluate_divisible_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)?
+        {
+            return Ok(value);
+        }
 
         self.evaluate_packed_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d, d_a)
+    }
+
+    fn evaluate_divisible_direct<F>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        alpha_pows_a: &[E],
+        alpha_pows_b: &[E],
+        alpha_pows_d: &[E],
+    ) -> Result<Option<E>, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let base_d = alpha_pows_a
+            .len()
+            .min(alpha_pows_b.len())
+            .min(alpha_pows_d.len());
+        if base_d == 0
+            || !alpha_pows_a.len().is_multiple_of(base_d)
+            || !alpha_pows_b.len().is_multiple_of(base_d)
+            || !alpha_pows_d.len().is_multiple_of(base_d)
+        {
+            return Ok(None);
+        }
+        let base_pows = if alpha_pows_a.len() == base_d {
+            alpha_pows_a
+        } else if alpha_pows_b.len() == base_d {
+            alpha_pows_b
+        } else {
+            alpha_pows_d
+        };
+        let Some(a_scales) = alpha_chunk_scales(alpha_pows_a, base_pows) else {
+            return Ok(None);
+        };
+        let Some(b_scales) = alpha_chunk_scales(alpha_pows_b, base_pows) else {
+            return Ok(None);
+        };
+        let Some(d_scales) = alpha_chunk_scales(alpha_pows_d, base_pows) else {
+            return Ok(None);
+        };
+
+        let required =
+            self.required_divisible_base(a_scales.ratio(), b_scales.ratio(), d_scales.ratio())?;
+        let setup_len = setup.shared_matrix().total_ring_elements_at_dyn(base_d)?;
+        if required > setup_len {
+            return Err(AkitaError::InvalidSetup(
+                "shared matrix is too small for selected verifier layout".into(),
+            ));
+        }
+        let setup_view = setup.shared_matrix().ring_view_dyn(1, setup_len, base_d)?;
+        let mut acc = E::zero();
+        for group in &self.groups {
+            acc += group.evaluate_divisible_packed_direct(
+                &setup_view,
+                base_pows,
+                &a_scales,
+                &b_scales,
+                &d_scales,
+                self.d_rows,
+                self.d_physical_cols,
+            )?;
+        }
+        Ok(Some(acc))
+    }
+
+    fn required_divisible_base(
+        &self,
+        a_ratio: usize,
+        b_ratio: usize,
+        d_ratio: usize,
+    ) -> Result<usize, AkitaError> {
+        let mut required = checked_mul(
+            checked_mul(
+                self.d_rows,
+                self.d_physical_cols,
+                "grouped D setup footprint",
+            )?,
+            d_ratio,
+            "grouped D base setup footprint",
+        )?;
+        for group in &self.groups {
+            let b_required = checked_mul(group.n_b, group.t_cols, "grouped B setup footprint")?;
+            let a_required = checked_mul(group.n_a, group.z_cols, "grouped A setup footprint")?;
+            required = required
+                .max(checked_mul(
+                    b_required,
+                    b_ratio,
+                    "grouped B base setup footprint",
+                )?)
+                .max(checked_mul(
+                    a_required,
+                    a_ratio,
+                    "grouped A base setup footprint",
+                )?);
+        }
+        Ok(required)
     }
 
     fn evaluate_uniform_direct<F>(
@@ -574,6 +675,124 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_divisible_packed_direct<F>(
+        &self,
+        setup_view: &FlatRingMatrixView<'_, F>,
+        base_pows: &[E],
+        a_scales: &AlphaChunkScales<E>,
+        b_scales: &AlphaChunkScales<E>,
+        d_scales: &AlphaChunkScales<E>,
+        d_rows: usize,
+        d_physical_cols: usize,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        self.packed_segments(d_rows, d_physical_cols)?;
+        let d_required = checked_mul(d_rows, d_physical_cols, "grouped D setup footprint")?;
+        let b_required = checked_mul(self.n_b, self.t_cols, "grouped B setup footprint")?;
+        let a_required = checked_mul(self.n_a, self.z_cols, "grouped A setup footprint")?;
+        let required = checked_mul(d_required, d_scales.ratio(), "grouped D base footprint")?
+            .max(checked_mul(
+                b_required,
+                b_scales.ratio(),
+                "grouped B base footprint",
+            )?)
+            .max(checked_mul(
+                a_required,
+                a_scales.ratio(),
+                "grouped A base footprint",
+            )?);
+        if required > 0 {
+            setup_view.elem(0, required - 1)?;
+        }
+        let d_scaled_weights = scaled_row_weights(&self.d_weights, d_scales.scales());
+        let b_scaled_weights = scaled_row_weights(&self.b_weights, b_scales.scales());
+        let a_scaled_weights = scaled_row_weights(&self.a_weights, a_scales.scales());
+
+        Ok(cfg_fold_reduce!(
+            0..required,
+            E::zero,
+            |mut acc, base_lambda| {
+                let weight = self.divisible_base_weight_at(
+                    base_lambda,
+                    &a_scaled_weights,
+                    &b_scaled_weights,
+                    &d_scaled_weights,
+                    a_scales,
+                    b_scales,
+                    d_scales,
+                    d_physical_cols,
+                    d_required,
+                    b_required,
+                    a_required,
+                );
+                if !weight.is_zero() {
+                    let coeffs = setup_view.elem_in_band(0, base_lambda);
+                    acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, base_pows) * weight;
+                }
+                acc
+            },
+            |lhs, rhs| lhs + rhs
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn divisible_base_weight_at(
+        &self,
+        base_lambda: usize,
+        a_scaled_weights: &[E],
+        b_scaled_weights: &[E],
+        d_scaled_weights: &[E],
+        a_scales: &AlphaChunkScales<E>,
+        b_scales: &AlphaChunkScales<E>,
+        d_scales: &AlphaChunkScales<E>,
+        d_physical_cols: usize,
+        d_required: usize,
+        b_required: usize,
+        a_required: usize,
+    ) -> E {
+        let mut weight = E::zero();
+
+        let d_ratio = d_scales.ratio();
+        if !self.e_eq_slice.is_empty() {
+            let d_lambda = base_lambda >> d_scales.shift();
+            if d_lambda < d_required {
+                let d_col = d_lambda % d_physical_cols;
+                let e_end = self.e_col_offset + self.e_eq_slice.len();
+                if d_col >= self.e_col_offset && d_col < e_end {
+                    let d_row = d_lambda / d_physical_cols;
+                    let d_start_abs = d_row * d_physical_cols + self.e_col_offset;
+                    let scaled_weight =
+                        d_scaled_weights[d_row * d_ratio + (base_lambda & d_scales.mask())];
+                    weight += scaled_weight * self.e_eq_slice[d_lambda - d_start_abs];
+                }
+            }
+        }
+
+        let b_ratio = b_scales.ratio();
+        let b_lambda = base_lambda >> b_scales.shift();
+        if b_lambda < b_required {
+            let b_row = b_lambda / self.t_cols;
+            let b_start_abs = b_row * self.t_cols;
+            let scaled_weight = b_scaled_weights[b_row * b_ratio + (base_lambda & b_scales.mask())];
+            weight += scaled_weight * self.t_eq_slice[b_lambda - b_start_abs];
+        }
+
+        let a_ratio = a_scales.ratio();
+        let a_lambda = base_lambda >> a_scales.shift();
+        if a_lambda < a_required {
+            let a_row = a_lambda / self.z_cols;
+            let a_start_abs = a_row * self.z_cols;
+            let scaled_weight = a_scaled_weights[a_row * a_ratio + (base_lambda & a_scales.mask())];
+            weight += scaled_weight * self.z_eq_slice[a_lambda - a_start_abs];
+        }
+
+        weight
+    }
+
     fn evaluate_uniform_packed_direct<F>(
         &self,
         setup_view: &FlatRingMatrixView<'_, F>,
@@ -925,6 +1144,68 @@ where
         a_view.elem(probe / z_cols, probe % z_cols)?;
     }
     Ok(())
+}
+
+struct AlphaChunkScales<E> {
+    scales: Vec<E>,
+    shift: usize,
+    mask: usize,
+}
+
+impl<E> AlphaChunkScales<E> {
+    fn ratio(&self) -> usize {
+        self.scales.len()
+    }
+
+    fn scales(&self) -> &[E] {
+        &self.scales
+    }
+
+    fn shift(&self) -> usize {
+        self.shift
+    }
+
+    fn mask(&self) -> usize {
+        self.mask
+    }
+}
+
+fn alpha_chunk_scales<E: FieldCore>(
+    alpha_pows: &[E],
+    base_pows: &[E],
+) -> Option<AlphaChunkScales<E>> {
+    let base_d = base_pows.len();
+    if base_d == 0 || !alpha_pows.len().is_multiple_of(base_d) {
+        return None;
+    }
+    let ratio = alpha_pows.len() / base_d;
+    if ratio == 0 || !ratio.is_power_of_two() {
+        return None;
+    }
+    let mut scales = Vec::with_capacity(ratio);
+    for chunk in 0..ratio {
+        let offset = chunk * base_d;
+        let scale = alpha_pows[offset];
+        for idx in 0..base_d {
+            if alpha_pows[offset + idx] != scale * base_pows[idx] {
+                return None;
+            }
+        }
+        scales.push(scale);
+    }
+    Some(AlphaChunkScales {
+        scales,
+        shift: ratio.trailing_zeros() as usize,
+        mask: ratio - 1,
+    })
+}
+
+fn scaled_row_weights<E: FieldCore>(row_weights: &[E], scales: &[E]) -> Vec<E> {
+    let mut scaled = Vec::with_capacity(row_weights.len() * scales.len());
+    for &row_weight in row_weights {
+        scaled.extend(scales.iter().map(|&scale| row_weight * scale));
+    }
+    scaled
 }
 
 #[inline(always)]
