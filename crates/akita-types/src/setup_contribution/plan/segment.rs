@@ -1,7 +1,9 @@
 use super::super::{checked_add, checked_mul};
 use super::types::SetupContributionGroupInputs;
-use crate::layout::flat_matrix::FlatRingMatrixView;
+#[cfg(test)]
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
+use akita_algebra::ring::eval_ring_at_pows_fast;
+use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
 
@@ -20,45 +22,46 @@ pub(super) struct GroupSetupSegment<E> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn validate_packed_scan_access<F, E>(
+pub(super) fn validate_typed_packed_scan_access<E>(
     d_rows: usize,
     d_physical_cols: usize,
-    d_view: Option<&FlatRingMatrixView<'_, F>>,
+    has_d_view: bool,
+    d_len: usize,
     n_b: usize,
     t_cols: usize,
-    b_view: &FlatRingMatrixView<'_, F>,
+    b_len: usize,
     n_a: usize,
     z_cols: usize,
-    a_view: &FlatRingMatrixView<'_, F>,
+    a_len: usize,
     segments: &[GroupSetupSegment<E>],
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
     E: FieldCore,
 {
     for segment in segments {
-        if segment.has_d && d_view.is_none() {
+        if segment.has_d && !has_d_view {
             return Err(AkitaError::InvalidSetup(
                 "setup packed D scan missing D view".into(),
             ));
         }
     }
     let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
-    if d_required > 0 {
-        if let Some(d_view) = d_view {
-            let probe = d_required - 1;
-            d_view.elem(probe / d_physical_cols, probe % d_physical_cols)?;
-        }
+    if d_required > d_len {
+        return Err(AkitaError::InvalidSetup(
+            "shared D matrix is too small for selected verifier layout".into(),
+        ));
     }
     let b_required = checked_mul(n_b, t_cols, "setup B footprint")?;
-    if b_required > 0 {
-        let probe = b_required - 1;
-        b_view.elem(probe / t_cols, probe % t_cols)?;
+    if b_required > b_len {
+        return Err(AkitaError::InvalidSetup(
+            "shared B matrix is too small for selected verifier layout".into(),
+        ));
     }
     let a_required = checked_mul(n_a, z_cols, "setup A footprint")?;
-    if a_required > 0 {
-        let probe = a_required - 1;
-        a_view.elem(probe / z_cols, probe % z_cols)?;
+    if a_required > a_len {
+        return Err(AkitaError::InvalidSetup(
+            "shared A matrix is too small for selected verifier layout".into(),
+        ));
     }
     Ok(())
 }
@@ -155,15 +158,16 @@ where
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn packed_uniform_group_slice_inner_sum<
+pub(super) fn packed_uniform_group_slice_inner_sum_typed<
     F,
     E,
+    const D: usize,
     const HAS_D: bool,
     const HAS_B: bool,
     const HAS_A: bool,
 >(
     range: std::ops::Range<usize>,
-    setup_view: &FlatRingMatrixView<'_, F>,
+    setup_flat: &[CyclotomicRing<F, D>],
     alpha_pows: &[E],
     d_start: usize,
     d_weight: E,
@@ -194,8 +198,7 @@ where
                 weight += a_weight * z_eq[lambda - a_start];
             }
             if !weight.is_zero() {
-                let coeffs = setup_view.elem_in_band(0, lambda);
-                acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, alpha_pows) * weight;
+                acc += eval_ring_at_pows_fast(&setup_flat[lambda], alpha_pows) * weight;
             }
             acc
         },
@@ -205,19 +208,22 @@ where
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn packed_group_slice_inner_sum<
+pub(super) fn packed_group_slice_inner_sum_typed<
     F,
     E,
+    const D_A: usize,
+    const D_B: usize,
+    const D_D: usize,
     const HAS_D: bool,
     const HAS_B: bool,
     const HAS_A: bool,
 >(
     range: std::ops::Range<usize>,
-    d_view: Option<&FlatRingMatrixView<'_, F>>,
+    d_flat: Option<&[CyclotomicRing<F, D_D>]>,
     d_physical_cols: usize,
-    b_view: &FlatRingMatrixView<'_, F>,
+    b_flat: &[CyclotomicRing<F, D_B>],
     t_cols: usize,
-    a_view: &FlatRingMatrixView<'_, F>,
+    a_flat: &[CyclotomicRing<F, D_A>],
     z_cols: usize,
     alpha_pows_a: &[E],
     alpha_pows_b: &[E],
@@ -243,11 +249,11 @@ where
             if HAS_D {
                 let eq_w = d_weight * e_eq[lambda - d_start];
                 if !eq_w.is_zero() {
-                    if let Some(d_view) = d_view {
+                    if let Some(d_flat) = d_flat {
                         let d_row = lambda / d_physical_cols;
                         let d_col = lambda % d_physical_cols;
-                        let coeffs = d_view.elem_in_band(d_row, d_col);
-                        acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, alpha_pows_d) * eq_w;
+                        let setup_idx = d_row * d_physical_cols + d_col;
+                        acc += eval_ring_at_pows_fast(&d_flat[setup_idx], alpha_pows_d) * eq_w;
                     }
                 }
             }
@@ -256,8 +262,8 @@ where
                 if !eq_w.is_zero() {
                     let b_row = lambda / t_cols;
                     let b_col = lambda % t_cols;
-                    let coeffs = b_view.elem_in_band(b_row, b_col);
-                    acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, alpha_pows_b) * eq_w;
+                    let setup_idx = b_row * t_cols + b_col;
+                    acc += eval_ring_at_pows_fast(&b_flat[setup_idx], alpha_pows_b) * eq_w;
                 }
             }
             if HAS_A {
@@ -265,8 +271,8 @@ where
                 if !eq_w.is_zero() {
                     let a_row = lambda / z_cols;
                     let a_col = lambda % z_cols;
-                    let coeffs = a_view.elem_in_band(a_row, a_col);
-                    acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, alpha_pows_a) * eq_w;
+                    let setup_idx = a_row * z_cols + a_col;
+                    acc += eval_ring_at_pows_fast(&a_flat[setup_idx], alpha_pows_a) * eq_w;
                 }
             }
             acc

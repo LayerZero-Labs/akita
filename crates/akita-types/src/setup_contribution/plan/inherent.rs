@@ -320,7 +320,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha_pows_d: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore,
+        F: FieldCore + CanonicalField,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let d_a = alpha_pows_a.len();
@@ -341,7 +341,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             return Ok(value);
         }
 
-        self.evaluate_packed_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d, d_a)
+        self.evaluate_packed_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
     }
 
     fn evaluate_divisible_direct<F>(
@@ -352,7 +352,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha_pows_d: &[E],
     ) -> Result<Option<E>, AkitaError>
     where
-        F: FieldCore,
+        F: FieldCore + CanonicalField,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let base_d = alpha_pows_a
@@ -383,32 +383,61 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             return Ok(None);
         };
 
-        let required =
-            self.required_divisible_base(
-                a_scales.scales.len(),
-                b_scales.scales.len(),
-                d_scales.scales.len(),
-            )?;
-        let setup_len = setup.shared_matrix().total_ring_elements_at_dyn(base_d)?;
+        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Opening), F, base_d, |BASE_D| {
+            self.evaluate_divisible_direct_typed::<F, BASE_D>(
+                setup,
+                base_pows,
+                &a_scales,
+                &b_scales,
+                &d_scales,
+            )
+        })
+        .map(Some)
+    }
+
+    fn evaluate_divisible_direct_typed<F, const BASE_D: usize>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        base_pows: &[E],
+        a_scales: &AlphaChunkScales<E>,
+        b_scales: &AlphaChunkScales<E>,
+        d_scales: &AlphaChunkScales<E>,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        if base_pows.len() != BASE_D {
+            return Err(AkitaError::InvalidSize {
+                expected: BASE_D,
+                actual: base_pows.len(),
+            });
+        }
+        let required = self.required_divisible_base(
+            a_scales.scales.len(),
+            b_scales.scales.len(),
+            d_scales.scales.len(),
+        )?;
+        let setup_len = setup.shared_matrix().total_ring_elements_at::<BASE_D>()?;
         if required > setup_len {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected verifier layout".into(),
             ));
         }
-        let setup_view = setup.shared_matrix().ring_view_dyn(1, setup_len, base_d)?;
+        let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, setup_len)?;
         let mut acc = E::zero();
         for group in &self.groups {
-            acc += group.evaluate_divisible_packed_direct(
+            acc += group.evaluate_divisible_packed_direct::<F, BASE_D>(
                 &setup_view,
                 base_pows,
-                &a_scales,
-                &b_scales,
-                &d_scales,
+                a_scales,
+                b_scales,
+                d_scales,
                 self.d_rows,
                 self.d_physical_cols,
             )?;
         }
-        Ok(Some(acc))
+        Ok(acc)
     }
 
     fn required_divisible_base(
@@ -439,20 +468,40 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         ring_d: usize,
     ) -> Result<E, AkitaError>
     where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, ring_d, |D| {
+            self.evaluate_uniform_direct_typed::<F, D>(setup, alpha_pows)
+        })
+    }
+
+    fn evaluate_uniform_direct_typed<F, const D: usize>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        if alpha_pows.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: alpha_pows.len(),
+            });
+        }
         let required = self.required()?;
-        let setup_len = setup.shared_matrix().total_ring_elements_at_dyn(ring_d)?;
+        let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
         if required > setup_len {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected verifier layout".into(),
             ));
         }
-        let setup_view = setup.shared_matrix().ring_view_dyn(1, setup_len, ring_d)?;
+        let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
         let mut acc = E::zero();
         for group in &self.groups {
-            acc += group.evaluate_uniform_packed_direct(
+            acc += group.evaluate_uniform_packed_direct_typed(
                 &setup_view,
                 alpha_pows,
                 self.d_rows,
@@ -468,20 +517,69 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha_pows_a: &[E],
         alpha_pows_b: &[E],
         alpha_pows_d: &[E],
-        d_a: usize,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let d_a = alpha_pows_a.len();
+        let d_b = alpha_pows_b.len();
+        let d_d = alpha_pows_d.len();
+        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D_A| {
+            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
+                dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Opening), F, d_d, |D_D| {
+                    self.evaluate_packed_direct_typed::<F, D_A, D_B, D_D>(
+                        setup,
+                        alpha_pows_a,
+                        alpha_pows_b,
+                        alpha_pows_d,
+                    )
+                })
+            })
+        })
+    }
+
+    fn evaluate_packed_direct_typed<
+        F,
+        const D_A: usize,
+        const D_B: usize,
+        const D_D: usize,
+    >(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        alpha_pows_a: &[E],
+        alpha_pows_b: &[E],
+        alpha_pows_d: &[E],
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        if alpha_pows_a.len() != D_A {
+            return Err(AkitaError::InvalidSize {
+                expected: D_A,
+                actual: alpha_pows_a.len(),
+            });
+        }
+        if alpha_pows_b.len() != D_B {
+            return Err(AkitaError::InvalidSize {
+                expected: D_B,
+                actual: alpha_pows_b.len(),
+            });
+        }
+        if alpha_pows_d.len() != D_D {
+            return Err(AkitaError::InvalidSize {
+                expected: D_D,
+                actual: alpha_pows_d.len(),
+            });
+        }
         let mut acc = E::zero();
         for group in &self.groups {
-            acc += group.evaluate_packed_direct(
+            acc += group.evaluate_packed_direct_typed::<F, D_A, D_B, D_D>(
                 setup,
                 alpha_pows_a,
                 alpha_pows_b,
                 alpha_pows_d,
-                d_a,
                 self.d_rows,
                 self.d_physical_cols,
             )?;
@@ -569,9 +667,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
     #[allow(clippy::too_many_arguments)]
-    fn evaluate_divisible_packed_direct<F>(
+    fn evaluate_divisible_packed_direct<F, const BASE_D: usize>(
         &self,
-        setup_view: &FlatRingMatrixView<'_, F>,
+        setup_view: &RingMatrixView<'_, F, BASE_D>,
         base_pows: &[E],
         a_scales: &AlphaChunkScales<E>,
         b_scales: &AlphaChunkScales<E>,
@@ -599,8 +697,14 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                 "setup A base footprint",
             )?);
         if required > 0 {
-            setup_view.elem(0, required - 1)?;
+            let setup_flat = setup_view.as_slice();
+            if required > setup_flat.len() {
+                return Err(AkitaError::InvalidSetup(
+                    "shared matrix is too small for selected verifier layout".into(),
+                ));
+            }
         }
+        let setup_flat = setup_view.as_slice();
         let d_scaled_weights = scaled_row_weights(&self.d_weights, &d_scales.scales);
         let b_scaled_weights = scaled_row_weights(&self.b_weights, &b_scales.scales);
         let a_scaled_weights = scaled_row_weights(&self.a_weights, &a_scales.scales);
@@ -623,8 +727,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                     a_required,
                 );
                 if !weight.is_zero() {
-                    let coeffs = setup_view.elem_in_band(0, base_lambda);
-                    acc += eval_flat_ring_at_pows_fast::<F, E>(coeffs, base_pows) * weight;
+                    acc += eval_ring_at_pows_fast(&setup_flat[base_lambda], base_pows) * weight;
                 }
                 acc
             },
@@ -690,9 +793,9 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         weight
     }
 
-    fn evaluate_uniform_packed_direct<F>(
+    fn evaluate_uniform_packed_direct_typed<F, const D: usize>(
         &self,
-        setup_view: &FlatRingMatrixView<'_, F>,
+        setup_view: &RingMatrixView<'_, F, D>,
         alpha_pows: &[E],
         d_rows: usize,
         d_physical_cols: usize,
@@ -702,8 +805,11 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let (required, segments) = self.packed_segments(d_rows, d_physical_cols)?;
-        if required > 0 {
-            setup_view.elem(0, required - 1)?;
+        let setup_flat = setup_view.as_slice();
+        if required > setup_flat.len() {
+            return Err(AkitaError::InvalidSetup(
+                "shared matrix is too small for selected verifier layout".into(),
+            ));
         }
 
         let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
@@ -711,9 +817,16 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                 let segment = &segments[idx];
                 macro_rules! segment_sum {
                     ($has_d:literal, $has_b:literal, $has_a:literal) => {
-                        packed_uniform_group_slice_inner_sum::<F, E, $has_d, $has_b, $has_a>(
+                        packed_uniform_group_slice_inner_sum_typed::<
+                            F,
+                            E,
+                            D,
+                            $has_d,
+                            $has_b,
+                            $has_a,
+                        >(
                             segment.lo..segment.hi,
-                            setup_view,
+                            setup_flat,
                             alpha_pows,
                             segment.d_start_abs,
                             segment.d_weight,
@@ -745,13 +858,17 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn evaluate_packed_direct<F>(
+    fn evaluate_packed_direct_typed<
+        F,
+        const D_A: usize,
+        const D_B: usize,
+        const D_D: usize,
+    >(
         &self,
         setup: &AkitaExpandedSetup<F>,
         alpha_pows_a: &[E],
         alpha_pows_b: &[E],
         alpha_pows_d: &[E],
-        d_a: usize,
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<E, AkitaError>
@@ -759,35 +876,30 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        let d_d = alpha_pows_d.len();
-        let d_b = alpha_pows_b.len();
         let d_view = if d_rows != 0 && !self.e_eq_slice.is_empty() {
-            Some(
-                setup
-                    .shared_matrix
-                    .ring_view_dyn(d_rows, d_physical_cols, d_d)?,
-            )
+            Some(setup.shared_matrix.ring_view::<D_D>(d_rows, d_physical_cols)?)
         } else {
             None
         };
-        let b_view = setup
-            .shared_matrix
-            .ring_view_dyn(self.n_b, self.t_cols, d_b)?;
-        let a_view = setup
-            .shared_matrix
-            .ring_view_dyn(self.n_a, self.z_cols, d_a)?;
+        let b_view = setup.shared_matrix.ring_view::<D_B>(self.n_b, self.t_cols)?;
+        let a_view = setup.shared_matrix.ring_view::<D_A>(self.n_a, self.z_cols)?;
+        let d_flat = d_view.as_ref().map(|view| view.as_slice());
+        let b_flat = b_view.as_slice();
+        let a_flat = a_view.as_slice();
+        let d_len = d_flat.map_or(0, |slice| slice.len());
 
         let (_, segments) = self.packed_segments(d_rows, d_physical_cols)?;
-        validate_packed_scan_access(
+        validate_typed_packed_scan_access(
             d_rows,
             d_physical_cols,
-            d_view.as_ref(),
+            d_flat.is_some(),
+            d_len,
             self.n_b,
             self.t_cols,
-            &b_view,
+            b_flat.len(),
             self.n_a,
             self.z_cols,
-            &a_view,
+            a_flat.len(),
             &segments,
         )?;
 
@@ -796,13 +908,22 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                 let segment = &segments[idx];
                 macro_rules! segment_sum {
                     ($has_d:literal, $has_b:literal, $has_a:literal) => {
-                        packed_group_slice_inner_sum::<F, E, $has_d, $has_b, $has_a>(
+                        packed_group_slice_inner_sum_typed::<
+                            F,
+                            E,
+                            D_A,
+                            D_B,
+                            D_D,
+                            $has_d,
+                            $has_b,
+                            $has_a,
+                        >(
                             segment.lo..segment.hi,
-                            d_view.as_ref(),
+                            d_flat,
                             d_physical_cols,
-                            &b_view,
+                            b_flat,
                             self.t_cols,
-                            &a_view,
+                            a_flat,
                             self.z_cols,
                             alpha_pows_a,
                             alpha_pows_b,
