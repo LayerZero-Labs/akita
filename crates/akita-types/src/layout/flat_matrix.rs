@@ -214,6 +214,20 @@ impl<'a, F: FieldCore> FlatRingMatrixView<'a, F> {
             .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
     }
 
+    /// Coefficient slice for `(row, col)` after packed-scan layout validation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `(row, col)` is out of bounds. Packed setup scans validate
+    /// role footprints before calling this on the hot path.
+    #[inline(always)]
+    pub(crate) fn elem_in_band(&self, row: usize, col: usize) -> &[F] {
+        debug_assert!(col < self.num_cols);
+        let idx = (row * self.num_cols + col) * self.ring_d;
+        debug_assert!(idx + self.ring_d <= self.data.len());
+        &self.data[idx..idx + self.ring_d]
+    }
+
     /// Coefficients of the ring element at `(row, col)`.
     ///
     /// # Errors
