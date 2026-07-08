@@ -310,7 +310,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 }
 
 impl<E: FieldCore> GroupedSetupContributionPlan<E> {
-    pub fn evaluate_direct<F, const D: usize>(
+    pub fn evaluate_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
         alpha_pows_a: &[E],
@@ -321,26 +321,29 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        if alpha_pows_a.len() != D {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: alpha_pows_a.len(),
-            });
+        let d_a = alpha_pows_a.len();
+        let d_b = alpha_pows_b.len();
+        let d_d = alpha_pows_d.len();
+        if d_a == 0 || d_b == 0 || d_d == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup contribution role alpha powers must be non-empty".into(),
+            ));
         }
 
         if self.groups.len() == 1 {
-            self.evaluate_packed_direct::<F, D>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
+            self.evaluate_packed_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d, d_a)
         } else {
-            self.evaluate_direct_by_rows::<F, D>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
+            self.evaluate_direct_by_rows(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d, d_a)
         }
     }
 
-    fn evaluate_packed_direct<F, const D: usize>(
+    fn evaluate_packed_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
         alpha_pows_a: &[E],
         alpha_pows_b: &[E],
         alpha_pows_d: &[E],
+        d_a: usize,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
@@ -348,11 +351,12 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
     {
         let mut acc = E::zero();
         for group in &self.groups {
-            acc += group.evaluate_packed_direct::<F, D>(
+            acc += group.evaluate_packed_direct(
                 setup,
                 alpha_pows_a,
                 alpha_pows_b,
                 alpha_pows_d,
+                d_a,
                 self.d_rows,
                 self.d_physical_cols,
             )?;
@@ -360,24 +364,26 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
         Ok(acc)
     }
 
-    pub(super) fn evaluate_direct_by_rows<F, const D: usize>(
+    pub(super) fn evaluate_direct_by_rows<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
         alpha_pows_a: &[E],
         alpha_pows_b: &[E],
         alpha_pows_d: &[E],
+        d_a: usize,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        let d_d = alpha_pows_d.len();
+        let d_b = alpha_pows_b.len();
         let mut acc = E::zero();
         if self.d_rows != 0 {
-            let d_view = setup.shared_matrix.ring_view_dyn(
-                self.d_rows,
-                self.d_physical_cols,
-                alpha_pows_d.len(),
-            )?;
+            let d_view =
+                setup
+                    .shared_matrix
+                    .ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
             for group in &self.groups {
                 for (row_idx, &row_weight) in group.d_weights.iter().enumerate() {
                     if row_weight.is_zero() {
@@ -398,7 +404,7 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
         for group in &self.groups {
             let a_view = setup
                 .shared_matrix
-                .ring_view_dyn(group.n_a, group.z_cols, D)?;
+                .ring_view_dyn(group.n_a, group.z_cols, d_a)?;
             for (row_idx, &row_weight) in group.a_weights.iter().enumerate() {
                 if row_weight.is_zero() {
                     continue;
@@ -413,10 +419,9 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
                 )?;
             }
 
-            let b_view =
-                setup
-                    .shared_matrix
-                    .ring_view_dyn(group.n_b, group.t_cols, alpha_pows_b.len())?;
+            let b_view = setup
+                .shared_matrix
+                .ring_view_dyn(group.n_b, group.t_cols, d_b)?;
             for (row_idx, &row_weight) in group.b_weights.iter().enumerate() {
                 if row_weight.is_zero() {
                     continue;
@@ -437,12 +442,13 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
 }
 
 impl<E: FieldCore> GroupSetupContributionPlan<E> {
-    fn evaluate_packed_direct<F, const D: usize>(
+    fn evaluate_packed_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
         alpha_pows_a: &[E],
         alpha_pows_b: &[E],
         alpha_pows_d: &[E],
+        d_a: usize,
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<E, AkitaError>
@@ -466,10 +472,10 @@ impl<E: FieldCore> GroupSetupContributionPlan<E> {
             .ring_view_dyn(self.n_b, self.t_cols, d_b)?;
         let a_view = setup
             .shared_matrix
-            .ring_view_dyn(self.n_a, self.z_cols, D)?;
+            .ring_view_dyn(self.n_a, self.z_cols, d_a)?;
 
         let (required, segments) = self.packed_segments(d_rows, d_physical_cols)?;
-        let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
+        let setup_len = setup.shared_matrix().total_ring_elements_at_dyn(d_a)?;
         if required > setup_len {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected grouped verifier layout".into(),
@@ -490,7 +496,7 @@ impl<E: FieldCore> GroupSetupContributionPlan<E> {
                             self.t_cols,
                             &a_view,
                             self.z_cols,
-                            D,
+                            d_a,
                             alpha_pows_a,
                             alpha_pows_b,
                             alpha_pows_d,

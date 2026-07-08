@@ -1254,7 +1254,7 @@ mod tests {
             .evaluate_prepared_direct::<F, 1>(&setup, &alpha_pows)
             .unwrap();
         let got_grouped = grouped_plan
-            .evaluate_direct::<F, 1>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
+            .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
             .unwrap();
         assert_eq!(got_grouped, expected);
     }
@@ -1301,10 +1301,10 @@ mod tests {
         );
         let alpha_pows = [test_scalar(3)];
         let expected = grouped_plan
-            .evaluate_direct_by_rows::<F, 1>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
+            .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, 1)
             .unwrap();
         let got = grouped_plan
-            .evaluate_direct::<F, 1>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
+            .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
             .unwrap();
         assert_eq!(got, expected);
     }
@@ -1357,10 +1357,10 @@ mod tests {
         let alpha_pows_b = scalar_powers(alpha, D_B);
         let alpha_pows_d = scalar_powers(alpha, D_D);
         let expected = grouped_plan
-            .evaluate_direct_by_rows::<F, D>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
+            .evaluate_direct_by_rows::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d, D)
             .unwrap();
         let got = grouped_plan
-            .evaluate_direct::<F, D>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
+            .evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
             .unwrap();
         assert_eq!(got, expected);
     }

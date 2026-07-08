@@ -81,14 +81,15 @@ where
                 alpha_pows_b,
                 alpha_pows_d,
             } => {
-                validate_grouped_role_alpha_pows(prepared, alpha_pows_b, alpha_pows_d)?;
-                let plan = self.prepare_grouped(prepared)?;
-                let value = plan.evaluate_direct::<F, D>(
-                    setup,
+                validate_grouped_role_alpha_pows(
+                    prepared,
                     self.alpha_pows,
                     alpha_pows_b,
                     alpha_pows_d,
                 )?;
+                let plan = self.prepare_grouped(prepared)?;
+                let value =
+                    plan.evaluate_direct::<F>(setup, self.alpha_pows, alpha_pows_b, alpha_pows_d)?;
                 Ok(SetupEvaluation::Direct(value))
             }
             #[cfg(test)]
@@ -128,9 +129,17 @@ where
 
 fn validate_grouped_role_alpha_pows<E: FieldCore>(
     prepared: &RingSwitchDeferredRowEval<E>,
+    alpha_pows_a: &[E],
     alpha_pows_b: &[E],
     alpha_pows_d: &[E],
 ) -> Result<(), AkitaError> {
+    let d_a = prepared.role_dims.d_a();
+    if alpha_pows_a.len() != d_a {
+        return Err(AkitaError::InvalidSize {
+            expected: d_a,
+            actual: alpha_pows_a.len(),
+        });
+    }
     let d_d = prepared.role_dims.d_d();
     if alpha_pows_d.len() != d_d {
         return Err(AkitaError::InvalidSize {
