@@ -250,7 +250,7 @@ mod tests {
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
-        let plan = SetupContributionPlan::prepare::<F>(
+        let plan = SetupContributionPlan::prepare_single_group::<F>(
             &inputs,
             &full_vec_randomness,
             None,
@@ -292,7 +292,7 @@ mod tests {
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
         let mut inputs_a = inputs.clone();
         let chunk_layout = single_chunk_layout(4, 0, z_range, 0, 64, 0);
-        let plan_a = SetupContributionPlan::prepare::<F>(
+        let plan_a = SetupContributionPlan::prepare_single_group::<F>(
             &inputs_a,
             &[test_scalar(99), test_scalar(100)],
             None,
@@ -302,7 +302,7 @@ mod tests {
         )
         .expect("plan a");
         inputs_a.eq_tau1 = vec![test_scalar(1); 8];
-        let plan_b = SetupContributionPlan::prepare::<F>(
+        let plan_b = SetupContributionPlan::prepare_single_group::<F>(
             &inputs_a,
             &[test_scalar(77), test_scalar(88)],
             None,

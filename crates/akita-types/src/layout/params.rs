@@ -1383,6 +1383,6 @@ mod tests {
         }
     }
 
-    #[path = "params_grouped_tests.rs"]
-    mod grouped_tests;
+    #[path = "params_precommitted_group_tests.rs"]
+    mod precommitted_group_tests;
 }

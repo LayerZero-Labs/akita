@@ -101,7 +101,7 @@ where
     }
 
     pub(crate) fn prepare_single_group_plan(&self) -> Result<SetupContributionPlan<E>, AkitaError> {
-        SetupContributionPlan::prepare(
+        SetupContributionPlan::prepare_single_group(
             self.inputs,
             self.full_vec_randomness,
             self.eq_low,
@@ -115,7 +115,7 @@ where
         &self,
         relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
     ) -> Result<SetupContributionPlan<E>, AkitaError> {
-        SetupContributionPlan::finish_grouped_plan::<F>(
+        SetupContributionPlan::finish_plan::<F>(
             &relation_matrix_evaluator.setup_contribution_static,
             self.full_vec_randomness,
             self.eq_low,

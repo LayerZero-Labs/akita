@@ -71,7 +71,7 @@ pub(super) struct SetupContributionGroupPlan<E> {
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     #[allow(clippy::too_many_arguments)]
-    pub fn prepare_grouped<F>(
+    pub fn prepare<F>(
         inputs: &SetupContributionPlanInputs<E>,
         full_vec_randomness: &[E],
         eq_low: Option<&[E]>,
@@ -87,8 +87,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         E: MulBase<F>,
     {
         let static_plan =
-            Self::prepare_grouped_static(inputs, groups, d_row_start, d_rows, d_physical_cols)?;
-        Self::finish_grouped_plan::<F>(
+            Self::prepare_static(inputs, groups, d_row_start, d_rows, d_physical_cols)?;
+        Self::finish_plan::<F>(
             &static_plan,
             full_vec_randomness,
             eq_low,
@@ -98,7 +98,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         )
     }
 
-    pub fn prepare_grouped_static(
+    pub fn prepare_static(
         inputs: &SetupContributionPlanInputs<E>,
         groups: &[SetupContributionGroupInputs],
         d_row_start: usize,
@@ -151,7 +151,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         })
     }
 
-    pub fn finish_grouped_plan<F>(
+    pub fn finish_plan<F>(
         static_plan: &SetupContributionStatic<E>,
         full_vec_randomness: &[E],
         eq_low: Option<&[E]>,
@@ -250,11 +250,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         })
     }
 
-    /// Single-group setup-contribution plan built from the flat inputs and a
-    /// witness chunk layout. Reproduces the historical flat plan: one commitment
-    /// group at `e_col_offset = 0` spanning the full `n_cols_e` D width.
+    /// Single-commitment-group setup-contribution plan from flat inputs and a
+    /// witness chunk layout: one group at `e_col_offset = 0` spanning the full
+    /// `n_cols_e` D width.
     #[allow(clippy::too_many_arguments)]
-    pub fn prepare<F>(
+    pub fn prepare_single_group<F>(
         inputs: &SetupContributionPlanInputs<E>,
         full_vec_randomness: &[E],
         eq_low: Option<&[E]>,
@@ -302,7 +302,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             blocks_per_chunk: chunk_layout.blocks_per_chunk,
             chunks: chunk_layout.chunks.clone(),
         };
-        Self::prepare_grouped::<F>(
+        Self::prepare::<F>(
             inputs,
             full_vec_randomness,
             eq_low,

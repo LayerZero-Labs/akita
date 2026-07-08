@@ -509,7 +509,7 @@ mod tests {
         }];
         let setup_contribution_groups =
             build_setup_contribution_groups(&chunk_layout, &groups).unwrap();
-        let setup_contribution_static = SetupContributionPlan::prepare_grouped_static(
+        let setup_contribution_static = SetupContributionPlan::prepare_static(
             &setup_contribution_inputs,
             &setup_contribution_groups,
             rows - n_d,

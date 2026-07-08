@@ -12,10 +12,10 @@ use akita_field::{AkitaError, FieldCore, MulBase};
 use crate::layout::{LevelParams, RelationMatrixRowLayout};
 const POSSIBLE_CARRIES: usize = 2;
 
-#[path = "setup_contribution_grouped.rs"]
-mod setup_contribution_grouped;
+#[path = "setup_contribution_plan.rs"]
+mod setup_contribution_plan;
 
-pub use setup_contribution_grouped::{
+pub use setup_contribution_plan::{
     SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic,
 };
 
@@ -474,7 +474,7 @@ fn checked_slice<'a, T>(
 
 #[cfg(test)]
 mod tests {
-    use super::setup_contribution_grouped::SetupContributionGroupPlan;
+    use super::setup_contribution_plan::SetupContributionGroupPlan;
     use super::*;
     use crate::{
         gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, RelationMatrixRowLayout,
@@ -535,7 +535,7 @@ mod tests {
                 r_len: Some(0),
             }],
         };
-        let plan = SetupContributionPlan::prepare::<F>(
+        let plan = SetupContributionPlan::prepare_single_group::<F>(
             &inputs,
             &full_vec_randomness,
             None,
@@ -622,7 +622,7 @@ mod tests {
             .map(|idx| test_scalar(101 + idx as u128))
             .collect::<Vec<_>>();
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-        let grouped_plan = SetupContributionPlan::prepare_grouped::<F>(
+        let plan = SetupContributionPlan::prepare::<F>(
             &inputs,
             &full_vec_randomness,
             None,
@@ -651,7 +651,7 @@ mod tests {
         )
         .unwrap();
 
-        let setup_len = grouped_plan.required().unwrap();
+        let setup_len = plan.required().unwrap();
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 0,
@@ -668,15 +668,15 @@ mod tests {
             ),
         );
         let alpha_pows = [test_scalar(3)];
-        let expected = grouped_plan
+        let expected = plan
             .evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, 1)
             .unwrap();
-        let got_grouped = grouped_plan
+        let got = plan
             .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
             .unwrap();
-        assert_eq!(got_grouped, expected);
+        assert_eq!(got, expected);
 
-        let bar_omega = grouped_plan.materialize_bar_omega().unwrap();
+        let bar_omega = plan.materialize_bar_omega().unwrap();
         let setup_view = setup
             .shared_matrix()
             .ring_view::<1>(1, bar_omega.len())
@@ -686,7 +686,7 @@ mod tests {
             .zip(setup_view.as_slice())
             .map(|(w, ring)| eval_ring_at_pows(ring, &alpha_pows) * *w)
             .sum();
-        assert_eq!(tie, got_grouped);
+        assert_eq!(tie, got);
     }
 
     #[test]
