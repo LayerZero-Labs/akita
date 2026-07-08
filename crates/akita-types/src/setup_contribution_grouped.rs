@@ -442,6 +442,7 @@ impl<E: FieldCore> GroupedSetupContributionPlan<E> {
 }
 
 impl<E: FieldCore> GroupSetupContributionPlan<E> {
+    #[allow(clippy::too_many_arguments)]
     fn evaluate_packed_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
@@ -507,7 +508,6 @@ impl<E: FieldCore> GroupSetupContributionPlan<E> {
                             self.t_cols,
                             &a_view,
                             self.z_cols,
-                            d_a,
                             alpha_pows_a,
                             alpha_pows_b,
                             alpha_pows_d,
@@ -689,6 +689,7 @@ struct GroupSetupSegment<E> {
     a_weight: E,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_packed_scan_access<F, E>(
     d_rows: usize,
     d_physical_cols: usize,
@@ -742,7 +743,6 @@ fn packed_group_slice_inner_sum<F, E, const HAS_D: bool, const HAS_B: bool, cons
     t_cols: usize,
     a_view: &FlatRingMatrixView<'_, F>,
     z_cols: usize,
-    d_a: usize,
     alpha_pows_a: &[E],
     alpha_pows_b: &[E],
     alpha_pows_d: &[E],
