@@ -1,11 +1,8 @@
-use crate::protocol::ring_switch::build_setup_contribution_groups;
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{
-    eq_eval_at_index, eval_offset_eq_interval, high_eq_window, summarize_pow2_block_carries,
-};
+use akita_algebra::offset_eq::{eval_offset_eq_interval, summarize_pow2_block_carries};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
@@ -346,7 +343,9 @@ mod tests {
         SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
     };
 
-    use crate::protocol::ring_switch::RingSwitchDeferredRowGroupEval;
+    use crate::protocol::ring_switch::{
+        build_setup_contribution_groups, RingSwitchDeferredRowGroupEval,
+    };
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
