@@ -1,4 +1,4 @@
-//! Grouped root-batch schedule planning.
+//! Multi-group root-batch schedule planning.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -173,7 +173,7 @@ pub(crate) fn group_root_params_from_layout(
     })
 }
 
-struct GroupedRootCandidateCtx<'a> {
+struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
@@ -369,7 +369,7 @@ pub(crate) fn multi_group_root_next_w_len(
 }
 
 fn multi_group_root_main_level_params_candidate(
-    ctx: &GroupedRootCandidateCtx<'_>,
+    ctx: &MultiGroupRootCandidateCtx<'_>,
     main_num_polys: usize,
     log_basis: u32,
     m_vars: usize,
@@ -490,7 +490,7 @@ fn multi_group_root_main_level_params_candidate(
         field_bits_hint: 0,
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
-        // Grouped root-direct ships raw witnesses; chunked layout is orthogonal
+        // Multi-group root-direct ships raw witnesses; chunked layout is orthogonal
         // and not used by the multi-group precommit path.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: ctx.precommitted_groups.to_vec(),
@@ -519,7 +519,7 @@ fn compute_multi_group_root_direct_level_params(
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let main_num_polys = key.final_group.num_polynomials();
     let main_num_vars = key.final_group.num_vars();
-    let candidate_ctx = GroupedRootCandidateCtx {
+    let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
         fold_challenge_shape,
@@ -660,7 +660,7 @@ pub fn find_group_batch_schedule(
         fold_challenge_shape,
     )?;
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let candidate_ctx = GroupedRootCandidateCtx {
+    let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
         fold_challenge_shape,

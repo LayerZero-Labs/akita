@@ -68,7 +68,7 @@ impl SetupContributionShape {
         }
     }
 
-    pub fn recursive_multigroup() -> Self {
+    pub fn recursive_multi_group() -> Self {
         Self {
             num_blocks: 8,
             num_claims: 3,
@@ -302,7 +302,7 @@ impl SetupContributionFixture {
         {
             SetupContributionEvaluation::Direct(value) => value,
             SetupContributionEvaluation::Recursive(_) => {
-                panic!("setup evaluator returned recursive output for grouped direct mode")
+                panic!("setup evaluator returned recursive output for multi-group direct mode")
             }
         }
     }

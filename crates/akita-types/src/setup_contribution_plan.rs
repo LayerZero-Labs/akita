@@ -35,7 +35,7 @@ pub struct SetupContributionPlan<E> {
     pub(super) d_physical_cols: usize,
 }
 
-/// Tau1-derived grouped setup weights cached at ring-switch prepare time.
+/// Tau1-derived setup weights cached at ring-switch prepare time.
 #[derive(Clone)]
 pub struct SetupContributionStatic<E> {
     pub(super) groups: Vec<SetupContributionGroupStatic<E>>,
@@ -1362,7 +1362,7 @@ fn validate_group_chunk_layout(
         || !group.blocks_per_chunk.is_power_of_two()
     {
         return Err(AkitaError::InvalidSetup(
-            "malformed grouped witness chunk layout".into(),
+            "malformed setup witness chunk layout".into(),
         ));
     }
     if checked_mul(
@@ -1377,7 +1377,7 @@ fn validate_group_chunk_layout(
     }
     if group.chunks.len() > 1 && num_groups != 1 {
         return Err(AkitaError::InvalidSetup(
-            "multi-chunk grouped setup contribution requires exactly one group".into(),
+            "multi-chunk setup contribution requires exactly one group".into(),
         ));
     }
     Ok(())

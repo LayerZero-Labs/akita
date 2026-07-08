@@ -29,9 +29,9 @@ pub struct RingRelationOpeningCounts {
     pub num_t_vectors: usize,
 }
 
-/// Per-group witness segment ring-column counts in segment-type-major emission order.
+/// Multi-group witness segment ring-column counts in segment-type-major emission order.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GroupedRingRelationSegmentLengths {
+pub struct MultiGroupRingRelationSegmentLengths {
     pub z_lens: Vec<usize>,
     pub e_lens: Vec<usize>,
     pub t_lens: Vec<usize>,
@@ -91,7 +91,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
-) -> Result<GroupedRingRelationSegmentLengths, AkitaError> {
+) -> Result<MultiGroupRingRelationSegmentLengths, AkitaError> {
     if !lp.has_precommitted_groups() {
         return Err(AkitaError::InvalidSetup(
             "multi-group ring-relation segment lengths require precommitted groups".to_string(),
@@ -162,7 +162,7 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         )?;
     }
 
-    Ok(GroupedRingRelationSegmentLengths {
+    Ok(MultiGroupRingRelationSegmentLengths {
         z_lens,
         e_lens,
         t_lens,
@@ -544,7 +544,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             // per-group widths already in that order. The per-chunk block-window
             // fields (`blocks_per_chunk`, `global_block_base`) are inert here:
             // each group is a single, non-windowed segment stride.
-            let GroupedRingRelationSegmentLengths {
+            let MultiGroupRingRelationSegmentLengths {
                 z_lens,
                 e_lens,
                 t_lens,

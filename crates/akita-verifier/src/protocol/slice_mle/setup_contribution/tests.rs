@@ -7,8 +7,8 @@ fn setup_contribution_matches_recursive_on_root_fixture() {
 }
 
 #[test]
-fn setup_contribution_matches_recursive_on_recursive_multigroup_fixture() {
-    SetupContributionFixture::from_shape(&SetupContributionShape::recursive_multigroup())
+fn setup_contribution_matches_recursive_on_recursive_multi_group_fixture() {
+    SetupContributionFixture::from_shape(&SetupContributionShape::recursive_multi_group())
         .assert_direct_matches_recursive();
 }
 
@@ -16,7 +16,7 @@ fn setup_contribution_matches_recursive_on_recursive_multigroup_fixture() {
 fn eq_eval_matches_materialized_bar_omega() {
     SetupContributionFixture::from_shape(&SetupContributionShape::root_single_point())
         .assert_eq_eval_matches_materialized();
-    SetupContributionFixture::from_shape(&SetupContributionShape::recursive_multigroup())
+    SetupContributionFixture::from_shape(&SetupContributionShape::recursive_multi_group())
         .assert_eq_eval_matches_materialized();
 }
 

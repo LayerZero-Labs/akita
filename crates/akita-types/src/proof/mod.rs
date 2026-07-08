@@ -65,7 +65,7 @@ pub use relation::{
 pub use relation_matrix_cols::compute_relation_matrix_col_evals;
 pub use ring_relation::{
     multi_group_ring_relation_segment_lengths, ring_relation_segment_lengths,
-    GroupedRingRelationSegmentLengths, RingRelationInstance, RingRelationOpeningCounts,
+    MultiGroupRingRelationSegmentLengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
