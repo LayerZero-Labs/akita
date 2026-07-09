@@ -46,6 +46,34 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             ));
         }
 
+        if a_projection.is_identity() && b_projection.is_identity() && d_projection.is_identity() {
+            let (_, segments) = self.packed_segments(d_rows, d_physical_cols)?;
+            let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
+                .map(|idx| {
+                    let segment = &segments[idx];
+                    dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
+                        identity_base_ring_segment_inner_sum_typed::<
+                            F,
+                            E,
+                            BASE_D,
+                            HAS_D,
+                            HAS_B,
+                            HAS_A,
+                        >(
+                            segment.lo..segment.hi,
+                            setup_flat,
+                            base_pows,
+                            segment,
+                            &self.e_eq_slice,
+                            &self.t_eq_slice,
+                            &self.z_eq_slice,
+                        )
+                    })
+                })
+                .collect();
+            return Ok(segment_sums.into_iter().sum());
+        }
+
         let segments = self.base_ring_segments(
             a_projection,
             b_projection,

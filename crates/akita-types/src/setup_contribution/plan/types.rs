@@ -118,6 +118,8 @@ pub(crate) struct SetupContributionGroupStatic<E> {
     pub(super) z_cols: usize,
     pub(super) n_a: usize,
     pub(super) n_b: usize,
+    pub(super) required: usize,
+    pub(super) segments: Vec<GroupSetupSegment<E>>,
     pub(super) a_weights: Vec<E>,
     pub(super) b_weights: Vec<E>,
 }

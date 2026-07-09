@@ -418,6 +418,54 @@ where
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
+pub(super) fn identity_base_ring_segment_inner_sum_typed<
+    F,
+    E,
+    const D: usize,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+>(
+    range: std::ops::Range<usize>,
+    setup_flat: &[CyclotomicRing<F, D>],
+    alpha_pows: &[E],
+    segment: &GroupSetupSegment<E>,
+    e_eq: &[E],
+    t_eq: &[E],
+    z_eq: &[E],
+) -> E
+where
+    F: FieldCore,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    if range.len() >= PARALLEL_BASE_RING_SEGMENT_MIN_LEN {
+        return cfg_fold_reduce!(
+            range,
+            E::zero,
+            |mut acc, setup_idx| {
+                let weight =
+                    segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
+                if !weight.is_zero() {
+                    acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
+                }
+                acc
+            },
+            |lhs, rhs| lhs + rhs
+        );
+    }
+
+    let mut acc = E::zero();
+    for setup_idx in range {
+        let weight = segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
+        if !weight.is_zero() {
+            acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
+        }
+    }
+    acc
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
 fn base_ring_segment_weight_at<
     E,
     const HAS_D: bool,

@@ -40,12 +40,34 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     "setup B rows",
                 )?
                 .to_vec();
+                let e_cols = group
+                    .num_claims
+                    .checked_mul(group.num_blocks)
+                    .and_then(|cols| cols.checked_mul(group.depth_open))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup E active width overflow".into())
+                    })?;
+                let (required, segments) = build_packed_segments(
+                    group.e_col_offset,
+                    e_cols,
+                    t_cols,
+                    z_cols,
+                    group.n_a,
+                    group.n_b,
+                    &a_weights,
+                    &b_weights,
+                    &d_weights,
+                    d_rows,
+                    d_physical_cols,
+                )?;
                 Ok(SetupContributionGroupStatic {
                     e_col_offset: group.e_col_offset,
                     t_cols,
                     z_cols,
                     n_a: group.n_a,
                     n_b: group.n_b,
+                    required,
+                    segments,
                     a_weights,
                     b_weights,
                 })
@@ -147,27 +169,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let a_weights = static_group.a_weights.clone();
                 let b_weights = static_group.b_weights.clone();
                 let d_weights = static_plan.d_weights.clone();
-                let (required, segments) = build_packed_segments(
-                    static_group.e_col_offset,
-                    e_eq_slice.len(),
-                    static_group.t_cols,
-                    static_group.z_cols,
-                    static_group.n_a,
-                    static_group.n_b,
-                    &a_weights,
-                    &b_weights,
-                    &d_weights,
-                    static_plan.d_rows,
-                    static_plan.d_physical_cols,
-                )?;
                 Ok(SetupContributionGroupPlan {
                     e_col_offset: static_group.e_col_offset,
                     t_cols: static_group.t_cols,
                     z_cols: static_group.z_cols,
                     n_a: static_group.n_a,
                     n_b: static_group.n_b,
-                    required,
-                    segments,
+                    required: static_group.required,
+                    segments: static_group.segments.clone(),
                     e_eq_slice,
                     t_eq_slice,
                     z_eq_slice,
