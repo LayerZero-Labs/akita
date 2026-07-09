@@ -46,15 +46,38 @@ parallel = [
 ]
 schedules-default = ["akita-config/schedules-default"]
 profile-ci = [
-  "akita-config/schedules-fp32-d128-onehot",
-  "akita-config/schedules-fp64-d128-onehot",
-  "akita-config/schedules-fp128-d64-onehot",
-  "akita-config/schedules-fp128-d64-onehot-tensor",
-  "akita-config/schedules-fp128-d64-full",
-  "akita-config/schedules-fp128-d64-onehot-multi-chunk",
+  "profile-ci-registry",
+  "mode-dense-fp128-d64",
+  "mode-onehot-fp128-d64",
+  "mode-onehot-fp128-d64-tensor",
+  "mode-onehot-fp128-d64-multi-chunk-w2r2",
+  "mode-onehot-fp128-d64-multi-chunk-w4r2",
+  "mode-onehot-fp128-d64-multi-chunk-w8r2",
+  "mode-onehot-fp32-d128",
+  "mode-onehot-fp64-d128",
+]
+# Selects the CI mode registry in examples/profile/modes.rs (a curated,
+# individually-gated subset) instead of the full local-dev registry. CI jobs
+# enable this plus only the `mode-*` features their matrix cases exercise, so
+# unused generic prover/verifier instantiations are never monomorphized.
+profile-ci-registry = []
+# Each mirrors one CI profile mode in examples/profile/modes.rs. Forwards to
+# the existing akita-config schedule-table feature so the mode's
+# `CommitmentConfig::runtime_schedule` has data to look up.
+mode-dense-fp128-d64 = ["akita-config/schedules-fp128-d64-full"]
+mode-onehot-fp128-d64 = ["akita-config/schedules-fp128-d64-onehot"]
+mode-onehot-fp128-d64-tensor = ["akita-config/schedules-fp128-d64-onehot-tensor"]
+mode-onehot-fp128-d64-multi-chunk-w2r2 = [
   "akita-config/schedules-fp128-d64-onehot-multi-chunk-w2r2",
+]
+mode-onehot-fp128-d64-multi-chunk-w4r2 = [
   "akita-config/schedules-fp128-d64-onehot-multi-chunk-w4r2",
 ]
+mode-onehot-fp128-d64-multi-chunk-w8r2 = [
+  "akita-config/schedules-fp128-d64-onehot-multi-chunk",
+]
+mode-onehot-fp32-d128 = ["akita-config/schedules-fp32-d128-onehot"]
+mode-onehot-fp64-d128 = ["akita-config/schedules-fp64-d128-onehot"]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [
   "akita-transcript/logging-transcript",
