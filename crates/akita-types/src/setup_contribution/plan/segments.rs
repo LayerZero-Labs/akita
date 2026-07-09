@@ -21,7 +21,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             d_physical_cols,
         )?;
         self.required = required;
-        self.segments = segments;
+        self.segments = segments.into();
         Ok(())
     }
 
@@ -47,7 +47,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                 self.z_cols,
             )?
         );
-        Ok((self.required, &self.segments))
+        Ok((self.required, self.segments.as_ref()))
     }
 }
 

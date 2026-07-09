@@ -881,8 +881,22 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let d_b = self.role_dims.d_b();
         let d_d = self.role_dims.d_d();
         let alpha_pows_a = scalar_powers(alpha, D);
-        let alpha_pows_b = scalar_powers(alpha, d_b);
-        let alpha_pows_d = scalar_powers(alpha, d_d);
+        let alpha_pows_b_storage;
+        let alpha_pows_b: &[E] = if d_b == D {
+            &alpha_pows_a
+        } else {
+            alpha_pows_b_storage = scalar_powers(alpha, d_b);
+            &alpha_pows_b_storage
+        };
+        let alpha_pows_d_storage;
+        let alpha_pows_d: &[E] = if d_d == D {
+            &alpha_pows_a
+        } else if d_d == d_b {
+            alpha_pows_b
+        } else {
+            alpha_pows_d_storage = scalar_powers(alpha, d_d);
+            &alpha_pows_d_storage
+        };
 
         let mut e_structured_contribution = E::zero();
         let mut t_structured_contribution = E::zero();
@@ -1082,8 +1096,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 setup_eq_low.as_deref(),
                 setup_z_block_low_eq.as_deref(),
                 &alpha_pows_a,
-                &alpha_pows_b,
-                &alpha_pows_d,
+                alpha_pows_b,
+                alpha_pows_d,
                 fold_gadget,
                 setup,
             )?

@@ -3,6 +3,7 @@ use crate::{
     RelationMatrixRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessLayout,
 };
 use akita_field::{AkitaError, FieldCore};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SetupContributionGroupInputs {
@@ -108,7 +109,7 @@ pub struct SetupContributionStatic<E> {
     pub(super) groups: Vec<SetupContributionGroupStatic<E>>,
     pub(super) d_rows: usize,
     pub(super) d_physical_cols: usize,
-    pub(super) d_weights: Vec<E>,
+    pub(super) d_weights: Arc<[E]>,
 }
 
 impl<E> SetupContributionStatic<E> {
@@ -133,9 +134,9 @@ pub(crate) struct SetupContributionGroupStatic<E> {
     pub(super) n_a: usize,
     pub(super) n_b: usize,
     pub(super) required: usize,
-    pub(super) segments: Vec<GroupSetupSegment<E>>,
-    pub(super) a_row_weights: Vec<E>,
-    pub(super) b_weights: Vec<E>,
+    pub(super) segments: Arc<[GroupSetupSegment<E>]>,
+    pub(super) a_row_weights: Arc<[E]>,
+    pub(super) b_weights: Arc<[E]>,
 }
 
 pub(crate) struct SetupContributionGroupPlan<E> {
@@ -145,11 +146,11 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) n_a: usize,
     pub(crate) n_b: usize,
     pub(crate) required: usize,
-    pub(crate) segments: Vec<GroupSetupSegment<E>>,
+    pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
     pub(crate) e_eq_slice: Vec<E>,
     pub(crate) t_eq_slice: Vec<E>,
     pub(crate) z_eq_slice: Vec<E>,
-    pub(crate) a_row_weights: Vec<E>,
-    pub(crate) b_weights: Vec<E>,
-    pub(crate) d_weights: Vec<E>,
+    pub(crate) a_row_weights: Arc<[E]>,
+    pub(crate) b_weights: Arc<[E]>,
+    pub(crate) d_weights: Arc<[E]>,
 }

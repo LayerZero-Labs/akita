@@ -33,9 +33,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let d_d = alpha_pows_d.len();
         let base_d = role_alpha_base_len(d_a, d_b, d_d)?;
         let base_pows = alpha_pows_a.get(..base_d).ok_or(AkitaError::InvalidProof)?;
-        let a_projection = role_projection(alpha_pows_a, base_pows).ok_or_else(|| {
-            AkitaError::InvalidSetup("A alpha powers do not decompose over base dimension".into())
-        })?;
+        let a_projection = if d_a == base_d {
+            RoleProjection::identity()
+        } else {
+            role_projection(alpha_pows_a, base_pows).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "A alpha powers do not decompose over base dimension".into(),
+                )
+            })?
+        };
         let b_projection = role_projection(alpha_pows_b, base_pows).ok_or_else(|| {
             AkitaError::InvalidSetup("B alpha powers do not decompose over base dimension".into())
         })?;

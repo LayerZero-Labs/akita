@@ -299,6 +299,15 @@ pub(super) struct RoleProjection<E> {
 
 impl<E: FieldCore> RoleProjection<E> {
     #[inline(always)]
+    pub(super) fn identity() -> Self {
+        Self {
+            scales: vec![E::one()],
+            shift: 0,
+            mask: 0,
+        }
+    }
+
+    #[inline(always)]
     pub(super) fn ratio(&self) -> usize {
         self.scales.len()
     }
@@ -320,6 +329,9 @@ pub(super) fn role_projection<E: FieldCore>(
     let ratio = alpha_pows.len() / base_d;
     if ratio == 0 || !ratio.is_power_of_two() {
         return None;
+    }
+    if ratio == 1 {
+        return (alpha_pows == base_pows).then(RoleProjection::identity);
     }
     let mut scales = Vec::with_capacity(ratio);
     for chunk in 0..ratio {

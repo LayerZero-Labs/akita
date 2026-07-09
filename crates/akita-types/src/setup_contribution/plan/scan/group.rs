@@ -49,10 +49,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
 
         if a_projection.is_identity() && b_projection.is_identity() && d_projection.is_identity() {
             let (_, segments) = self.packed_segments(d_rows, d_physical_cols)?;
-            let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
-                .map(|idx| {
+            let sum = cfg_fold_reduce!(
+                0..segments.len(),
+                E::zero,
+                |mut acc, idx| {
                     let segment = &segments[idx];
-                    dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
+                    acc += dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
                         identity_base_ring_segment_inner_sum_typed::<
                             F,
                             E,
@@ -69,10 +71,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                             &self.t_eq_slice,
                             &self.z_eq_slice,
                         )
-                    })
-                })
-                .collect();
-            return Ok(segment_sums.into_iter().sum());
+                    });
+                    acc
+                },
+                |lhs, rhs| lhs + rhs
+            );
+            return Ok(sum);
         }
 
         if let Some(result) = dispatch_projected_ratios!(
@@ -113,39 +117,44 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             a_projection,
             |D_IDENTITY, B_IDENTITY, A_IDENTITY| {
                 let segment_slice = segments.as_slice();
-                let segment_sums: Vec<E> = cfg_into_iter!(0..segment_slice.len())
-                    .map(|idx| {
+                let sum = cfg_fold_reduce!(
+                    0..segment_slice.len(),
+                    E::zero,
+                    |mut acc, idx| {
                         let segment = &segment_slice[idx];
-                        dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
-                            base_ring_segment_inner_sum_typed::<
-                                F,
-                                E,
-                                BASE_D,
-                                HAS_D,
-                                HAS_B,
-                                HAS_A,
-                                D_IDENTITY,
-                                B_IDENTITY,
-                                A_IDENTITY,
-                            >(
-                                segment.lo..segment.hi,
-                                setup_flat,
-                                base_pows,
-                                segment,
-                                &self.e_eq_slice,
-                                &self.t_eq_slice,
-                                &self.z_eq_slice,
-                                d_projection,
-                                b_projection,
-                                a_projection,
-                                &d_weights,
-                                &b_weights,
-                                &a_row_weights,
-                            )
-                        })
-                    })
-                    .collect();
-                Ok(segment_sums.into_iter().sum())
+                        acc +=
+                            dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
+                                base_ring_segment_inner_sum_typed::<
+                                    F,
+                                    E,
+                                    BASE_D,
+                                    HAS_D,
+                                    HAS_B,
+                                    HAS_A,
+                                    D_IDENTITY,
+                                    B_IDENTITY,
+                                    A_IDENTITY,
+                                >(
+                                    segment.lo..segment.hi,
+                                    setup_flat,
+                                    base_pows,
+                                    segment,
+                                    &self.e_eq_slice,
+                                    &self.t_eq_slice,
+                                    &self.z_eq_slice,
+                                    d_projection,
+                                    b_projection,
+                                    a_projection,
+                                    &d_weights,
+                                    &b_weights,
+                                    &a_row_weights,
+                                )
+                            });
+                        acc
+                    },
+                    |lhs, rhs| lhs + rhs
+                );
+                Ok(sum)
             }
         )
     }
@@ -181,10 +190,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             required,
         )?;
         let segment_slice = segments.as_slice();
-        let segment_sums: Vec<E> = cfg_into_iter!(0..segment_slice.len())
-            .map(|idx| {
+        let sum = cfg_fold_reduce!(
+            0..segment_slice.len(),
+            E::zero,
+            |mut acc, idx| {
                 let segment = &segment_slice[idx];
-                dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
+                acc += dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
                     projected_base_ring_segment_inner_sum_typed::<
                         F,
                         E,
@@ -207,10 +218,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                         &b_projection.scales,
                         &a_projection.scales,
                     )
-                })
-            })
-            .collect();
-        Ok(segment_sums.into_iter().sum())
+                });
+                acc
+            },
+            |lhs, rhs| lhs + rhs
+        );
+        Ok(sum)
     }
 
     #[allow(clippy::too_many_arguments)]

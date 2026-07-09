@@ -550,9 +550,15 @@ fn setup_role_projection<E: FieldCore>(
             "{role} setup-index weight projection ratio must be a non-zero power of two"
         )));
     }
+    if ratio == 1 {
+        return Ok(SetupRoleProjection {
+            ratio,
+            scales: vec![E::one()],
+        });
+    }
 
     let role_pows = scalar_powers(alpha, role_dim);
-    let base_pows = scalar_powers(alpha, setup_ring_dim);
+    let base_pows = &role_pows[..setup_ring_dim];
     let mut scales = Vec::with_capacity(ratio);
     for lane in 0..ratio {
         let offset = lane * setup_ring_dim;

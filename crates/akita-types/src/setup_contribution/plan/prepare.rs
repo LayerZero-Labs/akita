@@ -8,10 +8,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<SetupContributionStatic<E>, AkitaError> {
-        let d_weights = if d_rows == 0 {
-            Vec::new()
+        let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
+            Vec::new().into()
         } else {
-            checked_slice(&inputs.eq_tau1, d_row_start, d_rows, "setup D rows")?.to_vec()
+            checked_slice(&inputs.eq_tau1, d_row_start, d_rows, "setup D rows")?
+                .to_vec()
+                .into()
         };
         let num_groups = groups.len();
         let static_groups = groups
@@ -26,20 +28,22 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .block_len
                     .checked_mul(group.depth_commit)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                let a_row_weights = checked_slice(
+                let a_row_weights: std::sync::Arc<[E]> = checked_slice(
                     &inputs.eq_tau1,
                     group.a_row_start,
                     group.n_a,
                     "setup A rows",
                 )?
-                .to_vec();
-                let b_weights = checked_slice(
+                .to_vec()
+                .into();
+                let b_weights: std::sync::Arc<[E]> = checked_slice(
                     &inputs.eq_tau1,
                     group.b_row_start,
                     group.n_b,
                     "setup B rows",
                 )?
-                .to_vec();
+                .to_vec()
+                .into();
                 let e_cols = group
                     .num_claims
                     .checked_mul(group.num_blocks)
@@ -67,7 +71,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     n_a: group.n_a,
                     n_b: group.n_b,
                     required,
-                    segments,
+                    segments: segments.into(),
                     a_row_weights,
                     b_weights,
                 })

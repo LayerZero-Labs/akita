@@ -78,21 +78,27 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 acc += value;
             } else {
                 let (_, segments) = group.packed_segments(self.d_rows, self.d_physical_cols)?;
-                let segment_sums: Vec<Result<E, AkitaError>> = cfg_into_iter!(0..segments.len())
-                    .map(|idx| {
+                let group_sum = cfg_fold_reduce!(
+                    0..segments.len(),
+                    || Ok::<E, AkitaError>(E::zero()),
+                    |acc, idx| {
+                        let acc = acc?;
                         let segment = &segments[idx];
-                        setup_index_weight_segment_mle(
+                        let value = setup_index_weight_segment_mle(
                             rho_setup_idx,
                             segment,
                             &group.e_eq_slice,
                             &group.t_eq_slice,
                             &group.z_eq_slice,
-                        )
-                    })
-                    .collect();
-                acc += segment_sums
-                    .into_iter()
-                    .try_fold(E::zero(), |acc, value| value.map(|value| acc + value))?;
+                        )?;
+                        Ok::<E, AkitaError>(acc + value)
+                    },
+                    |lhs, rhs| match (lhs, rhs) {
+                        (Ok(lhs), Ok(rhs)) => Ok(lhs + rhs),
+                        (Err(err), _) | (_, Err(err)) => Err(err),
+                    }
+                )?;
+                acc += group_sum;
             }
         }
         Ok(acc)

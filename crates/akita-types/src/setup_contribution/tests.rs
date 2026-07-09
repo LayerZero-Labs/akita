@@ -624,7 +624,7 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
             n_a: 2,
             n_b: 2,
             required: 0,
-            segments: Vec::new(),
+            segments: Vec::new().into(),
             e_eq_slice: vec![test_scalar(2), test_scalar(3)],
             t_eq_slice: vec![
                 test_scalar(5),
@@ -633,9 +633,9 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
                 test_scalar(13),
             ],
             z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            a_row_weights: vec![test_scalar(29), test_scalar(31)],
-            b_weights: vec![test_scalar(37), test_scalar(41)],
-            d_weights: vec![test_scalar(43), test_scalar(47)],
+            a_row_weights: vec![test_scalar(29), test_scalar(31)].into(),
+            b_weights: vec![test_scalar(37), test_scalar(41)].into(),
+            d_weights: vec![test_scalar(43), test_scalar(47)].into(),
         }],
     });
     let setup_len = 10;
@@ -677,7 +677,7 @@ fn multi_group_packed_direct_matches_row_fallback() {
                 n_a: 2,
                 n_b: 2,
                 required: 0,
-                segments: Vec::new(),
+                segments: Vec::new().into(),
                 e_eq_slice: vec![test_scalar(2), test_scalar(3)],
                 t_eq_slice: vec![
                     test_scalar(5),
@@ -686,9 +686,9 @@ fn multi_group_packed_direct_matches_row_fallback() {
                     test_scalar(13),
                 ],
                 z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-                a_row_weights: vec![test_scalar(29), test_scalar(31)],
-                b_weights: vec![test_scalar(37), test_scalar(41)],
-                d_weights: vec![test_scalar(43), test_scalar(47)],
+                a_row_weights: vec![test_scalar(29), test_scalar(31)].into(),
+                b_weights: vec![test_scalar(37), test_scalar(41)].into(),
+                d_weights: vec![test_scalar(43), test_scalar(47)].into(),
             },
             SetupContributionGroupPlan {
                 e_col_offset: 0,
@@ -697,7 +697,7 @@ fn multi_group_packed_direct_matches_row_fallback() {
                 n_a: 2,
                 n_b: 2,
                 required: 0,
-                segments: Vec::new(),
+                segments: Vec::new().into(),
                 e_eq_slice: vec![test_scalar(53), test_scalar(59)],
                 t_eq_slice: vec![
                     test_scalar(61),
@@ -706,9 +706,9 @@ fn multi_group_packed_direct_matches_row_fallback() {
                     test_scalar(73),
                 ],
                 z_eq_slice: vec![test_scalar(79), test_scalar(83), test_scalar(89)],
-                a_row_weights: vec![test_scalar(97), test_scalar(101)],
-                b_weights: vec![test_scalar(103), test_scalar(107)],
-                d_weights: vec![test_scalar(109), test_scalar(113)],
+                a_row_weights: vec![test_scalar(97), test_scalar(101)].into(),
+                b_weights: vec![test_scalar(103), test_scalar(107)].into(),
+                d_weights: vec![test_scalar(109), test_scalar(113)].into(),
             },
         ],
     });
@@ -762,7 +762,7 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
             n_a: 2,
             n_b: 2,
             required: 0,
-            segments: Vec::new(),
+            segments: Vec::new().into(),
             e_eq_slice: vec![test_scalar(2), test_scalar(3)],
             t_eq_slice: vec![
                 test_scalar(5),
@@ -771,9 +771,9 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
                 test_scalar(13),
             ],
             z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            a_row_weights: vec![test_scalar(29), test_scalar(31)],
-            b_weights: vec![test_scalar(37), test_scalar(41)],
-            d_weights: vec![test_scalar(43), test_scalar(47)],
+            a_row_weights: vec![test_scalar(29), test_scalar(31)].into(),
+            b_weights: vec![test_scalar(37), test_scalar(41)].into(),
+            d_weights: vec![test_scalar(43), test_scalar(47)].into(),
         }],
     });
     const D: usize = 64;
@@ -820,7 +820,7 @@ fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
             n_a: 2,
             n_b: 2,
             required: 0,
-            segments: Vec::new(),
+            segments: Vec::new().into(),
             e_eq_slice: vec![test_scalar(2), test_scalar(3)],
             t_eq_slice: vec![
                 test_scalar(5),
@@ -829,9 +829,9 @@ fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
                 test_scalar(13),
             ],
             z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            a_row_weights: vec![test_scalar(29), test_scalar(31)],
-            b_weights: vec![test_scalar(37), test_scalar(41)],
-            d_weights: vec![test_scalar(43), test_scalar(47)],
+            a_row_weights: vec![test_scalar(29), test_scalar(31)].into(),
+            b_weights: vec![test_scalar(37), test_scalar(41)].into(),
+            d_weights: vec![test_scalar(43), test_scalar(47)].into(),
         }],
     });
     const D_A: usize = 64;
@@ -880,7 +880,7 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
             n_a: 2,
             n_b: 2,
             required: 0,
-            segments: Vec::new(),
+            segments: Vec::new().into(),
             e_eq_slice: vec![test_scalar(2), test_scalar(3)],
             t_eq_slice: vec![
                 test_scalar(5),
@@ -889,9 +889,9 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
                 test_scalar(13),
             ],
             z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            a_row_weights: vec![test_scalar(29), test_scalar(31)],
-            b_weights: vec![test_scalar(37), test_scalar(41)],
-            d_weights: vec![test_scalar(43), test_scalar(47)],
+            a_row_weights: vec![test_scalar(29), test_scalar(31)].into(),
+            b_weights: vec![test_scalar(37), test_scalar(41)].into(),
+            d_weights: vec![test_scalar(43), test_scalar(47)].into(),
         }],
     });
     const D_A: usize = 64;
@@ -939,7 +939,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                 n_a: 2,
                 n_b: 2,
                 required: 0,
-                segments: Vec::new(),
+                segments: Vec::new().into(),
                 e_eq_slice: vec![test_scalar(2), test_scalar(3)],
                 t_eq_slice: vec![
                     test_scalar(5),
@@ -948,9 +948,9 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                     test_scalar(13),
                 ],
                 z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-                a_row_weights: vec![test_scalar(29), test_scalar(31)],
-                b_weights: vec![test_scalar(37), test_scalar(41)],
-                d_weights: vec![test_scalar(43), test_scalar(47)],
+                a_row_weights: vec![test_scalar(29), test_scalar(31)].into(),
+                b_weights: vec![test_scalar(37), test_scalar(41)].into(),
+                d_weights: vec![test_scalar(43), test_scalar(47)].into(),
             },
             SetupContributionGroupPlan {
                 e_col_offset: 0,
@@ -959,7 +959,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                 n_a: 2,
                 n_b: 2,
                 required: 0,
-                segments: Vec::new(),
+                segments: Vec::new().into(),
                 e_eq_slice: vec![test_scalar(53), test_scalar(59)],
                 t_eq_slice: vec![
                     test_scalar(61),
@@ -970,9 +970,9 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                     test_scalar(83),
                 ],
                 z_eq_slice: vec![test_scalar(89), test_scalar(97), test_scalar(101)],
-                a_row_weights: vec![test_scalar(103), test_scalar(107)],
-                b_weights: vec![test_scalar(109), test_scalar(113)],
-                d_weights: vec![test_scalar(127), test_scalar(131)],
+                a_row_weights: vec![test_scalar(103), test_scalar(107)].into(),
+                b_weights: vec![test_scalar(109), test_scalar(113)].into(),
+                d_weights: vec![test_scalar(127), test_scalar(131)].into(),
             },
         ],
     });
