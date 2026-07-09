@@ -79,7 +79,7 @@ This is implemented in
 [`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
 `rounded_up_role_a_inf_norm` prices the
 `8·ω·balanced_digit_abs_max·ν` coefficient-`L∞` envelope, and
-`committed_fold_a_role_rank` builds the level's audited A-role rank from the same
+`a_role_rank` builds the level's audited A-role rank from the same
 geometry. Both thread `num_claims`, and `ring_subfield_norm_bound` from each call
 site (the planner DP in `schedule_params.rs`, the runtime expansion, and the
 verifier-reachable layout derivation in `layout/sis_derivation.rs`). The A-role

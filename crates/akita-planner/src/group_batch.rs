@@ -3,7 +3,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    committed_fold_a_role_rank, compute_num_digits_full_field, decomposed_s_block_ring_count,
+    a_role_rank, compute_num_digits_full_field, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank,
     num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm, AjtaiKeyParams,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
@@ -61,7 +61,7 @@ pub(crate) fn group_root_params_from_layout(
 
     let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
-    let (norm_s, min_n_a) = committed_fold_a_role_rank(
+    let (norm_s, min_n_a) = a_role_rank(
         policy.min_sis_security_bits,
         family,
         d,
@@ -396,7 +396,7 @@ fn multi_group_root_main_level_params_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
         return Ok(None);
     };
-    let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+    let Some((norm_s, n_a)) = a_role_rank(
         policy.min_sis_security_bits,
         family,
         d,

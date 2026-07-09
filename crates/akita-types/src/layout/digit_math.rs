@@ -10,7 +10,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
-    committed_fold_a_role_rank, fold_witness_digit_plan, fold_witness_linf_cap_policy,
+    a_role_rank, fold_witness_digit_plan, fold_witness_linf_cap_policy,
     num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     SisModulusFamily,
 };
@@ -123,7 +123,7 @@ pub fn optimal_m_r_split(
         let Some(inner_width) = (block_len as usize).checked_mul(delta_commit as usize) else {
             continue;
         };
-        let Some((_a_collision, n_a)) = committed_fold_a_role_rank(
+        let Some((_a_collision, n_a)) = a_role_rank(
             min_security_bits,
             sis_family,
             d as usize,

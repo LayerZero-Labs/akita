@@ -10,7 +10,7 @@ use akita_field::AkitaError;
 use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
 use akita_planner::PlannerPolicy;
 use akita_types::sis::{
-    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
     rounded_up_collision_inf_norm, SisTableKey,
 };
@@ -119,7 +119,7 @@ fn expand_envelope_witness_at_ring_d(
     let num_digits_open_val = num_digits_open(decomp);
     let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| no_layout("A"))?;
-    let (a_bucket, n_a) = committed_fold_a_role_rank(
+    let (a_bucket, n_a) = a_role_rank(
         min_security_bits,
         sis_family,
         target_ring_d,

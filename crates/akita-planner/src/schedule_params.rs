@@ -13,7 +13,7 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
-    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
     rounded_up_collision_inf_norm, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     SisTableKey,
@@ -128,7 +128,7 @@ fn derive_candidate_level_params(
         let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
             continue;
         };
-        let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+        let Some((norm_s, n_a)) = a_role_rank(
             policy.min_sis_security_bits,
             family,
             d,
@@ -678,7 +678,7 @@ fn compute_root_direct_level_params(
     let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
         return Ok(None);
     };
-    let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+    let Some((norm_s, n_a)) = a_role_rank(
         policy.min_sis_security_bits,
         sis_family,
         d,
@@ -907,7 +907,7 @@ fn find_schedule_inner(
             let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
                 continue;
             };
-            let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+            let Some((norm_s, n_a)) = a_role_rank(
                 policy.min_sis_security_bits,
                 family,
                 d,

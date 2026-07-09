@@ -429,7 +429,10 @@ impl LevelParams {
             num_claims,
             self.field_bits_for_cache(),
             self.log_basis,
-            crate::sis::fold_challenge_norms(&self.fold_challenge_config, self.fold_challenge_shape),
+            crate::sis::fold_challenge_norms(
+                &self.fold_challenge_config,
+                self.fold_challenge_shape,
+            ),
             self.fold_witness_norms(),
             &self.fold_linf_cap_config,
         )?;
