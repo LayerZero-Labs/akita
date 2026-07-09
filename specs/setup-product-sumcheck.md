@@ -16,10 +16,12 @@ the single largest non-deserialization cost. This spec covers the
 `SetupContributionMode::Recursive` path, where each **non-terminal** fold level
 instead delegates the setup contribution to a **setup-product sumcheck** — the
 Stage-3 `SetupSumcheckProver` / `SetupSumcheckVerifier` pair — so the verifier
-replays a sumcheck plus a single succinct `omega_S` evaluation rather than a
-full matrix scan. It also adds the missing end-to-end test coverage and a
-runnable example for this mode, both of which previously only existed for
-`Direct`.
+replays a sumcheck and evaluates the setup-weight vector without materializing
+it. The current verifier still builds dense equality tables and scans the
+selected setup prefix locally; it becomes truly sublinear in the setup prefix
+only once the prefix opening is carried into a later fold. This spec also adds
+the missing end-to-end test coverage and a runnable example for this mode, both
+of which previously only existed for `Direct`.
 
 ## Intent
 
@@ -38,8 +40,9 @@ Key abstractions and surfaces:
 - `akita-verifier` `stages::stage3::SetupSumcheckVerifier` — the verifier
   counterpart, with a two-phase `new` (derive the setup evaluation plan and
   sumcheck round count from the ring-switch row evaluation) + `verify` (replay
-  the extension-opening-reduction sumcheck and close it against a succinct
-  `omega_S` evaluation) API. Lives under `stages/` alongside stage1/stage2.
+  the extension-opening-reduction sumcheck and close it against local
+  non-materialized setup and setup-weight evaluations) API. Lives under
+  `stages/` alongside stage1/stage2.
 - `akita-types::SETUP_SUMCHECK_DEGREE` — the relocated degree constant
   (formerly `FACTORED_PRODUCT_SUMCHECK_DEGREE`).
 - `profile/akita-recursion` artifact/host/guest gain a `--setup-mode
@@ -83,10 +86,10 @@ Key abstractions and surfaces:
   work. The e2e tests and example are gated `#![cfg(not(feature = "zk"))]`, and
   the `Recursive` path is not yet exercised under the `zk` feature.
 - **Carried-opening batching / setup-prefix commitment delegation.** This spec
-  keeps the stage-3 sumcheck closed against the locally evaluated `omega_S`; it
-  does not carry the `(rho_lambda, rho_y, s_rho)` setup-prefix opening into the
-  next recursive fold or batch it with the folded-witness opening (STACK.md
-  slices 02B/02C/04).
+  keeps the stage-3 sumcheck closed against local verifier scans of the setup
+  prefix and `omega_S`; it does not carry the `(rho_setup_idx, rho_y, s_rho)`
+  setup-prefix opening into the next recursive fold or batch it with the
+  folded-witness opening (STACK.md slices 02B/02C/04).
 - **Planner/table changes.** No schedule-table regeneration; mode selection is
   orthogonal to the schedule.
 - **Making `Recursive` the default.** `Direct` remains the default mode for the
@@ -160,8 +163,10 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
   construct `SetupSumcheckVerifier::new(...)` from the ring-switch row
   evaluation, and call `verify(...)`. The verifier replays the
   `ExtensionOpeningReductionSumcheck`, then closes the final claim against
-  `setup_val * omega * alpha_val`, where `omega` is the succinct `omega_S`
-  evaluation (`SetupContributionPlan::evaluate_bar_omega_with_eq`).
+  `setup_val * omega * alpha_val`. `setup_val` is computed by scanning the
+  selected setup prefix against the ring/setup-index equality tables, while
+  `omega` is computed by scanning the cached segment partition against the
+  setup-index equality table (`SetupContributionPlan::evaluate_bar_omega_with_eq`).
 - **Types** (`akita-types`): `SETUP_SUMCHECK_DEGREE` and the
   `SetupContributionMode` enum.
 - **Recursion harness** (`profile/akita-recursion`): the `--setup-mode` CLI flag

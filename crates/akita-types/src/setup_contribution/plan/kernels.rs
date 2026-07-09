@@ -1,5 +1,3 @@
-use super::super::{checked_add, checked_mul};
-use super::types::SetupContributionGroupInputs;
 #[cfg(test)]
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::ring::eval_ring_at_pows_fast;
@@ -20,6 +18,111 @@ pub(crate) struct GroupSetupSegment<E> {
     pub(super) has_a: bool,
     pub(super) a_start_abs: usize,
     pub(super) a_weight: E,
+}
+
+macro_rules! dispatch_segment_roles {
+    ($segment:expr, $none:expr, |$has_d:ident, $has_b:ident, $has_a:ident| $body:block) => {{
+        match ($segment.has_d, $segment.has_b, $segment.has_a) {
+            (true, true, true) => {
+                const $has_d: bool = true;
+                const $has_b: bool = true;
+                const $has_a: bool = true;
+                $body
+            }
+            (true, true, false) => {
+                const $has_d: bool = true;
+                const $has_b: bool = true;
+                const $has_a: bool = false;
+                $body
+            }
+            (true, false, true) => {
+                const $has_d: bool = true;
+                const $has_b: bool = false;
+                const $has_a: bool = true;
+                $body
+            }
+            (false, true, true) => {
+                const $has_d: bool = false;
+                const $has_b: bool = true;
+                const $has_a: bool = true;
+                $body
+            }
+            (true, false, false) => {
+                const $has_d: bool = true;
+                const $has_b: bool = false;
+                const $has_a: bool = false;
+                $body
+            }
+            (false, true, false) => {
+                const $has_d: bool = false;
+                const $has_b: bool = true;
+                const $has_a: bool = false;
+                $body
+            }
+            (false, false, true) => {
+                const $has_d: bool = false;
+                const $has_b: bool = false;
+                const $has_a: bool = true;
+                $body
+            }
+            (false, false, false) => $none,
+        }
+    }};
+}
+
+pub(super) use dispatch_segment_roles;
+
+impl<E: FieldCore> GroupSetupSegment<E> {
+    #[inline(always)]
+    pub(super) fn weight_at(&self, setup_idx: usize, e_eq: &[E], t_eq: &[E], z_eq: &[E]) -> E {
+        let mut weight = E::zero();
+        if self.has_d {
+            weight += self.d_weight_at(setup_idx, e_eq);
+        }
+        if self.has_b {
+            weight += self.b_weight_at(setup_idx, t_eq);
+        }
+        if self.has_a {
+            weight += self.a_weight_at(setup_idx, z_eq);
+        }
+        weight
+    }
+
+    #[inline(always)]
+    pub(super) fn typed_weight_at<const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
+        &self,
+        setup_idx: usize,
+        e_eq: &[E],
+        t_eq: &[E],
+        z_eq: &[E],
+    ) -> E {
+        let mut weight = E::zero();
+        if HAS_D {
+            weight += self.d_weight_at(setup_idx, e_eq);
+        }
+        if HAS_B {
+            weight += self.b_weight_at(setup_idx, t_eq);
+        }
+        if HAS_A {
+            weight += self.a_weight_at(setup_idx, z_eq);
+        }
+        weight
+    }
+
+    #[inline(always)]
+    pub(super) fn d_weight_at(&self, setup_idx: usize, e_eq: &[E]) -> E {
+        self.d_weight * e_eq[setup_idx - self.d_start_abs]
+    }
+
+    #[inline(always)]
+    pub(super) fn b_weight_at(&self, setup_idx: usize, t_eq: &[E]) -> E {
+        self.b_weight * t_eq[setup_idx - self.b_start_abs]
+    }
+
+    #[inline(always)]
+    pub(super) fn a_weight_at(&self, setup_idx: usize, z_eq: &[E]) -> E {
+        self.a_weight * z_eq[setup_idx - self.a_start_abs]
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -46,19 +149,25 @@ where
             ));
         }
     }
-    let d_required = checked_mul(d_rows, d_physical_cols, "setup D footprint")?;
+    let d_required = d_rows
+        .checked_mul(d_physical_cols)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
     if d_required > d_len {
         return Err(AkitaError::InvalidSetup(
             "shared D matrix is too small for selected verifier layout".into(),
         ));
     }
-    let b_required = checked_mul(n_b, t_cols, "setup B footprint")?;
+    let b_required = n_b
+        .checked_mul(t_cols)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
     if b_required > b_len {
         return Err(AkitaError::InvalidSetup(
             "shared B matrix is too small for selected verifier layout".into(),
         ));
     }
-    let a_required = checked_mul(n_a, z_cols, "setup A footprint")?;
+    let a_required = n_a
+        .checked_mul(z_cols)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?;
     if a_required > a_len {
         return Err(AkitaError::InvalidSetup(
             "shared A matrix is too small for selected verifier layout".into(),
@@ -120,15 +229,10 @@ pub(super) fn group_bar_omega_segment_eval<
     const HAS_A: bool,
 >(
     range: std::ops::Range<usize>,
-    eq_lambda: &[E],
-    d_start: usize,
-    d_weight: E,
+    eq_setup_idx: &[E],
+    segment: &GroupSetupSegment<E>,
     e_eq: &[E],
-    b_start: usize,
-    b_weight: E,
     t_eq: &[E],
-    a_start: usize,
-    a_weight: E,
     z_eq: &[E],
 ) -> E
 where
@@ -137,19 +241,11 @@ where
     cfg_fold_reduce!(
         range,
         E::zero,
-        |mut acc, lambda| {
-            let mut weight = E::zero();
-            if HAS_D {
-                weight += d_weight * e_eq[lambda - d_start];
-            }
-            if HAS_B {
-                weight += b_weight * t_eq[lambda - b_start];
-            }
-            if HAS_A {
-                weight += a_weight * z_eq[lambda - a_start];
-            }
+        |mut acc, setup_idx| {
+            let weight =
+                segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
             if !weight.is_zero() {
-                acc += eq_lambda[lambda] * weight;
+                acc += eq_setup_idx[setup_idx] * weight;
             }
             acc
         },
@@ -170,14 +266,9 @@ pub(super) fn packed_uniform_group_slice_inner_sum_typed<
     range: std::ops::Range<usize>,
     setup_flat: &[CyclotomicRing<F, D>],
     alpha_pows: &[E],
-    d_start: usize,
-    d_weight: E,
+    segment: &GroupSetupSegment<E>,
     e_eq: &[E],
-    b_start: usize,
-    b_weight: E,
     t_eq: &[E],
-    a_start: usize,
-    a_weight: E,
     z_eq: &[E],
 ) -> E
 where
@@ -187,19 +278,11 @@ where
     cfg_fold_reduce!(
         range,
         E::zero,
-        |mut acc, lambda| {
-            let mut weight = E::zero();
-            if HAS_D {
-                weight += d_weight * e_eq[lambda - d_start];
-            }
-            if HAS_B {
-                weight += b_weight * t_eq[lambda - b_start];
-            }
-            if HAS_A {
-                weight += a_weight * z_eq[lambda - a_start];
-            }
+        |mut acc, setup_idx| {
+            let weight =
+                segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
             if !weight.is_zero() {
-                acc += eval_ring_at_pows_fast(&setup_flat[lambda], alpha_pows) * weight;
+                acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
             }
             acc
         },
@@ -229,14 +312,9 @@ pub(super) fn packed_group_slice_inner_sum_typed<
     alpha_pows_a: &[E],
     alpha_pows_b: &[E],
     alpha_pows_d: &[E],
-    d_start: usize,
-    d_weight: E,
+    segment: &GroupSetupSegment<E>,
     e_eq: &[E],
-    b_start: usize,
-    b_weight: E,
     t_eq: &[E],
-    a_start: usize,
-    a_weight: E,
     z_eq: &[E],
 ) -> E
 where
@@ -246,70 +324,40 @@ where
     cfg_fold_reduce!(
         range,
         E::zero,
-        |mut acc, lambda| {
+        |mut acc, setup_idx| {
             if HAS_D {
-                let eq_w = d_weight * e_eq[lambda - d_start];
+                let eq_w = segment.d_weight_at(setup_idx, e_eq);
                 if !eq_w.is_zero() {
                     if let Some(d_flat) = d_flat {
-                        let d_row = lambda / d_physical_cols;
-                        let d_col = lambda % d_physical_cols;
+                        let d_row = setup_idx / d_physical_cols;
+                        let d_col = setup_idx % d_physical_cols;
                         let setup_idx = d_row * d_physical_cols + d_col;
                         acc += eval_ring_at_pows_fast(&d_flat[setup_idx], alpha_pows_d) * eq_w;
                     }
                 }
             }
             if HAS_B {
-                let eq_w = b_weight * t_eq[lambda - b_start];
+                let eq_w = segment.b_weight_at(setup_idx, t_eq);
                 if !eq_w.is_zero() {
-                    let b_row = lambda / t_cols;
-                    let b_col = lambda % t_cols;
-                    let setup_idx = b_row * t_cols + b_col;
-                    acc += eval_ring_at_pows_fast(&b_flat[setup_idx], alpha_pows_b) * eq_w;
+                    let b_row = setup_idx / t_cols;
+                    let b_col = setup_idx % t_cols;
+                    let role_idx = b_row * t_cols + b_col;
+                    acc += eval_ring_at_pows_fast(&b_flat[role_idx], alpha_pows_b) * eq_w;
                 }
             }
             if HAS_A {
-                let eq_w = a_weight * z_eq[lambda - a_start];
+                let eq_w = segment.a_weight_at(setup_idx, z_eq);
                 if !eq_w.is_zero() {
-                    let a_row = lambda / z_cols;
-                    let a_col = lambda % z_cols;
-                    let setup_idx = a_row * z_cols + a_col;
-                    acc += eval_ring_at_pows_fast(&a_flat[setup_idx], alpha_pows_a) * eq_w;
+                    let a_row = setup_idx / z_cols;
+                    let a_col = setup_idx % z_cols;
+                    let role_idx = a_row * z_cols + a_col;
+                    acc += eval_ring_at_pows_fast(&a_flat[role_idx], alpha_pows_a) * eq_w;
                 }
             }
             acc
         },
         |lhs, rhs| lhs + rhs
     )
-}
-
-pub(super) fn validate_group_chunk_layout(
-    group: &SetupContributionGroupInputs,
-    num_groups: usize,
-) -> Result<(), AkitaError> {
-    if group.chunks.is_empty()
-        || group.blocks_per_chunk == 0
-        || !group.blocks_per_chunk.is_power_of_two()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "malformed setup witness chunk layout".into(),
-        ));
-    }
-    if checked_mul(
-        group.chunks.len(),
-        group.blocks_per_chunk,
-        "setup chunk block coverage",
-    )? != group.num_blocks
-    {
-        return Err(AkitaError::InvalidSetup(
-            "setup witness chunk windows do not tile num_blocks".into(),
-        ));
-    }
-    if group.chunks.len() > 1 && num_groups != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "multi-chunk setup contribution requires exactly one commitment group".into(),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -332,43 +380,14 @@ where
         if col_weight.is_zero() {
             continue;
         }
-        let setup_col = checked_add(col_offset, col, "weighted setup column")?;
-        let coeff_start = checked_mul(setup_col, ring_d, "weighted setup coeff start")?;
+        let setup_col = col_offset
+            .checked_add(col)
+            .ok_or_else(|| AkitaError::InvalidSetup("weighted setup column overflow".into()))?;
+        let coeff_start = setup_col.checked_mul(ring_d).ok_or_else(|| {
+            AkitaError::InvalidSetup("weighted setup coeff start overflow".into())
+        })?;
         let coeffs = checked_slice(row, coeff_start, ring_d, "weighted setup coeffs")?;
         acc += row_weight * col_weight * eval_flat_ring_at_pows_fast::<Base, E>(coeffs, alpha_pows);
     }
     Ok(acc)
-}
-
-#[inline(always)]
-pub(super) fn push_group_d_boundaries(
-    endpoints: &mut Vec<usize>,
-    rows: usize,
-    stride: usize,
-    active_col_start: usize,
-    active_cols: usize,
-) -> Result<(), AkitaError> {
-    if rows == 0 || stride == 0 {
-        return Ok(());
-    }
-    let active_col_end = checked_add(active_col_start, active_cols, "setup D active columns")?;
-    let mut row_start = 0usize;
-    for _ in 0..rows {
-        let row_end = checked_add(row_start, stride, "packed D boundary")?;
-        endpoints.push(row_end);
-        if active_cols != 0 {
-            endpoints.push(checked_add(
-                row_start,
-                active_col_start,
-                "setup D active boundary",
-            )?);
-            endpoints.push(checked_add(
-                row_start,
-                active_col_end,
-                "setup D active boundary",
-            )?);
-        }
-        row_start = row_end;
-    }
-    Ok(())
 }

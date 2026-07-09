@@ -2,8 +2,8 @@
 //!
 //! The table is laid out as `left * right_len + right`. The right factor is
 //! bound first, then the left factor. This matches setup products of the form
-//! `S(lambda, y) * omega(lambda) * alpha(y)` without materializing the full
-//! `omega(lambda) * alpha(y)` table.
+//! `S(i, y) * omega(i) * alpha(y)` without materializing the full
+//! `omega(i) * alpha(y)` table.
 
 mod product_table;
 mod utils;
@@ -19,8 +19,9 @@ use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
     stage3_offload_natural_field_len, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -300,20 +301,20 @@ where
         ));
     }
 
-    let lambda_len = required
+    let setup_idx_len = required
         .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup product lambda length overflow".into()))?;
-    bar_omega.resize(lambda_len, E::zero());
+        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
+    bar_omega.resize(setup_idx_len, E::zero());
 
-    let table_len = lambda_len
+    let table_len = setup_idx_len
         .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("setup product table length overflow".into()))?;
     let mut setup_table = vec![E::zero(); table_len];
     cfg_chunks_mut!(&mut setup_table, ring_d)
         .enumerate()
-        .for_each(|(lambda, row)| {
-            if lambda < required {
-                let src = &setup_field[lambda * ring_d..(lambda + 1) * ring_d];
+        .for_each(|(setup_idx, row)| {
+            if setup_idx < required {
+                let src = &setup_field[setup_idx * ring_d..(setup_idx + 1) * ring_d];
                 for (slot, &coeff) in row.iter_mut().zip(src) {
                     *slot = E::lift_base(coeff);
                 }
@@ -399,13 +400,23 @@ where
         lp.log_basis,
     );
     let layout = relation.segment_layout(lp, None)?;
-    let plan = SetupContributionPlan::prepare_single_group(
+    let single_group =
+        SetupContributionGroupInputs::single_group_layout(&inputs, &layout, lp.log_basis)?;
+    let groups = std::slice::from_ref(&single_group.group);
+    let static_plan = SetupContributionPlan::prepare_static(
         &inputs,
+        groups,
+        single_group.d_row_start,
+        single_group.d_rows,
+        single_group.d_physical_cols,
+    )?;
+    let plan = SetupContributionPlan::finish_plan::<F>(
+        &static_plan,
         x_challenges,
         None,
         None,
-        &fold_gadget,
-        &layout,
+        Some(&fold_gadget),
+        groups,
     )?;
     let required = plan.required()?;
     let bar_omega = plan.materialize_bar_omega()?;

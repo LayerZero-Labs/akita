@@ -2,8 +2,11 @@
 //!
 //! This module owns challenge-free geometry (`geometry.rs`), pure layout/weight
 //! derivation for the stage-3 setup product, and evaluation planning. The
-//! prover consumes the materialized `bar_omega` vector; the verifier evaluates
-//! the same plan directly against the packed setup.
+//! prover consumes the materialized `bar_omega` vector: one scalar weight per
+//! packed setup position. The recursive stage-3 verifier evaluates that same
+//! weight vector against an equality table without materializing it, while the
+//! direct verifier scans the packed setup directly with the same segment
+//! partition.
 
 use akita_field::AkitaError;
 
@@ -20,7 +23,10 @@ pub use geometry::{
     setup_required_for_inputs, stage3_offload_natural_field_len,
 };
 pub use inputs::SetupContributionPlanInputs;
-pub use plan::{SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic};
+pub use plan::{
+    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic,
+    SingleGroupSetupContributionLayout,
+};
 
 pub(crate) fn push_role_boundaries(
     endpoints: &mut Vec<usize>,
@@ -42,24 +48,14 @@ pub(crate) fn push_role_boundaries(
 }
 
 #[inline(always)]
-pub(crate) fn checked_add(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_add(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
-}
-
-#[inline(always)]
-pub(crate) fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_mul(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
-}
-
-#[inline(always)]
 pub(crate) fn checked_slice<'a, T>(
     slice: &'a [T],
     start: usize,
     len: usize,
     context: &'static str,
 ) -> Result<&'a [T], AkitaError> {
-    let end = checked_add(start, len, context)?;
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))?;
     slice.get(start..end).ok_or(AkitaError::InvalidProof)
 }

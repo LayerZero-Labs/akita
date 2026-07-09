@@ -18,10 +18,37 @@ fn test_scalar(value: u128) -> F {
 fn finalize_test_plan(mut plan: SetupContributionPlan<F>) -> SetupContributionPlan<F> {
     for group in &mut plan.groups {
         group
-            .refresh_cached_segments(plan.d_rows, plan.d_physical_cols)
+            .refresh_segments(plan.d_rows, plan.d_physical_cols)
             .expect("valid cached setup scan segments");
     }
     plan
+}
+
+fn prepare_single_group_plan(
+    inputs: &SetupContributionPlanInputs<F>,
+    full_vec_randomness: &[F],
+    eq_low: Option<&[F]>,
+    z_block_low_eq: Option<&[F]>,
+    fold_gadget: &[F],
+    chunk_layout: &crate::WitnessLayout,
+) -> Result<SetupContributionPlan<F>, AkitaError> {
+    let single_group = SetupContributionGroupInputs::single_group_layout(inputs, chunk_layout, 0)?;
+    let groups = std::slice::from_ref(&single_group.group);
+    let static_plan = SetupContributionPlan::prepare_static(
+        inputs,
+        groups,
+        single_group.d_row_start,
+        single_group.d_rows,
+        single_group.d_physical_cols,
+    )?;
+    SetupContributionPlan::finish_plan::<F>(
+        &static_plan,
+        full_vec_randomness,
+        eq_low,
+        z_block_low_eq,
+        Some(fold_gadget),
+        groups,
+    )
 }
 
 #[test]
@@ -71,7 +98,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
             r_len: Some(0),
         }],
     };
-    let plan = SetupContributionPlan::prepare_single_group::<F>(
+    let plan = prepare_single_group_plan(
         &inputs,
         &full_vec_randomness,
         None,

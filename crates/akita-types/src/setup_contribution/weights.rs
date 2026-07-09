@@ -3,8 +3,6 @@ use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
-use super::{checked_add, checked_mul};
-
 const POSSIBLE_CARRIES: usize = 2;
 
 /// Canonical `D·ê` column eq-weights, shared by the single-group and multi-group setup
@@ -43,14 +41,20 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         });
     }
     let high_challenges = &full_vec_randomness[block_bits..];
-    let high_len = checked_mul(num_claims, depth_open, "D high width")?;
+    let high_len = num_claims
+        .checked_mul(depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("D high width overflow".into()))?;
     let eq_high_by_chunk: Vec<Vec<E>> = chunks
         .iter()
         .map(|chunk| high_eq_window(high_challenges, chunk.offset_e >> block_bits, high_len))
         .collect();
     let low_mask = blocks_per_chunk - 1;
-    let total_blocks = checked_mul(num_claims, num_blocks, "D blocks")?;
-    let e_cols = checked_mul(total_blocks, depth_open, "D columns")?;
+    let total_blocks = num_claims
+        .checked_mul(num_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("D blocks overflow".into()))?;
+    let e_cols = total_blocks
+        .checked_mul(depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("D columns overflow".into()))?;
     Ok(cfg_into_iter!(0..e_cols)
         .map(|local_col| {
             let flat_block = local_col / depth_open;
@@ -115,18 +119,21 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
         });
     }
     let high_challenges = &full_vec_randomness[block_bits..];
-    let high_len = checked_mul(
-        checked_mul(high_vector_stride, depth_open, "B high width")?,
-        n_a,
-        "B high width",
-    )?;
+    let high_len = high_vector_stride
+        .checked_mul(depth_open)
+        .and_then(|width| width.checked_mul(n_a))
+        .ok_or_else(|| AkitaError::InvalidSetup("B high width overflow".into()))?;
     let eq_high_by_chunk: Vec<Vec<E>> = chunks
         .iter()
         .map(|chunk| high_eq_window(high_challenges, chunk.offset_t >> block_bits, high_len))
         .collect();
     let low_mask = blocks_per_chunk - 1;
-    let t_compound_per_block = checked_mul(n_a, depth_open, "B compound stride")?;
-    let t_cols = checked_mul(num_vectors, cols_per_vector, "B width")?;
+    let t_compound_per_block = n_a
+        .checked_mul(depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("B compound stride overflow".into()))?;
+    let t_cols = num_vectors
+        .checked_mul(cols_per_vector)
+        .ok_or_else(|| AkitaError::InvalidSetup("B width overflow".into()))?;
     Ok(cfg_into_iter!(0..t_cols)
         .map(|local_col| {
             let vector_idx = local_col / cols_per_vector;
@@ -178,7 +185,9 @@ where
             "setup Z weights require at least one witness chunk".into(),
         ));
     }
-    let z_range = checked_mul(block_len, depth_commit, "setup Z range")?;
+    let z_range = block_len
+        .checked_mul(depth_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
     if z_weights.len() != z_range {
         return Err(AkitaError::InvalidSize {
             expected: z_range,
@@ -207,11 +216,10 @@ where
             });
         }
         let high_challenges = &full_vec_randomness[z_bits..];
-        let high_len = checked_mul(
-            checked_mul(depth_commit, depth_fold, "Z high width")?,
-            num_fold_groups,
-            "Z high width",
-        )?;
+        let high_len = depth_commit
+            .checked_mul(depth_fold)
+            .and_then(|width| width.checked_mul(num_fold_groups))
+            .ok_or_else(|| AkitaError::InvalidSetup("Z high width overflow".into()))?;
         let low_mask = block_len - 1;
         let chunk_summaries: Vec<(usize, Vec<[E; POSSIBLE_CARRIES]>)> = chunks
             .iter()
@@ -255,11 +263,15 @@ where
                 Ok(())
             })
     } else {
-        let z_len = checked_mul(
-            checked_mul(depth_fold, depth_commit, "dense Z length")?,
-            checked_mul(block_len, num_fold_groups, "dense Z block width")?,
-            "dense Z length",
-        )?;
+        let z_depth = depth_fold
+            .checked_mul(depth_commit)
+            .ok_or_else(|| AkitaError::InvalidSetup("dense Z length overflow".into()))?;
+        let z_block_width = block_len
+            .checked_mul(num_fold_groups)
+            .ok_or_else(|| AkitaError::InvalidSetup("dense Z block width overflow".into()))?;
+        let z_len = z_depth
+            .checked_mul(z_block_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("dense Z length overflow".into()))?;
         let low_bits = z_len
             .saturating_sub(1)
             .checked_next_power_of_two()
@@ -282,7 +294,10 @@ where
             .map(|chunk| {
                 let offset_low = chunk.offset_z & low_mask;
                 let offset_high = chunk.offset_z >> low_bits;
-                let max_high = checked_add(chunk.offset_z, z_len, "dense Z end")?
+                let max_high = chunk
+                    .offset_z
+                    .checked_add(z_len)
+                    .ok_or_else(|| AkitaError::InvalidSetup("dense Z end overflow".into()))?
                     .checked_sub(1)
                     .ok_or(AkitaError::InvalidProof)?
                     >> low_bits;

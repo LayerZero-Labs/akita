@@ -341,30 +341,30 @@ impl SetupContributionFixture {
     /// kernel) must equal the eq-weighted materialized `bar_omega` (the generic
     /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree.
     pub fn assert_eq_eval_matches_materialized(&self) {
-        let plan = SetupContributionPlan::prepare_single_group(
-            &self.relation_matrix_evaluator.setup_contribution_inputs,
+        let plan = SetupContributionPlan::finish_plan::<TestField>(
+            &self.relation_matrix_evaluator.setup_contribution_static,
             &self.full_vec_randomness,
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
-            &self.fold_gadget,
-            &self.relation_matrix_evaluator.chunk_layout,
+            Some(&self.fold_gadget),
+            &self.relation_matrix_evaluator.setup_contribution_groups,
         )
         .unwrap();
         let bar_omega = plan.materialize_bar_omega().unwrap();
-        let lambda_len = plan
+        let setup_idx_len = plan
             .required()
             .unwrap()
             .checked_next_power_of_two()
             .unwrap();
-        let eq_lambda: Vec<TestField> = (0..lambda_len)
+        let eq_setup_idx: Vec<TestField> = (0..setup_idx_len)
             .map(|idx| test_scalar(7 + idx as u128 * 13))
             .collect();
         let expected: TestField = bar_omega
             .iter()
             .enumerate()
-            .map(|(lambda, weight)| eq_lambda[lambda] * *weight)
+            .map(|(setup_idx, weight)| eq_setup_idx[setup_idx] * *weight)
             .sum();
-        let got = plan.evaluate_bar_omega_with_eq(&eq_lambda).unwrap();
+        let got = plan.evaluate_bar_omega_with_eq(&eq_setup_idx).unwrap();
         assert_eq!(
             got, expected,
             "evaluate_bar_omega_with_eq must equal the eq-weighted materialized bar_omega"
