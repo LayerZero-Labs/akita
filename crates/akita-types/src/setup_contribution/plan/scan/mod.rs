@@ -33,13 +33,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let d_d = alpha_pows_d.len();
         let base_d = role_alpha_base_len(d_a, d_b, d_d)?;
         let base_pows = alpha_pows_a.get(..base_d).ok_or(AkitaError::InvalidProof)?;
-        let a_scales = role_alpha_scales(alpha_pows_a, base_pows).ok_or_else(|| {
+        let a_projection = role_projection(alpha_pows_a, base_pows).ok_or_else(|| {
             AkitaError::InvalidSetup("A alpha powers do not decompose over base dimension".into())
         })?;
-        let b_scales = role_alpha_scales(alpha_pows_b, base_pows).ok_or_else(|| {
+        let b_projection = role_projection(alpha_pows_b, base_pows).ok_or_else(|| {
             AkitaError::InvalidSetup("B alpha powers do not decompose over base dimension".into())
         })?;
-        let d_scales = role_alpha_scales(alpha_pows_d, base_pows).ok_or_else(|| {
+        let d_projection = role_projection(alpha_pows_d, base_pows).ok_or_else(|| {
             AkitaError::InvalidSetup("D alpha powers do not decompose over base dimension".into())
         })?;
 
@@ -49,7 +49,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             base_d,
             |BASE_D| {
                 self.evaluate_role_dims_direct_typed::<F, BASE_D>(
-                    setup, base_pows, &a_scales, &b_scales, &d_scales,
+                    setup,
+                    base_pows,
+                    &a_projection,
+                    &b_projection,
+                    &d_projection,
                 )
             }
         )
@@ -59,9 +63,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         &self,
         setup: &AkitaExpandedSetup<F>,
         base_pows: &[E],
-        a_scales: &RoleAlphaScales<E>,
-        b_scales: &RoleAlphaScales<E>,
-        d_scales: &RoleAlphaScales<E>,
+        a_projection: &RoleProjection<E>,
+        b_projection: &RoleProjection<E>,
+        d_projection: &RoleProjection<E>,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
@@ -74,9 +78,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let required = self.required_base_ring_rows(
-            a_scales.scales.len(),
-            b_scales.scales.len(),
-            d_scales.scales.len(),
+            a_projection.ratio(),
+            b_projection.ratio(),
+            d_projection.ratio(),
         )?;
         let setup_len = setup.shared_matrix().total_ring_elements_at::<BASE_D>()?;
         if required > setup_len {
@@ -90,9 +94,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             acc += group.evaluate_base_ring_direct::<F, BASE_D>(
                 &setup_view,
                 base_pows,
-                a_scales,
-                b_scales,
-                d_scales,
+                a_projection,
+                b_projection,
+                d_projection,
                 self.d_rows,
                 self.d_physical_cols,
             )?;

@@ -12,12 +12,15 @@ pub(crate) struct GroupSetupSegment<E> {
     pub(super) lo: usize,
     pub(super) hi: usize,
     pub(super) has_d: bool,
+    pub(super) d_row: usize,
     pub(super) d_start_abs: usize,
     pub(super) d_weight: E,
     pub(super) has_b: bool,
+    pub(super) b_row: usize,
     pub(super) b_start_abs: usize,
     pub(super) b_weight: E,
     pub(super) has_a: bool,
+    pub(super) a_row: usize,
     pub(super) a_start_abs: usize,
     pub(super) a_weight: E,
 }
@@ -74,6 +77,67 @@ macro_rules! dispatch_segment_roles {
 
 pub(super) use dispatch_segment_roles;
 
+macro_rules! dispatch_role_projections {
+    ($d_projection:expr, $b_projection:expr, $a_projection:expr, |$d_identity:ident, $b_identity:ident, $a_identity:ident| $body:block) => {{
+        match (
+            $d_projection.is_identity(),
+            $b_projection.is_identity(),
+            $a_projection.is_identity(),
+        ) {
+            (true, true, true) => {
+                const $d_identity: bool = true;
+                const $b_identity: bool = true;
+                const $a_identity: bool = true;
+                $body
+            }
+            (true, true, false) => {
+                const $d_identity: bool = true;
+                const $b_identity: bool = true;
+                const $a_identity: bool = false;
+                $body
+            }
+            (true, false, true) => {
+                const $d_identity: bool = true;
+                const $b_identity: bool = false;
+                const $a_identity: bool = true;
+                $body
+            }
+            (false, true, true) => {
+                const $d_identity: bool = false;
+                const $b_identity: bool = true;
+                const $a_identity: bool = true;
+                $body
+            }
+            (true, false, false) => {
+                const $d_identity: bool = true;
+                const $b_identity: bool = false;
+                const $a_identity: bool = false;
+                $body
+            }
+            (false, true, false) => {
+                const $d_identity: bool = false;
+                const $b_identity: bool = true;
+                const $a_identity: bool = false;
+                $body
+            }
+            (false, false, true) => {
+                const $d_identity: bool = false;
+                const $b_identity: bool = false;
+                const $a_identity: bool = true;
+                $body
+            }
+            (false, false, false) => {
+                const $d_identity: bool = false;
+                const $b_identity: bool = false;
+                const $a_identity: bool = false;
+                $body
+            }
+        }
+    }};
+}
+
+pub(super) use dispatch_role_projections;
+
 impl<E: FieldCore> GroupSetupSegment<E> {
     #[inline(always)]
     pub(super) fn weight_at(&self, setup_idx: usize, e_eq: &[E], t_eq: &[E], z_eq: &[E]) -> E {
@@ -127,16 +191,28 @@ impl<E: FieldCore> GroupSetupSegment<E> {
     }
 }
 
-pub(super) struct RoleAlphaScales<E> {
+pub(super) struct RoleProjection<E> {
     pub(super) scales: Vec<E>,
     pub(super) shift: usize,
     pub(super) mask: usize,
 }
 
-pub(super) fn role_alpha_scales<E: FieldCore>(
+impl<E: FieldCore> RoleProjection<E> {
+    #[inline(always)]
+    pub(super) fn ratio(&self) -> usize {
+        self.scales.len()
+    }
+
+    #[inline(always)]
+    pub(super) fn is_identity(&self) -> bool {
+        self.scales.len() == 1
+    }
+}
+
+pub(super) fn role_projection<E: FieldCore>(
     alpha_pows: &[E],
     base_pows: &[E],
-) -> Option<RoleAlphaScales<E>> {
+) -> Option<RoleProjection<E>> {
     let base_d = base_pows.len();
     if base_d == 0 || !alpha_pows.len().is_multiple_of(base_d) {
         return None;
@@ -156,19 +232,41 @@ pub(super) fn role_alpha_scales<E: FieldCore>(
         }
         scales.push(scale);
     }
-    Some(RoleAlphaScales {
+    Some(RoleProjection {
         scales,
         shift: ratio.trailing_zeros() as usize,
         mask: ratio - 1,
     })
 }
 
-pub(super) fn scaled_role_weights<E: FieldCore>(row_weights: &[E], scales: &[E]) -> Vec<E> {
-    let mut scaled = Vec::with_capacity(row_weights.len() * scales.len());
-    for &row_weight in row_weights {
-        scaled.extend(scales.iter().map(|&scale| row_weight * scale));
+pub(super) struct ProjectedRoleWeights<E> {
+    scaled: Vec<E>,
+    ratio: usize,
+}
+
+impl<E: FieldCore> ProjectedRoleWeights<E> {
+    pub(super) fn new(row_weights: &[E], projection: &RoleProjection<E>) -> Self {
+        if projection.is_identity() {
+            return Self {
+                scaled: Vec::new(),
+                ratio: 1,
+            };
+        }
+
+        let mut scaled = Vec::with_capacity(row_weights.len() * projection.ratio());
+        for &row_weight in row_weights {
+            scaled.extend(projection.scales.iter().map(|&scale| row_weight * scale));
+        }
+        Self {
+            scaled,
+            ratio: projection.ratio(),
+        }
     }
-    scaled
+
+    #[inline(always)]
+    pub(super) fn get(&self, row: usize, base_idx: usize, projection: &RoleProjection<E>) -> E {
+        self.scaled[row * self.ratio + (base_idx & projection.mask)]
+    }
 }
 
 #[inline(always)]
@@ -206,39 +304,99 @@ where
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn identity_role_dims_group_slice_inner_sum_typed<
+pub(super) fn base_ring_segment_inner_sum_typed<
     F,
     E,
     const D: usize,
     const HAS_D: bool,
     const HAS_B: bool,
     const HAS_A: bool,
+    const D_IDENTITY: bool,
+    const B_IDENTITY: bool,
+    const A_IDENTITY: bool,
 >(
     range: std::ops::Range<usize>,
     setup_flat: &[CyclotomicRing<F, D>],
-    alpha_pows: &[E],
+    base_pows: &[E],
     segment: &GroupSetupSegment<E>,
     e_eq: &[E],
     t_eq: &[E],
     z_eq: &[E],
+    d_projection: &RoleProjection<E>,
+    b_projection: &RoleProjection<E>,
+    a_projection: &RoleProjection<E>,
+    d_weights: &ProjectedRoleWeights<E>,
+    b_weights: &ProjectedRoleWeights<E>,
+    a_weights: &ProjectedRoleWeights<E>,
 ) -> E
 where
     F: FieldCore,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
-    cfg_fold_reduce!(
-        range,
-        E::zero,
-        |mut acc, setup_idx| {
-            let weight =
-                segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
-            if !weight.is_zero() {
-                acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
-            }
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    )
+    let mut acc = E::zero();
+    for base_idx in range {
+        let mut weight = E::zero();
+        if HAS_D {
+            weight += projected_role_weight_at::<E, D_IDENTITY>(
+                base_idx,
+                segment.d_row,
+                segment.d_start_abs,
+                segment.d_weight,
+                e_eq,
+                d_projection,
+                d_weights,
+            );
+        }
+        if HAS_B {
+            weight += projected_role_weight_at::<E, B_IDENTITY>(
+                base_idx,
+                segment.b_row,
+                segment.b_start_abs,
+                segment.b_weight,
+                t_eq,
+                b_projection,
+                b_weights,
+            );
+        }
+        if HAS_A {
+            weight += projected_role_weight_at::<E, A_IDENTITY>(
+                base_idx,
+                segment.a_row,
+                segment.a_start_abs,
+                segment.a_weight,
+                z_eq,
+                a_projection,
+                a_weights,
+            );
+        }
+        if !weight.is_zero() {
+            acc += eval_ring_at_pows_fast(&setup_flat[base_idx], base_pows) * weight;
+        }
+    }
+    acc
+}
+
+#[inline(always)]
+fn projected_role_weight_at<E: FieldCore, const IDENTITY: bool>(
+    base_idx: usize,
+    row: usize,
+    start_abs: usize,
+    row_weight: E,
+    eq_slice: &[E],
+    projection: &RoleProjection<E>,
+    weights: &ProjectedRoleWeights<E>,
+) -> E {
+    let role_idx = if IDENTITY {
+        base_idx
+    } else {
+        base_idx >> projection.shift
+    };
+    let weight = if IDENTITY {
+        row_weight
+    } else {
+        weights.get(row, base_idx, projection)
+    };
+    weight * eq_slice[role_idx - start_abs]
 }
 
 #[cfg(test)]
