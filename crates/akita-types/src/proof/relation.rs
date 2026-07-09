@@ -462,6 +462,10 @@ where
 }
 
 /// Row-index weight for the trailing EvaluationTrace row: `eq(row_index, last)`.
+///
+/// Fold paths combine this with `relation_claim_from_layout_extension` as
+/// `relation_claim + weight * trace_eval_target` (and reuse `weight` for
+/// Stage-2 `TraceClaim::trace_coeff`).
 pub fn evaluation_trace_row_weight<E: FieldCore>(
     row_layout: RelationRowLayout,
     tau1: &[E],
@@ -475,28 +479,6 @@ pub fn evaluation_trace_row_weight<E: FieldCore>(
             expected: row + 1,
             actual: eq_tau1.len(),
         })
-}
-
-/// Quotient relation claim plus EvaluationTrace opening:
-/// `relation_claim + eq(row_index, last) * trace_eval_target`.
-#[tracing::instrument(skip_all, name = "relation_weight_claim_from_layout_extension")]
-pub fn relation_weight_claim_from_layout_extension<F, E>(
-    row_layout: RelationRowLayout,
-    dims: CommitmentRingDims,
-    layout: &RelationRhsLayout,
-    tau1: &[E],
-    alpha: E,
-    trace_eval_target: E,
-    v: &RingVec<F>,
-    u: &RingVec<F>,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
-{
-    let relation_claim = relation_claim_from_layout_extension(dims, layout, tau1, alpha, v, u)?;
-    let trace_weight = evaluation_trace_row_weight(row_layout, tau1)?;
-    Ok(relation_claim + trace_weight * trace_eval_target)
 }
 
 #[cfg(test)]
@@ -656,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_weight_claim_adds_last_row_opening() {
+    fn relation_claim_plus_last_row_opening_matches_manual_fuse() {
         const D: usize = 64;
         let dims = CommitmentRingDims::uniform(D);
         let tau1 = [
@@ -685,21 +667,9 @@ mod tests {
         let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
         const N_A: usize = 1;
         let layout = RelationRhsLayout::uniform(1, N_A, 1, 0, 1);
-        // Quotient rows for this layout: consistency(1) + n_a + commit + b_inner + n_d.
         let quotient_rows = relation_rhs_row_count(&layout);
         let row_layout = RelationRowLayout { quotient_rows };
         let trace_target = E::from_u64(19);
-        let fused = relation_weight_claim_from_layout_extension::<F, E>(
-            row_layout,
-            dims,
-            &layout,
-            &lifted_tau1,
-            E::lift_base(alpha),
-            trace_target,
-            &RingVec::from_ring_elems(&v),
-            &RingVec::from_ring_elems(&u),
-        )
-        .unwrap();
         let base = relation_claim_from_layout_extension::<F, E>(
             dims,
             &layout,
@@ -710,6 +680,11 @@ mod tests {
         )
         .unwrap();
         let weight = evaluation_trace_row_weight(row_layout, &lifted_tau1).unwrap();
+        let fused = base + weight * trace_target;
         assert_eq!(fused, base + weight * trace_target);
+        assert_eq!(
+            weight,
+            EqPolynomial::evals(&lifted_tau1).unwrap()[quotient_rows]
+        );
     }
 }

@@ -29,7 +29,7 @@
 //! internalized as the `EvaluationTrace` relation row (last logical row), weighted
 //! by `eq(tau1, EvaluationTrace)`, rather than a separate `gamma^2` Stage-2
 //! summand. `y_alpha` runs `FoldEvaluation | A | B(u) | D(v)` for quotient rows;
-//! the opening target enters `relation_weight_claim` through EvaluationTrace.
+//! the opening target enters the Stage-2 claim through EvaluationTrace.
 //!
 //! The fused EvaluationTrace term binds the committed fold witness to the public
 //! opening through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only

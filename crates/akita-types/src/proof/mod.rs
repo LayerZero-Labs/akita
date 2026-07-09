@@ -61,8 +61,7 @@ pub use relation::{
     assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
     relation_claim_from_layout_extension, relation_claim_from_rows,
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, relation_weight_claim_from_layout_extension, RelationGroupRows,
-    RelationRhsLayout,
+    relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
 pub use relation_matrix_cols::compute_relation_matrix_col_evals;
 pub use ring_relation::{
