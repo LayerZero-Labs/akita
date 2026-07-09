@@ -46,7 +46,6 @@ pub use compute::{
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
-pub use protocol::fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
     batched_prove, commit_w, prove, prove_root, prove_root_direct, prove_suffix,

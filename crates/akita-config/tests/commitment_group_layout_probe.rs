@@ -8,7 +8,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_planner::{find_schedule, PlannerPolicy};
-use akita_types::sis::{min_secure_rank, rounded_up_collision_linf_t, SisTableKey};
+use akita_types::sis::{min_secure_rank, rounded_up_collision_inf_norm, SisTableKey};
 use akita_types::{LevelParams, PolynomialGroupLayout, Step};
 
 type Cfg = fp128::D64OneHot;
@@ -47,7 +47,7 @@ fn layout_summary(
     )?;
     let params = root_params(&schedule)?;
     let b_width = params.b_key.col_len();
-    let norm_at_lmax = rounded_up_collision_linf_t(
+    let norm_at_lmax = rounded_up_collision_inf_norm(
         policy.min_sis_security_bits,
         Cfg::sis_modulus_family(),
         Cfg::D,

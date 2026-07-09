@@ -83,7 +83,7 @@ This is implemented in
 geometry. Both thread `num_claims`, and `ring_subfield_norm_bound` from each call
 site (the planner DP in `schedule_params.rs`, the runtime expansion, and the
 verifier-reachable layout derivation in `layout/sis_derivation.rs`). The A-role
-price and `δ_fold` now share `fold_witness_honest_prover_linf_cap` /
+price and `δ_fold` now share `fold_witness_linf_digit_plan` /
 `num_digits_fold`, so the binding rank and the digit count cannot drift.
 
 ### Public-paper basis

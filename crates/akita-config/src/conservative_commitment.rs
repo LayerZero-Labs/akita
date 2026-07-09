@@ -10,7 +10,7 @@ use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    min_secure_rank, rounded_up_collision_linf_t, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
+    min_secure_rank, rounded_up_collision_inf_norm, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
 };
 use akita_types::{
     AjtaiKeyParams, AkitaScheduleInputs, DecompositionParams, LevelParams, OpeningClaimsLayout,
@@ -144,7 +144,7 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         ));
     }
 
-    let conservative_norm = rounded_up_collision_linf_t(
+    let conservative_norm = rounded_up_collision_inf_norm(
         DEFAULT_SIS_SECURITY_BITS,
         Cfg::sis_modulus_family(),
         Cfg::D,

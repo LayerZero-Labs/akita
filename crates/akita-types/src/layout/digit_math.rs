@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
-        use crate::sis::fold_witness_linf_digit_plan;
+        use crate::sis::fold_witness_beta;
         use akita_challenges::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         let fold_challenge_config = SparseChallengeConfig {
             count_pm1: D64_PRODUCTION_PM1_COUNT,
@@ -195,15 +195,13 @@ mod tests {
                 .1,
         )
         .unwrap();
-        let singleton_plan =
-            fold_witness_linf_digit_plan(5, 1, 128, 3, fold_challenge, fold_witness, &cap_config)
-                .expect("singleton fold plan");
-        let batched_plan =
-            fold_witness_linf_digit_plan(5, 4, 128, 3, fold_challenge, fold_witness, &cap_config)
-                .expect("batched fold plan");
+        let singleton_beta =
+            fold_witness_beta(5, 1, fold_challenge, fold_witness).expect("singleton beta");
+        let batched_beta =
+            fold_witness_beta(5, 4, fold_challenge, fold_witness).expect("batched beta");
         assert!(
-            batched_plan.pre_snap_cap > singleton_plan.pre_snap_cap,
-            "pre-snap fold witness cap must grow with batched num_claims"
+            batched_beta > singleton_beta,
+            "folded-witness bound must grow with batched num_claims"
         );
         let singleton_fold_digits =
             num_digits_fold(5, 1, 128, 3, fold_challenge, fold_witness, cap_config)

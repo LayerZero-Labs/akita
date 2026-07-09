@@ -15,8 +15,8 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_linf_t, rounded_up_collision_linf_w, AjtaiKeyParams,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    rounded_up_collision_inf_norm, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
@@ -153,7 +153,7 @@ fn derive_candidate_level_params(
             d,
         )?;
         let Some(norm_t) =
-            rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, log_basis)
+            rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
         else {
             continue;
         };
@@ -172,7 +172,7 @@ fn derive_candidate_level_params(
             d,
         )?;
         let Some(norm_w) =
-            rounded_up_collision_linf_w(policy.min_sis_security_bits, family, d, log_basis)
+            rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
         else {
             continue;
         };
@@ -703,7 +703,7 @@ fn compute_root_direct_level_params(
         d,
     )?;
     let Some(norm_t) =
-        rounded_up_collision_linf_t(policy.min_sis_security_bits, sis_family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -722,7 +722,7 @@ fn compute_root_direct_level_params(
         d,
     )?;
     let Some(norm_w) =
-        rounded_up_collision_linf_w(policy.min_sis_security_bits, sis_family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -931,7 +931,7 @@ fn find_schedule_inner(
                 norm_s,
                 d,
             )?;
-            let Some(norm_t) = rounded_up_collision_linf_t(
+            let Some(norm_t) = rounded_up_collision_inf_norm(
                 policy.min_sis_security_bits,
                 family,
                 d,
@@ -955,7 +955,7 @@ fn find_schedule_inner(
                 norm_t,
                 d,
             )?;
-            let Some(norm_w) = rounded_up_collision_linf_w(
+            let Some(norm_w) = rounded_up_collision_inf_norm(
                 policy.min_sis_security_bits,
                 family,
                 d,
