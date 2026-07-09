@@ -2,13 +2,13 @@ use super::super::*;
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn evaluate_divisible_packed_direct<F, const BASE_D: usize>(
+    pub(super) fn evaluate_base_ring_direct<F, const BASE_D: usize>(
         &self,
         setup_view: &RingMatrixView<'_, F, BASE_D>,
         base_pows: &[E],
-        a_scales: &AlphaChunkScales<E>,
-        b_scales: &AlphaChunkScales<E>,
-        d_scales: &AlphaChunkScales<E>,
+        a_scales: &RoleAlphaScales<E>,
+        b_scales: &RoleAlphaScales<E>,
+        d_scales: &RoleAlphaScales<E>,
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<E, AkitaError>
@@ -17,7 +17,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         if a_scales.scales.len() == 1 && b_scales.scales.len() == 1 && d_scales.scales.len() == 1 {
-            return self.evaluate_identity_ratio_divisible_direct(
+            return self.evaluate_identity_role_dims_direct(
                 setup_view,
                 base_pows,
                 d_rows,
@@ -38,19 +38,19 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?;
         let required = d_required
             .checked_mul(d_scales.scales.len())
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D base footprint overflow".into()))?
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D base-ring footprint overflow".into()))?
             .max(
                 b_required
                     .checked_mul(b_scales.scales.len())
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("setup B base footprint overflow".into())
+                        AkitaError::InvalidSetup("setup B base-ring footprint overflow".into())
                     })?,
             )
             .max(
                 a_required
                     .checked_mul(a_scales.scales.len())
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("setup A base footprint overflow".into())
+                        AkitaError::InvalidSetup("setup A base-ring footprint overflow".into())
                     })?,
             );
         if required > 0 {
@@ -62,15 +62,15 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             }
         }
         let setup_flat = setup_view.as_slice();
-        let d_scaled_weights = scaled_row_weights(&self.d_weights, &d_scales.scales);
-        let b_scaled_weights = scaled_row_weights(&self.b_weights, &b_scales.scales);
-        let a_scaled_weights = scaled_row_weights(&self.a_weights, &a_scales.scales);
+        let d_scaled_weights = scaled_role_weights(&self.d_weights, &d_scales.scales);
+        let b_scaled_weights = scaled_role_weights(&self.b_weights, &b_scales.scales);
+        let a_scaled_weights = scaled_role_weights(&self.a_weights, &a_scales.scales);
 
         Ok(cfg_fold_reduce!(
             0..required,
             E::zero,
             |mut acc, base_idx| {
-                let weight = self.divisible_base_weight_at(
+                let weight = self.base_ring_weight_at(
                     base_idx,
                     &a_scaled_weights,
                     &b_scaled_weights,
@@ -92,7 +92,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         ))
     }
 
-    fn evaluate_identity_ratio_divisible_direct<F, const BASE_D: usize>(
+    fn evaluate_identity_role_dims_direct<F, const BASE_D: usize>(
         &self,
         setup_view: &RingMatrixView<'_, F, BASE_D>,
         base_pows: &[E],
@@ -115,7 +115,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             .map(|idx| {
                 let segment = &segments[idx];
                 dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
-                    divisible_identity_group_slice_inner_sum_typed::<
+                    identity_role_dims_group_slice_inner_sum_typed::<
                         F,
                         E,
                         BASE_D,
@@ -139,15 +139,15 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn divisible_base_weight_at(
+    fn base_ring_weight_at(
         &self,
         base_idx: usize,
         a_scaled_weights: &[E],
         b_scaled_weights: &[E],
         d_scaled_weights: &[E],
-        a_scales: &AlphaChunkScales<E>,
-        b_scales: &AlphaChunkScales<E>,
-        d_scales: &AlphaChunkScales<E>,
+        a_scales: &RoleAlphaScales<E>,
+        b_scales: &RoleAlphaScales<E>,
+        d_scales: &RoleAlphaScales<E>,
         d_physical_cols: usize,
         d_required: usize,
         b_required: usize,

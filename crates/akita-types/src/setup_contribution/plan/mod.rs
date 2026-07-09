@@ -45,7 +45,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulB
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;
 use kernels::{
-    alpha_chunk_scales, dispatch_segment_roles, divisible_identity_group_slice_inner_sum_typed,
-    group_bar_omega_segment_eval, scaled_row_weights, AlphaChunkScales, GroupSetupSegment,
+    dispatch_segment_roles, group_bar_omega_segment_eval,
+    identity_role_dims_group_slice_inner_sum_typed, role_alpha_scales, scaled_role_weights,
+    GroupSetupSegment, RoleAlphaScales,
 };
 use segments::{build_packed_segments, validate_group_chunk_layout};

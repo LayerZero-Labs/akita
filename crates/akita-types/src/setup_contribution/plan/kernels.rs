@@ -127,16 +127,16 @@ impl<E: FieldCore> GroupSetupSegment<E> {
     }
 }
 
-pub(super) struct AlphaChunkScales<E> {
+pub(super) struct RoleAlphaScales<E> {
     pub(super) scales: Vec<E>,
     pub(super) shift: usize,
     pub(super) mask: usize,
 }
 
-pub(super) fn alpha_chunk_scales<E: FieldCore>(
+pub(super) fn role_alpha_scales<E: FieldCore>(
     alpha_pows: &[E],
     base_pows: &[E],
-) -> Option<AlphaChunkScales<E>> {
+) -> Option<RoleAlphaScales<E>> {
     let base_d = base_pows.len();
     if base_d == 0 || !alpha_pows.len().is_multiple_of(base_d) {
         return None;
@@ -156,14 +156,14 @@ pub(super) fn alpha_chunk_scales<E: FieldCore>(
         }
         scales.push(scale);
     }
-    Some(AlphaChunkScales {
+    Some(RoleAlphaScales {
         scales,
         shift: ratio.trailing_zeros() as usize,
         mask: ratio - 1,
     })
 }
 
-pub(super) fn scaled_row_weights<E: FieldCore>(row_weights: &[E], scales: &[E]) -> Vec<E> {
+pub(super) fn scaled_role_weights<E: FieldCore>(row_weights: &[E], scales: &[E]) -> Vec<E> {
     let mut scaled = Vec::with_capacity(row_weights.len() * scales.len());
     for &row_weight in row_weights {
         scaled.extend(scales.iter().map(|&scale| row_weight * scale));
@@ -206,7 +206,7 @@ where
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn divisible_identity_group_slice_inner_sum_typed<
+pub(super) fn identity_role_dims_group_slice_inner_sum_typed<
     F,
     E,
     const D: usize,
