@@ -3,8 +3,8 @@
 //! [`FoldWitnessLinfCapConfig`] selects whether digit depth uses worst-case
 //! `β_inf` alone or `min(β_inf, t*)` under a proved tail certificate.
 //! A-role MSIS pricing is separate: it uses
-//! [`super::decomposition_digits::fold_witness_verifier_linf_bound`] at the
-//! resulting `δ_fold` depth (see [`super::norm_bound::committed_fold_collision_linf_bound`]).
+//! [`super::decomposition_digits::balanced_digit_abs_max`] at the
+//! resulting `δ_fold` depth (see [`super::norm_bound::rounded_up_role_a_inf_norm`]).
 
 use akita_challenges::{tensor_split, SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;

@@ -10,7 +10,7 @@ use akita_field::AkitaError;
 
 use super::ajtai_key::{ceil_supported_linf_bound, min_secure_rank, SisModulusFamily, SisTableKey};
 use super::decomposition_digits::{
-    fold_witness_representable_linf_bounds, fold_witness_verifier_linf_bound, num_digits_fold,
+    balanced_digit_abs_max, fold_witness_representable_linf_bounds, num_digits_fold,
     num_digits_for_bound,
 };
 use crate::{DecompositionParams, FoldLinfProtocolBinding};
@@ -37,27 +37,66 @@ pub fn rounded_up_collision_inf_norm(
     ceil_supported_linf_bound(min_security_bits, sis_family, ring_dimension as u32, linf)
 }
 
-/// This implements computing the norm bound based on the weak binding lemma.
-/// Formula is `2 * c_bar * z_bar`, where `c_bar = 2 * challenge_l1_norm` and
-/// `z_bar = 2 * z_inf_norm`.
-pub fn rounded_up_weak_binding_inf_norm(
-    min_security_bits: u16,
-    sis_family: SisModulusFamily,
-    ring_dimension: usize,
+/// Weak-binding lemma `L∞` norm bound:
+/// `2 * challenge_l1_norm * ring_subfield_norm_bound * z_inf_norm`.
+pub fn weak_binding_inf_norm(
     challenge_l1_norm: u128,
     ring_subfield_norm_bound: u32,
     z_inf_norm: u128,
 ) -> Option<u128> {
-    let collision_linf = 8u128
+    2u128
         .checked_mul(challenge_l1_norm)?
         .checked_mul(u128::from(ring_subfield_norm_bound))?
-        .checked_mul(z_inf_norm)?;
-    ceil_supported_linf_bound(
-        min_security_bits,
-        sis_family,
-        ring_dimension as u32,
-        collision_linf,
+        .checked_mul(z_inf_norm)
+}
+
+/// A-role committed-level coefficient-`L∞` collision bucket.
+///
+/// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
+/// bounds the extracted kernel by challenge mass; stage-1 digit membership
+/// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
+/// envelope is [`balanced_digit_abs_max`] at the `δ_fold` depth
+/// induced by [`fold_witness_linf_digit_plan`]. MSIS accounting prices the
+/// weak-binding collision `2 · c_bar · z_bar · nu`, where the challenge slack
+/// is `c_bar = 2 · challenge_l1_mass` and the digit envelope is
+/// `z_bar = 2 · balanced_digit_abs_max`, then rounds up to the audited
+/// bucket.
+///
+/// Returns `None` on overflow or when the collision exceeds every audited bucket
+/// for `(sis_family, ring_dimension)`.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn rounded_up_role_a_inf_norm(
+    min_security_bits: u16,
+    sis_family: SisModulusFamily,
+    ring_dimension: u32,
+    challenge_l1_mass: u128,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+    r_vars: usize,
+    num_claims: usize,
+    ring_subfield_norm_bound: u32,
+    decomposition: DecompositionParams,
+    cap_config: &FoldWitnessLinfCapConfig,
+) -> Option<u128> {
+    let fold_decomposed_digits = num_digits_fold(
+        r_vars,
+        num_claims,
+        decomposition.field_bits(),
+        decomposition.log_basis,
+        challenge,
+        witness,
+        *cap_config,
     )
+    .ok()?;
+    let recomposed_inf_norm_bound =
+        balanced_digit_abs_max(decomposition.log_basis, fold_decomposed_digits);
+    let collision_linf = weak_binding_inf_norm(
+        2u128.checked_mul(challenge_l1_mass)?,
+        ring_subfield_norm_bound,
+        2u128.checked_mul(recomposed_inf_norm_bound)?,
+    )?;
+    ceil_supported_linf_bound(min_security_bits, sis_family, ring_dimension, collision_linf)
 }
 
 /// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
@@ -295,60 +334,6 @@ pub fn fold_witness_linf_digit_plan(
     Ok((delta_fold, inf_norm_bound))
 }
 
-/// A-role committed-level coefficient-`L∞` collision bucket.
-///
-/// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
-/// bounds the extracted kernel by challenge mass; stage-1 digit membership
-/// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
-/// envelope is [`fold_witness_verifier_linf_bound`] at the `δ_fold` depth
-/// induced by [`fold_witness_linf_digit_plan`]. MSIS accounting keeps
-/// the natural coefficient-`L∞` collision:
-///
-/// ```text
-/// collision_A_inf = 8 · challenge_l1_mass · fold_witness_verifier_linf_bound · nu,
-///   challenge_l1_mass = ω (effective L1 mass per logical block),
-///   nu     = ring_subfield_norm_bound.
-/// ```
-///
-/// Returns `None` on overflow or when the collision exceeds every audited bucket
-/// for `(sis_family, d)`.
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn committed_fold_collision_linf_bound(
-    min_security_bits: u16,
-    sis_family: SisModulusFamily,
-    ring_dimension: u32,
-    challenge_l1_mass: u128,
-    challenge: FoldChallengeNorms,
-    witness: FoldWitnessNorms,
-    r_vars: usize,
-    num_claims: usize,
-    ring_subfield_norm_bound: u32,
-    decomposition: DecompositionParams,
-    cap_config: &FoldWitnessLinfCapConfig,
-) -> Option<u128> {
-    let delta_fold = num_digits_fold(
-        r_vars,
-        num_claims,
-        decomposition.field_bits(),
-        decomposition.log_basis,
-        challenge,
-        witness,
-        *cap_config,
-    )
-    .ok()?;
-    let z_verifier_linf_bound =
-        fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
-    rounded_up_weak_binding_inf_norm(
-        min_security_bits,
-        sis_family,
-        ring_dimension as usize,
-        challenge_l1_mass,
-        ring_subfield_norm_bound,
-        z_verifier_linf_bound,
-    )
-}
-
 /// A-role committed-fold collision bucket and audited secure rank at one geometry.
 ///
 /// Prices with the effective challenge L1 mass `ω` from `fold_shape` and
@@ -382,7 +367,7 @@ pub fn committed_fold_a_role_rank(
         inner_width as usize,
     )
     .ok()?;
-    let bucket = committed_fold_collision_linf_bound(
+    let bucket = rounded_up_role_a_inf_norm(
         min_security_bits,
         sis_family,
         d as u32,
@@ -536,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_fold_collision_linf_bound_matches_lemma7_envelope() {
+    fn rounded_up_role_a_inf_norm_matches_lemma7_envelope() {
         use crate::DecompositionParams;
 
         let challenge = FoldChallengeNorms {
@@ -560,7 +545,7 @@ mod tests {
             cap_config,
         )
         .unwrap();
-        let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
+        let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
         let collision_linf = 8u128 * challenge.l1_norm * z_bound;
         let envelope = ceil_supported_linf_bound(
             DEFAULT_SIS_SECURITY_BITS,
@@ -570,7 +555,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            committed_fold_collision_linf_bound(
+            rounded_up_role_a_inf_norm(
                 DEFAULT_SIS_SECURITY_BITS,
                 SisModulusFamily::Q32,
                 64,
@@ -632,12 +617,12 @@ mod tests {
             cap_config,
         )
         .unwrap();
-        let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
+        let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
         assert!(
             z_bound >= honest_cap,
             "verifier envelope {z_bound} must cover honest cap {honest_cap}"
         );
-        let digit_priced = committed_fold_collision_linf_bound(
+        let digit_priced = rounded_up_role_a_inf_norm(
             DEFAULT_SIS_SECURITY_BITS,
             SisModulusFamily::Q64,
             64,
@@ -763,8 +748,8 @@ mod tests {
             cap_config,
         )
         .unwrap();
-        let z_bound = fold_witness_verifier_linf_bound(decomposition.log_basis, delta_fold);
-        let priced = committed_fold_collision_linf_bound(
+        let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
+        let priced = rounded_up_role_a_inf_norm(
             DEFAULT_SIS_SECURITY_BITS,
             SisModulusFamily::Q32,
             64,

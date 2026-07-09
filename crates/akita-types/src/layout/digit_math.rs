@@ -46,7 +46,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// `n_A` is the per-`r` minimum SIS-secure A-rank for the candidate's
 /// `inner_width(r) = block_len(r) · δ_commit` (via [`crate::sis::min_secure_rank`]). The
 /// A collision is itself recomputed per `r` via
-/// [`crate::sis::committed_fold_collision_linf_bound`], because the committed-level
+/// [`crate::sis::rounded_up_role_a_inf_norm`], because the committed-level
 /// weak-binding norm grows with the fold arity `num_claims · 2^r`; scoring
 /// every split against a single bucket would rank the larger-`r` splits wrong.
 ///

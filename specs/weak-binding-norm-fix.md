@@ -63,7 +63,7 @@ envelope** the stage-1 range check actually certifies:
 β^resp = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
        = fold_witness_beta(...)
 δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*) when tail-bound-with-grind)
-z_verifier = fold_witness_verifier_linf_bound(log_basis, δ_fold)
+z_verifier = balanced_digit_abs_max(log_basis, δ_fold)
 
 collision_A_inf = 8 · ω · z_verifier · ν
 collision_A     = ceil_bucket(d · collision_A_inf²)   (L2 MSIS table)
@@ -77,8 +77,8 @@ This is implemented in
 [`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs)
 (with fold-linf cap policy in
 [`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
-`committed_fold_collision_linf_bound` prices the
-`8·ω·fold_witness_verifier_linf_bound·ν` coefficient-`L∞` envelope, and
+`rounded_up_role_a_inf_norm` prices the
+`8·ω·balanced_digit_abs_max·ν` coefficient-`L∞` envelope, and
 `committed_fold_a_role_rank` builds the level's audited A-role rank from the same
 geometry. Both thread `num_claims`, and `ring_subfield_norm_bound` from each call
 site (the planner DP in `schedule_params.rs`, the runtime expansion, and the
@@ -197,7 +197,7 @@ needs `||z||_1`. Two independent facts close that door:
    `||·||_1 / ||·||_inf` ratio, so the outer `min` is a no-op: there is no
    `ω`-factor to recover, with or without an L1 range check.
 
-So the shipped `8·ω·fold_witness_verifier_linf_bound(δ_fold)·ν` bound is already the
+So the shipped `8·ω·balanced_digit_abs_max(δ_fold)·ν` bound is already the
 tight one for the one-hot case; replacing the outer `||c||_1` with `||c||_inf` would
 under-price the coefficient-`L∞` collision by a factor of `ω` and select SIS
 ranks below the configured floor. No code change: the conservative `||c||_1` outer factor is also the correct one. The
