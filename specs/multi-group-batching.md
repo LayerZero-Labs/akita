@@ -180,7 +180,8 @@ Implemented now:
   `CommitmentProver` / PCS scheme surface. It validates the final group,
   reconstructs precommitted `PrecommittedGroupParams` values from
   `PolynomialGroupLayout`s under `ConservativeCommitmentConfig<Cfg>`,
-  resolves grouped params through `Cfg::get_params_for_grouped_batched_commitment`,
+  resolves the runtime schedule, reads its multi-group root commit params through
+  `Cfg::multi_group_root_commit_params`,
   and emits the final commitment plus hint.
 - `batched_prove` / `batched_verify` support `G > 1` folded multi-group-root one-hot
   openings when `SetupContributionMode::Direct`, the opening field has extension
@@ -203,7 +204,8 @@ Still future / guarded:
 - Dense polynomial multi-group roots, recursive setup contribution, and tiered
   multi-group commitments remain guarded.
 - Folded multi-group roots over extension-field openings remain guarded by a
-  root-direct fallback until the grouped trace/output contribution supports them.
+  root-direct fallback until the multi-group trace and output contribution support
+  them.
 - Immediately terminal multi-group root folds and EOR-bearing multi-group roots remain
   guarded.
 - There is no separate descriptor `CommitSection`, and the design should not add
@@ -281,7 +283,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
 }
 ```
 
-The first supported grouped shape requires:
+The first supported multi-group shape requires:
 
 ```text
 all claims use one shared opening point
@@ -382,14 +384,14 @@ num_vars        = committed/opened arity for this group
 num_polynomials = K_g
 ```
 
-The final group sets the shared padded opening arity used by the grouped
+The final group sets the shared padded opening arity used by the multi-group
 root. Precommitted group entries may have smaller arity; their
 `PointVariableSelection` chooses the coordinates they use from the shared point.
 Precommitted entries with arity greater than `final_group.num_vars / 2` must
 reject. This is the integer-division bound enforced by
 `AkitaScheduleLookupKey::validate`.
 
-`AkitaScheduleLookupKey` is the common key shape for scalar and grouped
+`AkitaScheduleLookupKey` is the common key shape for scalar and multi-group
 planning:
 
 ```rust
@@ -481,9 +483,9 @@ validate AkitaScheduleLookupKey
 if precommitteds is empty:
     resolve scalar schedule
 else if a generated entry with matching precommitteds exists:
-    expand and validate that grouped row
+    expand and validate that multi-group row
 else:
-    run grouped DP fallback
+    run multi-group DP fallback
 ```
 
 Current generated group-batch tables are emitted only for eligible one-hot,
@@ -498,7 +500,7 @@ first precommitted K:      1
 second precommitted K:     max(main.K / 2, 1)
 ```
 
-The generated row is kept only if conservative precommit params and grouped DP
+The generated row is kept only if conservative precommit params and multi-group DP
 both succeed. Table misses remain safe because runtime DP can derive a schedule.
 A false table hit is not safe.
 
@@ -580,7 +582,7 @@ commit_final_group(new_group, precommitted_layouts)
   from its `PolynomialGroupLayout` under `ConservativeCommitmentConfig<Cfg>`;
 - builds the full `AkitaScheduleLookupKey`;
 - resolves the multi-group final-root commit params through
-  `Cfg::get_params_for_grouped_batched_commitment`;
+  `Cfg::multi_group_root_commit_params`;
 - commits the last group with the final multi-group plan and returns only the final
   commitment plus hint.
 
@@ -592,16 +594,14 @@ root-params accessor for final multi-group commitments:
 ```rust
 fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>;
 
-fn get_params_for_grouped_batched_commitment(
-    key: &AkitaScheduleLookupKey,
-) -> Result<LevelParams, AkitaError>;
+fn multi_group_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError>;
 ```
 
 `runtime_schedule` delegates scalar keys to `resolve_schedule` and multi-group keys
 to `resolve_group_batch_schedule`; both paths validate catalog identity on table
-hits and fall back to DP on misses. `get_params_for_grouped_batched_commitment`
-reads the main/final group's root commit params from the first schedule step
-(`Fold.params` or root-direct `Direct.params`).
+hits and fall back to DP on misses. `multi_group_root_commit_params` reads the
+main/final group's root commit params from the first schedule step (`Fold.params`
+or root-direct `Direct.params`).
 
 Standalone conservative precommit scheduling is not a public trait hook. It is
 implemented by `ConservativeCommitmentConfig<Cfg>`, which overrides
@@ -684,7 +684,7 @@ precommitted group. The final-group path then:
   `ConservativeCommitmentConfig<Cfg>::get_params_for_batched_commitment`;
 - builds an `AkitaScheduleLookupKey` from those layouts and the final group key;
 - validates `precommitted.group.num_vars <= final_group.num_vars / 2`;
-- resolves multi-group params through `Cfg::get_params_for_grouped_batched_commitment`;
+- resolves multi-group params through `Cfg::multi_group_root_commit_params`;
 - validates setup footprint and one-hot chunk size for the final group;
 - applies tensor root projection when the multi-group final schedule starts with a
   fold and the field tower supports root tensor projection;
@@ -860,7 +860,7 @@ num_segments = G
 num_polys_per_segment = [K_0, K_1, ..., K_{G-1}]
 ```
 
-Verifier code must never silently construct `num_segments = 1` for a grouped
+Verifier code must never silently construct `num_segments = 1` for a multi-group
 proof.
 
 ## Instance Descriptor and Transcript
@@ -868,10 +868,10 @@ proof.
 ### Phase 1 Descriptor Binding
 
 The current descriptor has `AlgebraSection`, `SetupSection`, `PlanSection`, and
-`CallSection`. There is no top-level `CommitSection`, and this grouped flow
+`CallSection`. There is no top-level `CommitSection`, and this multi-group flow
 should not add one.
 
-`CallSection` binds the public grouped opening shape:
+`CallSection` binds the public multi-group opening shape:
 
 ```text
 num_polys
@@ -935,10 +935,10 @@ After audit freeze, incompatible layout changes must increment it.
 
 ### No Separate Commit Section
 
-Grouped opening should not add a `CommitSection` or a separate params digest. The
+Multi-group opening should not add a `CommitSection` or a separate params digest. The
 existing descriptor already has the two bindings needed for this shape:
 
-- `CallSection.opening_batch_digest` binds the public grouped opening shape,
+- `CallSection.opening_batch_digest` binds the public multi-group opening shape,
   including group count, per-group polynomial counts, and point-variable
   selections.
 - `PlanSection.effective_schedule_digest` binds the materialized schedule. For a
@@ -953,7 +953,7 @@ through the existing level/schedule descriptor bytes.
 
 ### Canonical Encoding
 
-Grouped opening and schedule encodings use the same canonical byte helpers as
+Multi-group opening and schedule encodings use the same canonical byte helpers as
 the existing instance descriptor digests in
 `crates/akita-types/src/descriptor_bytes.rs`:
 
@@ -977,7 +977,7 @@ n_a
 conservative_n_b
 ```
 
-Grouped schedule precommitted params encode in transcript order through the
+Multi-group schedule precommitted params encode in transcript order through the
 materialized root `LevelParams`:
 
 ```text
@@ -986,7 +986,7 @@ for g in 0..precommitteds.len():
     PrecommittedGroupParams(precommitteds[g])
 ```
 
-The grouped opening-batch digest in `CallSection` remains separate and uses the
+The multi-group opening-batch digest in `CallSection` remains separate and uses the
 existing `opening_batch_digest` encoding over:
 
 ```text
@@ -1004,11 +1004,11 @@ Descriptor digest domain labels:
 effective_schedule_digest = Blake2b-256(schedule.append_descriptor_bytes(...))
 ```
 
-The grouped opening phase should not add new proof-body fields beyond the
-existing descriptor and batched proof containers. Grouped proof shape lives in
+The multi-group opening phase should not add new proof-body fields beyond the
+existing descriptor and batched proof containers. Multi-group proof shape lives in
 the opening batch and effective schedule, not in prover-supplied side channels.
 
-Malformed Phase 2 grouped descriptor bytes must reject before any
+Malformed Phase 2 multi-group descriptor bytes must reject before any
 verifier-reachable matrix prefix selection or ring-switch replay. Exact
 rejection cases:
 
@@ -1018,13 +1018,13 @@ any PrecommittedGroupParams field overflow or zero where forbidden -> AkitaError
 unknown descriptor version                           -> SerializationError
 group vector order differs from commitment vector order -> AkitaError::InvalidProof
 effective_schedule_digest mismatch after recompute      -> AkitaError::InvalidProof
-scalar [4] opening-batch digest presented as grouped [1,3] -> AkitaError::InvalidProof
+scalar [4] opening-batch digest presented as multi-group [1,3] -> AkitaError::InvalidProof
 ```
 
 ### Phase 2 Verifier Boundary
 
 `PrecommittedGroupParams` values are not a separate prover-supplied side channel in
-the Phase 2 grouped opening phase. They are derived from the public
+the Phase 2 multi-group opening phase. They are derived from the public
 `OpeningClaimsLayout`, setup, and config policy, then bound indirectly through
 the effective schedule digest.
 The verifier must follow this order:
@@ -1059,7 +1059,7 @@ max_setup_len
 
 For eligible one-hot, non-tiered proof-optimized configs, setup-envelope sizing
 inflates `max_setup_len` with conservative standalone commitment footprints.
-Grouped root setup capacity is still represented through the selected schedule's
+Multi-group root setup capacity is still represented through the selected schedule's
 effective `LevelParams`, not a separate public `max_commitment_groups` field.
 
 Phase 2 setup envelope scans must include partitions, not only total polynomial
@@ -1084,7 +1084,7 @@ polynomials are known up front. The multi-group root pays for:
 
 - one `z_hat_g` segment per group;
 - one B block per group;
-- one A block per group in the initial grouped relation;
+- one A block per group in the initial multi-group relation;
 - repeated B traversal and padding for unequal `K_g`;
 - conservative B ranks for precommitted groups.
 
@@ -1128,7 +1128,7 @@ At Phase 1 multi-group schedule lookup time:
 - Each precommitted group must have
   `group.num_vars <= final_group.num_vars / 2`.
 - Dense and tiered multi-group roots must return `AkitaError::InvalidSetup`.
-- Grouped folded roots must hand off to a singleton recursive suffix; grouped
+- Multi-group folded roots must hand off to a singleton recursive suffix; multi-group
   terminal root folds remain rejected until the terminal witness layout is
   implemented.
 
@@ -1180,9 +1180,9 @@ At current verify time:
 
 | Shape                                           | Rejection point                         | Error                                    |
 | ----------------------------------------------- | --------------------------------------- | ---------------------------------------- |
-| Tiered preset + multi-group schedule key            | `runtime_schedule` / grouped DP         | `AkitaError::InvalidSetup`               |
+| Tiered preset + multi-group schedule key            | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
 | Tiered preset + `G > 1` proof                   | Prove / verify entry                    | `AkitaError::InvalidSetup`               |
-| Dense config + multi-group schedule key             | `runtime_schedule` / grouped DP         | `AkitaError::InvalidSetup`               |
+| Dense config + multi-group schedule key             | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
 | Dense polynomial at conservative precommit      | `ConservativeCommitmentConfig` commit params / one-hot validators | `AkitaError::InvalidSetup` / `InvalidInput` |
 | Dense polynomial + `G > 1` proof                | Prove entry                             | `AkitaError::InvalidInput`               |
 | Precommitted `num_vars > final_group.num_vars / 2` | multi-group key validation               | `AkitaError::InvalidInput`               |
@@ -1245,13 +1245,13 @@ negative tests pass.
 
 - Implemented `commit_final_group(new_group, precommitted_layouts)`.
 - Recompute precommitted layouts under `ConservativeCommitmentConfig<Cfg>`.
-- Commit the final group with the final grouped plan.
+- Commit the final group with the final multi-group plan.
 - Return the final commitment plus hint only.
 
 Phase 1.5 is implemented. It validates the final-group commitment layout and
-final commitment row count, but it does not produce a grouped opening proof.
+final commitment row count, but it does not produce a multi-group opening proof.
 
-### Phase 2: Grouped Opening
+### Phase 2: Multi-Group Opening
 
 - Reuse `OpeningClaimsLayout` / `CallSection.opening_batch_digest` for group
   partition and point-variable selection binding.
@@ -1267,12 +1267,12 @@ final commitment row count, but it does not produce a grouped opening proof.
 - Add folded non-tiered two-group one-hot same-point E2E.
 
 Phase 2 done means: a final-group commitment can be combined with precommitted
-one-hot groups to produce and verify a grouped same-point opening proof for
+one-hot groups to produce and verify a multi-group same-point opening proof for
 unequal `K_g`, with recursive suffix folds remaining singleton.
 
 ### Phase 3: Tables, Performance, and Broader Shapes
 
-- Add generated table grids for common grouped one-hot shapes, including unequal
+- Add generated table grids for common multi-group one-hot shapes, including unequal
 `K_g`.
 - Add profile modes for multi-group roots.
 - Add fused B kernels if repeated per-group B traversal is too slow.
@@ -1362,10 +1362,10 @@ Baseline scalar command:
 AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=28 cargo run --release --example profile
 ```
 
-Grouped command (after profile mode exists):
+Multi-group command after profile mode exists:
 
 ```bash
-AKITA_MODE=onehot_fp128_d64_grouped AKITA_NUM_VARS=28 \
+AKITA_MODE=onehot_fp128_d64_multi_group AKITA_NUM_VARS=28 \
   AKITA_GROUP_SIZES=1,3 cargo run --release --example profile \
   --no-default-features --features parallel,profile-ci
 ```
@@ -1429,7 +1429,7 @@ Groups with identical dimensions could share one A block and use a fresh
 group-batching challenge to combine their A equations. This could reduce the
 `G * n_a` A-row cost in symmetric workloads.
 
-This is not part of the initial grouped opening. It needs a separate soundness
+This is not part of the initial multi-group opening. It needs a separate soundness
 argument because the current design isolates each group with its own A relation.
 
 ### Per-group D outputs
@@ -1437,7 +1437,7 @@ argument because the current design isolates each group with its own A relation.
 The design could replace `D * concat(w_hat_g) = v` with one `D_g * w_hat_g = v_g` per group. This can make each D relation narrower, but it also sends more D
 outputs and adds more relation rows.
 
-The initial grouped opening keeps one concatenated D relation. A per-group D design should only be
+The initial multi-group opening keeps one concatenated D relation. A per-group D design should only be
 adopted if a later cost model shows a win for a supported workload.
 
 ### Two-phase prove and link
@@ -1462,15 +1462,15 @@ The following choices close the open questions from the first draft:
   `max_num_batched_polys`, and `max_setup_len` for Phase 1. Add an explicit
   group-count setup API field only if Phase 2 envelope scans show a need.
 3. **Recursive setup contribution:** explicitly delay generalization until
-  a later root-layout generalization. The grouped opening phase keeps the
+  a later root-layout generalization. The multi-group opening phase keeps the
   existing reject.
 4. **Planner key exposure:** keep `AkitaScheduleLookupKey` as the canonical
   config/planner key. Public final-commit callers pass
   `PolynomialGroupLayout`s for precommitted groups; opening callers should use
-  grouped `OpeningClaims` vectors and the effective schedule digest rather than
+  multi-group `OpeningClaims` vectors and the effective schedule digest rather than
   proof-local side channels.
 
 ## Open Questions
 
-None for the initial grouped implementation. Revisit only if tiered multi-group or
+None for the initial multi-group implementation. Revisit only if tiered multi-group or
 known-final-schedule precommit become active follow-up specs.

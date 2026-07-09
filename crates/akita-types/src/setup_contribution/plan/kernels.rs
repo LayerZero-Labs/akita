@@ -370,29 +370,45 @@ where
         );
     }
 
+    // Keep the small-segment path inline. Routing each index through a shared
+    // helper costs the ordinary verifier scan, while the wide path above keeps
+    // the parallel shape needed by distributed profiles.
     let mut acc = E::zero();
     for base_idx in range {
-        let weight = base_ring_segment_weight_at::<
-            E,
-            HAS_D,
-            HAS_B,
-            HAS_A,
-            D_IDENTITY,
-            B_IDENTITY,
-            A_IDENTITY,
-        >(
-            base_idx,
-            segment,
-            e_eq,
-            t_eq,
-            z_eq,
-            d_projection,
-            b_projection,
-            a_projection,
-            d_weights,
-            b_weights,
-            a_weights,
-        );
+        let mut weight = E::zero();
+        if HAS_D {
+            weight += projected_role_weight_at::<E, D_IDENTITY>(
+                base_idx,
+                segment.d_row,
+                segment.d_start_abs,
+                segment.d_weight,
+                e_eq,
+                d_projection,
+                d_weights,
+            );
+        }
+        if HAS_B {
+            weight += projected_role_weight_at::<E, B_IDENTITY>(
+                base_idx,
+                segment.b_row,
+                segment.b_start_abs,
+                segment.b_weight,
+                t_eq,
+                b_projection,
+                b_weights,
+            );
+        }
+        if HAS_A {
+            weight += projected_role_weight_at::<E, A_IDENTITY>(
+                base_idx,
+                segment.a_row,
+                segment.a_start_abs,
+                segment.a_weight,
+                z_eq,
+                a_projection,
+                a_weights,
+            );
+        }
         if !weight.is_zero() {
             acc += eval_ring_at_pows_fast(&setup_flat[base_idx], base_pows) * weight;
         }
