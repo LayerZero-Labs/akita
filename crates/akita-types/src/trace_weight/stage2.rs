@@ -43,10 +43,9 @@ pub enum TracePublicWeights<F: FieldCore, E: FieldCore, const D: usize> {
 pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     pub layout: TraceWeightLayout,
     pub trace_terms: Vec<TraceTerm<F, E, D>>,
-    /// Batching weight applied to the fused trace term. This is the `γ²` power
-    /// of the stage-2 batching challenge (`CHALLENGE_SUMCHECK_BATCH`); the trace
-    /// term reuses that challenge rather than sampling a dedicated one, so it is
-    /// sampled after the next-level witness is bound to the transcript.
+    /// Batching weight applied to the fused trace term. This is
+    /// `eq(row_index, EvaluationTrace)` for the trailing EvaluationTrace relation
+    /// row (not a separate `γ²` Stage-2 summand).
     pub trace_coeff: E,
     pub trace_opening_claim: E,
     /// Dense multi-group-root trace-weight table (`col ⊗ ring`, `output_scale = 1`).

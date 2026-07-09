@@ -14,7 +14,6 @@ use crate::{
     ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
     RingRelationWitness,
 };
-use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::parallel::*;
@@ -37,7 +36,7 @@ use akita_types::{
     append_claim_values_to_transcript, basis_weights, build_trace_table_scaled,
     check_extension_opening_reduction_output, derive_tensor_extension_opening_claim_from_partials,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
-    prepare_opening_point, recover_ring_subfield_inner_product,
+    evaluation_trace_row_weight, prepare_opening_point, recover_ring_subfield_inner_product,
     relation_claim_from_layout_extension, relation_rhs_layout_for, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_current_w_len,
     root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
@@ -49,7 +48,7 @@ use akita_types::{
     AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
     CleartextWitnessProof, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
     LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout,
-    RelationTau1Geometry, RingMultiplierOpeningPoint, RingVec, RingView, Schedule,
+    RelationRowLayout, RingMultiplierOpeningPoint, RingVec, RingView, Schedule,
     SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
     TraceTable,
 };

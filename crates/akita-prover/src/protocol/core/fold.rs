@@ -583,21 +583,13 @@ where
     } else {
         sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
     };
-    // EvaluationTrace is the last τ₁ row: weight openings by eq(τ₁, last), not γ².
-    let tau1_geometry = RelationTau1Geometry::for_level(
+    // EvaluationTrace is the last relation row: weight openings by eq(row_index, last), not γ².
+    let row_layout = RelationRowLayout::for_level(
         lp,
         prepared_fold.instance.relation_matrix_row_layout(),
         prepared_fold.instance.opening_batch(),
     )?;
-    let eq_tau1 = EqPolynomial::evals(&rs.tau1)?;
-    let evaluation_trace_row = tau1_geometry.evaluation_trace_row();
-    let evaluation_trace_weight = eq_tau1
-        .get(evaluation_trace_row)
-        .copied()
-        .ok_or_else(|| AkitaError::InvalidSize {
-            expected: evaluation_trace_row + 1,
-            actual: eq_tau1.len(),
-        })?;
+    let evaluation_trace_weight = evaluation_trace_row_weight(row_layout, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {

@@ -26,7 +26,7 @@
 //! `               = sum_{x,y} w(x, y) * a(y) * m_tau1(x)`.
 //!
 //! There is no public-output `y_ring` row: the §3.1 fold-opening trace check is
-//! internalized as the `EvaluationTrace` relation row (last τ₁ index), weighted
+//! internalized as the `EvaluationTrace` relation row (last logical row), weighted
 //! by `eq(tau1, EvaluationTrace)`, rather than a separate `gamma^2` Stage-2
 //! summand. `y_alpha` runs `FoldEvaluation | A | B(u) | D(v)` for quotient rows;
 //! the opening target enters `relation_weight_claim` through EvaluationTrace.
@@ -36,7 +36,7 @@
 //! on the `e_hat` digit segment). Its input contribution is
 //! `eq(tau1, EvaluationTrace) * trace_target`, where `trace_target` is the
 //! incoming opening claim (or the EOR final claim on extension-opening-reduction
-//! paths). It reuses the existing τ₁ row-batching challenge, so it adds no new
+//! paths). It reuses the existing row-index challenge (`tau1`), so it adds no new
 //! Fiat-Shamir challenge and no terminal `trace_gamma` squeeze.
 //!
 //! Stage 1 supplies the carried virtual claim

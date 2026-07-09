@@ -36,7 +36,9 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
     let openings: Vec<F> = poly_refs
         .iter()
-        .map(|poly| opening_from_poly_with_basis::<DENSE_D, _>(*poly, &opening_point, &layout, basis_mode))
+        .map(|poly| {
+            opening_from_poly_with_basis::<DENSE_D, _>(*poly, &opening_point, &layout, basis_mode)
+        })
         .collect();
 
     let setup = Scheme::setup_prover(num_vars, total_claims).unwrap();

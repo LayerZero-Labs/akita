@@ -15,7 +15,7 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup,
-    CommitmentRingDims, FpExtEncoding, LevelParams, RelationMatrixRowLayout, RelationTau1Geometry,
+    CommitmentRingDims, FpExtEncoding, LevelParams, RelationMatrixRowLayout, RelationRowLayout,
     RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
     SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
     SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
@@ -276,10 +276,9 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
-    let tau1_geometry =
-        RelationTau1Geometry::for_level(lp, relation_matrix_row_layout, opening_batch)?;
+    let row_layout = RelationRowLayout::for_level(lp, relation_matrix_row_layout, opening_batch)?;
     let num_sc_vars = col_bits + ring_bits;
-    let num_i = tau1_geometry.tau1_num_vars()?;
+    let num_i = row_layout.row_index_num_vars()?;
 
     let tau0 = match relation_matrix_row_layout {
         RelationMatrixRowLayout::WithDBlock => Some(
