@@ -7,6 +7,8 @@ use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{ExtField, FieldCore, MulBaseUnreduced};
 
+const PARALLEL_BASE_RING_SEGMENT_MIN_LEN: usize = 8192;
+
 #[derive(Clone)]
 pub(crate) struct GroupSetupSegment<E> {
     pub(super) lo: usize,
@@ -333,47 +335,132 @@ where
     F: FieldCore,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
+    if range.len() >= PARALLEL_BASE_RING_SEGMENT_MIN_LEN {
+        return cfg_fold_reduce!(
+            range,
+            E::zero,
+            |mut acc, base_idx| {
+                let weight = base_ring_segment_weight_at::<
+                    E,
+                    HAS_D,
+                    HAS_B,
+                    HAS_A,
+                    D_IDENTITY,
+                    B_IDENTITY,
+                    A_IDENTITY,
+                >(
+                    base_idx,
+                    segment,
+                    e_eq,
+                    t_eq,
+                    z_eq,
+                    d_projection,
+                    b_projection,
+                    a_projection,
+                    d_weights,
+                    b_weights,
+                    a_weights,
+                );
+                if !weight.is_zero() {
+                    acc += eval_ring_at_pows_fast(&setup_flat[base_idx], base_pows) * weight;
+                }
+                acc
+            },
+            |lhs, rhs| lhs + rhs
+        );
+    }
+
     let mut acc = E::zero();
     for base_idx in range {
-        let mut weight = E::zero();
-        if HAS_D {
-            weight += projected_role_weight_at::<E, D_IDENTITY>(
-                base_idx,
-                segment.d_row,
-                segment.d_start_abs,
-                segment.d_weight,
-                e_eq,
-                d_projection,
-                d_weights,
-            );
-        }
-        if HAS_B {
-            weight += projected_role_weight_at::<E, B_IDENTITY>(
-                base_idx,
-                segment.b_row,
-                segment.b_start_abs,
-                segment.b_weight,
-                t_eq,
-                b_projection,
-                b_weights,
-            );
-        }
-        if HAS_A {
-            weight += projected_role_weight_at::<E, A_IDENTITY>(
-                base_idx,
-                segment.a_row,
-                segment.a_start_abs,
-                segment.a_weight,
-                z_eq,
-                a_projection,
-                a_weights,
-            );
-        }
+        let weight = base_ring_segment_weight_at::<
+            E,
+            HAS_D,
+            HAS_B,
+            HAS_A,
+            D_IDENTITY,
+            B_IDENTITY,
+            A_IDENTITY,
+        >(
+            base_idx,
+            segment,
+            e_eq,
+            t_eq,
+            z_eq,
+            d_projection,
+            b_projection,
+            a_projection,
+            d_weights,
+            b_weights,
+            a_weights,
+        );
         if !weight.is_zero() {
             acc += eval_ring_at_pows_fast(&setup_flat[base_idx], base_pows) * weight;
         }
     }
     acc
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn base_ring_segment_weight_at<
+    E,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+    const D_IDENTITY: bool,
+    const B_IDENTITY: bool,
+    const A_IDENTITY: bool,
+>(
+    base_idx: usize,
+    segment: &GroupSetupSegment<E>,
+    e_eq: &[E],
+    t_eq: &[E],
+    z_eq: &[E],
+    d_projection: &RoleProjection<E>,
+    b_projection: &RoleProjection<E>,
+    a_projection: &RoleProjection<E>,
+    d_weights: &ProjectedRoleWeights<E>,
+    b_weights: &ProjectedRoleWeights<E>,
+    a_weights: &ProjectedRoleWeights<E>,
+) -> E
+where
+    E: FieldCore,
+{
+    let mut weight = E::zero();
+    if HAS_D {
+        weight += projected_role_weight_at::<E, D_IDENTITY>(
+            base_idx,
+            segment.d_row,
+            segment.d_start_abs,
+            segment.d_weight,
+            e_eq,
+            d_projection,
+            d_weights,
+        );
+    }
+    if HAS_B {
+        weight += projected_role_weight_at::<E, B_IDENTITY>(
+            base_idx,
+            segment.b_row,
+            segment.b_start_abs,
+            segment.b_weight,
+            t_eq,
+            b_projection,
+            b_weights,
+        );
+    }
+    if HAS_A {
+        weight += projected_role_weight_at::<E, A_IDENTITY>(
+            base_idx,
+            segment.a_row,
+            segment.a_start_abs,
+            segment.a_weight,
+            z_eq,
+            a_projection,
+            a_weights,
+        );
+    }
+    weight
 }
 
 #[inline(always)]

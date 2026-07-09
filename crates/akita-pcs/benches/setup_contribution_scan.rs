@@ -25,16 +25,69 @@ fn scalar(value: u128) -> F {
 }
 
 fn scan_bench_case(d_b: usize, d_d: usize) -> ScanBenchCase {
-    let n_a = 32;
-    let n_b = 32;
-    let n_d = 32;
-    let num_claims = 2;
-    let num_blocks = 32;
-    let block_len = 8;
-    let depth_open = 2;
-    let depth_commit = 2;
-    let depth_fold = 2;
-    let log_basis = 4;
+    scan_bench_case_with_layout(ScanBenchLayout {
+        n_a: 32,
+        n_b: 32,
+        n_d: 32,
+        num_claims: 2,
+        num_blocks: 32,
+        block_len: 8,
+        depth_open: 2,
+        depth_commit: 2,
+        depth_fold: 2,
+        log_basis: 4,
+        d_b,
+        d_d,
+    })
+}
+
+fn wide_equal_dim_scan_bench_case() -> ScanBenchCase {
+    scan_bench_case_with_layout(ScanBenchLayout {
+        n_a: 6,
+        n_b: 1,
+        n_d: 1,
+        num_claims: 1,
+        num_blocks: 1024,
+        block_len: 512,
+        depth_open: 32,
+        depth_commit: 2,
+        depth_fold: 2,
+        log_basis: 4,
+        d_b: D_A,
+        d_d: D_A,
+    })
+}
+
+struct ScanBenchLayout {
+    n_a: usize,
+    n_b: usize,
+    n_d: usize,
+    num_claims: usize,
+    num_blocks: usize,
+    block_len: usize,
+    depth_open: usize,
+    depth_commit: usize,
+    depth_fold: usize,
+    log_basis: u32,
+    d_b: usize,
+    d_d: usize,
+}
+
+fn scan_bench_case_with_layout(layout: ScanBenchLayout) -> ScanBenchCase {
+    let ScanBenchLayout {
+        n_a,
+        n_b,
+        n_d,
+        num_claims,
+        num_blocks,
+        block_len,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        log_basis,
+        d_b,
+        d_d,
+    } = layout;
     let rows = 1 + n_a + n_b + n_d;
     let z_range = block_len * depth_commit;
     let e_range = num_claims * depth_open * num_blocks;
@@ -134,6 +187,7 @@ fn scan_bench_case(d_b: usize, d_d: usize) -> ScanBenchCase {
 fn bench_setup_contribution_scan(c: &mut Criterion) {
     let equal_dims = scan_bench_case(D_A, D_A);
     let nested_dims = scan_bench_case(D_B_NESTED, D_D_NESTED);
+    let wide_equal_dims = wide_equal_dim_scan_bench_case();
     let mut group = c.benchmark_group("setup_contribution_scan");
     group.throughput(Throughput::Elements(
         equal_dims.plan.required().expect("non-empty plan") as u64,
@@ -158,6 +212,18 @@ fn bench_setup_contribution_scan(c: &mut Criterion) {
                     black_box(&nested_dims.alpha_pows_a),
                     black_box(&nested_dims.alpha_pows_b),
                     black_box(&nested_dims.alpha_pows_d),
+                )
+                .expect("setup contribution direct evaluation")
+        })
+    });
+    group.bench_function("wide_equal_role_dims", |bench| {
+        bench.iter(|| {
+            black_box(&wide_equal_dims.plan)
+                .evaluate_direct::<F>(
+                    black_box(&wide_equal_dims.setup),
+                    black_box(&wide_equal_dims.alpha_pows_a),
+                    black_box(&wide_equal_dims.alpha_pows_b),
+                    black_box(&wide_equal_dims.alpha_pows_d),
                 )
                 .expect("setup contribution direct evaluation")
         })
